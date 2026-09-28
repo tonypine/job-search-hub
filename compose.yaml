@@ -1,0 +1,25 @@
+name: job-search-hub
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_DB: hub
+      POSTGRES_PASSWORD: ${HUB_DATABASE_PASSWORD:?set HUB_DATABASE_PASSWORD in .env; see .env.example}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      # Postgres 18 images keep the cluster in a versioned directory under
+      # /var/lib/postgresql, so the volume mounts there.
+      - hub-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hub", "-d", "hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  hub-db:
