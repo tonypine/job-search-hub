@@ -3,6 +3,8 @@
 package mcptools
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
 var schemaOptions = &jsonschema.ForOptions{
@@ -29,6 +32,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier) *mcp.Server {
 	addWatchListTools(server, hub)
 	addJobBoardTools(server, hub, verifier)
 	addPeopleTools(server, hub)
+	addAgentPromptTools(server, hub)
 	return server
 }
 
@@ -38,6 +42,22 @@ func NewHandler(server *mcp.Server, verifier auth.TokenVerifier) http.Handler {
 	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	requireToken := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	return requireToken(streamable)
+}
+
+// errOwnerOnly guards the owner's own decisions: what to watch, how agents
+// are instructed and who the candidate is. Agents can read those, but never
+// change them.
+var errOwnerOnly = errors.New("only the owner can use this tool")
+
+func getOwnerActor(ctx context.Context) (store.Actor, error) {
+	actor, err := tokens.GetActor(ctx)
+	if err != nil {
+		return store.Actor{}, err
+	}
+	if actor.Kind != store.ActorOwner {
+		return store.Actor{}, errOwnerOnly
+	}
+	return actor, nil
 }
 
 // addTool registers a typed tool with schemas that describe a uuid.UUID as

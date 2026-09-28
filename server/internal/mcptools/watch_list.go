@@ -2,14 +2,12 @@ package mcptools
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
-	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
 type watchListInput struct {
@@ -27,21 +25,6 @@ type removeFromWatchListOutput struct {
 
 type listWatchListOutput struct {
 	Companies []store.WatchedCompany `json:"companies"`
-}
-
-// The watch list records where the owner has chosen to aim, so agents can read
-// it but never change it.
-var errOwnerOnly = errors.New("only the owner can change the watch list")
-
-func getOwnerActor(ctx context.Context) (store.Actor, error) {
-	actor, err := tokens.GetActor(ctx)
-	if err != nil {
-		return store.Actor{}, err
-	}
-	if actor.Kind != store.ActorOwner {
-		return store.Actor{}, errOwnerOnly
-	}
-	return actor, nil
 }
 
 func addWatchListTools(server *mcp.Server, hub *store.Store) {
