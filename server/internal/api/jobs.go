@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -19,8 +20,20 @@ type postingSource interface {
 }
 
 type jobsResponse struct {
-	Jobs  []store.JobListItem `json:"jobs"`
+	Jobs  []judgedJobListItem `json:"jobs"`
 	Total int                 `json:"total"`
+}
+
+// judgedJobListItem is a row of the jobs list with its fit.
+type judgedJobListItem struct {
+	store.JobListItem
+	Fit jobfit.Fit `json:"fit"`
+}
+
+// judgedJobDetails are a job's details with its fit.
+type judgedJobDetails struct {
+	store.JobDetails
+	Fit jobfit.Fit `json:"fit"`
 }
 
 type addJobRequest struct {
@@ -55,7 +68,16 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, jobsResponse{Jobs: jobs, Total: total})
+		criteria, err := hub.GetJobCriteria(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		judged := make([]judgedJobListItem, 0, len(jobs))
+		for _, item := range jobs {
+			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: jobfit.Judge(item.Job, item.Facts, criteria.Criteria)})
+		}
+		writeJSON(w, http.StatusOK, jobsResponse{Jobs: judged, Total: total})
 	})))
 
 	routes.Handle("GET /v1/jobs/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +95,12 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, details)
+		criteria, err := hub.GetJobCriteria(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria.Criteria)})
 	})))
 
 	routes.Handle("POST /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

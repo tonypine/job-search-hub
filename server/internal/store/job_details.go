@@ -21,6 +21,8 @@ type JobDetails struct {
 	Facts       *LabelledJobFacts `json:"facts,omitempty"`
 	Application *Application      `json:"application,omitempty"`
 	Phase       *PipelinePhase    `json:"phase,omitempty"`
+	// RawFacts are the facts as read, which the fit is judged from.
+	RawFacts json.RawMessage `json:"-"`
 }
 
 // LabelledJobFacts are a job's facts, each labelled by the schema of the
@@ -67,6 +69,7 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 			return JobDetails{}, err
 		}
 		details.Facts = &facts
+		details.RawFacts = rawFacts
 	case !errors.Is(err, pgx.ErrNoRows):
 		return JobDetails{}, err
 	}

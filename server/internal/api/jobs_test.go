@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -189,5 +190,39 @@ func TestAJobsDetailsCarryItsFactsAndItsPhase(t *testing.T) {
 		if status, _ := readJobDetails(t, service, id); status != http.StatusNotFound {
 			t.Errorf("job %s: %d, want 404", id, status)
 		}
+	}
+}
+
+func TestTheJobsListAndDetailsCarryTheFit(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := service.hub.SaveJobCriteria(ctx, owner, store.JobCriteria{
+		Technologies: []string{"Go"}, SeniorityLevels: []string{"Senior"}, EligibleLocationTerms: []string{"Americas"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Senior Go Engineer", URL: "https://acme.com/jobs/9", Location: "Americas"})
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/jobs", ownerToken, "")
+	var list struct {
+		Jobs []struct {
+			Job store.Job  `json:"job"`
+			Fit jobfit.Fit `json:"fit"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(body, &list); status != http.StatusOK || err != nil || len(list.Jobs) != 1 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	if fit := list.Jobs[0].Fit; fit.Level != jobfit.LevelGood || len(fit.Checks) != 3 {
+		t.Fatalf("list fit = %+v", fit)
+	}
+
+	status, body = send(t, http.MethodGet, service.url+"/v1/jobs/"+job.ID.String(), ownerToken, "")
+	var details struct {
+		Fit jobfit.Fit `json:"fit"`
+	}
+	if err := json.Unmarshal(body, &details); status != http.StatusOK || err != nil || details.Fit.Level != jobfit.LevelGood {
+		t.Fatalf("details: %d %s", status, body)
 	}
 }
