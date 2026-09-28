@@ -192,7 +192,7 @@ func parsePathIDOrWriteNotFound(w http.ResponseWriter, r *http.Request) (uuid.UU
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrApplicationNotFound), errors.Is(err, store.ErrPipelinePhaseNotFound),
-		errors.Is(err, store.ErrJobNotFound), errors.Is(err, store.ErrCompanyNotFound):
+		errors.Is(err, store.ErrJobNotFound), errors.Is(err, store.ErrCompanyNotFound), errors.Is(err, store.ErrClaudeSessionNotFound):
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
 	case errors.Is(err, store.ErrPipelinePhaseInUse), errors.Is(err, store.ErrPipelinePhaseNameUsed):
 		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})

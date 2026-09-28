@@ -78,6 +78,7 @@ func run() error {
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
+	api.RegisterClaudeSessionRoutes(routes, hub, requireOwner)
 	boards := jobboards.NewVerifier()
 	api.RegisterJobRoutes(routes, hub, boards, exchangerates.NewCache(exchangerates.DefaultAPIBase), requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
