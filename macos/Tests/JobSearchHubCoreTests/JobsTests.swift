@@ -8,10 +8,10 @@ private let jobsJSON = #"""
                  "title":"Senior Product Engineer","location":"Americas","workplace_type":"Remote",
                  "url":"https://jobs.ashbyhq.com/acme/x1","description":"Build things.",
                  "first_seen_at":"2026-09-28T13:57:13.161025Z","last_seen_at":"2026-09-28T13:57:13.161025Z"},
-          "company_name":"Acme"},
+          "company_name":"Acme","fit":{"level":"good","checks":[{"name":"Stack","verdict":"yes","reason":"React"}]}},
          {"job":{"id":"8d9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Staff Engineer",
                  "url":"https://other.com/jobs/9","first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z",
-                 "closed_at":"2026-09-29T10:00:00Z"}}],
+                 "closed_at":"2026-09-29T10:00:00Z"},"fit":{"level":"poor","checks":[]}}],
  "total":2}
 """#
 
@@ -40,4 +40,30 @@ private let jobsJSON = #"""
     let request = client.makeRequest(method: "GET", path: "v1/jobs", query: [URLQueryItem(name: "query", value: "front end")], body: nil)
 
     #expect(request.url?.absoluteString == "http://localhost:8090/v1/jobs?query=front%20end")
+}
+
+private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterval) -> JobListItem {
+    JobListItem(
+        job: Job(id: UUID(), source: "manual", title: title, url: "https://acme.com/\(title)",
+                 firstSeenAt: Date(timeIntervalSince1970: firstSeen), lastSeenAt: Date(timeIntervalSince1970: firstSeen)),
+        companyName: nil, fit: JobFit(level: level, checks: [])
+    )
+}
+
+@Test func jobsSortByFitThenNewestAndPoorFitsCanBeHidden() {
+    let items = [
+        makeItem("old good", .good, firstSeen: 100), makeItem("poor", .poor, firstSeen: 500),
+        makeItem("new unclear", .unclear, firstSeen: 400), makeItem("new good", .good, firstSeen: 300),
+    ]
+
+    #expect(JobsOrder.sort(items).map(\.job.title) == ["new good", "old good", "new unclear", "poor"])
+    #expect(JobsOrder.hidePoorFits(items).map(\.job.title) == ["old good", "new unclear", "new good"])
+}
+
+@Test func aJobIsNewWhenFirstSeenAfterTheLastVisit() {
+    let item = makeItem("job", .good, firstSeen: 200)
+
+    #expect(item.isNew(since: Date(timeIntervalSince1970: 100)))
+    #expect(!item.isNew(since: Date(timeIntervalSince1970: 300)))
+    #expect(!item.isNew(since: nil))
 }

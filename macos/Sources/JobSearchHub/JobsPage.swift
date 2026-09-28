@@ -6,8 +6,23 @@ import SwiftUI
 @Observable
 final class JobsModel {
     static let pageSize = 500
+    private static let lastVisitPreferenceKey = "jobsLastVisitedAt"
 
     private(set) var items: [JobListItem] = []
+    var hidesPoorFits = false
+    /// When the Jobs page was opened before this visit; jobs first seen since
+    /// are marked new.
+    let previousVisit: Date?
+
+    init() {
+        previousVisit = UserDefaults.standard.object(forKey: Self.lastVisitPreferenceKey) as? Date
+        UserDefaults.standard.set(Date.now, forKey: Self.lastVisitPreferenceKey)
+    }
+
+    /// The rows shown: best fit first, then newest, without poor fits when hidden.
+    var shownItems: [JobListItem] {
+        JobsOrder.sort(hidesPoorFits ? JobsOrder.hidePoorFits(items) : items)
+    }
     private(set) var total = 0
     private(set) var isLoading = false
     private(set) var loadError: String?
@@ -99,12 +114,28 @@ struct JobsPage: View {
             }
         }
         .navigationTitle("Jobs")
-        .navigationSubtitle(model.total == model.items.count ? "\(model.total) jobs" : "\(model.items.count) of \(model.total) jobs")
+        .navigationSubtitle(describeCounts())
+    }
+
+    private func describeCounts() -> String {
+        let goodCount = model.items.filter { $0.fit.level == .good }.count
+        let jobCount = model.total == model.items.count ? "\(model.total) jobs" : "\(model.items.count) of \(model.total) jobs"
+        return "\(jobCount) · \(goodCount) good fits"
     }
 
     private func table(client: HubClient) -> some View {
-        Table(model.items, selection: $model.selectedID) {
-            TableColumn("Title") { item in Text(item.job.title).help(item.job.title) }
+        Table(model.shownItems, selection: $model.selectedID) {
+            TableColumn("Fit") { item in FitLabel(level: item.fit.level) }
+                .width(70)
+            TableColumn("Title") { item in
+                HStack(spacing: 6) {
+                    Text(item.job.title).help(item.job.title)
+                    if item.isNew(since: model.previousVisit) {
+                        Text("New").font(.caption2.weight(.semibold)).padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.2), in: Capsule())
+                    }
+                }
+            }
             TableColumn("Company") { item in Text(item.companyName ?? "–") }
                 .width(min: 100, ideal: 140)
             TableColumn("Location") { item in Text(item.job.location ?? "").help(item.job.location ?? "") }
@@ -121,6 +152,8 @@ struct JobsPage: View {
         }
         .searchable(text: $model.search, prompt: "Title, location or company")
         .toolbar {
+            Toggle("Hide poor fits", systemImage: "line.3.horizontal.decrease.circle", isOn: $model.hidesPoorFits)
+                .help("Hide the jobs judged a poor fit; good and unclear ones stay")
             Picker("Status", selection: $model.status) {
                 ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
             }
@@ -201,6 +234,25 @@ struct AddJobSheet: View {
             dismiss()
         } catch {
             errorMessage = String(describing: error)
+        }
+    }
+}
+
+/// A job's fit level as a colored word.
+struct FitLabel: View {
+    let level: FitLevel
+
+    var body: some View {
+        Text(level.title)
+            .foregroundStyle(color)
+            .fontWeight(level == .good ? .semibold : .regular)
+    }
+
+    private var color: Color {
+        switch level {
+        case .good: .green
+        case .unclear: .orange
+        case .poor: .secondary
         }
     }
 }

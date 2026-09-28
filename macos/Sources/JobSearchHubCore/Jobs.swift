@@ -54,12 +54,20 @@ public struct PayRange: Codable, Equatable, Sendable {
     private static let periods = ["year": "a year", "month": "a month", "week": "a week", "day": "a day", "hour": "an hour"]
 }
 
-/// One row of the jobs list: a job and its company's name.
+/// One row of the jobs list: a job, its company's name, and its fit.
 public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
     public var job: Job
     public var companyName: String?
+    public var fit: JobFit
 
     public var id: UUID { job.id }
+
+    /// Whether the job was first seen after `lastVisit`; with no earlier
+    /// visit, nothing is new.
+    public func isNew(since lastVisit: Date?) -> Bool {
+        guard let lastVisit else { return false }
+        return job.firstSeenAt > lastVisit
+    }
 }
 
 public struct JobsResponse: Codable, Equatable, Sendable {

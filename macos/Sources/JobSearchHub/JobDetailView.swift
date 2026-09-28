@@ -47,6 +47,7 @@ struct JobDetailView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         header(details)
                         actions(details)
+                        fitChecks(details.fit)
                         boardFacts(details.job)
                         readFacts(details.facts)
                         if let description = details.job.description, !description.isEmpty {
@@ -94,6 +95,38 @@ struct JobDetailView: View {
                     ProgressView().controlSize(.small)
                 }
             }
+        }
+    }
+
+    private func fitChecks(_ fit: JobFit) -> some View {
+        section("Fit") {
+            HStack(spacing: 6) {
+                FitLabel(level: fit.level)
+                Text("for your criteria").foregroundStyle(.secondary)
+            }
+            ForEach(fit.checks) { check in
+                Label {
+                    Text(check.name).fontWeight(.medium) + Text("  \(check.reason)").foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: verdictSymbol(check.verdict)).foregroundStyle(verdictColor(check.verdict))
+                }
+            }
+        }
+    }
+
+    private func verdictSymbol(_ verdict: FitVerdict) -> String {
+        switch verdict {
+        case .yes: "checkmark.circle.fill"
+        case .no: "xmark.circle.fill"
+        case .unclear: "questionmark.circle"
+        }
+    }
+
+    private func verdictColor(_ verdict: FitVerdict) -> Color {
+        switch verdict {
+        case .yes: .green
+        case .no: .red
+        case .unclear: .orange
         }
     }
 

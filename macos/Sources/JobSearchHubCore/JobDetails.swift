@@ -8,6 +8,7 @@ public struct JobDetails: Decodable, Equatable, Sendable {
     public var facts: LabelledJobFacts?
     public var application: Application?
     public var phase: PipelinePhase?
+    public var fit: JobFit
 }
 
 /// A job's facts in the order and with the labels of the prompt version they
