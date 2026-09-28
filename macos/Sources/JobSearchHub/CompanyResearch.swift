@@ -44,7 +44,7 @@ final class CompanyResearch {
         let process = Process()
         process.executableURL = command
         process.arguments = CompanyResearchLaunch.makeArguments(company: self.company, foundVia: foundVia)
-        process.environment = CompanyResearchLaunch.makeEnvironment(
+        process.environment = BundledHubCommand.makeEnvironment(
             from: ProcessInfo.processInfo.environment, hubURL: client.baseURL, ownerToken: client.token, claude: claude
         )
         let output = Pipe()

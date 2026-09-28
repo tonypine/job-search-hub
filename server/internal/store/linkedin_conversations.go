@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -302,4 +303,16 @@ func (s *Store) SaveConversationClassification(ctx context.Context, conversation
 		conversationID, classification.Class, classification.ClassifiedBy, classification.Reason, classification.PromptID,
 		classification.HiringCompany, classification.Role, classification.IsAgency)
 	return err
+}
+
+// ErrConversationNotFound means no LinkedIn conversation has the id.
+var ErrConversationNotFound = errors.New("linkedin conversation not found")
+
+func (s *Store) GetLinkedInConversation(ctx context.Context, id uuid.UUID) (LinkedInConversation, error) {
+	conversation, err := scanLinkedInConversation(s.pool.QueryRow(ctx, `
+		SELECT `+linkedInConversationColumns+` FROM `+linkedInConversationJoin+` WHERE conversations.id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LinkedInConversation{}, ErrConversationNotFound
+	}
+	return conversation, err
 }

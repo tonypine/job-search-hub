@@ -19,6 +19,8 @@ const usage = `usage:
   hub company show <domain>         print a company's dossier
   hub company add <name-or-url>     research a company with an agent and watch it
       [--found-via <note>] [--model <model>] [--effort <level>]
+  hub recruiter reply <conversation-id>
+      [--model <model>]             draft a message back to a recruiter who wrote before
 `
 
 func main() {
@@ -57,6 +59,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = addCompany(ctx, config, args[2], options, stdout)
+	case len(args) >= 3 && args[0] == "recruiter" && args[1] == "reply":
+		flags := flag.NewFlagSet("recruiter reply", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		model := flags.String("model", "", "the Claude model for the draft")
+		if flags.Parse(args[3:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = draftRecruiterReply(ctx, config, args[2], *model, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2

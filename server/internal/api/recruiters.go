@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
+	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -35,6 +37,22 @@ type companyOpenings struct {
 	companyID *uuid.UUID
 	open      int
 	fitting   int
+	jobs      []opening
+}
+
+// opening is an open job as a draft names it.
+type opening struct {
+	Title string       `json:"title"`
+	URL   string       `json:"url"`
+	Fit   jobfit.Level `json:"fit"`
+}
+
+// maximumOpeningsInDraft keeps a draft's context to the roles worth naming.
+const maximumOpeningsInDraft = 8
+
+type replyPromptResponse struct {
+	Prompt  string `json:"prompt"`
+	Version int    `json:"version"`
 }
 
 // RegisterRecruiterRoutes adds the owner-only list of recruiters who wrote
@@ -60,6 +78,43 @@ func RegisterRecruiterRoutes(routes *http.ServeMux, hub *store.Store, rateSource
 			recruiters = append(recruiters, recruiter)
 		}
 		writeJSON(w, http.StatusOK, recruitersResponse{Recruiters: recruiters})
+	})))
+
+	routes.Handle("GET /v1/recruiters/{id}/reply-prompt", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		conversation, err := hub.GetLinkedInConversation(r.Context(), id)
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		messages, err := hub.ListConversationMessages(r.Context(), id, maximumConversationMessages)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		openings, err := getOpeningsByCompany(r.Context(), hub, rateSource)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		jobs := []opening{}
+		if conversation.HiringCompany != "" {
+			jobs = pickOpeningsForDraft(openings[store.NormalizeCompanyName(conversation.HiringCompany)].jobs)
+		}
+		rendered, err := prompts.RenderRecruiterReply(r.Context(), hub, conversation, messages, jobs)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, replyPromptResponse{Prompt: rendered.Body, Version: rendered.Version})
 	})))
 
 	routes.Handle("GET /v1/linkedin/conversations/{id}/messages", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,13 +157,29 @@ func getOpeningsByCompany(ctx context.Context, hub *store.Store, rateSource exch
 			counted := openings[key]
 			counted.companyID = item.Job.CompanyID
 			counted.open++
-			if jobfit.Judge(item.Job, item.Facts, criteria, rates).Level == jobfit.LevelGood {
+			level := jobfit.Judge(item.Job, item.Facts, criteria, rates).Level
+			if level == jobfit.LevelGood {
 				counted.fitting++
 			}
+			counted.jobs = append(counted.jobs, opening{Title: item.Job.Title, URL: item.Job.URL, Fit: level})
 			openings[key] = counted
 		}
 		if offset+len(jobs) >= total || len(jobs) == 0 {
 			return openings, nil
 		}
 	}
+}
+
+// pickOpeningsForDraft keeps the roles a draft may name: good fits first,
+// then unclear ones, never poor ones.
+func pickOpeningsForDraft(jobs []opening) []opening {
+	picked := []opening{}
+	for _, level := range []jobfit.Level{jobfit.LevelGood, jobfit.LevelUnclear} {
+		for _, job := range jobs {
+			if job.Fit == level && len(picked) < maximumOpeningsInDraft {
+				picked = append(picked, job)
+			}
+		}
+	}
+	return picked
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -16,12 +17,23 @@ func postJSON(ctx context.Context, config cliConfig, path string, request, respo
 	if err != nil {
 		return err
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(config.HubURL, "/")+path, bytes.NewReader(body))
+	return callREST(ctx, config, http.MethodPost, path, bytes.NewReader(body), response)
+}
+
+// getJSON reads the hub's REST API as the owner.
+func getJSON(ctx context.Context, config cliConfig, path string, response any) error {
+	return callREST(ctx, config, http.MethodGet, path, nil, response)
+}
+
+func callREST(ctx context.Context, config cliConfig, method, path string, body io.Reader, response any) error {
+	httpRequest, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(config.HubURL, "/")+path, body)
 	if err != nil {
 		return err
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+config.OwnerToken)
-	httpRequest.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		httpRequest.Header.Set("Content-Type", "application/json")
+	}
 
 	httpResponse, err := http.DefaultClient.Do(httpRequest)
 	if err != nil {
@@ -34,7 +46,7 @@ func postJSON(ctx context.Context, config cliConfig, path string, request, respo
 			Error string `json:"error"`
 		}
 		json.NewDecoder(httpResponse.Body).Decode(&failure)
-		return fmt.Errorf("POST %s: %d %s", path, httpResponse.StatusCode, failure.Error)
+		return fmt.Errorf("%s %s: %d %s", method, path, httpResponse.StatusCode, failure.Error)
 	}
 	return json.NewDecoder(httpResponse.Body).Decode(response)
 }

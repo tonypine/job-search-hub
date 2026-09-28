@@ -40,6 +40,7 @@ final class RecruitersModel {
 struct RecruitersPage: View {
     @Environment(HubConnection.self) private var connection
     @State private var model = RecruitersModel()
+    @State private var replyDraft = RecruiterReplyDraft()
     let onOpenCompany: (UUID) -> Void
 
     var body: some View {
@@ -50,7 +51,9 @@ struct RecruitersPage: View {
                     .task(id: model.selectedID) { await model.loadMessages(with: client) }
                     .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
                         if let recruiter = model.selected {
-                            RecruiterDetail(recruiter: recruiter, messages: model.messages, onOpenCompany: onOpenCompany)
+                            RecruiterDetail(
+                                recruiter: recruiter, messages: model.messages, replyDraft: replyDraft, client: client, onOpenCompany: onOpenCompany
+                            )
                                 .inspectorColumnWidth(min: 360, ideal: 460, max: 720)
                         }
                     }
@@ -119,6 +122,8 @@ struct RecruitersPage: View {
 struct RecruiterDetail: View {
     let recruiter: RecruiterConversation
     let messages: [LinkedInMessage]
+    let replyDraft: RecruiterReplyDraft
+    let client: HubClient
     let onOpenCompany: (UUID) -> Void
 
     var body: some View {
@@ -147,6 +152,7 @@ struct RecruiterDetail: View {
                         row("Why", reason)
                     }
                 }
+                reply
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Conversation").font(.headline)
                     ForEach(Array(messages.enumerated()), id: \.offset) { entry in
@@ -165,6 +171,39 @@ struct RecruiterDetail: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The draft of a reply, when it is about this recruiter's conversation.
+    private var reply: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reply").font(.headline)
+            let state = replyDraft.conversationID == recruiter.id ? replyDraft.state : .idle
+            switch state {
+            case .idle:
+                Button("Draft a reply", systemImage: "square.and.pencil") {
+                    Task { await replyDraft.draft(conversationID: recruiter.id, client: client) }
+                }
+                Text("Claude drafts a message that picks up from this conversation and names the roles that fit you at their company. You send it yourself.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .drafting:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Drafting…").foregroundStyle(.secondary)
+                }
+            case let .drafted(text):
+                Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                HStack {
+                    Button("Copy", systemImage: "doc.on.doc") { replyDraft.copyDraft() }
+                    Button("Draft again") { Task { await replyDraft.draft(conversationID: recruiter.id, client: client) } }
+                }
+            case let .failed(reason):
+                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Button("Try again") { Task { await replyDraft.draft(conversationID: recruiter.id, client: client) } }
+            }
         }
     }
 

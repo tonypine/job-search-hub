@@ -154,3 +154,31 @@ func findStoredCompany(ctx context.Context, hub *store.Store, input string) (sto
 	}
 	return exact[0], true, nil
 }
+
+// RenderRecruiterReply fills the active recruiter_reply prompt with the
+// owner's profile, the conversation the recruiter started, and the open roles
+// at their company.
+func RenderRecruiterReply(ctx context.Context, hub *store.Store, conversation store.LinkedInConversation, messages []store.LinkedInMessage, openings any) (Rendered, error) {
+	prompt, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindRecruiterReply)
+	if err != nil {
+		return Rendered{}, err
+	}
+	profile, err := hub.GetOwnerProfile(ctx)
+	if err != nil {
+		return Rendered{}, err
+	}
+	conversationText, err := formatAsData(map[string]any{"recruiter": conversation, "messages": messages})
+	if err != nil {
+		return Rendered{}, err
+	}
+	openingsText, err := formatAsData(openings)
+	if err != nil {
+		return Rendered{}, err
+	}
+	filled := strings.NewReplacer(
+		"{{owner_profile}}", getProfileText(profile),
+		"{{recruiter_conversation}}", conversationText,
+		"{{openings}}", openingsText,
+	).Replace(prompt.Body)
+	return Rendered{Body: filled, Version: prompt.Version}, nil
+}

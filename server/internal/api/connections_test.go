@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -131,6 +133,13 @@ func TestTheRecruitersListCountsTheOpeningsAtTheirCompany(t *testing.T) {
 	status, body = send(t, http.MethodGet, service.url+"/v1/linkedin/conversations/"+awaiting[0].ID.String()+"/messages", ownerToken, "")
 	if status != http.StatusOK || !strings.Contains(string(body), "A role at Globex") {
 		t.Fatalf("messages: %d %s", status, body)
+	}
+	status, body = send(t, http.MethodGet, service.url+"/v1/recruiters/"+awaiting[0].ID.String()+"/reply-prompt", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(body), "A role at Globex") || !strings.Contains(string(body), "Open roles at their company") {
+		t.Fatalf("reply prompt: %d %s; want the conversation and the openings section in it", status, body)
+	}
+	if status, _ := send(t, http.MethodGet, service.url+"/v1/recruiters/"+uuid.NewString()+"/reply-prompt", ownerToken, ""); status != http.StatusNotFound {
+		t.Fatalf("an unknown conversation: %d", status)
 	}
 }
 
