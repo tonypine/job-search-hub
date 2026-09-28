@@ -50,6 +50,7 @@ type readFacts struct {
 	Seniority           string   `json:"seniority"`
 	PayInText           string   `json:"pay_in_text"`
 	ContractType        string   `json:"contract_type"`
+	TimezoneRequirement string   `json:"timezone_requirement"`
 }
 
 const notStated = "not stated"
@@ -66,6 +67,9 @@ func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria, 
 		checkLocation(job, facts, criteria),
 		checkStack(job, facts, criteria),
 		checkLevel(job, facts, criteria),
+	}
+	if timezone, applies := checkTimezone(facts, criteria); applies {
+		checks = append(checks, timezone)
 	}
 	if pay, applies := checkPay(job, facts, criteria, rates); applies {
 		checks = append(checks, pay)
@@ -214,6 +218,33 @@ func checkLevel(job store.Job, facts readFacts, criteria store.JobCriteria) Chec
 		return Check{Name: name, Verdict: VerdictNo, Reason: seniority}
 	}
 	return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
+}
+
+// checkTimezone applies when the posting states the hours it requires; most
+// don't.
+func checkTimezone(facts readFacts, criteria store.JobCriteria) (Check, bool) {
+	const name = "Timezone"
+	requirement := strings.TrimSpace(facts.TimezoneRequirement)
+	if requirement == "" || strings.HasPrefix(strings.ToLower(requirement), notStated) {
+		return Check{}, false
+	}
+	texts := []string{requirement}
+	if term, found := findTerm(texts, criteria.UnworkableTimezoneTerms); found {
+		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("asks for %q", term)}, true
+	}
+	if term, found := findTerm(texts, criteria.WorkableTimezoneTerms); found {
+		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("asks for %q", term)}, true
+	}
+	return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("asks for %q", shorten(requirement, 60))}, true
+}
+
+// shorten cuts text to at most length characters, marking the cut.
+func shorten(text string, length int) string {
+	runes := []rune(text)
+	if len(runes) <= length {
+		return text
+	}
+	return strings.TrimSpace(string(runes[:length])) + "…"
 }
 
 // ExchangeRates convert pay to the take-home currency: PerBase[c] is how much

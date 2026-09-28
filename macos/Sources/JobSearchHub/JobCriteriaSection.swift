@@ -18,6 +18,8 @@ struct JobCriteriaSection: View {
             TextField("Home country", text: $editor.draft.homeCountry, prompt: Text("Brazil"))
             listField("Hires from", text: $editor.draft.eligibleLocationTerms, prompt: "Brazil, LATAM, Americas, worldwide")
             listField("Rules me out", text: $editor.draft.ineligibleLocationTerms, prompt: "must reside in the US")
+            listField("Timezones that work", text: $editor.draft.workableTimezoneTerms, prompt: "US business hours, EST, your local time zone")
+            listField("Timezones that don't", text: $editor.draft.unworkableTimezoneTerms, prompt: "APAC, AEST")
             Toggle("Refuse hourly work", isOn: $editor.draft.refuseHourlyWork)
         } header: {
             Text("Job criteria")

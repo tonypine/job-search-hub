@@ -51,7 +51,7 @@ private let savedJSON = #"""
     let body = try #require(recording.lastBody)
     let sent = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
     #expect(Set(sent.keys) == ["roles", "excluded_role_terms", "search_terms", "technologies", "seniority_levels", "home_country", "eligible_location_terms",
-                                "ineligible_location_terms", "take_home", "refuse_hourly_work"])
+                                "ineligible_location_terms", "workable_timezone_terms", "unworkable_timezone_terms", "take_home", "refuse_hourly_work"])
     #expect(sent["technologies"] as? [String] == ["TypeScript", "React"])
     let takeHome = try #require(sent["take_home"] as? [String: Any])
     #expect(Set(takeHome.keys) == ["currency", "minimum_monthly", "target_monthly", "clt", "pj", "foreign_contractor"])

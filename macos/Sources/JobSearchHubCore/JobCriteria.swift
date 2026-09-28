@@ -11,12 +11,14 @@ public struct JobCriteria: Codable, Equatable, Sendable {
     public var homeCountry: String
     public var eligibleLocationTerms: [String]
     public var ineligibleLocationTerms: [String]
+    public var workableTimezoneTerms: [String]
+    public var unworkableTimezoneTerms: [String]
     public var takeHome: TakeHome?
     public var refuseHourlyWork: Bool
 
     enum CodingKeys: String, CodingKey {
         case roles, excludedRoleTerms, searchTerms, technologies, seniorityLevels, homeCountry, eligibleLocationTerms, ineligibleLocationTerms, takeHome
-        case refuseHourlyWork
+        case workableTimezoneTerms, unworkableTimezoneTerms, refuseHourlyWork
     }
 
     /// The hub sends null for a list it holds none of.
@@ -30,13 +32,16 @@ public struct JobCriteria: Codable, Equatable, Sendable {
         homeCountry = try container.decodeIfPresent(String.self, forKey: .homeCountry) ?? ""
         eligibleLocationTerms = try container.decodeIfPresent([String].self, forKey: .eligibleLocationTerms) ?? []
         ineligibleLocationTerms = try container.decodeIfPresent([String].self, forKey: .ineligibleLocationTerms) ?? []
+        workableTimezoneTerms = try container.decodeIfPresent([String].self, forKey: .workableTimezoneTerms) ?? []
+        unworkableTimezoneTerms = try container.decodeIfPresent([String].self, forKey: .unworkableTimezoneTerms) ?? []
         takeHome = try container.decodeIfPresent(TakeHome.self, forKey: .takeHome)
         refuseHourlyWork = try container.decodeIfPresent(Bool.self, forKey: .refuseHourlyWork) ?? false
     }
 
     public init(
         roles: [String] = [], excludedRoleTerms: [String] = [], searchTerms: [String] = [], technologies: [String] = [], seniorityLevels: [String] = [], homeCountry: String = "",
-        eligibleLocationTerms: [String] = [], ineligibleLocationTerms: [String] = [], takeHome: TakeHome? = nil, refuseHourlyWork: Bool = false
+        eligibleLocationTerms: [String] = [], ineligibleLocationTerms: [String] = [], workableTimezoneTerms: [String] = [],
+        unworkableTimezoneTerms: [String] = [], takeHome: TakeHome? = nil, refuseHourlyWork: Bool = false
     ) {
         self.roles = roles
         self.excludedRoleTerms = excludedRoleTerms
@@ -46,6 +51,8 @@ public struct JobCriteria: Codable, Equatable, Sendable {
         self.homeCountry = homeCountry
         self.eligibleLocationTerms = eligibleLocationTerms
         self.ineligibleLocationTerms = ineligibleLocationTerms
+        self.workableTimezoneTerms = workableTimezoneTerms
+        self.unworkableTimezoneTerms = unworkableTimezoneTerms
         self.takeHome = takeHome
         self.refuseHourlyWork = refuseHourlyWork
     }
@@ -90,6 +97,8 @@ public struct JobCriteriaDraft: Equatable, Sendable {
     public var homeCountry: String
     public var eligibleLocationTerms: String
     public var ineligibleLocationTerms: String
+    public var workableTimezoneTerms: String
+    public var unworkableTimezoneTerms: String
     public var judgesTakeHome: Bool
     public var takeHome: TakeHome
     public var refuseHourlyWork: Bool
@@ -103,6 +112,8 @@ public struct JobCriteriaDraft: Equatable, Sendable {
         homeCountry = criteria.homeCountry
         eligibleLocationTerms = Self.formatList(criteria.eligibleLocationTerms)
         ineligibleLocationTerms = Self.formatList(criteria.ineligibleLocationTerms)
+        workableTimezoneTerms = Self.formatList(criteria.workableTimezoneTerms)
+        unworkableTimezoneTerms = Self.formatList(criteria.unworkableTimezoneTerms)
         judgesTakeHome = criteria.takeHome != nil
         takeHome = criteria.takeHome ?? .empty
         refuseHourlyWork = criteria.refuseHourlyWork
@@ -113,6 +124,7 @@ public struct JobCriteriaDraft: Equatable, Sendable {
             roles: Self.parseList(roles), excludedRoleTerms: Self.parseList(excludedRoleTerms), searchTerms: Self.parseList(searchTerms), technologies: Self.parseList(technologies),
             seniorityLevels: Self.parseList(seniorityLevels), homeCountry: homeCountry.trimmingCharacters(in: .whitespaces),
             eligibleLocationTerms: Self.parseList(eligibleLocationTerms), ineligibleLocationTerms: Self.parseList(ineligibleLocationTerms),
+            workableTimezoneTerms: Self.parseList(workableTimezoneTerms), unworkableTimezoneTerms: Self.parseList(unworkableTimezoneTerms),
             takeHome: judgesTakeHome ? takeHome : nil, refuseHourlyWork: refuseHourlyWork
         )
     }

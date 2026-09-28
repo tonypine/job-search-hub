@@ -70,7 +70,8 @@ func TestAgentsReadTheCriteriaAndOnlyTheOwnerSavesThem(t *testing.T) {
 
 	criteria := map[string]any{
 		"roles": []string{}, "excluded_role_terms": []string{"Sales"}, "search_terms": []string{"react"}, "technologies": []string{}, "seniority_levels": []string{}, "home_country": "Brazil",
-		"eligible_location_terms": []string{"Americas"}, "ineligible_location_terms": []string{}, "refuse_hourly_work": true,
+		"eligible_location_terms": []string{"Americas"}, "ineligible_location_terms": []string{},
+		"workable_timezone_terms": []string{"EST"}, "unworkable_timezone_terms": []string{}, "refuse_hourly_work": true,
 	}
 	saved := callTool[store.SavedJobCriteria](t, owner, "update_job_criteria", criteria)
 	if len(saved.Criteria.SearchTerms) != 1 || !saved.Criteria.RefuseHourlyWork {

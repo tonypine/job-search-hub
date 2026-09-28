@@ -36,6 +36,11 @@ type JobCriteria struct {
 	// IneligibleLocationTerms are words that exclude the owner even beside an
 	// eligible one, e.g. "must reside in the US".
 	IneligibleLocationTerms []string `json:"ineligible_location_terms"`
+	// WorkableTimezoneTerms are words in a posting's working-hours
+	// requirement that the owner can meet, e.g. "US business hours", "EST".
+	WorkableTimezoneTerms []string `json:"workable_timezone_terms"`
+	// UnworkableTimezoneTerms are words the owner cannot meet, e.g. "APAC".
+	UnworkableTimezoneTerms []string `json:"unworkable_timezone_terms"`
 	// TakeHome judges pay by what it would leave the owner each month; nil
 	// applies no pay check.
 	TakeHome *TakeHome `json:"take_home,omitempty"`

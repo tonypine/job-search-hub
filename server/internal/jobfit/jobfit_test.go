@@ -17,6 +17,8 @@ var criteria = store.JobCriteria{
 	EligibleLocationTerms:   []string{"Brazil", "LATAM", "Americas", "Worldwide"},
 	IneligibleLocationTerms: []string{"must reside in the US", "US only"},
 	RefuseHourlyWork:        true,
+	WorkableTimezoneTerms:   []string{"US", "EDT", "EST", "your local time zone"},
+	UnworkableTimezoneTerms: []string{"APAC", "Bangkok"},
 }
 
 func facts(t *testing.T, values map[string]any) json.RawMessage {
@@ -175,6 +177,30 @@ func TestTheRole(t *testing.T) {
 		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, criteria, rates), "Role")
 		if check.Verdict != test.want || check.Reason != test.reason {
 			t.Errorf("%q: %+v, want %s %q", test.title, check, test.want, test.reason)
+		}
+	}
+}
+
+func TestTheTimezone(t *testing.T) {
+	for _, test := range []struct {
+		requirement string
+		want        jobfit.Verdict
+	}{
+		{"8am - 5pm EDT", jobfit.VerdictYes},
+		{"10am-3pm in your local time zone with flexibility", jobfit.VerdictYes},
+		{"At least four hours of weekday overlap with Bangkok (GMT+7)", jobfit.VerdictNo},
+		{"EU timezones", jobfit.VerdictUnclear},
+	} {
+		check := findCheck(t, jobfit.Judge(store.Job{}, facts(t, map[string]any{"timezone_requirement": test.requirement}), criteria, rates), "Timezone")
+		if check.Verdict != test.want {
+			t.Errorf("%q: %+v, want %s", test.requirement, check, test.want)
+		}
+	}
+	for _, unstated := range []string{"not stated", "Not stated (schedule can remain flexible)", ""} {
+		for _, check := range jobfit.Judge(store.Job{}, facts(t, map[string]any{"timezone_requirement": unstated}), criteria, rates).Checks {
+			if check.Name == "Timezone" {
+				t.Errorf("%q got a timezone check: %+v", unstated, check)
+			}
 		}
 	}
 }
