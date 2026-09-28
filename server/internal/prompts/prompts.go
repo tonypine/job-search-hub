@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/voice"
 )
 
 const (
@@ -89,8 +90,13 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 			return Rendered{}, err
 		}
 	}
+	voiceText, err := getOwnerVoiceText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
 	filled := strings.NewReplacer(
 		"{{owner_profile}}", profileText,
+		"{{owner_voice}}", voiceText,
 		"{{company_dossier}}", dossierText,
 		"{{job_details}}", jobText,
 	).Replace(prompt.Body)
@@ -131,6 +137,16 @@ func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) 
 		fmt.Fprintf(&written, ": \"%s\"", recommendation.Text)
 	}
 	return written.String(), nil
+}
+
+// getOwnerVoiceText shows the drafting agents how the owner writes: a few of
+// their own recent messages to recruiters, in each language they write in.
+func getOwnerVoiceText(ctx context.Context, hub *store.Store) (string, error) {
+	messages, err := hub.ListOwnerProfessionalMessages(ctx)
+	if err != nil {
+		return "", err
+	}
+	return voice.FormatSamples(voice.PickSamples(messages)), nil
 }
 
 // formatAsData fences stored data so it never reads as instructions: agents
@@ -205,8 +221,13 @@ func RenderRecruiterReply(ctx context.Context, hub *store.Store, conversation st
 	if err != nil {
 		return Rendered{}, err
 	}
+	voiceText, err := getOwnerVoiceText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
 	filled := strings.NewReplacer(
 		"{{owner_profile}}", profileText,
+		"{{owner_voice}}", voiceText,
 		"{{recruiter_conversation}}", conversationText,
 		"{{openings}}", openingsText,
 	).Replace(prompt.Body)

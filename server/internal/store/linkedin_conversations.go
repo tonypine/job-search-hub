@@ -316,3 +316,44 @@ func (s *Store) GetLinkedInConversation(ctx context.Context, id uuid.UUID) (Link
 	}
 	return conversation, err
 }
+
+// VoiceSample is a message the owner wrote themselves.
+type VoiceSample struct {
+	SentAt  time.Time `json:"sent_at"`
+	Content string    `json:"content"`
+}
+
+// voiceSampleLength bounds the messages that show how the owner writes:
+// long enough to have a voice, short enough to be a message.
+const (
+	minimumVoiceSampleLength = 40
+	maximumVoiceSampleLength = 900
+	voiceCandidates          = 400
+)
+
+// ListOwnerProfessionalMessages returns what the owner wrote to recruiters
+// and others pitching them something, the most recent first, of a message's
+// length. Chats with people they know are left out: they are private and
+// written in another register. The owner is the one who started the
+// conversations marked as started by the owner.
+func (s *Store) ListOwnerProfessionalMessages(ctx context.Context) ([]VoiceSample, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH owner AS (
+			SELECT lower(rtrim(started_by_url, '/')) AS url FROM linkedin_conversations WHERE started_by_owner LIMIT 1
+		)
+		SELECT messages.sent_at, messages.content
+		FROM linkedin_messages AS messages
+		JOIN linkedin_conversations AS conversations ON conversations.id = messages.conversation_id, owner
+		WHERE lower(rtrim(messages.sender_profile_url, '/')) = owner.url
+			AND conversations.classification IN ('recruiter_outreach', 'sales_pitch')
+			AND length(messages.content) BETWEEN $1 AND $2
+		ORDER BY messages.sent_at DESC LIMIT $3`, minimumVoiceSampleLength, maximumVoiceSampleLength, voiceCandidates)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (VoiceSample, error) {
+		var sample VoiceSample
+		err := row.Scan(&sample.SentAt, &sample.Content)
+		return sample, err
+	})
+}
