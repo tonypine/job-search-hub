@@ -22,9 +22,26 @@ const (
 	MatchedByApplicantTracking = "applicant_tracking"
 )
 
-// MailMessage is one message of the owner's mail, as Gmail announced it, and
-// the company and person it was matched to. MatchedBy is empty until a rule
-// matches it.
+// Mail classes: what kind of mail a received message is.
+const (
+	MailHumanReply              = "human_reply"
+	MailApplicationConfirmation = "application_confirmation"
+	MailRejection               = "rejection"
+	MailInterviewInvite         = "interview_invite"
+	MailRecruiterOutreach       = "recruiter_outreach"
+	MailJobAlert                = "job_alert"
+	MailNoise                   = "noise"
+)
+
+// Who classified a message.
+const (
+	ClassifiedByRule  = "rule"
+	ClassifiedByModel = "model"
+)
+
+// MailMessage is one message of the owner's mail, as Gmail announced it, the
+// company and person it was matched to, and its class. MatchedBy and
+// Classification are empty until a rule, or the model, sets them.
 type MailMessage struct {
 	ID             uuid.UUID  `json:"id"`
 	GmailMessageID string     `json:"gmail_message_id"`
@@ -39,15 +56,21 @@ type MailMessage struct {
 	CompanyID      *uuid.UUID `json:"company_id,omitempty"`
 	PersonID       *uuid.UUID `json:"person_id,omitempty"`
 	MatchedBy      string     `json:"matched_by,omitempty"`
+	Classification string     `json:"classification,omitempty"`
+	ClassifiedBy   string     `json:"classified_by,omitempty"`
+	// ClassificationReason is the model's one-sentence reason, or the rule's.
+	ClassificationReason string     `json:"classification_reason,omitempty"`
+	ClassifiedAt         *time.Time `json:"classified_at,omitempty"`
 }
 
 const mailMessageColumns = `id, gmail_message_id, thread_id, direction, sender, recipients, subject, sent_at, label_ids, recorded_at,
-	company_id, person_id, matched_by`
+	company_id, person_id, matched_by, classification, classified_by, classification_reason, classified_at`
 
 func scanMailMessage(row pgx.Row) (MailMessage, error) {
 	var message MailMessage
 	err := row.Scan(&message.ID, &message.GmailMessageID, &message.ThreadID, &message.Direction, &message.Sender, &message.Recipients,
-		&message.Subject, &message.SentAt, &message.LabelIDs, &message.RecordedAt, &message.CompanyID, &message.PersonID, &message.MatchedBy)
+		&message.Subject, &message.SentAt, &message.LabelIDs, &message.RecordedAt, &message.CompanyID, &message.PersonID, &message.MatchedBy,
+		&message.Classification, &message.ClassifiedBy, &message.ClassificationReason, &message.ClassifiedAt)
 	return message, err
 }
 
@@ -120,9 +143,44 @@ type MailMatch struct {
 	MatchedBy string
 }
 
+// SaveMailMatch ties a message to what it is about. A class given without
+// that knowledge is cleared, so the message is read again.
 func (s *Store) SaveMailMatch(ctx context.Context, messageID uuid.UUID, match MailMatch) error {
-	_, err := s.pool.Exec(ctx, `UPDATE mail_messages SET company_id = $2, person_id = $3, matched_by = $4 WHERE id = $1`,
+	_, err := s.pool.Exec(ctx, `
+		UPDATE mail_messages SET company_id = $2, person_id = $3, matched_by = $4,
+			classification = '', classified_by = '', classification_reason = '', classification_prompt_id = NULL, classified_at = NULL
+		WHERE id = $1`,
 		messageID, match.CompanyID, match.PersonID, match.MatchedBy)
+	return err
+}
+
+// ListMailAwaitingClassification returns received messages not classified
+// yet, newest first, so fresh mail is read before old.
+func (s *Store) ListMailAwaitingClassification(ctx context.Context, limit int) ([]MailMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+mailMessageColumns+` FROM mail_messages
+		WHERE classification = '' AND direction = 'received' ORDER BY sent_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (MailMessage, error) { return scanMailMessage(row) })
+}
+
+// MailClassification is a message's class, who gave it, and why; PromptID
+// is the mail_triage version the model read, nil for a rule.
+type MailClassification struct {
+	Class        string
+	ClassifiedBy string
+	Reason       string
+	PromptID     *uuid.UUID
+}
+
+func (s *Store) SaveMailClassification(ctx context.Context, messageID uuid.UUID, classification MailClassification) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE mail_messages SET classification = $2, classified_by = $3, classification_reason = $4, classification_prompt_id = $5,
+			classified_at = now()
+		WHERE id = $1`,
+		messageID, classification.Class, classification.ClassifiedBy, classification.Reason, classification.PromptID)
 	return err
 }
 

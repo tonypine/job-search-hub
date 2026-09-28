@@ -25,11 +25,13 @@ const (
 	// AgentPromptKindOutreachDraft is the request a session gets when the
 	// owner asks it to draft outreach.
 	AgentPromptKindOutreachDraft = "outreach_draft"
+	// AgentPromptKindMailTriage sorts the received mail no rule could sort.
+	AgentPromptKindMailTriage = "mail_triage"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
-	AgentPromptKindOutreachDraft: true,
+	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

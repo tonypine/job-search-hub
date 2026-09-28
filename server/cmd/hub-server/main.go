@@ -26,6 +26,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
+	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -34,6 +35,9 @@ import (
 const (
 	readHeaderTimeout = 10 * time.Second
 	shutdownTimeout   = 5 * time.Second
+	// mailTriageInterval retries mail the model couldn't read; new mail
+	// nudges a pass at once.
+	mailTriageInterval = 5 * time.Minute
 )
 
 func main() {
@@ -99,8 +103,12 @@ func run() error {
 	if settings.feedPollInterval > 0 {
 		go feedpoller.New(hub, boards).Run(ctx, settings.feedPollInterval)
 	}
-	if settings.jobFactsModelURL != "" && settings.jobFactsInterval > 0 {
-		extractor := jobfacts.NewExtractor(hub, chatcompletions.NewClient(settings.jobFactsModelURL), settings.jobFactsModel)
+	var modelClient *chatcompletions.Client
+	if settings.jobFactsModelURL != "" {
+		modelClient = chatcompletions.NewClient(settings.jobFactsModelURL)
+	}
+	if modelClient != nil && settings.jobFactsInterval > 0 {
+		extractor := jobfacts.NewExtractor(hub, modelClient, settings.jobFactsModel)
 		go extractor.Run(ctx, settings.jobFactsInterval)
 		slog.Info("job facts reading on", "model", settings.jobFactsModel, "every", settings.jobFactsInterval.String())
 	}
@@ -109,6 +117,11 @@ func run() error {
 	if googleClient != nil && settings.gmailSubscription != "" {
 		watcher := gmailwatch.New(hub, googleClient, settings.gmailTopic, settings.gmailSubscription)
 		mailBackfiller = watcher
+		if modelClient != nil {
+			classifier := mailtriage.NewClassifier(hub, googleClient, modelClient, settings.jobFactsModel)
+			watcher.OnMailRecorded = classifier.Nudge
+			go classifier.Run(ctx, mailTriageInterval)
+		}
 		go watcher.Run(ctx)
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)
 	}

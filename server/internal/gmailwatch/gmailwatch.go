@@ -44,6 +44,8 @@ type Watcher struct {
 	mailbox      mailbox
 	topic        string
 	subscription string
+	// OnMailRecorded, when set, is called after new mail was recorded.
+	OnMailRecorded func()
 }
 
 // New watches the mailbox through topic and subscription, full Pub/Sub
@@ -121,6 +123,7 @@ func (watcher *Watcher) Sync(ctx context.Context) (recorded int, err error) {
 	if _, err := mailmatch.MatchMessages(ctx, watcher.hub, messages); err != nil {
 		return len(messages), err
 	}
+	watcher.announceRecorded(len(messages))
 	return len(messages), watcher.hub.SaveGmailHistoryID(ctx, changes.HistoryID)
 }
 
@@ -154,7 +157,14 @@ func (watcher *Watcher) Backfill(ctx context.Context, days int) (BackfillResult,
 		return result, err
 	}
 	result.Matched, err = mailmatch.MatchUnmatched(ctx, watcher.hub)
+	watcher.announceRecorded(result.Recorded + result.Matched)
 	return result, err
+}
+
+func (watcher *Watcher) announceRecorded(count int) {
+	if count > 0 && watcher.OnMailRecorded != nil {
+		watcher.OnMailRecorded()
+	}
 }
 
 // recordMessages stores the messages of ids that are mail sent or received,
