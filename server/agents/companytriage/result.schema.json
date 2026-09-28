@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": ["string", "null"],
+      "description": "The hub id of the company researched; null only when the company could not be identified."
+    },
+    "domain": { "type": "string" },
+    "job_board": {
+      "type": ["object", "null"],
+      "properties": {
+        "provider": { "type": "string" },
+        "board_token": { "type": "string" },
+        "verified": { "type": "boolean" }
+      },
+      "required": ["provider", "board_token", "verified"],
+      "additionalProperties": false
+    },
+    "people_added": { "type": "integer", "minimum": 0 },
+    "unresolved": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Each fact that could not be sourced, e.g. 'no job board link on the careers page'."
+    },
+    "summary": { "type": "string" }
+  },
+  "required": ["company_id", "domain", "job_board", "people_added", "unresolved", "summary"],
+  "additionalProperties": false
+}
