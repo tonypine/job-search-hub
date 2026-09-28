@@ -31,8 +31,9 @@ type getCompanyInput struct {
 
 // companyDossier is everything the hub knows about one company.
 type companyDossier struct {
-	Company      store.Company `json:"company"`
-	WatchedSince *time.Time    `json:"watched_since,omitempty" jsonschema:"when the company was put on the watch list; absent when it is not on it"`
+	Company      store.Company    `json:"company"`
+	WatchedSince *time.Time       `json:"watched_since,omitempty" jsonschema:"when the company was put on the watch list; absent when it is not on it"`
+	JobBoards    []store.JobBoard `json:"job_boards"`
 }
 
 type findCompaniesInput struct {
@@ -88,7 +89,11 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 			return nil, companyDossier{}, err
 		}
 		watchedSince, err := hub.GetWatchedSince(ctx, company.ID)
-		return nil, companyDossier{Company: company, WatchedSince: watchedSince}, err
+		if err != nil {
+			return nil, companyDossier{}, err
+		}
+		jobBoards, err := hub.ListJobBoards(ctx, company.ID)
+		return nil, companyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards}, err
 	})
 
 	addTool(server, &mcp.Tool{

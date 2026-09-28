@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -30,7 +32,7 @@ func startHub(t *testing.T) hubUnderTest {
 	t.Helper()
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
-	handler := mcptools.NewHandler(mcptools.NewServer(hub), tokens.NewVerifier(ownerToken, hub))
+	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}), tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, store: hub, url: server.URL}
@@ -46,6 +48,19 @@ func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.A
 		t.Fatalf("start agent run: %v", err)
 	}
 	return run, token
+}
+
+// stubJobBoards knows one board, "acme", on each provider it can verify.
+type stubJobBoards struct{}
+
+func (stubJobBoards) Verify(_ context.Context, provider, boardToken string) (jobboards.Verification, error) {
+	if !slices.Contains([]string{jobboards.Greenhouse, jobboards.Lever, jobboards.Ashby}, provider) {
+		return jobboards.Verification{}, jobboards.ErrUnsupportedProvider
+	}
+	if boardToken != "acme" {
+		return jobboards.Verification{}, nil
+	}
+	return jobboards.Verification{Verified: true, OpenPostingCount: 5, BoardURL: "https://boards.example/" + provider + "/acme"}, nil
 }
 
 type bearerTransport struct{ token string }

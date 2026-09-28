@@ -7,10 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
-
-const foreignKeyViolation = "23503"
 
 type WatchedCompany struct {
 	Company      Company   `json:"company"`
@@ -32,8 +29,7 @@ func (s *Store) AddToWatchList(ctx context.Context, actor Actor, companyID uuid.
 			return tx.QueryRow(ctx, `SELECT added_at FROM watch_list_entries WHERE company_id = $1 AND removed_at IS NULL`, companyID).
 				Scan(&watchedSince)
 		}
-		var postgresErr *pgconn.PgError
-		if errors.As(err, &postgresErr) && postgresErr.Code == foreignKeyViolation {
+		if isForeignKeyViolation(err) {
 			return ErrCompanyNotFound
 		}
 		if err != nil {

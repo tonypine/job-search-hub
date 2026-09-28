@@ -4,11 +4,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -41,6 +43,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		slog.Info("migration applied", "version", result.Source.Version)
 	}
 	return nil
+}
+
+const foreignKeyViolation = "23503"
+
+// isForeignKeyViolation reports whether err is Postgres refusing a row that
+// points at a missing parent, such as an unknown company.
+func isForeignKeyViolation(err error) bool {
+	var postgresErr *pgconn.PgError
+	return errors.As(err, &postgresErr) && postgresErr.Code == foreignKeyViolation
 }
 
 type ActorKind string

@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -68,7 +69,7 @@ func run() error {
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub), verifier))
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, jobboards.NewVerifier()), verifier))
 
 	server := &http.Server{
 		Addr:              settings.address,
