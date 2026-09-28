@@ -69,6 +69,12 @@ func (s *Store) ImportLinkedInJobs(ctx context.Context, actor Actor, entries []N
 			if err != nil {
 				return err
 			}
+			if closedReason != "" {
+				// A posting applied to long ago is no longer open.
+				if _, err := tx.Exec(ctx, `UPDATE jobs SET closed_at = $2 WHERE id = $1 AND closed_at IS NULL`, jobID, now); err != nil {
+					return err
+				}
+			}
 			var onBoard bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM applications WHERE job_id = $1)`, jobID).Scan(&onBoard); err != nil {
 				return err

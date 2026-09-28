@@ -179,6 +179,12 @@ func TestLinkedInApplicationsJoinThePipelineAsActiveCardsOrHistory(t *testing.T)
 	if len(cards) != 3 || phases["Backend Engineer"] != "Applied on LinkedIn on 2023-03-24; no outcome recorded" {
 		t.Fatalf("cards = %+v", phases)
 	}
+	openJobs, _, _ := service.hub.ListJobs(context.Background(), store.JobFilter{Status: store.JobStatusOpen})
+	for _, job := range openJobs {
+		if job.Job.Title == "Backend Engineer" {
+			t.Fatal("the job of an application kept as history should be closed")
+		}
+	}
 }
 
 func TestFollowedCompaniesAreSuggestedByTheirOpenings(t *testing.T) {
