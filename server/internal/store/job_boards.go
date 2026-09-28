@@ -112,3 +112,18 @@ func (s *Store) ListJobBoards(ctx context.Context, companyID uuid.UUID) ([]JobBo
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobBoard, error) { return scanJobBoard(row) })
 }
+
+// ListWatchedJobBoards returns the verified boards of watched companies on the
+// providers whose postings can be fetched.
+func (s *Store) ListWatchedJobBoards(ctx context.Context) ([]JobBoard, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+jobBoardColumns+` FROM job_boards
+		WHERE verified_at IS NOT NULL
+		  AND provider IN ('greenhouse', 'lever', 'ashby')
+		  AND company_id IN (SELECT company_id FROM watch_list_entries WHERE removed_at IS NULL)
+		ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobBoard, error) { return scanJobBoard(row) })
+}

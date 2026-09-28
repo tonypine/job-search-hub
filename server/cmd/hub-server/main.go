@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -71,7 +72,12 @@ func run() error {
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, jobboards.NewVerifier()), verifier))
+	boards := jobboards.NewVerifier()
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
+
+	if settings.boardPollInterval > 0 {
+		go boardpoller.New(hub, boards).Run(ctx, settings.boardPollInterval)
+	}
 
 	server := &http.Server{
 		Addr:              settings.address,
