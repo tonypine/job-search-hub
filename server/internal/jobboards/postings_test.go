@@ -95,3 +95,53 @@ func TestLivePostings(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePostingURL(t *testing.T) {
+	for raw, want := range map[string]jobboards.PostingReference{
+		"https://job-boards.greenhouse.io/tailscale/jobs/4721289005": {Provider: "greenhouse", BoardToken: "tailscale", PostingID: "4721289005"},
+		"https://boards.greenhouse.io/stripe/jobs/123?gh_src=x":      {Provider: "greenhouse", BoardToken: "stripe", PostingID: "123"},
+		"https://jobs.lever.co/waveapps/6961-abc":                    {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
+		"https://jobs.lever.co/waveapps/6961-abc/apply":              {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
+		"https://jobs.ashbyhq.com/revenuecat/c3fe34a4":               {Provider: "ashby", BoardToken: "revenuecat", PostingID: "c3fe34a4"},
+	} {
+		got, ok := jobboards.ParsePostingURL(raw)
+		if !ok || got != want {
+			t.Errorf("%s: got %+v, %v; want %+v", raw, got, ok, want)
+		}
+	}
+	for _, raw := range []string{"https://acme.com/careers/42", "https://jobs.lever.co/waveapps", "https://job-boards.greenhouse.io/tailscale"} {
+		if got, ok := jobboards.ParsePostingURL(raw); ok {
+			t.Errorf("%s was recognized as %+v", raw, got)
+		}
+	}
+}
+
+func TestFetchPostingReadsOnePostingPerProvider(t *testing.T) {
+	routes := http.NewServeMux()
+	routes.HandleFunc("GET /v1/boards/acme/jobs/7", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"id":7,"title":"Frontend Engineer","absolute_url":"https://job-boards.greenhouse.io/acme/jobs/7","location":{"name":"Remote"},"content":"&lt;p&gt;Hi&lt;/p&gt;"}`))
+	})
+	routes.HandleFunc("GET /v0/postings/acme/abc", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"id":"abc","text":"Full-stack Engineer","hostedUrl":"https://jobs.lever.co/acme/abc","categories":{"location":"Toronto"},"descriptionPlain":"About."}`))
+	})
+	routes.HandleFunc("GET /posting-api/job-board/acme", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"jobs":[{"id":"x1","title":"Product Engineer","location":"Americas","jobUrl":"https://jobs.ashbyhq.com/acme/x1","descriptionPlain":"","isListed":true}]}`))
+	})
+	server := httptest.NewServer(routes)
+	defer server.Close()
+	verifier := &jobboards.Verifier{HTTPClient: &http.Client{Timeout: time.Second}, GreenhouseAPIBase: server.URL, LeverAPIBase: server.URL, AshbyAPIBase: server.URL}
+
+	for reference, wantTitle := range map[jobboards.PostingReference]string{
+		{Provider: "greenhouse", BoardToken: "acme", PostingID: "7"}: "Frontend Engineer",
+		{Provider: "lever", BoardToken: "acme", PostingID: "abc"}:    "Full-stack Engineer",
+		{Provider: "ashby", BoardToken: "acme", PostingID: "x1"}:     "Product Engineer",
+	} {
+		posting, err := verifier.FetchPosting(context.Background(), reference)
+		if err != nil || posting.Title != wantTitle || posting.URL == "" {
+			t.Errorf("%+v: %+v, %v", reference, posting, err)
+		}
+	}
+	if _, err := verifier.FetchPosting(context.Background(), jobboards.PostingReference{Provider: "ashby", BoardToken: "acme", PostingID: "gone"}); err == nil {
+		t.Error("expected an error for a posting the Ashby board doesn't list")
+	}
+}

@@ -73,6 +73,7 @@ func run() error {
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	boards := jobboards.NewVerifier()
+	api.RegisterJobRoutes(routes, hub, boards, requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
 
 	if settings.boardPollInterval > 0 {

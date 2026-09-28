@@ -127,3 +127,13 @@ func (s *Store) ListWatchedJobBoards(ctx context.Context) ([]JobBoard, error) {
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobBoard, error) { return scanJobBoard(row) })
 }
+
+var ErrJobBoardNotFound = errors.New("job board not found")
+
+func (s *Store) GetJobBoardByToken(ctx context.Context, provider, boardToken string) (JobBoard, error) {
+	board, err := scanJobBoard(s.pool.QueryRow(ctx, `SELECT `+jobBoardColumns+` FROM job_boards WHERE provider = $1 AND board_token = $2`, provider, boardToken))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return JobBoard{}, ErrJobBoardNotFound
+	}
+	return board, err
+}
