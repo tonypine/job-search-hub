@@ -42,6 +42,9 @@ func printDossier(out io.Writer, dossier store.CompanyDossier) {
 	}
 
 	fmt.Fprintln(out)
+	if company.FoundVia != "" {
+		fmt.Fprintf(out, "Found via: %s\n", company.FoundVia)
+	}
 	if dossier.WatchedSince != nil {
 		fmt.Fprintf(out, "On the watch list since %s.\n", dossier.WatchedSince.Format(time.DateOnly))
 	} else {

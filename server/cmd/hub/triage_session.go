@@ -23,8 +23,9 @@ const hubMCPServerName = "hub"
 const maximumStreamLineBytes = 16 << 20
 
 type triageOptions struct {
-	model  string
-	effort string
+	model    string
+	effort   string
+	foundVia string
 }
 
 // sessionOutcome is how an agent session ended, in the shape the hub's finish

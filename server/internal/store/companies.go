@@ -25,18 +25,19 @@ type Company struct {
 	HeadquartersCountry string    `json:"headquarters_country,omitempty"`
 	EmployeeCountRange  string    `json:"employee_count_range,omitempty"`
 	Summary             string    `json:"summary,omitempty"`
+	FoundVia            string    `json:"found_via,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
-const companyColumns = `id, name, domain, website_url, careers_url, headquarters_country, employee_count_range, summary, created_at, updated_at`
+const companyColumns = `id, name, domain, website_url, careers_url, headquarters_country, employee_count_range, summary, found_via, created_at, updated_at`
 
 // scanCompany reads the companyColumns, then any extra columns the query
 // selects after them into extra.
 func scanCompany(row pgx.Row, extra ...any) (Company, error) {
 	var company Company
 	destinations := append([]any{&company.ID, &company.Name, &company.Domain, &company.WebsiteURL, &company.CareersURL,
-		&company.HeadquartersCountry, &company.EmployeeCountRange, &company.Summary, &company.CreatedAt, &company.UpdatedAt}, extra...)
+		&company.HeadquartersCountry, &company.EmployeeCountRange, &company.Summary, &company.FoundVia, &company.CreatedAt, &company.UpdatedAt}, extra...)
 	err := row.Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Company{}, ErrCompanyNotFound
@@ -48,6 +49,7 @@ type NewCompany struct {
 	Name       string
 	Domain     string
 	WebsiteURL string
+	FoundVia   string
 	SourceURL  string
 }
 
@@ -68,9 +70,9 @@ func (s *Store) CreateCompany(ctx context.Context, actor Actor, input NewCompany
 	created := false
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		inserted, insertErr := scanCompany(tx.QueryRow(ctx, `
-			INSERT INTO companies (name, domain, website_url) VALUES ($1, $2, $3)
+			INSERT INTO companies (name, domain, website_url, found_via) VALUES ($1, $2, $3, $4)
 			ON CONFLICT (domain) DO NOTHING
-			RETURNING `+companyColumns, name, domain, input.WebsiteURL))
+			RETURNING `+companyColumns, name, domain, input.WebsiteURL, input.FoundVia))
 		if errors.Is(insertErr, ErrCompanyNotFound) {
 			existing, selectErr := scanCompany(tx.QueryRow(ctx, `SELECT `+companyColumns+` FROM companies WHERE domain = $1`, domain))
 			company = existing
@@ -131,6 +133,7 @@ type CompanyUpdate struct {
 	HeadquartersCountry *string
 	EmployeeCountRange  *string
 	Summary             *string
+	FoundVia            *string
 	SourceURL           string
 }
 
@@ -156,6 +159,7 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 			{"headquarters_country", current.HeadquartersCountry, update.HeadquartersCountry},
 			{"employee_count_range", current.EmployeeCountRange, update.EmployeeCountRange},
 			{"summary", current.Summary, update.Summary},
+			{"found_via", current.FoundVia, update.FoundVia},
 		}
 		before := map[string]string{}
 		after := map[string]string{}
@@ -178,10 +182,11 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 				headquarters_country = COALESCE($5, headquarters_country),
 				employee_count_range = COALESCE($6, employee_count_range),
 				summary = COALESCE($7, summary),
+				found_via = COALESCE($8, found_via),
 				updated_at = now()
 			WHERE id = $1
 			RETURNING `+companyColumns,
-			id, update.Name, update.WebsiteURL, update.CareersURL, update.HeadquartersCountry, update.EmployeeCountRange, update.Summary))
+			id, update.Name, update.WebsiteURL, update.CareersURL, update.HeadquartersCountry, update.EmployeeCountRange, update.Summary, update.FoundVia))
 		if err != nil {
 			return err
 		}

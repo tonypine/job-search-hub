@@ -18,7 +18,7 @@ const usage = `usage:
   hub watch-list                    list the watched companies
   hub company show <domain>         print a company's dossier
   hub company add <name-or-url>     research a company with an agent and watch it
-      [--model <model>] [--effort <level>]
+      [--found-via <note>] [--model <model>] [--effort <level>]
 `
 
 func main() {
@@ -51,6 +51,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		var options triageOptions
 		flags.StringVar(&options.model, "model", "", "the Claude model for the session")
 		flags.StringVar(&options.effort, "effort", "", "the effort level for the session")
+		flags.StringVar(&options.foundVia, "found-via", "", "how the company reached you, e.g. a referral")
 		if flags.Parse(args[3:]) != nil || flags.NArg() > 0 {
 			fmt.Fprint(stderr, usage)
 			return 2

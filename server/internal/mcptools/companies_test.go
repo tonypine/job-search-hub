@@ -63,9 +63,9 @@ func TestCreatedCompaniesRoundTripAndRecordTheOwner(t *testing.T) {
 	session := connect(t, hub, ownerToken)
 
 	created := callTool[createdCompany](t, session, "create_company", map[string]any{
-		"name": "Stripe", "domain": "https://www.stripe.com/", "source_url": "https://stripe.com/about",
+		"name": "Stripe", "domain": "https://www.stripe.com/", "source_url": "https://stripe.com/about", "found_via": "Board: startups.gallery",
 	})
-	if !created.Created || created.Company.Domain != "stripe.com" {
+	if !created.Created || created.Company.Domain != "stripe.com" || created.Company.FoundVia != "Board: startups.gallery" {
 		t.Fatalf("create = %+v", created)
 	}
 

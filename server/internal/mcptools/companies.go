@@ -15,6 +15,7 @@ type createCompanyInput struct {
 	Name       string `json:"name" jsonschema:"the company's name as it presents itself"`
 	Domain     string `json:"domain" jsonschema:"the company's own domain, or any URL on it; stored normalized, e.g. stripe.com"`
 	WebsiteURL string `json:"website_url,omitempty" jsonschema:"the company's homepage"`
+	FoundVia   string `json:"found_via,omitempty" jsonschema:"how the company reached the hub, e.g. a referral or a job board"`
 	SourceURL  string `json:"source_url,omitempty" jsonschema:"the page these facts came from"`
 }
 
@@ -44,6 +45,7 @@ type updateCompanyInput struct {
 	HeadquartersCountry *string   `json:"headquarters_country,omitempty"`
 	EmployeeCountRange  *string   `json:"employee_count_range,omitempty" jsonschema:"e.g. 51-200"`
 	Summary             *string   `json:"summary,omitempty" jsonschema:"two or three sentences on what the company does"`
+	FoundVia            *string   `json:"found_via,omitempty" jsonschema:"how the company reached the hub, e.g. a referral or a job board"`
 	SourceURL           string    `json:"source_url,omitempty" jsonschema:"the page these facts came from"`
 }
 
@@ -57,7 +59,7 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 			return nil, createCompanyOutput{}, err
 		}
 		company, created, err := hub.CreateCompany(ctx, actor, store.NewCompany{
-			Name: input.Name, Domain: input.Domain, WebsiteURL: input.WebsiteURL, SourceURL: input.SourceURL,
+			Name: input.Name, Domain: input.Domain, WebsiteURL: input.WebsiteURL, FoundVia: input.FoundVia, SourceURL: input.SourceURL,
 		})
 		return nil, createCompanyOutput{Company: company, Created: created}, err
 	})
@@ -108,6 +110,7 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 			HeadquartersCountry: input.HeadquartersCountry,
 			EmployeeCountRange:  input.EmployeeCountRange,
 			Summary:             input.Summary,
+			FoundVia:            input.FoundVia,
 			SourceURL:           input.SourceURL,
 		})
 		return nil, company, err

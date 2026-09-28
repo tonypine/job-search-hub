@@ -115,7 +115,7 @@ func TestAddCompanyRecordsTheRunAndWatchesTheCompany(t *testing.T) {
 	argumentsPath := installFakeClaude(t, initLine(""), toolUseLine, resultLine(company.ID.String()))
 
 	var out bytes.Buffer
-	if err := addCompany(context.Background(), hub.config, "acme.com", triageOptions{}, &out); err != nil {
+	if err := addCompany(context.Background(), hub.config, "acme.com", triageOptions{foundVia: "Referral: a former colleague"}, &out); err != nil {
 		t.Fatalf("add company: %v\n%s", err, out.String())
 	}
 
@@ -126,7 +126,7 @@ func TestAddCompanyRecordsTheRunAndWatchesTheCompany(t *testing.T) {
 	if since, err := hub.store.GetWatchedSince(context.Background(), company.ID); err != nil || since == nil {
 		t.Fatalf("the company is not watched: %v", err)
 	}
-	for _, want := range []string{"· find_companies", "Stored Acme.", "unresolved: no job board link", "Acme (acme.com)", "On the watch list since"} {
+	for _, want := range []string{"· find_companies", "Stored Acme.", "unresolved: no job board link", "Acme (acme.com)", "Found via: Referral: a former colleague", "On the watch list since"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}

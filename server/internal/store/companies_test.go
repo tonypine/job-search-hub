@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -209,5 +210,25 @@ func TestNormalizeDomain(t *testing.T) {
 		if got, err := store.NormalizeDomain(raw); err == nil {
 			t.Errorf("NormalizeDomain(%q) = %q, want an error", raw, got)
 		}
+	}
+}
+
+func TestFoundViaIsStoredAndItsChangesRecorded(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+
+	company, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com", FoundVia: "Board: startups.gallery"})
+	if err != nil || company.FoundVia != "Board: startups.gallery" {
+		t.Fatalf("create = %+v, err = %v", company, err)
+	}
+	referral := "Referral: a former colleague who interviewed there"
+	updated, err := hub.UpdateCompany(ctx, owner, company.ID, store.CompanyUpdate{FoundVia: &referral})
+	if err != nil || updated.FoundVia != referral {
+		t.Fatalf("update = %+v, err = %v", updated, err)
+	}
+	recorded := changesFor(t, pool, company.ID)
+	if len(recorded) != 2 || !strings.Contains(string(recorded[1].after), "found_via") {
+		t.Fatalf("changes = %+v", recorded)
 	}
 }

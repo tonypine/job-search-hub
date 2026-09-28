@@ -74,6 +74,11 @@ func addCompany(ctx context.Context, config cliConfig, company string, options t
 	if _, err := callTool[struct{}](ctx, session, "add_to_watch_list", map[string]any{"company_id": companyID}); err != nil {
 		return fmt.Errorf("put the company on the watch list: %w", err)
 	}
+	if options.foundVia != "" {
+		if _, err := callTool[store.Company](ctx, session, "update_company", map[string]any{"company_id": companyID, "found_via": options.foundVia}); err != nil {
+			return fmt.Errorf("record how the company was found: %w", err)
+		}
+	}
 	dossier, err := callTool[store.CompanyDossier](ctx, session, "get_company", map[string]any{"company_id": companyID})
 	if err != nil {
 		return err
