@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -69,6 +70,9 @@ func GetActor(ctx context.Context) (store.Actor, error) {
 	}
 	if slices.Contains(info.Scopes, ScopeOwner) {
 		return store.Actor{Kind: store.ActorOwner}, nil
+	}
+	if agentRunID, ok := info.Extra["agent_run_id"].(uuid.UUID); ok && slices.Contains(info.Scopes, ScopeAgentRun) {
+		return store.Actor{Kind: store.ActorAgentRun, AgentRunID: agentRunID}, nil
 	}
 	return store.Actor{}, errors.New("the token has no scope the hub recognizes")
 }

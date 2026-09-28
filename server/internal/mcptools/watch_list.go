@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,12 +29,27 @@ type listWatchListOutput struct {
 	Companies []store.WatchedCompany `json:"companies"`
 }
 
+// The watch list records where the owner has chosen to aim, so agents can read
+// it but never change it.
+var errOwnerOnly = errors.New("only the owner can change the watch list")
+
+func getOwnerActor(ctx context.Context) (store.Actor, error) {
+	actor, err := tokens.GetActor(ctx)
+	if err != nil {
+		return store.Actor{}, err
+	}
+	if actor.Kind != store.ActorOwner {
+		return store.Actor{}, errOwnerOnly
+	}
+	return actor, nil
+}
+
 func addWatchListTools(server *mcp.Server, hub *store.Store) {
 	addTool(server, &mcp.Tool{
 		Name:        "add_to_watch_list",
-		Description: "Put a company on the watch list of target companies.",
+		Description: "Put a company on the watch list of target companies. Owner only.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input watchListInput) (*mcp.CallToolResult, addToWatchListOutput, error) {
-		actor, err := tokens.GetActor(ctx)
+		actor, err := getOwnerActor(ctx)
 		if err != nil {
 			return nil, addToWatchListOutput{}, err
 		}
@@ -43,9 +59,9 @@ func addWatchListTools(server *mcp.Server, hub *store.Store) {
 
 	addTool(server, &mcp.Tool{
 		Name:        "remove_from_watch_list",
-		Description: "Take a company off the watch list. The company and its dossier are kept.",
+		Description: "Take a company off the watch list. The company and its dossier are kept. Owner only.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input watchListInput) (*mcp.CallToolResult, removeFromWatchListOutput, error) {
-		actor, err := tokens.GetActor(ctx)
+		actor, err := getOwnerActor(ctx)
 		if err != nil {
 			return nil, removeFromWatchListOutput{}, err
 		}

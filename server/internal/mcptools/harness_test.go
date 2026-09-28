@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,8 +21,9 @@ import (
 var ownerToken = strings.Repeat("o", 64)
 
 type hubUnderTest struct {
-	pool *pgxpool.Pool
-	url  string
+	pool  *pgxpool.Pool
+	store *store.Store
+	url   string
 }
 
 func startHub(t *testing.T) hubUnderTest {
@@ -31,7 +33,19 @@ func startHub(t *testing.T) hubUnderTest {
 	handler := mcptools.NewHandler(mcptools.NewServer(hub), tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return hubUnderTest{pool: pool, url: server.URL}
+	return hubUnderTest{pool: pool, store: hub, url: server.URL}
+}
+
+// startAgentRun records a running agent run whose token expires at
+// expiresAt, and returns the run with its token.
+func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.AgentRun, string) {
+	t.Helper()
+	token, tokenHash := tokens.NewAgentRunToken()
+	run, err := hub.store.StartAgentRun(context.Background(), store.AgentRunKindCompanyTriage, "stripe.com", tokenHash, expiresAt)
+	if err != nil {
+		t.Fatalf("start agent run: %v", err)
+	}
+	return run, token
 }
 
 type bearerTransport struct{ token string }
