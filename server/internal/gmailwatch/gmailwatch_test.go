@@ -16,11 +16,12 @@ import (
 // fakeMailbox answers from its fields; a history ID in tooOld is one Gmail
 // no longer keeps.
 type fakeMailbox struct {
-	watch     google.MailboxWatch
-	changes   map[string]google.MailboxChanges
-	tooOld    string
-	summaries map[string]google.MessageSummary
-	failing   string
+	watch         google.MailboxWatch
+	changes       map[string]google.MailboxChanges
+	tooOld        string
+	summaries     map[string]google.MessageSummary
+	failing       string
+	searchResults []string
 }
 
 func (mailbox *fakeMailbox) WatchMailbox(context.Context, string) (google.MailboxWatch, error) {
@@ -43,6 +44,10 @@ func (mailbox *fakeMailbox) GetMessageSummary(_ context.Context, id string) (goo
 		return google.MessageSummary{}, google.ErrMessageNotFound
 	}
 	return summary, nil
+}
+
+func (mailbox *fakeMailbox) ListMessageIDs(context.Context, string) ([]string, error) {
+	return mailbox.searchResults, nil
 }
 
 func (mailbox *fakeMailbox) GetTokenSource(context.Context) (oauth2.TokenSource, error) {
@@ -86,7 +91,7 @@ func TestSyncRecordsTheMailAddedSinceTheWatchAndResumesAfterIt(t *testing.T) {
 	if err != nil || recorded != 2 {
 		t.Fatalf("sync = %d, %v; want the reply and the sent message", recorded, err)
 	}
-	messages, _ := hub.ListMailMessages(ctx, 10)
+	messages, _ := hub.ListMailMessages(ctx, store.MailFilter{Limit: 10})
 	directions := map[string]string{}
 	for _, message := range messages {
 		directions[message.GmailMessageID] = message.Direction
@@ -182,5 +187,42 @@ func TestTheProjectIsReadFromTheSubscriptionName(t *testing.T) {
 	}
 	if _, err := parseProject("s"); err == nil {
 		t.Fatal("a bare subscription ID should be refused")
+	}
+}
+
+func TestABackfillRecordsPastMailAndMatchesThreadsBothWays(t *testing.T) {
+	sentAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	mailbox := &fakeMailbox{
+		searchResults: []string{"reply", "forward", "newsletter"},
+		summaries: map[string]google.MessageSummary{
+			"forward": {ID: "forward", ThreadID: "t1", From: "Pat <pat@example.dev>", To: "owner@example.com", Subject: "Re: Quick note",
+				Date: sentAt, LabelIDs: []string{"INBOX"}},
+			"reply": {ID: "reply", ThreadID: "t1", From: "Ada <ada@acme.com>", To: "owner@example.com", Subject: "Re: Quick note",
+				Date: sentAt.Add(time.Hour), LabelIDs: []string{"INBOX"}},
+			"newsletter": {ID: "newsletter", ThreadID: "t2", From: "news@example.org", Subject: "Weekly", Date: sentAt, LabelIDs: []string{"INBOX"}},
+		},
+	}
+	watcher, hub := startWatcher(t, mailbox)
+	ctx := context.Background()
+	acme, _, err := hub.CreateCompany(ctx, store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := watcher.Backfill(ctx, 60)
+	if err != nil || result.Recorded != 3 || result.Matched != 2 {
+		t.Fatalf("backfill = %+v, %v; want 3 recorded, and the reply and the earlier message in its thread matched", result, err)
+	}
+	matched, _ := hub.ListMailMessages(ctx, store.MailFilter{CompanyID: &acme.ID, Limit: 10})
+	rules := map[string]string{}
+	for _, message := range matched {
+		rules[message.GmailMessageID] = message.MatchedBy
+	}
+	if rules["reply"] != store.MatchedByDomain || rules["forward"] != store.MatchedByThread {
+		t.Fatalf("rules = %v", rules)
+	}
+
+	if again, err := watcher.Backfill(ctx, 60); err != nil || again.Recorded != 0 || again.Matched != 0 {
+		t.Fatalf("second backfill = %+v, %v; want nothing new", again, err)
 	}
 }

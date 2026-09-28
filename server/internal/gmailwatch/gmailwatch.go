@@ -16,6 +16,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/tonypine/job-search-hub/server/internal/google"
+	"github.com/tonypine/job-search-hub/server/internal/mailmatch"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -34,6 +35,7 @@ type mailbox interface {
 	WatchMailbox(ctx context.Context, topic string) (google.MailboxWatch, error)
 	ListAddedMessages(ctx context.Context, startHistoryID string) (google.MailboxChanges, error)
 	GetMessageSummary(ctx context.Context, id string) (google.MessageSummary, error)
+	ListMessageIDs(ctx context.Context, query string) ([]string, error)
 	GetTokenSource(ctx context.Context) (oauth2.TokenSource, error)
 }
 
@@ -84,8 +86,8 @@ func (watcher *Watcher) RenewWatch(ctx context.Context) error {
 	return watcher.hub.SaveGmailWatch(ctx, watch.HistoryID, watch.ExpiresAt)
 }
 
-// Sync records the messages added since reading last stopped, then stores
-// where the next reading resumes. A failure leaves that point where it was,
+// Sync records the messages added since reading last stopped and matches
+// them to what the hub knows, then stores where the next reading resumes. A failure leaves that point where it was,
 // so the next sync reads the same changes again; recording is idempotent.
 // When Gmail no longer keeps changes that far back, reading resumes from now
 // and the mail in between goes unrecorded.
@@ -112,7 +114,54 @@ func (watcher *Watcher) Sync(ctx context.Context) (recorded int, err error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, id := range changes.AddedMessageIDs {
+	messages, err := watcher.recordMessages(ctx, changes.AddedMessageIDs)
+	if err != nil {
+		return len(messages), err
+	}
+	if _, err := mailmatch.MatchMessages(ctx, watcher.hub, messages); err != nil {
+		return len(messages), err
+	}
+	return len(messages), watcher.hub.SaveGmailHistoryID(ctx, changes.HistoryID)
+}
+
+// BackfillResult counts what a backfill recorded and matched.
+type BackfillResult struct {
+	Recorded int `json:"recorded"`
+	Matched  int `json:"matched"`
+}
+
+// Backfill records the mail of the last days that isn't recorded yet,
+// leaving out promotions and social mail, then matches every message still
+// unmatched, so a company added since picks up its old mail.
+func (watcher *Watcher) Backfill(ctx context.Context, days int) (BackfillResult, error) {
+	ids, err := watcher.mailbox.ListMessageIDs(ctx, fmt.Sprintf("newer_than:%dd -category:promotions -category:social", days))
+	if err != nil {
+		return BackfillResult{}, err
+	}
+	var newIDs []string
+	for _, id := range ids {
+		recorded, err := watcher.hub.IsMailMessageRecorded(ctx, id)
+		if err != nil {
+			return BackfillResult{}, err
+		}
+		if !recorded {
+			newIDs = append(newIDs, id)
+		}
+	}
+	messages, err := watcher.recordMessages(ctx, newIDs)
+	result := BackfillResult{Recorded: len(messages)}
+	if err != nil {
+		return result, err
+	}
+	result.Matched, err = mailmatch.MatchUnmatched(ctx, watcher.hub)
+	return result, err
+}
+
+// recordMessages stores the messages of ids that are mail sent or received,
+// skipping any deleted since, and returns the ones newly recorded.
+func (watcher *Watcher) recordMessages(ctx context.Context, ids []string) ([]store.MailMessage, error) {
+	var recorded []store.MailMessage
+	for _, id := range ids {
 		summary, err := watcher.mailbox.GetMessageSummary(ctx, id)
 		if errors.Is(err, google.ErrMessageNotFound) {
 			continue
@@ -123,15 +172,15 @@ func (watcher *Watcher) Sync(ctx context.Context) (recorded int, err error) {
 		if slices.ContainsFunc(summary.LabelIDs, func(label string) bool { return slices.Contains(ignoredLabels, label) }) {
 			continue
 		}
-		_, created, err := watcher.hub.RecordMailMessage(ctx, convertSummaryToNewMailMessage(summary))
+		message, created, err := watcher.hub.RecordMailMessage(ctx, convertSummaryToNewMailMessage(summary))
 		if err != nil {
 			return recorded, err
 		}
 		if created {
-			recorded++
+			recorded = append(recorded, message)
 		}
 	}
-	return recorded, watcher.hub.SaveGmailHistoryID(ctx, changes.HistoryID)
+	return recorded, nil
 }
 
 func (watcher *Watcher) syncAndLog(ctx context.Context) {

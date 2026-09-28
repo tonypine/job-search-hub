@@ -105,10 +105,14 @@ func run() error {
 		slog.Info("job facts reading on", "model", settings.jobFactsModel, "every", settings.jobFactsInterval.String())
 	}
 
+	var mailBackfiller api.MailBackfiller
 	if googleClient != nil && settings.gmailSubscription != "" {
-		go gmailwatch.New(hub, googleClient, settings.gmailTopic, settings.gmailSubscription).Run(ctx)
+		watcher := gmailwatch.New(hub, googleClient, settings.gmailTopic, settings.gmailSubscription)
+		mailBackfiller = watcher
+		go watcher.Run(ctx)
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)
 	}
+	api.RegisterMailRoutes(routes, hub, mailBackfiller, requireOwner)
 
 	server := &http.Server{
 		Addr:              settings.address,

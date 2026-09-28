@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
 )
 
 type Verdict string
@@ -110,7 +111,7 @@ func checkRole(job store.Job, criteria store.JobCriteria) Check {
 		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("%q in the title", term)}
 	}
 	for _, role := range criteria.Roles {
-		if keyword := getRoleKeyword(role, criteria.SeniorityLevels); keyword != "" && containsWords(title, keyword) {
+		if keyword := getRoleKeyword(role, criteria.SeniorityLevels); keyword != "" && wordmatch.Contains(title, keyword) {
 			return Check{Name: name, Verdict: VerdictYes, Reason: role}
 		}
 	}
@@ -132,7 +133,7 @@ func checkRole(job store.Job, criteria store.JobCriteria) Check {
 func getRoleKeyword(role string, levels []string) string {
 	excluded := map[string]bool{}
 	for _, level := range levels {
-		excluded[normalizeWords(level)] = true
+		excluded[wordmatch.Normalize(level)] = true
 	}
 	var kept []string
 	for _, word := range strings.Fields(normalizeTitle(role)) {
@@ -148,7 +149,7 @@ var titleSpellings = strings.NewReplacer("front-end", "frontend", "front end", "
 	"back-end", "backend", "back end", "backend")
 
 func normalizeTitle(title string) string {
-	return titleSpellings.Replace(normalizeWords(title))
+	return titleSpellings.Replace(wordmatch.Normalize(title))
 }
 
 func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) Check {
@@ -406,45 +407,17 @@ func isPaidHourly(job store.Job, facts readFacts) bool {
 // found in the Portuguese "Sênior".
 func findTerm(texts, terms []string) (string, bool) {
 	for _, term := range terms {
-		normalizedTerm := normalizeWords(term)
+		normalizedTerm := wordmatch.Normalize(term)
 		if normalizedTerm == "" {
 			continue
 		}
 		for _, text := range texts {
-			if containsWords(normalizeWords(text), normalizedTerm) {
+			if wordmatch.Contains(wordmatch.Normalize(text), normalizedTerm) {
 				return term, true
 			}
 		}
 	}
 	return "", false
-}
-
-var accents = strings.NewReplacer(
-	"á", "a", "à", "a", "â", "a", "ã", "a", "ä", "a", "é", "e", "è", "e", "ê", "e", "ë", "e", "í", "i", "ì", "i", "î", "i", "ï", "i",
-	"ó", "o", "ò", "o", "ô", "o", "õ", "o", "ö", "o", "ú", "u", "ù", "u", "û", "u", "ü", "u", "ç", "c", "ñ", "n",
-)
-
-func normalizeWords(text string) string {
-	return accents.Replace(strings.ToLower(strings.TrimSpace(text)))
-}
-
-func containsWords(text, words string) bool {
-	for start := 0; start <= len(text)-len(words); {
-		index := strings.Index(text[start:], words)
-		if index < 0 {
-			return false
-		}
-		begin, end := start+index, start+index+len(words)
-		if (begin == 0 || !isWordCharacter(text[begin-1])) && (end == len(text) || !isWordCharacter(text[end])) {
-			return true
-		}
-		start = begin + 1
-	}
-	return false
-}
-
-func isWordCharacter(character byte) bool {
-	return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
 }
 
 // normalizeTechnology compares names without case or punctuation, so

@@ -18,11 +18,12 @@ type addPersonInput struct {
 	ProfileURL string    `json:"profile_url,omitempty" jsonschema:"a public profile URL, e.g. from a team page or search result; never fetched by the hub"`
 	SourceURL  string    `json:"source_url" jsonschema:"the page that names this person at this company; required"`
 	Notes      string    `json:"notes,omitempty" jsonschema:"anything useful for a first message, e.g. a talk they gave or a team they lead"`
+	Email      string    `json:"email,omitempty" jsonschema:"their work email, only as a public page or their own mail shows it; never guessed"`
 }
 
 type addPersonOutput struct {
 	Person  store.Person `json:"person"`
-	Created bool         `json:"created" jsonschema:"false when this company already had a person with this name; they are returned unchanged"`
+	Created bool         `json:"created" jsonschema:"false when this company already had a person with this name; they are returned unchanged, except for an email they didn't have"`
 }
 
 func addPeopleTools(server *mcp.Server, hub *store.Store) {
@@ -37,7 +38,7 @@ func addPeopleTools(server *mcp.Server, hub *store.Store) {
 		}
 		person, created, err := hub.AddPerson(ctx, actor, store.PersonInput{
 			CompanyID: input.CompanyID, Name: input.Name, RoleTitle: input.RoleTitle, Relevance: input.Relevance,
-			ProfileURL: input.ProfileURL, SourceURL: input.SourceURL, Notes: input.Notes,
+			ProfileURL: input.ProfileURL, SourceURL: input.SourceURL, Notes: input.Notes, Email: input.Email,
 		})
 		return nil, addPersonOutput{Person: person, Created: created}, err
 	})

@@ -165,6 +165,10 @@ struct DossierPane: View {
                                 Text(person.name).bold()
                                 Text([person.roleTitle, person.relevance.replacingOccurrences(of: "_", with: " ")].compactMap { $0 }.joined(separator: " · "))
                                     .foregroundStyle(.secondary)
+                                if let email = person.email {
+                                    linkOrText(email, url: "mailto:\(email)")
+                                        .font(.caption)
+                                }
                                 linkOrText("Source", url: person.sourceURL)
                                     .font(.caption)
                             }

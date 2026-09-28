@@ -190,3 +190,36 @@ func convertHTMLToText(markup string) string {
 	text = html.UnescapeString(anyMarkup.ReplaceAllString(text, ""))
 	return strings.TrimSpace(blankRuns.ReplaceAllString(text, "\n\n"))
 }
+
+// ListMessageIDs returns the IDs of every message matching a Gmail query,
+// newest first.
+func (client *Client) ListMessageIDs(ctx context.Context, query string) ([]string, error) {
+	httpClient, _, err := client.getAuthorizedClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	pageToken := ""
+	for {
+		search := url.Values{"q": {query}, "maxResults": {"500"}}
+		if pageToken != "" {
+			search.Set("pageToken", pageToken)
+		}
+		var page struct {
+			Messages []struct {
+				ID string `json:"id"`
+			} `json:"messages"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages?"+search.Encode(), &page); err != nil {
+			return nil, err
+		}
+		for _, message := range page.Messages {
+			ids = append(ids, message.ID)
+		}
+		if page.NextPageToken == "" {
+			return ids, nil
+		}
+		pageToken = page.NextPageToken
+	}
+}

@@ -29,7 +29,7 @@ private let dossierJSON = ##"""
                 "verified_at":"2026-09-28T12:01:00Z"}],
  "people":[{"id":"2cc55565-58d2-4247-ba01-cba65060a316","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
             "name":"Ada Lovelace","role_title":"Engineering Manager","relevance":"hiring_manager",
-            "source_url":"https://acme.com/team","created_at":"2026-09-28T12:02:00Z"}]}
+            "source_url":"https://acme.com/team","email":"ada@acme.com","created_at":"2026-09-28T12:02:00Z"}]}
 """##
 
 @Test func theCompaniesListDecodes() throws {
@@ -57,4 +57,5 @@ private let dossierJSON = ##"""
     #expect(dossier.people.first?.sourceURL == "https://acme.com/team")
     #expect(dossier.people.first?.roleTitle == "Engineering Manager")
     #expect(dossier.people.first?.profileURL == nil)
+    #expect(dossier.people.first?.email == "ada@acme.com")
 }

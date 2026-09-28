@@ -59,10 +59,11 @@ public struct Person: Codable, Equatable, Identifiable, Sendable {
     public var profileURL: String?
     public var sourceURL: String
     public var notes: String?
+    public var email: String?
     public var createdAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, name, roleTitle, relevance, notes, createdAt
+        case id, name, roleTitle, relevance, notes, email, createdAt
         case companyID = "companyId"
         case profileURL = "profileUrl"
         case sourceURL = "sourceUrl"
