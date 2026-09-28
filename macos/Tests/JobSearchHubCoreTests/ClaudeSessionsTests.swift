@@ -71,3 +71,10 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     #expect(ClaudeHooks.parseActivity("blocked\n") == .blocked)
     #expect(ClaudeHooks.parseActivity("?") == nil)
 }
+
+@Test func aFirstMessageComesLastAfterTheOptions() {
+    let command = ClaudeLaunch.getShellCommand(claude: "claude", session: makeSession(), hasConversation: true, firstMessage: "-draft this")
+
+    #expect(command.hasSuffix("'--' '-draft this'"))
+    #expect(ClaudeLaunch.getPastedMessage("line one\nline two") == "\u{1b}[200~line one\nline two\u{1b}[201~\r")
+}

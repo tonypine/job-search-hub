@@ -22,10 +22,14 @@ const AgentPromptKindJobFacts = "job_facts"
 const (
 	AgentPromptKindCompanySession = "company_session"
 	AgentPromptKindJobSession     = "job_session"
+	// AgentPromptKindOutreachDraft is the request a session gets when the
+	// owner asks it to draft outreach.
+	AgentPromptKindOutreachDraft = "outreach_draft"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
+	AgentPromptKindOutreachDraft: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

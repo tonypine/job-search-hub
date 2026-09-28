@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -26,5 +27,18 @@ func TestTheProfileRoundTripsAndRecordsTheSave(t *testing.T) {
 	err := service.pool.QueryRow(context.Background(), `SELECT count(*) FROM changes WHERE entity_type = 'owner_profile' AND actor_kind = 'owner'`).Scan(&saves)
 	if err != nil || saves != 1 {
 		t.Fatalf("profile changes = %d, err = %v, want 1", saves, err)
+	}
+}
+
+func TestTheActiveVersionOfAPromptIsServed(t *testing.T) {
+	service := startAPI(t)
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/agent-prompts/outreach_draft", ownerToken, "")
+	var prompt store.AgentPrompt
+	if err := json.Unmarshal(body, &prompt); status != http.StatusOK || err != nil || prompt.Version != 1 || !strings.Contains(prompt.Body, "Draft only") {
+		t.Fatalf("outreach prompt: %d %s", status, body)
+	}
+	if status, _ := send(t, http.MethodGet, service.url+"/v1/agent-prompts/unknown", ownerToken, ""); status != http.StatusNotFound {
+		t.Errorf("unknown prompt: %d, want 404", status)
 	}
 }

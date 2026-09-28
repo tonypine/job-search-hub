@@ -102,7 +102,7 @@ public enum ClaudeLaunch {
     /// resumed, and one without starts under its own ID. Either way it reads
     /// its context fresh and loads the app's hooks on top of the owner's own
     /// settings.
-    public static func getShellCommand(claude: String, session: ClaudeSession, hasConversation: Bool) -> String {
+    public static func getShellCommand(claude: String, session: ClaudeSession, hasConversation: Bool, firstMessage: String? = nil) -> String {
         var arguments = [claude, "--settings", ClaudeHooks.settingsFileName]
         if hasConversation {
             arguments += ["--resume", session.claudeSessionID.uuidString.lowercased()]
@@ -110,7 +110,16 @@ public enum ClaudeLaunch {
             arguments += ["--session-id", session.claudeSessionID.uuidString.lowercased(), "--name", session.name]
         }
         arguments += ["--append-system-prompt-file", getContextFileName(for: session)]
+        if let firstMessage {
+            arguments += ["--", firstMessage]
+        }
         return "exec " + arguments.map(quoteForShell).joined(separator: " ")
+    }
+
+    /// A message typed into a running session: pasted whole, so its line
+    /// breaks don't submit it early, then sent with Enter.
+    public static func getPastedMessage(_ message: String) -> String {
+        "\u{1b}[200~" + message + "\u{1b}[201~\r"
     }
 
     /// Single-quotes an argument for a POSIX shell.
@@ -178,4 +187,11 @@ public enum ClaudeHooks {
     public static func parseActivity(_ text: String) -> SessionActivity? {
         SessionActivity(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
+}
+
+/// The active version of one of the hub's prompts.
+public struct AgentPrompt: Decodable, Sendable {
+    public var kind: String
+    public var version: Int
+    public var body: String
 }

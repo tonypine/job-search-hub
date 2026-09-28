@@ -45,7 +45,7 @@ final class ClaudeSessionHost {
     /// Writes the session's context to the sessions folder, runs `claude` there through
     /// a login shell so the owner's whole setup loads, and tells the hub it
     /// started. A session with a conversation is resumed.
-    func start(_ session: ClaudeSession, with client: HubClient) async throws {
+    func start(_ session: ClaudeSession, with client: HubClient, firstMessage: String? = nil) async throws {
         guard !isRunning(session.id) else { return }
         guard let claude = ClaudeLaunch.findClaudeExecutable() else { throw ClaudeSessionLaunchError.claudeNotFound }
         let context = try await client.get("v1/claude-sessions/\(session.id.uuidString)/context", as: ClaudeSessionContext.self)
@@ -61,7 +61,9 @@ final class ClaudeSessionHost {
         let stateFile = states.appending(path: "\(session.id.uuidString.lowercased()).state")
         try? fileManager.removeItem(at: stateFile)
         let transcript = ClaudeLaunch.getTranscriptURL(for: session, workingDirectory: folder, home: fileManager.homeDirectoryForCurrentUser)
-        let command = ClaudeLaunch.getShellCommand(claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path))
+        let command = ClaudeLaunch.getShellCommand(
+            claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path), firstMessage: firstMessage
+        )
 
         let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         let watcher = ProcessEndWatcher { [weak self] in self?.handleEnd(of: session.id, client: client) }
@@ -82,6 +84,12 @@ final class ClaudeSessionHost {
         startReadingActivities()
         requestNotificationPermission()
         _ = try? await client.send("POST", "v1/claude-sessions/\(session.id.uuidString)/start", body: EmptyRequest(), as: ClaudeSession.self)
+    }
+
+    /// Types a message into a running session and sends it.
+    func send(_ message: String, to sessionID: UUID) {
+        guard let terminal = terminals[sessionID] else { return }
+        terminal.send(source: terminal, data: ArraySlice(Array(ClaudeLaunch.getPastedMessage(message).utf8)))
     }
 
     /// Ends the session's process; the end is recorded when it happens.

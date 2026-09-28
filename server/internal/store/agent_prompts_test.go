@@ -56,7 +56,7 @@ func TestSavingAPromptRefusesAnUnknownKindOrAnEmptyBody(t *testing.T) {
 	hub := store.New(testdatabase.New(t))
 	ctx := context.Background()
 
-	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: "outreach_draft", Body: "body"}); !errors.Is(err, store.ErrAgentPromptNotFound) {
+	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: "cover_letter", Body: "body"}); !errors.Is(err, store.ErrAgentPromptNotFound) {
 		t.Errorf("unknown kind: err = %v", err)
 	}
 	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentRunKindCompanyTriage, Body: "  "}); err == nil {

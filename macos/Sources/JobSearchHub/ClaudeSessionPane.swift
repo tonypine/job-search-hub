@@ -18,16 +18,36 @@ final class ClaudeSessionPaneModel {
     }
 
     /// Creates a session about the subject, then starts it.
-    func startNew(_ subject: ClaudeSessionSubject, with client: HubClient, host: ClaudeSessionHost) async {
+    func startNew(_ subject: ClaudeSessionSubject, with client: HubClient, host: ClaudeSessionHost, firstMessage: String? = nil) async {
         await run {
             let session = try await client.send("POST", "v1/claude-sessions", body: CreateClaudeSessionRequest(subject), as: ClaudeSession.self)
             sessions.insert(session, at: 0)
-            try await host.start(session, with: client)
+            try await host.start(session, with: client, firstMessage: firstMessage)
         }
     }
 
-    func resume(_ session: ClaudeSession, with client: HubClient, host: ClaudeSessionHost) async {
-        await run { try await host.start(session, with: client) }
+    func resume(_ session: ClaudeSession, with client: HubClient, host: ClaudeSessionHost, firstMessage: String? = nil) async {
+        await run { try await host.start(session, with: client, firstMessage: firstMessage) }
+    }
+
+    /// Asks the subject's session to draft outreach with the hub's
+    /// outreach_draft prompt: typed into a running session, or as the first
+    /// message of a resumed or new one.
+    func draftOutreach(_ subject: ClaudeSessionSubject, with client: HubClient, host: ClaudeSessionHost) async {
+        let request: String
+        do {
+            request = try await client.get("v1/agent-prompts/outreach_draft", as: AgentPrompt.self).body.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            errorMessage = String(describing: error)
+            return
+        }
+        if let running = sessions.first(where: { host.isRunning($0.id) }) {
+            host.send(request, to: running.id)
+        } else if let latest = sessions.first {
+            await resume(latest, with: client, host: host, firstMessage: request)
+        } else {
+            await startNew(subject, with: client, host: host, firstMessage: request)
+        }
     }
 
     private func run(_ work: () async throws -> Void) async {
@@ -61,6 +81,8 @@ struct ClaudeSessionPane: View {
                         Text(running.name).lineLimit(1)
                         Text(SessionLamp.describe(host.activities[running.id])).foregroundStyle(.secondary)
                         Spacer()
+                        Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
+                            .help("Ask this session to find who to write to and draft a first message")
                         Button("Stop", systemImage: "stop.fill") { host.stop(running.id) }
                     }
                     .padding(8)
@@ -104,6 +126,8 @@ struct ClaudeSessionPane: View {
                 Button("Start session", systemImage: "play.fill") { Task { await model.startNew(subject, with: client, host: host) } }
                     .keyboardShortcut(.defaultAction)
             }
+            Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
+                .help("Find who to write to and draft a first message; you send it yourself")
             if model.isStarting {
                 ProgressView().controlSize(.small)
             }

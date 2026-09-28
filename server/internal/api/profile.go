@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -12,7 +13,7 @@ type saveProfileRequest struct {
 }
 
 // RegisterProfileRoutes adds the owner-only routes for reading and saving
-// the owner profile.
+// the owner profile, and for reading the active version of a prompt.
 func RegisterProfileRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/profile", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		profile, err := hub.GetOwnerProfile(r.Context())
@@ -21,6 +22,19 @@ func RegisterProfileRoutes(routes *http.ServeMux, hub *store.Store, requireOwner
 			return
 		}
 		writeJSON(w, http.StatusOK, profile)
+	})))
+
+	routes.Handle("GET /v1/agent-prompts/{kind}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prompt, err := hub.GetLatestAgentPrompt(r.Context(), r.PathValue("kind"))
+		if errors.Is(err, store.ErrAgentPromptNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such prompt"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, prompt)
 	})))
 
 	routes.Handle("PUT /v1/profile", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
