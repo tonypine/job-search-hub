@@ -39,6 +39,16 @@ public struct HubClient: Sendable {
         return try await perform(makeRequest(method: method, path: path, body: encoded))
     }
 
+    /// Sends a file's bytes as they are, such as a CSV export, and decodes the
+    /// answer.
+    public func upload<Response: Decodable>(
+        _ path: String, data: Data, contentType: String, as responseType: Response.Type = Response.self
+    ) async throws -> Response {
+        var request = makeRequest(method: "POST", path: path, body: data)
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        return try await perform(request)
+    }
+
     /// Opens a server-sent event stream and returns its lines as they arrive,
     /// resuming after lastEventID when there is one.
     public func openEventStream(_ path: String, lastEventID: String?) async throws -> EventStreamLines<URLSession.AsyncBytes> {

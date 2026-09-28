@@ -35,6 +35,7 @@ struct SettingsPage: View {
             }
             if let client = connection.makeClient() {
                 GoogleSection(client: client)
+                NetworkSection(client: client)
                 JobCriteriaSection(client: client)
                 PipelinePhasesSection(client: client)
             }

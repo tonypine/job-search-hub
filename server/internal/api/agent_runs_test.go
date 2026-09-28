@@ -45,6 +45,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
+	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)

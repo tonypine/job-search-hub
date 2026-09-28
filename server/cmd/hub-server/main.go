@@ -88,6 +88,7 @@ func run() error {
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
+	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
