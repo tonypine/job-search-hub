@@ -192,3 +192,114 @@ func findOwnerProfileURL(messages []NewLinkedInMessage) string {
 func normalizeProfileURL(url string) string {
 	return strings.TrimRight(strings.ToLower(strings.TrimSpace(url)), "/")
 }
+
+// LinkedInConversation is one conversation someone else started, with how
+// it was classified and, for a recruiter, whom they hired for.
+type LinkedInConversation struct {
+	ID                   uuid.UUID  `json:"id"`
+	Title                string     `json:"title,omitempty"`
+	StartedByName        string     `json:"started_by_name"`
+	StartedByURL         string     `json:"started_by_url"`
+	OwnerWrote           bool       `json:"owner_wrote"`
+	MessageCount         int        `json:"message_count"`
+	FirstMessageAt       *time.Time `json:"first_message_at,omitempty"`
+	LastMessageAt        *time.Time `json:"last_message_at,omitempty"`
+	Classification       string     `json:"classification,omitempty"`
+	ClassificationReason string     `json:"classification_reason,omitempty"`
+	HiringCompany        string     `json:"hiring_company,omitempty"`
+	Role                 string     `json:"role,omitempty"`
+	IsAgency             bool       `json:"is_agency"`
+	// StarterPosition is the starter's current position, when they are a
+	// connection.
+	StarterPosition *string `json:"starter_position,omitempty"`
+	StarterCompany  *string `json:"starter_company,omitempty"`
+}
+
+const linkedInConversationColumns = `conversations.id, conversations.title,
+	COALESCE((SELECT sender_name FROM linkedin_messages WHERE conversation_id = conversations.id ORDER BY sent_at LIMIT 1), ''),
+	conversations.started_by_url, conversations.owner_wrote, conversations.message_count, conversations.first_message_at,
+	conversations.last_message_at, conversations.classification, conversations.classification_reason, conversations.hiring_company,
+	conversations.role, conversations.is_agency, NULLIF(connections.position, ''), NULLIF(connections.company_name, '')`
+
+const linkedInConversationJoin = `linkedin_conversations AS conversations
+	LEFT JOIN connections ON lower(rtrim(connections.profile_url, '/')) = lower(rtrim(conversations.started_by_url, '/'))`
+
+func scanLinkedInConversation(row pgx.Row) (LinkedInConversation, error) {
+	var conversation LinkedInConversation
+	err := row.Scan(&conversation.ID, &conversation.Title, &conversation.StartedByName, &conversation.StartedByURL, &conversation.OwnerWrote,
+		&conversation.MessageCount, &conversation.FirstMessageAt, &conversation.LastMessageAt, &conversation.Classification,
+		&conversation.ClassificationReason, &conversation.HiringCompany, &conversation.Role, &conversation.IsAgency,
+		&conversation.StarterPosition, &conversation.StarterCompany)
+	return conversation, err
+}
+
+// ListConversationsAwaitingClassification returns the conversations others
+// started that aren't classified yet, the latest first.
+func (s *Store) ListConversationsAwaitingClassification(ctx context.Context, limit int) ([]LinkedInConversation, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+linkedInConversationColumns+` FROM `+linkedInConversationJoin+`
+		WHERE NOT conversations.started_by_owner AND conversations.classification = ''
+		ORDER BY conversations.last_message_at DESC NULLS LAST LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (LinkedInConversation, error) { return scanLinkedInConversation(row) })
+}
+
+// ListRecruiterConversations returns the conversations recruiters started,
+// the latest first.
+func (s *Store) ListRecruiterConversations(ctx context.Context) ([]LinkedInConversation, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+linkedInConversationColumns+` FROM `+linkedInConversationJoin+`
+		WHERE conversations.classification = 'recruiter_outreach'
+		ORDER BY conversations.last_message_at DESC NULLS LAST`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (LinkedInConversation, error) { return scanLinkedInConversation(row) })
+}
+
+// LinkedInMessage is one message of a conversation.
+type LinkedInMessage struct {
+	SenderName string    `json:"sender_name"`
+	SentAt     time.Time `json:"sent_at"`
+	Subject    string    `json:"subject,omitempty"`
+	Content    string    `json:"content"`
+}
+
+// ListConversationMessages returns a conversation's messages, oldest first.
+func (s *Store) ListConversationMessages(ctx context.Context, conversationID uuid.UUID, limit int) ([]LinkedInMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sender_name, sent_at, subject, content FROM linkedin_messages WHERE conversation_id = $1 ORDER BY sent_at LIMIT $2`,
+		conversationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (LinkedInMessage, error) {
+		var message LinkedInMessage
+		err := row.Scan(&message.SenderName, &message.SentAt, &message.Subject, &message.Content)
+		return message, err
+	})
+}
+
+// ConversationClassification is a conversation's class, who gave it and
+// why, and for a recruiter the company and role.
+type ConversationClassification struct {
+	Class         string
+	ClassifiedBy  string
+	Reason        string
+	PromptID      *uuid.UUID
+	HiringCompany string
+	Role          string
+	IsAgency      bool
+}
+
+func (s *Store) SaveConversationClassification(ctx context.Context, conversationID uuid.UUID, classification ConversationClassification) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE linkedin_conversations SET classification = $2, classified_by = $3, classification_reason = $4,
+			classification_prompt_id = $5, hiring_company = $6, role = $7, is_agency = $8, classified_at = now()
+		WHERE id = $1`,
+		conversationID, classification.Class, classification.ClassifiedBy, classification.Reason, classification.PromptID,
+		classification.HiringCompany, classification.Role, classification.IsAgency)
+	return err
+}

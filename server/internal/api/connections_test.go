@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -86,5 +88,48 @@ func TestMessagesGiveConnectionsTheirHistoryAndReimportReplacesThem(t *testing.T
 	service.pool.QueryRow(context.Background(), `SELECT started_by_owner FROM linkedin_conversations WHERE linkedin_id = 'c2'`).Scan(&startedByOwner)
 	if !startedByOwner {
 		t.Fatal("c2 was started by the owner")
+	}
+}
+
+func TestTheRecruitersListCountsTheOpeningsAtTheirCompany(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	at := time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)
+	if _, err := service.hub.ImportLinkedInMessages(ctx, owner, []store.NewLinkedInMessage{{
+		ConversationID: "c1", SenderName: "Rita Recruiter", SenderProfileURL: "https://www.linkedin.com/in/rita-example",
+		RecipientProfileURLs: []string{"https://www.linkedin.com/in/owner-example"}, SentAt: at, Content: "A role at Globex",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, _ := service.hub.ListConversationsAwaitingClassification(ctx, 10)
+	if err := service.hub.SaveConversationClassification(ctx, awaiting[0].ID, store.ConversationClassification{
+		Class: "recruiter_outreach", ClassifiedBy: store.ClassifiedByModel, HiringCompany: "Globex Inc.", Role: "Engineer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(48 * time.Hour)
+	if _, err := service.hub.SyncFeedJobs(ctx, owner, store.JobSourceHimalayas, []store.JobPosting{{
+		ExternalID: "1", CompanyName: "Globex", Title: "Frontend Engineer", Location: "Worldwide",
+		URL: "https://himalayas.app/companies/globex/jobs/1", ExpiresAt: &expiresAt,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/recruiters", ownerToken, "")
+	var list struct {
+		Recruiters []struct {
+			StartedByName string `json:"started_by_name"`
+			HiringCompany string `json:"hiring_company"`
+			OpenJobs      int    `json:"open_jobs"`
+		} `json:"recruiters"`
+	}
+	if json.Unmarshal(body, &list); status != http.StatusOK || len(list.Recruiters) != 1 || list.Recruiters[0].OpenJobs != 1 ||
+		list.Recruiters[0].StartedByName != "Rita Recruiter" {
+		t.Fatalf("recruiters: %d %s", status, body)
+	}
+	status, body = send(t, http.MethodGet, service.url+"/v1/linkedin/conversations/"+awaiting[0].ID.String()+"/messages", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(body), "A role at Globex") {
+		t.Fatalf("messages: %d %s", status, body)
 	}
 }

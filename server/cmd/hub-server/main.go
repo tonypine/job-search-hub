@@ -19,6 +19,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
@@ -39,6 +40,9 @@ const (
 	// mailTriageInterval retries mail the model couldn't read; new mail
 	// nudges a pass at once.
 	mailTriageInterval = 5 * time.Minute
+	// conversationTriageInterval picks up LinkedIn conversations imported
+	// since the last pass, or that the model couldn't read.
+	conversationTriageInterval = 10 * time.Minute
 )
 
 func main() {
@@ -89,6 +93,7 @@ func run() error {
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
+	api.RegisterRecruiterRoutes(routes, hub, rates, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
@@ -110,6 +115,9 @@ func run() error {
 	var modelClient *chatcompletions.Client
 	if settings.jobFactsModelURL != "" {
 		modelClient = chatcompletions.NewClient(settings.jobFactsModelURL)
+	}
+	if modelClient != nil {
+		go conversationtriage.NewClassifier(hub, modelClient, settings.jobFactsModel).Run(ctx, conversationTriageInterval)
 	}
 	if modelClient != nil && settings.jobFactsInterval > 0 {
 		extractor := jobfacts.NewExtractor(hub, modelClient, settings.jobFactsModel)

@@ -27,11 +27,14 @@ const (
 	AgentPromptKindOutreachDraft = "outreach_draft"
 	// AgentPromptKindMailTriage sorts the received mail no rule could sort.
 	AgentPromptKindMailTriage = "mail_triage"
+	// AgentPromptKindLinkedInConversation sorts the LinkedIn conversations
+	// others started, finding the recruiters.
+	AgentPromptKindLinkedInConversation = "linkedin_conversation"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
-	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true,
+	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

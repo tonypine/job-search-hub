@@ -115,6 +115,8 @@ struct ContentView: View {
                 )
             case .companies:
                 CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil && focus?.opensSession == true).id(focus?.id)
+            case .recruiters:
+                RecruitersPage(onOpenCompany: { open(.company($0), opensSession: false) })
             case .profile: ProfilePage()
             case .jobs:
                 JobsPage(

@@ -4,6 +4,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     case updates
     case jobs
     case companies
+    case recruiters
     case profile
     case settings
 
@@ -15,6 +16,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .updates: "Updates"
         case .jobs: "Jobs"
         case .companies: "Companies"
+        case .recruiters: "Recruiters"
         case .profile: "Profile"
         case .settings: "Settings"
         }
@@ -27,6 +29,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .updates: "bell"
         case .jobs: "briefcase"
         case .companies: "building.2"
+        case .recruiters: "person.crop.rectangle.stack"
         case .profile: "person.crop.circle"
         case .settings: "gearshape"
         }

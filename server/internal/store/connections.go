@@ -104,7 +104,7 @@ func (s *Store) ImportConnections(ctx context.Context, actor Actor, connections 
 	return result, err
 }
 
-// getCompanyIDsByName maps each company's name, as normalizeCompanyName
+// getCompanyIDsByName maps each company's name, as NormalizeCompanyName
 // writes it, to the company.
 func getCompanyIDsByName(ctx context.Context, tx pgx.Tx) (map[string]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT id, name FROM companies`)
@@ -119,7 +119,7 @@ func getCompanyIDsByName(ctx context.Context, tx pgx.Tx) (map[string]uuid.UUID, 
 		if err := rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		companyIDs[normalizeCompanyName(name)] = id
+		companyIDs[NormalizeCompanyName(name)] = id
 	}
 	return companyIDs, rows.Err()
 }
@@ -143,7 +143,7 @@ func matchConnectionsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
 		if err := rows.Scan(&id, &companyName); err != nil {
 			return 0, err
 		}
-		if companyID, found := companyIDs[normalizeCompanyName(companyName)]; found && companyName != "" {
+		if companyID, found := companyIDs[NormalizeCompanyName(companyName)]; found && companyName != "" {
 			matches[id] = &companyID
 		} else {
 			matches[id] = nil
@@ -166,9 +166,9 @@ func matchConnectionsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
 
 var legalSuffixes = []string{" inc", " inc.", " llc", " ltd", " ltd.", " ltda", " ltda.", " gmbh", " s.a.", " sa", " corp", " corp.", " co."}
 
-// normalizeCompanyName compares company names as people write them:
+// NormalizeCompanyName compares company names as people write them:
 // "Acme, Inc." and "acme" are the same company.
-func normalizeCompanyName(name string) string {
+func NormalizeCompanyName(name string) string {
 	normalized := strings.TrimSpace(strings.ReplaceAll(wordmatch.Normalize(name), ",", ""))
 	for _, suffix := range legalSuffixes {
 		normalized = strings.TrimSuffix(normalized, suffix)
@@ -216,7 +216,7 @@ func (s *Store) ListCompanyConnections(ctx context.Context, companyID uuid.UUID)
 // the hub doesn't hold, such as one a feed posting names, compared as
 // ListCompanyConnections' matching compares names.
 func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName string) ([]Connection, error) {
-	wanted := normalizeCompanyName(companyName)
+	wanted := NormalizeCompanyName(companyName)
 	connections := []Connection{}
 	if wanted == "" {
 		return connections, nil
@@ -231,7 +231,7 @@ func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName st
 		return nil, err
 	}
 	for _, connection := range all {
-		if normalizeCompanyName(connection.CompanyName) == wanted {
+		if NormalizeCompanyName(connection.CompanyName) == wanted {
 			connections = append(connections, connection)
 		}
 	}
@@ -257,7 +257,7 @@ func tieJobsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
 		if err := rows.Scan(&jobID, &companyName); err != nil {
 			return 0, err
 		}
-		if companyID, found := companyIDs[normalizeCompanyName(companyName)]; found {
+		if companyID, found := companyIDs[NormalizeCompanyName(companyName)]; found {
 			matches[jobID] = companyID
 		}
 	}
