@@ -311,16 +311,19 @@ func getBothBounds(minimum, maximum *float64) (float64, float64) {
 	}
 }
 
-var payIntervalUnits = []string{"year", "month", "week", "day", "hour"}
+// payIntervalWords map the words boards use for a pay period to its unit:
+// Ashby's "1 YEAR", Lever's "per-year-salary", Himalayas' "annual".
+var payIntervalWords = []struct{ word, unit string }{
+	{"year", "year"}, {"annual", "year"}, {"month", "month"}, {"week", "week"}, {"daily", "day"}, {"day", "day"}, {"hour", "hour"},
+}
 
-// convertPayIntervalToUnit reads a board's interval, such as Ashby's "1 YEAR"
-// or Lever's "per-year-salary", as one of payIntervalUnits, or "" when none
-// is named.
+// convertPayIntervalToUnit reads a board's interval as year, month, week,
+// day or hour, or "" when it names none.
 func convertPayIntervalToUnit(interval string) string {
 	lowered := strings.ToLower(interval)
-	for _, unit := range payIntervalUnits {
-		if strings.Contains(lowered, unit) {
-			return unit
+	for _, candidate := range payIntervalWords {
+		if strings.Contains(lowered, candidate.word) {
+			return candidate.unit
 		}
 	}
 	return ""

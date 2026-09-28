@@ -46,7 +46,7 @@ func TestHimalayasSearchStopsAtThePageWithNothingRecent(t *testing.T) {
 	verifier, queries := startHimalayas(t, map[string]string{
 		"1": himalayasJob("a", recent, `[]`, `"minSalary":8000,"maxSalary":10000,"currency":"USD","salaryPeriod":"monthly",`) + "," +
 			himalayasJob("b", old, `["Brazil","Argentina"]`, ``),
-		"2": himalayasJob("c", recent, `["Brazil","Argentina","Chile","Mexico","Colombia"]`, `"minSalary":120000,"maxSalary":null,"currency":"CAD","salaryPeriod":"yearly",`),
+		"2": himalayasJob("c", recent, `["Brazil","Argentina","Chile","Mexico","Colombia"]`, `"minSalary":120000,"maxSalary":null,"currency":"CAD","salaryPeriod":"annual",`),
 		"3": himalayasJob("d", old, `[]`, ``),
 		"4": himalayasJob("e", recent, `[]`, ``),
 	})
