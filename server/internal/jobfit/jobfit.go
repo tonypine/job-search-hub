@@ -62,6 +62,7 @@ func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria, 
 		_ = json.Unmarshal(rawFacts, &facts)
 	}
 	checks := []Check{
+		checkRole(job, criteria),
 		checkLocation(job, facts, criteria),
 		checkStack(job, facts, criteria),
 		checkLevel(job, facts, criteria),
@@ -86,6 +87,64 @@ func getLevel(checks []Check) Level {
 		return LevelGood
 	}
 	return LevelUnclear
+}
+
+// genericRoleWords are left out of a criteria role when matching titles,
+// with the criteria's own levels: "Senior Front-End Engineer" matches any
+// title with "frontend" in it.
+var genericRoleWords = map[string]bool{"engineer": true, "developer": true, "software": true, "sr": true, "jr": true}
+
+// engineeringNouns mark a title as engineering work, in English and Portuguese.
+var engineeringNouns = []string{
+	"engineer", "developer", "desenvolvedor", "desenvolvedora", "programmer", "programador", "dev", "architect", "arquiteto", "swe",
+}
+
+func checkRole(job store.Job, criteria store.JobCriteria) Check {
+	const name = "Role"
+	title := normalizeTitle(job.Title)
+	if term, found := findTerm([]string{job.Title}, criteria.ExcludedRoleTerms); found {
+		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("%q in the title", term)}
+	}
+	for _, role := range criteria.Roles {
+		if keyword := getRoleKeyword(role, criteria.SeniorityLevels); keyword != "" && containsWords(title, keyword) {
+			return Check{Name: name, Verdict: VerdictYes, Reason: role}
+		}
+	}
+	isEngineering := hasAnyTerm([]string{job.Title}, engineeringNouns...)
+	for _, technology := range criteria.Technologies {
+		if isEngineering && containsTechnology(job.Title, technology) {
+			return Check{Name: name, Verdict: VerdictYes, Reason: "a " + technology + " role"}
+		}
+	}
+	if isEngineering {
+		return Check{Name: name, Verdict: VerdictUnclear, Reason: "an engineering title that names none of your roles"}
+	}
+	return Check{Name: name, Verdict: VerdictNo, Reason: "the title names none of your roles"}
+}
+
+// getRoleKeyword is what a criteria role must share with a title: its words
+// without the level and generic words, e.g. "frontend" for "Senior Front-End
+// Engineer" and "ai product" for "AI Product Engineer".
+func getRoleKeyword(role string, levels []string) string {
+	excluded := map[string]bool{}
+	for _, level := range levels {
+		excluded[normalizeWords(level)] = true
+	}
+	var kept []string
+	for _, word := range strings.Fields(normalizeTitle(role)) {
+		if !genericRoleWords[word] && !excluded[word] {
+			kept = append(kept, word)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+// titleSpellings join the spellings of the same kind of role.
+var titleSpellings = strings.NewReplacer("front-end", "frontend", "front end", "frontend", "full-stack", "fullstack", "full stack", "fullstack",
+	"back-end", "backend", "back end", "backend")
+
+func normalizeTitle(title string) string {
+	return titleSpellings.Replace(normalizeWords(title))
 }
 
 func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) Check {

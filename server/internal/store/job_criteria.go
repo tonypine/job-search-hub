@@ -18,6 +18,9 @@ import (
 type JobCriteria struct {
 	// Roles are the job titles the owner is after, e.g. "Senior Full-Stack Engineer".
 	Roles []string `json:"roles"`
+	// ExcludedRoleTerms are words in a title that make it a different kind of
+	// job, e.g. "Sales", "Manager", "Designer".
+	ExcludedRoleTerms []string `json:"excluded_role_terms"`
 	// SearchTerms are what job feeds are searched by, e.g. "react".
 	SearchTerms []string `json:"search_terms"`
 	// Technologies are the stack the owner wants to work in.

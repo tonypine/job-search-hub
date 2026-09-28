@@ -11,6 +11,7 @@ struct JobCriteriaSection: View {
         @Bindable var editor = editor
         Section {
             listField("Roles", text: $editor.draft.roles, prompt: "Senior Full-Stack Engineer, Product Engineer")
+            listField("Rules a title out", text: $editor.draft.excludedRoleTerms, prompt: "Sales, Manager, Analyst, Designer")
             listField("Search terms", text: $editor.draft.searchTerms, prompt: "react, typescript")
             listField("Technologies", text: $editor.draft.technologies, prompt: "TypeScript, React, Node.js")
             listField("Levels", text: $editor.draft.seniorityLevels, prompt: "Senior, Staff")

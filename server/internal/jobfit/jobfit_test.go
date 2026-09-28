@@ -9,6 +9,8 @@ import (
 )
 
 var criteria = store.JobCriteria{
+	Roles:                   []string{"Senior Front-End Engineer", "Senior Full-Stack Engineer", "Product Engineer", "AI Product Engineer"},
+	ExcludedRoleTerms:       []string{"Sales", "Manager", "Analyst", "Designer"},
 	Technologies:            []string{"TypeScript", "React", "Node.js"},
 	SeniorityLevels:         []string{"Senior", "Staff"},
 	HomeCountry:             "Brazil",
@@ -99,7 +101,7 @@ func pay(maximum float64, currency, interval string) *store.Pay {
 }
 
 func TestPayIsJudgedByEstimatedTakeHome(t *testing.T) {
-	if fit := jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: pay(25000, "BRL", "month")}}, nil, criteria, rates); len(fit.Checks) != 3 {
+	if fit := jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: pay(25000, "BRL", "month")}}, nil, criteria, rates); len(fit.Checks) != 4 {
 		t.Errorf("without a take-home or hourly pay there is no pay check: %+v", fit.Checks)
 	}
 	withTakeHome := criteria
@@ -142,10 +144,34 @@ func TestAContractorPostingWithoutACurrencyRateStaysUnclear(t *testing.T) {
 	}
 }
 
+func TestTheRole(t *testing.T) {
+	for _, test := range []struct {
+		title  string
+		want   jobfit.Verdict
+		reason string
+	}{
+		{"Senior Sales Engineer", jobfit.VerdictNo, `"Sales" in the title`},
+		{"Senior Business Analyst - Payments", jobfit.VerdictNo, `"Analyst" in the title`},
+		{"Technical Product Manager", jobfit.VerdictNo, `"Manager" in the title`},
+		{"Desenvolvedor FrontEnd React - Sênior", jobfit.VerdictYes, "Senior Front-End Engineer"},
+		{"Senior Full Stack Developer", jobfit.VerdictYes, "Senior Full-Stack Engineer"},
+		{"Product Engineer", jobfit.VerdictYes, "Product Engineer"},
+		{"Staff React Native Engineer", jobfit.VerdictYes, "a React role"},
+		{"Senior Software Engineer, Agents", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
+		{"Desenvolvedor(a) Backend Pleno", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
+		{"Content Writer, Investment Research", jobfit.VerdictNo, "the title names none of your roles"},
+	} {
+		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, criteria, rates), "Role")
+		if check.Verdict != test.want || check.Reason != test.reason {
+			t.Errorf("%q: %+v, want %s %q", test.title, check, test.want, test.reason)
+		}
+	}
+}
+
 func TestTheFitLevel(t *testing.T) {
-	good := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
-	unclear := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "Remote"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
-	poor := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"Java"}}), criteria, rates)
+	good := jobfit.Judge(store.Job{Title: "Senior Frontend Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
+	unclear := jobfit.Judge(store.Job{Title: "Senior Frontend Engineer", Location: "Remote"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
+	poor := jobfit.Judge(store.Job{Title: "Senior Frontend Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"Java"}}), criteria, rates)
 
 	if good.Level != jobfit.LevelGood || unclear.Level != jobfit.LevelUnclear || poor.Level != jobfit.LevelPoor {
 		t.Fatalf("levels = %s, %s, %s", good.Level, unclear.Level, poor.Level)

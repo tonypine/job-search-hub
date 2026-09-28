@@ -224,7 +224,7 @@ func TestTheJobsListAndDetailsCarryTheFit(t *testing.T) {
 	if err := json.Unmarshal(body, &list); status != http.StatusOK || err != nil || len(list.Jobs) != 1 {
 		t.Fatalf("list: %d %s", status, body)
 	}
-	if fit := list.Jobs[0].Fit; fit.Level != jobfit.LevelGood || len(fit.Checks) != 3 {
+	if fit := list.Jobs[0].Fit; fit.Level != jobfit.LevelGood || len(fit.Checks) != 4 {
 		t.Fatalf("list fit = %+v", fit)
 	}
 

@@ -4,6 +4,7 @@ import Observation
 /// What makes a job worth the owner's time, as the hub stores it.
 public struct JobCriteria: Codable, Equatable, Sendable {
     public var roles: [String]
+    public var excludedRoleTerms: [String]
     public var searchTerms: [String]
     public var technologies: [String]
     public var seniorityLevels: [String]
@@ -14,7 +15,7 @@ public struct JobCriteria: Codable, Equatable, Sendable {
     public var refuseHourlyWork: Bool
 
     enum CodingKeys: String, CodingKey {
-        case roles, searchTerms, technologies, seniorityLevels, homeCountry, eligibleLocationTerms, ineligibleLocationTerms, takeHome
+        case roles, excludedRoleTerms, searchTerms, technologies, seniorityLevels, homeCountry, eligibleLocationTerms, ineligibleLocationTerms, takeHome
         case refuseHourlyWork
     }
 
@@ -22,6 +23,7 @@ public struct JobCriteria: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         roles = try container.decodeIfPresent([String].self, forKey: .roles) ?? []
+        excludedRoleTerms = try container.decodeIfPresent([String].self, forKey: .excludedRoleTerms) ?? []
         searchTerms = try container.decodeIfPresent([String].self, forKey: .searchTerms) ?? []
         technologies = try container.decodeIfPresent([String].self, forKey: .technologies) ?? []
         seniorityLevels = try container.decodeIfPresent([String].self, forKey: .seniorityLevels) ?? []
@@ -33,10 +35,11 @@ public struct JobCriteria: Codable, Equatable, Sendable {
     }
 
     public init(
-        roles: [String] = [], searchTerms: [String] = [], technologies: [String] = [], seniorityLevels: [String] = [], homeCountry: String = "",
+        roles: [String] = [], excludedRoleTerms: [String] = [], searchTerms: [String] = [], technologies: [String] = [], seniorityLevels: [String] = [], homeCountry: String = "",
         eligibleLocationTerms: [String] = [], ineligibleLocationTerms: [String] = [], takeHome: TakeHome? = nil, refuseHourlyWork: Bool = false
     ) {
         self.roles = roles
+        self.excludedRoleTerms = excludedRoleTerms
         self.searchTerms = searchTerms
         self.technologies = technologies
         self.seniorityLevels = seniorityLevels
@@ -80,6 +83,7 @@ public struct SavedJobCriteria: Codable, Equatable, Sendable {
 /// check is off.
 public struct JobCriteriaDraft: Equatable, Sendable {
     public var roles: String
+    public var excludedRoleTerms: String
     public var searchTerms: String
     public var technologies: String
     public var seniorityLevels: String
@@ -92,6 +96,7 @@ public struct JobCriteriaDraft: Equatable, Sendable {
 
     public init(_ criteria: JobCriteria) {
         roles = Self.formatList(criteria.roles)
+        excludedRoleTerms = Self.formatList(criteria.excludedRoleTerms)
         searchTerms = Self.formatList(criteria.searchTerms)
         technologies = Self.formatList(criteria.technologies)
         seniorityLevels = Self.formatList(criteria.seniorityLevels)
@@ -105,7 +110,7 @@ public struct JobCriteriaDraft: Equatable, Sendable {
 
     public func makeCriteria() -> JobCriteria {
         JobCriteria(
-            roles: Self.parseList(roles), searchTerms: Self.parseList(searchTerms), technologies: Self.parseList(technologies),
+            roles: Self.parseList(roles), excludedRoleTerms: Self.parseList(excludedRoleTerms), searchTerms: Self.parseList(searchTerms), technologies: Self.parseList(technologies),
             seniorityLevels: Self.parseList(seniorityLevels), homeCountry: homeCountry.trimmingCharacters(in: .whitespaces),
             eligibleLocationTerms: Self.parseList(eligibleLocationTerms), ineligibleLocationTerms: Self.parseList(ineligibleLocationTerms),
             takeHome: judgesTakeHome ? takeHome : nil, refuseHourlyWork: refuseHourlyWork
