@@ -29,10 +29,11 @@ final class NetworkSectionModel {
         do {
             let files = try listExportFiles(picked)
             var imports = LinkedInArchive.findImports(in: files)
-            if imports.isEmpty, picked.pathExtension.lowercased() == "csv" {
+            let profileFiles = LinkedInArchive.findProfileFiles(in: files)
+            if imports.isEmpty, profileFiles.isEmpty, picked.pathExtension.lowercased() == "csv" {
                 imports = [(.connections, picked)]
             }
-            guard !imports.isEmpty else {
+            guard !imports.isEmpty || !profileFiles.isEmpty else {
                 errorMessage = "No file of a LinkedIn export found there, such as Connections.csv or messages.csv."
                 return
             }
@@ -57,6 +58,13 @@ final class NetworkSectionModel {
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: VouchingImport.self)
                         .makeSummary(of: kind.vouchingTitle))
                 }
+            }
+            if !profileFiles.isEmpty {
+                var contents: [String: String] = [:]
+                for file in profileFiles {
+                    contents[file.lastPathComponent] = try String(contentsOf: file, encoding: .utf8)
+                }
+                importLines.append(try await client.send("POST", "v1/linkedin/profile/import", body: ProfileImportRequest(files: contents), as: ProfileImportResponse.self).summary)
             }
             errorMessage = nil
             await load(with: client)

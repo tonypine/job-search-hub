@@ -108,6 +108,11 @@ func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) 
 	if text == "" {
 		text = missingProfileText
 	}
+	linkedIn, err := hub.GetLinkedInProfile(ctx)
+	if err != nil {
+		return "", err
+	}
+	text += describeLinkedInProfile(linkedIn)
 	recommendations, err := hub.ListRecommendationsReceived(ctx)
 	if err != nil || len(recommendations) == 0 {
 		return text, err
@@ -206,4 +211,46 @@ func RenderRecruiterReply(ctx context.Context, hub *store.Store, conversation st
 		"{{openings}}", openingsText,
 	).Replace(prompt.Body)
 	return Rendered{Body: filled, Version: prompt.Version}, nil
+}
+
+// describeLinkedInProfile writes the owner's LinkedIn profile as text for an
+// agent: headline, positions, skills, languages and education. It is empty
+// when no profile was imported.
+func describeLinkedInProfile(profile store.LinkedInProfile) string {
+	if profile.Headline == "" && len(profile.Positions) == 0 && len(profile.Skills) == 0 {
+		return ""
+	}
+	var text strings.Builder
+	text.WriteString("\n\nFrom my LinkedIn profile:\n")
+	if profile.Headline != "" {
+		fmt.Fprintf(&text, "\nHeadline: %s\n", profile.Headline)
+	}
+	if len(profile.Positions) > 0 {
+		text.WriteString("\nPositions:\n")
+		for _, position := range profile.Positions {
+			finished := position.FinishedOn
+			if finished == "" {
+				finished = "now"
+			}
+			fmt.Fprintf(&text, "- %s at %s (%s – %s)\n", position.Title, position.Company, position.StartedOn, finished)
+		}
+	}
+	if len(profile.Skills) > 0 {
+		fmt.Fprintf(&text, "\nSkills: %s\n", strings.Join(profile.Skills, ", "))
+	}
+	if len(profile.Languages) > 0 {
+		var languages []string
+		for _, language := range profile.Languages {
+			described := language.Name
+			if language.Proficiency != "" {
+				described += " (" + language.Proficiency + ")"
+			}
+			languages = append(languages, described)
+		}
+		fmt.Fprintf(&text, "\nLanguages: %s\n", strings.Join(languages, ", "))
+	}
+	for _, education := range profile.Education {
+		fmt.Fprintf(&text, "\nEducation: %s\n", strings.TrimSpace(education.Degree+", "+education.School))
+	}
+	return text.String()
 }

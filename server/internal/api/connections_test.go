@@ -216,3 +216,45 @@ func TestFollowedCompaniesAreSuggestedByTheirOpenings(t *testing.T) {
 		t.Fatalf("suggestions: %d %s; want Initech first with its opening, and Acme left out as already in the hub", status, body)
 	}
 }
+
+func TestTheLinkedInProfileIsImportedComparedAndItsEmployersNotSuggested(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	if _, err := service.hub.SaveJobCriteria(ctx, store.Actor{Kind: store.ActorOwner}, store.JobCriteria{
+		Roles: []string{"Senior Software Engineer", "Senior Front-End Engineer"}, EligibleLocationTerms: []string{"Brazil", "LATAM"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(map[string]any{"files": map[string]string{
+		"Profile.csv":                "First Name,Last Name,Maiden Name,Address,Birth Date,Headline,Summary,Industry,Zip Code,Geo Location,Twitter Handles,Websites,Instant Messengers\nOwner,Example,,Secret Street 1,1 Jan 1990,Senior Software Engineer,Builds products,Software,00000,Brazil,,,\n",
+		"Positions.csv":              "Company Name,Title,Description,Location,Started On,Finished On\nGlobex,Senior Engineer,,Remote,Jan 2024,\nUmbrella Health,Engineer,,Remote,Jan 2020,Dec 2023\n",
+		"Skills.csv":                 "Name\nReact\nTypeScript\n",
+		"Job Seeker Preferences.csv": "Locations,Industries,Company Employee Count,Preferred Job Types,Job Titles,Open To Recruiters\n,Software Development,Over 1 employees,Full-time,Senior Software Engineer,No\n",
+	}})
+	status, body := send(t, http.MethodPost, service.url+"/v1/linkedin/profile/import", ownerToken, string(request))
+	if status != http.StatusOK || !strings.Contains(string(body), "Positions.csv") {
+		t.Fatalf("import: %d %s", status, body)
+	}
+
+	status, body = send(t, http.MethodGet, service.url+"/v1/linkedin/profile", ownerToken, "")
+	var read struct {
+		Profile             store.LinkedInProfile `json:"profile"`
+		CriteriaDifferences []string              `json:"criteria_differences"`
+	}
+	json.Unmarshal(body, &read)
+	if status != http.StatusOK || read.Profile.Headline != "Senior Software Engineer" || len(read.Profile.Skills) != 2 || strings.Contains(string(body), "Secret Street") {
+		t.Fatalf("profile: %d %s; want the headline and skills, and never the address", status, body)
+	}
+	differences := strings.Join(read.CriteriaDifferences, "\n")
+	if !strings.Contains(differences, `"Senior Front-End Engineer"`) || !strings.Contains(differences, "Open to recruiters is off") ||
+		!strings.Contains(differences, "no locations") || strings.Contains(differences, `want "Senior Software Engineer"`) {
+		t.Fatalf("differences = %q", differences)
+	}
+
+	follows := "Organization,Followed On\nGlobex,Wed Jun 24 12:43:42 UTC 2026\nInitech,Thu Oct 24 16:49:32 UTC 2024\nUmbrella,Thu Oct 24 16:49:32 UTC 2024\n"
+	send(t, http.MethodPost, service.url+"/v1/linkedin/company-follows/import", ownerToken, follows)
+	status, body = send(t, http.MethodGet, service.url+"/v1/company-suggestions", ownerToken, "")
+	if status != http.StatusOK || strings.Contains(string(body), "Globex") || strings.Contains(string(body), "Umbrella") || !strings.Contains(string(body), "Initech") {
+		t.Fatalf("suggestions: %d %s; a former employer is never suggested", status, body)
+	}
+}

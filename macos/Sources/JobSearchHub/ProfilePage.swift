@@ -4,12 +4,14 @@ import SwiftUI
 struct ProfilePage: View {
     @Environment(HubConnection.self) private var connection
     @State private var editor = ProfileEditor()
+    @State private var linkedIn: LinkedInProfileResponse?
 
     var body: some View {
         Group {
             if let client = connection.makeClient() {
                 content(client: client)
                     .task { await editor.load(with: client) }
+                    .task { linkedIn = try? await client.get("v1/linkedin/profile", as: LinkedInProfileResponse.self) }
             } else {
                 ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
             }
@@ -32,10 +34,15 @@ struct ProfilePage: View {
                     .disabled(editor.isSaving)
             } else if let profile = editor.profile {
                 ScrollView {
-                    ProfileDocument(markdown: profile.body)
-                        .padding(24)
-                        .frame(maxWidth: 760, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 28) {
+                        ProfileDocument(markdown: profile.body)
+                        if let linkedIn, !linkedIn.profile.isEmpty {
+                            LinkedInProfileSection(response: linkedIn)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -93,3 +100,52 @@ struct ProfileDocument: View {
             ?? AttributedString(text)
     }
 }
+
+/// The LinkedIn profile the agents also read, and where it differs from the
+/// hub's criteria.
+struct LinkedInProfileSection: View {
+    let response: LinkedInProfileResponse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("From LinkedIn").font(.title3.bold())
+            if !response.criteriaDifferences.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("LinkedIn and your criteria differ", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    ForEach(response.criteriaDifferences, id: \.self) { difference in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("•")
+                            Text(difference)
+                        }
+                    }
+                    Text("Recruiters find you by what LinkedIn says. Edit it there, or the criteria in Settings.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let headline = response.profile.headline {
+                Text(headline).fontWeight(.medium)
+            }
+            if let positions = response.profile.positions, !positions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Positions").font(.headline)
+                    ForEach(Array(positions.enumerated()), id: \.offset) { _, position in
+                        Text("\(position.title) at \(position.company)").fontWeight(.medium)
+                            + Text("  \(position.period)").foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let skills = response.profile.skills, !skills.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Skills").font(.headline)
+                    Text(skills.joined(separator: " · ")).foregroundStyle(.secondary)
+                }
+            }
+            Text("Agents read this with your profile above. Import again from Settings › Network to update it.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .textSelection(.enabled)
+    }
+}
+

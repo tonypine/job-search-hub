@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
 )
 
 type NewCompanyFollow struct {
@@ -44,11 +46,16 @@ type CompanyFollow struct {
 }
 
 // ListCompanyFollowsNotInHub returns the followed companies the hub doesn't
-// hold yet, compared by name, with the connections at each.
+// hold yet and the owner never worked at, compared by name, with the
+// connections at each.
 func (s *Store) ListCompanyFollowsNotInHub(ctx context.Context) ([]CompanyFollow, error) {
 	var follows []CompanyFollow
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		companyIDs, err := getCompanyIDsByName(ctx, tx)
+		if err != nil {
+			return err
+		}
+		formerEmployers, err := getFormerEmployerNames(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -81,7 +88,7 @@ func (s *Store) ListCompanyFollowsNotInHub(ctx context.Context) ([]CompanyFollow
 		}
 		for _, follow := range all {
 			key := NormalizeCompanyName(follow.Organization)
-			if _, inHub := companyIDs[key]; inHub {
+			if _, inHub := companyIDs[key]; inHub || isFormerEmployer(key, formerEmployers) {
 				continue
 			}
 			follow.ConnectionCount = connectionCounts[key]
@@ -90,4 +97,35 @@ func (s *Store) ListCompanyFollowsNotInHub(ctx context.Context) ([]CompanyFollow
 		return nil
 	})
 	return follows, err
+}
+
+// getFormerEmployerNames returns the normalized names of the companies in the
+// owner's LinkedIn positions.
+func getFormerEmployerNames(ctx context.Context, tx pgx.Tx) (map[string]bool, error) {
+	names := map[string]bool{}
+	rows, err := tx.Query(ctx, `SELECT jsonb_array_elements(snapshot->'positions')->>'company' FROM linkedin_profile`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var company string
+		if err := rows.Scan(&company); err != nil {
+			return nil, err
+		}
+		names[NormalizeCompanyName(company)] = true
+	}
+	return names, rows.Err()
+}
+
+// isFormerEmployer reports whether a normalized company name is one the
+// owner worked at, one written inside the other as whole words, as
+// "clipboard" is in "clipboard health": a miss here only hides a suggestion.
+func isFormerEmployer(name string, formerEmployers map[string]bool) bool {
+	for employer := range formerEmployers {
+		if employer != "" && (wordmatch.Contains(employer, name) || wordmatch.Contains(name, employer)) {
+			return true
+		}
+	}
+	return false
 }
