@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
@@ -58,9 +59,16 @@ func run() error {
 		return err
 	}
 
+	hub := store.New(database)
+	verifier := tokens.NewVerifier(settings.ownerToken, hub)
+	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
+		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
+	})
+
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(store.New(database)), tokens.NewVerifier(settings.ownerToken)))
+	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub), verifier))
 
 	server := &http.Server{
 		Addr:              settings.address,

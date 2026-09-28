@@ -27,7 +27,8 @@ type hubUnderTest struct {
 func startHub(t *testing.T) hubUnderTest {
 	t.Helper()
 	pool := testdatabase.New(t)
-	handler := mcptools.NewHandler(mcptools.NewServer(store.New(pool)), tokens.NewVerifier(ownerToken))
+	hub := store.New(pool)
+	handler := mcptools.NewHandler(mcptools.NewServer(hub), tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, url: server.URL}

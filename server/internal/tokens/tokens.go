@@ -4,6 +4,8 @@ package tokens
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -14,16 +16,49 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-const ScopeOwner = "owner"
+const (
+	ScopeOwner    = "owner"
+	ScopeAgentRun = "agent_run"
+)
 
-// NewVerifier accepts the owner token.
-func NewVerifier(ownerToken string) auth.TokenVerifier {
-	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+type agentRunLookup interface {
+	GetRunningAgentRunByTokenHash(ctx context.Context, tokenHash []byte) (store.AgentRun, error)
+}
+
+// NewVerifier accepts the owner token, and the token of any agent run that is
+// still running and unexpired.
+func NewVerifier(ownerToken string, agentRuns agentRunLookup) auth.TokenVerifier {
+	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(ownerToken)) == 1 {
 			return &auth.TokenInfo{UserID: ScopeOwner, Scopes: []string{ScopeOwner}}, nil
 		}
-		return nil, auth.ErrInvalidToken
+
+		run, err := agentRuns.GetRunningAgentRunByTokenHash(ctx, HashAgentRunToken(token))
+		if errors.Is(err, store.ErrAgentRunNotFound) {
+			return nil, auth.ErrInvalidToken
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &auth.TokenInfo{
+			UserID:     "agent-run:" + run.ID.String(),
+			Scopes:     []string{ScopeAgentRun},
+			Expiration: run.TokenExpiresAt,
+			Extra:      map[string]any{"agent_run_id": run.ID},
+		}, nil
 	}
+}
+
+// NewAgentRunToken returns a fresh random token and the hash the store keeps
+// in its place.
+func NewAgentRunToken() (string, []byte) {
+	token := rand.Text()
+	return token, HashAgentRunToken(token)
+}
+
+func HashAgentRunToken(token string) []byte {
+	hash := sha256.Sum256([]byte(token))
+	return hash[:]
 }
 
 // GetActor returns who the verified token in ctx belongs to.
