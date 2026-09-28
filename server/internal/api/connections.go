@@ -123,6 +123,19 @@ func RegisterConnectionRoutes(routes *http.ServeMux, hub *store.Store, requireOw
 	handle("POST /v1/linkedin/endorsements-given/import", importEndorsements(linkedinexport.ParseEndorsementsGiven))
 	handle("POST /v1/linkedin/recommendations-received/import", importRecommendations(linkedinexport.ParseRecommendationsReceived))
 	handle("POST /v1/linkedin/recommendations-given/import", importRecommendations(linkedinexport.ParseRecommendationsGiven))
+
+	handle("POST /v1/linkedin/company-follows/import", func(w http.ResponseWriter, r *http.Request) {
+		follows, err := linkedinexport.ParseCompanyFollows(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
+		if !writeImportReadError(w, err) {
+			return
+		}
+		imported, err := hub.ImportCompanyFollows(r.Context(), store.Actor{Kind: store.ActorOwner}, follows)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, imported)
+	})
 }
 
 // writeImportReadError answers a file that couldn't be read, and reports

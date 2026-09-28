@@ -94,6 +94,7 @@ func run() error {
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	api.RegisterRecruiterRoutes(routes, hub, rates, requireOwner)
+	api.RegisterCompanySuggestionRoutes(routes, hub, rates, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)

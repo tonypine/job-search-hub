@@ -180,3 +180,33 @@ func TestLinkedInApplicationsJoinThePipelineAsActiveCardsOrHistory(t *testing.T)
 		t.Fatalf("cards = %+v", phases)
 	}
 }
+
+func TestFollowedCompaniesAreSuggestedByTheirOpenings(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	follows := "Organization,Followed On\nGlobex,Wed Jun 24 12:43:42 UTC 2026\nInitech,Thu Oct 24 16:49:32 UTC 2024\nAcme,Wed Mar 20 18:29:04 UTC 2013\n"
+	if status, body := send(t, http.MethodPost, service.url+"/v1/linkedin/company-follows/import", ownerToken, follows); status != http.StatusOK || !strings.Contains(string(body), `"stored":3`) {
+		t.Fatalf("import: %d %s", status, body)
+	}
+	service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	expiresAt := time.Now().Add(48 * time.Hour)
+	if _, err := service.hub.SyncFeedJobs(ctx, owner, store.JobSourceHimalayas, []store.JobPosting{{
+		ExternalID: "1", CompanyName: "Initech", Title: "Frontend Engineer", Location: "Worldwide",
+		URL: "https://himalayas.app/companies/initech/jobs/1", ExpiresAt: &expiresAt,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/company-suggestions", ownerToken, "")
+	var list struct {
+		Suggestions []struct {
+			Organization string `json:"organization"`
+			OpenJobs     int    `json:"open_jobs"`
+		} `json:"suggestions"`
+	}
+	if json.Unmarshal(body, &list); status != http.StatusOK || len(list.Suggestions) != 2 || list.Suggestions[0].Organization != "Initech" ||
+		list.Suggestions[0].OpenJobs != 1 {
+		t.Fatalf("suggestions: %d %s; want Initech first with its opening, and Acme left out as already in the hub", status, body)
+	}
+}

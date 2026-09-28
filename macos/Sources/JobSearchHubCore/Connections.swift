@@ -89,6 +89,7 @@ public enum LinkedInArchive {
         case endorsementsGiven = "Endorsement_Given_Info.csv"
         case recommendationsReceived = "Recommendations_Received.csv"
         case recommendationsGiven = "Recommendations_Given.csv"
+        case companyFollows = "Company Follows.csv"
 
         /// What the import summary calls a vouching file.
         public var vouchingTitle: String {
@@ -112,6 +113,7 @@ public enum LinkedInArchive {
             case .endorsementsGiven: "v1/linkedin/endorsements-given/import"
             case .recommendationsReceived: "v1/linkedin/recommendations-received/import"
             case .recommendationsGiven: "v1/linkedin/recommendations-given/import"
+            case .companyFollows: "v1/linkedin/company-follows/import"
             }
         }
     }
@@ -148,5 +150,45 @@ public struct VouchingImport: Decodable, Equatable, Sendable {
     public func makeSummary(of what: String) -> String {
         "\(what): \(stored); \(connectionsWithVouches) connections vouch for you or you for them."
     }
+}
+
+/// What an import of Company Follows.csv stored.
+public struct FollowsImport: Decodable, Equatable, Sendable {
+    public var stored: Int
+
+    public var summary: String { "Followed companies: \(stored); see Suggestions on the Companies page." }
+}
+
+/// A company the owner follows on LinkedIn that the hub doesn't hold, and
+/// what makes it worth researching.
+public struct CompanySuggestion: Decodable, Equatable, Identifiable, Sendable {
+    public var organization: String
+    public var followedAt: Date?
+    public var connectionCount: Int
+    public var openJobs: Int
+    public var fittingJobs: Int
+
+    public var id: String { organization }
+
+    /// "2 fitting jobs open · 1 person you know", or "Followed since 2019".
+    public var reason: String {
+        var parts: [String] = []
+        if fittingJobs > 0 {
+            parts.append(fittingJobs == 1 ? "1 fitting job open" : "\(fittingJobs) fitting jobs open")
+        } else if openJobs > 0 {
+            parts.append(openJobs == 1 ? "1 job open" : "\(openJobs) jobs open")
+        }
+        if connectionCount > 0 {
+            parts.append(connectionCount == 1 ? "1 person you know" : "\(connectionCount) people you know")
+        }
+        if parts.isEmpty, let followedAt {
+            parts.append("Followed since \(followedAt.formatted(.dateTime.year()))")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+public struct CompanySuggestionsResponse: Decodable, Sendable {
+    public var suggestions: [CompanySuggestion]
 }
 

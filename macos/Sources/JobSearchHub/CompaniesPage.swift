@@ -43,6 +43,7 @@ struct CompaniesPage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(CompanyResearch.self) private var research
     @State private var isAddingCompany = false
+    @State private var isShowingSuggestions = false
     @State private var model = CompaniesModel()
     @State private var side: PanelSide = .details
     private let opensSession: Bool
@@ -65,6 +66,13 @@ struct CompaniesPage: View {
                 }
                 .task { await model.load(with: client) }
                 .onChange(of: [events.revision, unseen.revision, research.revision]) { Task { await model.load(with: client) } }
+                .sheet(isPresented: $isShowingSuggestions) {
+                    CompanySuggestionsSheet(client: client) { suggestion in
+                        research.start(company: suggestion.organization, foundVia: "Followed on LinkedIn", client: client)
+                        isShowingSuggestions = false
+                        isAddingCompany = true
+                    }
+                }
                 .sheet(isPresented: $isAddingCompany) {
                     AddCompanySheet(client: client, getCompanyName: { id in model.summaries.first { $0.id == id }?.company.name }) { companyID in
                         model.selectedID = companyID
@@ -89,6 +97,8 @@ struct CompaniesPage: View {
                         }
                         .help("Show the research's progress")
                     }
+                    Button("Suggestions", systemImage: "sparkles") { isShowingSuggestions = true }
+                        .help("Companies you follow on LinkedIn, to research")
                     Button("Add company", systemImage: "plus") { isAddingCompany = true }
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                         .disabled(model.isLoading)
