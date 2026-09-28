@@ -49,3 +49,42 @@ func TestConnectionsAreImportedOnceAndTiedToKnownCompanies(t *testing.T) {
 		t.Fatalf("without the owner token: %d", status)
 	}
 }
+
+func TestMessagesGiveConnectionsTheirHistoryAndReimportReplacesThem(t *testing.T) {
+	service := startAPI(t)
+	connections := "First Name,Last Name,URL,Email Address,Company,Position,Connected On\n" +
+		"Rita,Recruiter,https://www.linkedin.com/in/rita-example/,,Acme,Recruiter,01 Jan 2020\n" +
+		"Ada,Lovelace,https://www.linkedin.com/in/ada-example,,Globex,Engineer,01 Jan 2020\n"
+	if status, body := send(t, http.MethodPost, service.url+"/v1/connections/import", ownerToken, connections); status != http.StatusOK {
+		t.Fatalf("connections: %d %s", status, body)
+	}
+	messages := `"CONVERSATION ID","CONVERSATION TITLE","FROM","SENDER PROFILE URL","TO","RECIPIENT PROFILE URLS","DATE","SUBJECT","CONTENT","FOLDER","ATTACHMENTS"
+"c1","","Rita","https://www.linkedin.com/in/rita-example","Owner","https://www.linkedin.com/in/owner-example","2025-03-01 10:00:00 UTC","","A role","INBOX",""
+"c1","","Owner","https://www.linkedin.com/in/owner-example","Rita","https://www.linkedin.com/in/rita-example","2025-03-02 10:00:00 UTC","","Thanks","INBOX",""
+"c2","","Owner","https://www.linkedin.com/in/owner-example","Rita","https://www.linkedin.com/in/rita-example","2026-01-05 10:00:00 UTC","","Checking in","INBOX",""
+`
+	for attempt := 1; attempt <= 2; attempt++ {
+		status, body := send(t, http.MethodPost, service.url+"/v1/linkedin/messages/import", ownerToken, messages)
+		var imported store.MessagesImport
+		if json.Unmarshal(body, &imported); status != http.StatusOK || imported.Conversations != 2 || imported.Messages != 3 || imported.ConnectionsWithHistory != 1 {
+			t.Fatalf("import %d: %d %s", attempt, status, body)
+		}
+	}
+	var messageRows int
+	service.pool.QueryRow(context.Background(), `SELECT count(*) FROM linkedin_messages`).Scan(&messageRows)
+	if messageRows != 3 {
+		t.Fatalf("stored messages = %d after two imports; want 3", messageRows)
+	}
+	var conversations, messageCount int
+	var theyWroteFirst bool
+	service.pool.QueryRow(context.Background(), `SELECT conversation_count, message_count, they_wrote_first FROM connections WHERE first_name = 'Rita'`).
+		Scan(&conversations, &messageCount, &theyWroteFirst)
+	if conversations != 2 || messageCount != 3 || !theyWroteFirst {
+		t.Fatalf("Rita's history = %d conversations, %d messages, wrote first %v", conversations, messageCount, theyWroteFirst)
+	}
+	var startedByOwner bool
+	service.pool.QueryRow(context.Background(), `SELECT started_by_owner FROM linkedin_conversations WHERE linkedin_id = 'c2'`).Scan(&startedByOwner)
+	if !startedByOwner {
+		t.Fatal("c2 was started by the owner")
+	}
+}

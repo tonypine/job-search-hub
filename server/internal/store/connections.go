@@ -25,14 +25,23 @@ type Connection struct {
 	CompanyID   *uuid.UUID `json:"company_id,omitempty"`
 	ImportedAt  time.Time  `json:"imported_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	// The owner's LinkedIn conversations with them: how many, how many
+	// messages, when first and last, and whether they ever wrote first.
+	ConversationCount int        `json:"conversation_count"`
+	MessageCount      int        `json:"message_count"`
+	FirstMessageAt    *time.Time `json:"first_message_at,omitempty"`
+	LastMessageAt     *time.Time `json:"last_message_at,omitempty"`
+	TheyWroteFirst    bool       `json:"they_wrote_first"`
 }
 
-const connectionColumns = `id, first_name, last_name, profile_url, email, company_name, position, connected_on, company_id, imported_at, updated_at`
+const connectionColumns = `id, first_name, last_name, profile_url, email, company_name, position, connected_on, company_id, imported_at, updated_at,
+	conversation_count, message_count, first_message_at, last_message_at, they_wrote_first`
 
 func scanConnection(row pgx.Row) (Connection, error) {
 	var connection Connection
 	err := row.Scan(&connection.ID, &connection.FirstName, &connection.LastName, &connection.ProfileURL, &connection.Email,
-		&connection.CompanyName, &connection.Position, &connection.ConnectedOn, &connection.CompanyID, &connection.ImportedAt, &connection.UpdatedAt)
+		&connection.CompanyName, &connection.Position, &connection.ConnectedOn, &connection.CompanyID, &connection.ImportedAt, &connection.UpdatedAt,
+		&connection.ConversationCount, &connection.MessageCount, &connection.FirstMessageAt, &connection.LastMessageAt, &connection.TheyWroteFirst)
 	return connection, err
 }
 
@@ -87,6 +96,9 @@ func (s *Store) ImportConnections(ctx context.Context, actor Actor, connections 
 			return err
 		}
 		result.Matched = matched
+		if _, err := refreshConnectionHistory(ctx, tx); err != nil {
+			return err
+		}
 		return insertChange(ctx, tx, actor, change{entityType: "connections", entityID: uuid.New(), operation: "import", after: result})
 	})
 	return result, err
@@ -170,12 +182,18 @@ type ConnectionsSummary struct {
 	Count          int        `json:"count"`
 	Matched        int        `json:"matched"`
 	LastImportedAt *time.Time `json:"last_imported_at,omitempty"`
+	// Conversations and Invitations count what the archive import stored.
+	Conversations int `json:"conversations"`
+	Invitations   int `json:"invitations"`
 }
 
 func (s *Store) GetConnectionsSummary(ctx context.Context) (ConnectionsSummary, error) {
 	var summary ConnectionsSummary
-	err := s.pool.QueryRow(ctx, `SELECT count(*), count(company_id), max(updated_at) FROM connections`).
-		Scan(&summary.Count, &summary.Matched, &summary.LastImportedAt)
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*), count(company_id), max(updated_at),
+			(SELECT count(*) FROM linkedin_conversations), (SELECT count(*) FROM linkedin_invitations)
+		FROM connections`).
+		Scan(&summary.Count, &summary.Matched, &summary.LastImportedAt, &summary.Conversations, &summary.Invitations)
 	return summary, err
 }
 
