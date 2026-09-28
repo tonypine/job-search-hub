@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func lookupFrom(values map[string]string) func(string) string {
@@ -50,5 +51,25 @@ func TestParseEnvironmentRejectsAShortOwnerToken(t *testing.T) {
 	_, err := parseEnvironment(lookupFrom(environment))
 	if err == nil || !strings.Contains(err.Error(), "HUB_OWNER_TOKEN") {
 		t.Fatalf("expected an owner token length error, got %v", err)
+	}
+}
+
+func TestParseEnvironmentReadsTheBoardPollInterval(t *testing.T) {
+	for raw, want := range map[string]time.Duration{"": time.Hour, "30m": 30 * time.Minute, "0": 0} {
+		environment := map[string]string{"HUB_BOARD_POLL_INTERVAL": raw}
+		for name, value := range validEnvironment {
+			environment[name] = value
+		}
+		parsed, err := parseEnvironment(lookupFrom(environment))
+		if err != nil || parsed.boardPollInterval != want {
+			t.Errorf("%q: interval %v, err %v; want %v", raw, parsed.boardPollInterval, err, want)
+		}
+	}
+	environment := map[string]string{"HUB_BOARD_POLL_INTERVAL": "hourly"}
+	for name, value := range validEnvironment {
+		environment[name] = value
+	}
+	if _, err := parseEnvironment(lookupFrom(environment)); err == nil {
+		t.Error("expected an error for an invalid interval")
 	}
 }

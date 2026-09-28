@@ -1,0 +1,302 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	JobSourceJobBoard = "job_board"
+	JobSourceManual   = "manual"
+)
+
+type Job struct {
+	ID            uuid.UUID  `json:"id"`
+	CompanyID     *uuid.UUID `json:"company_id,omitempty"`
+	JobBoardID    *uuid.UUID `json:"job_board_id,omitempty"`
+	ExternalID    *string    `json:"external_id,omitempty"`
+	Source        string     `json:"source"`
+	Title         string     `json:"title"`
+	Location      string     `json:"location,omitempty"`
+	WorkplaceType string     `json:"workplace_type,omitempty"`
+	URL           string     `json:"url"`
+	Description   string     `json:"description,omitempty"`
+	FirstSeenAt   time.Time  `json:"first_seen_at"`
+	LastSeenAt    time.Time  `json:"last_seen_at"`
+	ClosedAt      *time.Time `json:"closed_at,omitempty"`
+}
+
+const jobColumns = `id, company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, first_seen_at, last_seen_at, closed_at`
+
+// prefixedJobColumns are the jobColumns qualified for queries that join
+// companies, whose id would otherwise be ambiguous.
+const prefixedJobColumns = `jobs.id, jobs.company_id, jobs.job_board_id, jobs.external_id, jobs.source, jobs.title, jobs.location, jobs.workplace_type, jobs.url, jobs.description, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at`
+
+// scanJob reads the jobColumns, then any extra columns the query selects
+// after them into extra.
+func scanJob(row pgx.Row, extra ...any) (Job, error) {
+	var job Job
+	destinations := append([]any{&job.ID, &job.CompanyID, &job.JobBoardID, &job.ExternalID, &job.Source, &job.Title, &job.Location,
+		&job.WorkplaceType, &job.URL, &job.Description, &job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt}, extra...)
+	err := row.Scan(destinations...)
+	return job, err
+}
+
+// JobPosting is one open posting as a job board lists it.
+type JobPosting struct {
+	ExternalID    string
+	Title         string
+	Location      string
+	WorkplaceType string
+	URL           string
+	Description   string
+	Raw           json.RawMessage
+}
+
+// BoardSyncResult counts what one sync of a board changed.
+type BoardSyncResult struct {
+	Created  int `json:"created"`
+	Closed   int `json:"closed"`
+	Reopened int `json:"reopened"`
+	Seen     int `json:"seen"`
+}
+
+// SyncBoardJobs makes the board's jobs match its current postings, as seen at
+// seenAt: new postings are created, known ones are refreshed, postings that
+// disappeared are closed, and a closed one that returns is reopened. Only
+// those lifecycle events are recorded as changes; refreshing a posting that
+// is still open is not.
+func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, postings []JobPosting, seenAt time.Time) (BoardSyncResult, error) {
+	result := BoardSyncResult{Seen: len(postings)}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT external_id, id, closed_at FROM jobs WHERE job_board_id = $1 FOR UPDATE`, board.ID)
+		if err != nil {
+			return err
+		}
+		type knownJob struct {
+			id       uuid.UUID
+			closedAt *time.Time
+		}
+		known := map[string]knownJob{}
+		for rows.Next() {
+			var externalID string
+			var job knownJob
+			if err := rows.Scan(&externalID, &job.id, &job.closedAt); err != nil {
+				return err
+			}
+			known[externalID] = job
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		seenExternalIDs := make([]string, 0, len(postings))
+		for _, posting := range postings {
+			seenExternalIDs = append(seenExternalIDs, posting.ExternalID)
+			existing, isKnown := known[posting.ExternalID]
+			if !isKnown {
+				job, err := scanJob(tx.QueryRow(ctx, `
+					INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at)
+					VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10)
+					RETURNING `+jobColumns,
+					board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+					posting.URL, posting.Description, posting.Raw, seenAt))
+				if err != nil {
+					return err
+				}
+				result.Created++
+				if err := insertChange(ctx, tx, actor, change{
+					entityType: "job", entityID: job.ID, operation: "create",
+					after: map[string]string{"title": job.Title, "url": job.URL}, sourceURL: job.URL,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if _, err := tx.Exec(ctx, `
+				UPDATE jobs SET title = $2, location = $3, workplace_type = $4, url = $5, description = $6, raw = $7,
+					last_seen_at = $8, closed_at = NULL
+				WHERE id = $1`,
+				existing.id, posting.Title, posting.Location, posting.WorkplaceType, posting.URL, posting.Description, posting.Raw, seenAt); err != nil {
+				return err
+			}
+			if existing.closedAt != nil {
+				result.Reopened++
+				if err := insertChange(ctx, tx, actor, change{entityType: "job", entityID: existing.id, operation: "reopen", sourceURL: posting.URL}); err != nil {
+					return err
+				}
+			}
+		}
+
+		closedRows, err := tx.Query(ctx, `
+			UPDATE jobs SET closed_at = $2
+			WHERE job_board_id = $1 AND closed_at IS NULL AND NOT (external_id = ANY($3))
+			RETURNING id`, board.ID, seenAt, seenExternalIDs)
+		if err != nil {
+			return err
+		}
+		closedIDs, err := pgx.CollectRows(closedRows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		result.Closed = len(closedIDs)
+		for _, closedID := range closedIDs {
+			if err := insertChange(ctx, tx, actor, change{entityType: "job", entityID: closedID, operation: "close"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+type ManualJobInput struct {
+	CompanyID   *uuid.UUID
+	Title       string
+	URL         string
+	Location    string
+	Description string
+}
+
+// AddManualJob stores a job added by hand, or returns the one already added
+// with the same URL; created reports which.
+func (s *Store) AddManualJob(ctx context.Context, actor Actor, input ManualJobInput) (Job, bool, error) {
+	title := strings.TrimSpace(input.Title)
+	jobURL := strings.TrimSpace(input.URL)
+	if title == "" || !(strings.HasPrefix(jobURL, "https://") || strings.HasPrefix(jobURL, "http://")) {
+		return Job{}, false, errors.New("a job needs a title and an http(s) URL")
+	}
+
+	var job Job
+	created := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		inserted, err := scanJob(tx.QueryRow(ctx, `
+			INSERT INTO jobs (company_id, source, title, url, location, description)
+			VALUES ($1, 'manual', $2, $3, $4, $5)
+			ON CONFLICT (url) WHERE source = 'manual' DO NOTHING
+			RETURNING `+jobColumns, input.CompanyID, title, jobURL, input.Location, input.Description))
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			job, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs WHERE source = 'manual' AND url = $1`, jobURL))
+			return err
+		case isForeignKeyViolation(err):
+			return ErrCompanyNotFound
+		case err != nil:
+			return err
+		}
+		job = inserted
+		created = true
+		return insertChange(ctx, tx, actor, change{
+			entityType: "job", entityID: job.ID, operation: "create",
+			after: map[string]string{"title": job.Title, "url": job.URL}, sourceURL: job.URL,
+		})
+	})
+	if err != nil {
+		return Job{}, false, err
+	}
+	return job, created, nil
+}
+
+// UpsertBoardJob stores one posting of a stored board, as a board sync would,
+// without closing the board's other jobs; created reports whether it was new.
+func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard, posting JobPosting, seenAt time.Time) (Job, bool, error) {
+	var job Job
+	created := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		job, err = scanJob(tx.QueryRow(ctx, `
+			INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at)
+			VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10)
+			ON CONFLICT (job_board_id, external_id) DO UPDATE SET
+				title = EXCLUDED.title, location = EXCLUDED.location, workplace_type = EXCLUDED.workplace_type, url = EXCLUDED.url,
+				description = EXCLUDED.description, raw = EXCLUDED.raw, last_seen_at = EXCLUDED.last_seen_at, closed_at = NULL
+			RETURNING `+jobColumns+`, (xmax = 0)`,
+			board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+			posting.URL, posting.Description, posting.Raw, seenAt), &created)
+		if err != nil {
+			return err
+		}
+		if !created {
+			return nil
+		}
+		return insertChange(ctx, tx, actor, change{
+			entityType: "job", entityID: job.ID, operation: "create",
+			after: map[string]string{"title": job.Title, "url": job.URL}, sourceURL: job.URL,
+		})
+	})
+	return job, created, err
+}
+
+const (
+	JobStatusOpen   = "open"
+	JobStatusClosed = "closed"
+	JobStatusAll    = "all"
+
+	defaultJobPageSize = 100
+	maximumJobPageSize = 500
+)
+
+// JobFilter narrows the jobs list. Query matches the title, location or
+// company name, case-insensitively.
+type JobFilter struct {
+	Query     string
+	CompanyID *uuid.UUID
+	Status    string
+	Limit     int
+	Offset    int
+}
+
+// JobListItem is one row of the jobs list: a job and its company's name.
+type JobListItem struct {
+	Job         Job     `json:"job"`
+	CompanyName *string `json:"company_name,omitempty"`
+}
+
+// ListJobs returns one page of jobs, newest first, with the total that match.
+func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, int, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > maximumJobPageSize {
+		limit = defaultJobPageSize
+	}
+	status := filter.Status
+	if status == "" {
+		status = JobStatusOpen
+	}
+	if status != JobStatusOpen && status != JobStatusClosed && status != JobStatusAll {
+		return nil, 0, errors.New("status must be open, closed or all")
+	}
+
+	const matches = `
+		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
+		WHERE ($1 = '' OR strpos(lower(jobs.title), $1) > 0 OR strpos(lower(jobs.location), $1) > 0 OR strpos(lower(companies.name), $1) > 0)
+		  AND ($2::uuid IS NULL OR jobs.company_id = $2)
+		  AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL))`
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) `+matches, query, filter.CompanyID, status).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+prefixedJobColumns+`, companies.name
+		`+matches+`
+		ORDER BY jobs.first_seen_at DESC, jobs.title
+		LIMIT $4 OFFSET $5`, query, filter.CompanyID, status, limit, filter.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobListItem, error) {
+		var item JobListItem
+		job, err := scanJob(row, &item.CompanyName)
+		item.Job = job
+		return item, err
+	})
+	return items, total, err
+}

@@ -45,7 +45,10 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-const foreignKeyViolation = "23503"
+const (
+	foreignKeyViolation = "23503"
+	uniqueViolation     = "23505"
+)
 
 // isForeignKeyViolation reports whether err is Postgres refusing a row that
 // points at a missing parent, such as an unknown company.
@@ -54,14 +57,23 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &postgresErr) && postgresErr.Code == foreignKeyViolation
 }
 
+// isUniqueViolation reports whether err is Postgres refusing a row that
+// repeats a value a unique index holds, such as a phase name.
+func isUniqueViolation(err error) bool {
+	var postgresErr *pgconn.PgError
+	return errors.As(err, &postgresErr) && postgresErr.Code == uniqueViolation
+}
+
 type ActorKind string
 
 const (
 	ActorOwner    ActorKind = "owner"
 	ActorAgentRun ActorKind = "agent_run"
+	ActorSystem   ActorKind = "system"
 )
 
-// Actor is who made a write: the owner, or one agent run.
+// Actor is who made a write: the owner, one agent run, or the hub itself
+// (the board poller).
 type Actor struct {
 	Kind       ActorKind
 	AgentRunID uuid.UUID
