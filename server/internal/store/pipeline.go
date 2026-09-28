@@ -15,6 +15,7 @@ var (
 	ErrApplicationNotFound   = errors.New("application not found")
 	ErrPipelinePhaseNotFound = errors.New("pipeline phase not found")
 	ErrPipelinePhaseInUse    = errors.New("the phase still has applications; move them first")
+	ErrPipelinePhaseNameUsed = errors.New("another phase already has that name")
 	ErrJobNotFound           = errors.New("job not found")
 )
 
@@ -223,6 +224,9 @@ func (s *Store) AddPipelinePhase(ctx context.Context, actor Actor, name string, 
 			INSERT INTO pipeline_phases (name, position, is_closed)
 			SELECT $1, COALESCE(MAX(position), 0) + 1, $2 FROM pipeline_phases
 			RETURNING `+pipelinePhaseColumns, name, isClosed))
+		if isUniqueViolation(err) {
+			return ErrPipelinePhaseNameUsed
+		}
 		if err != nil {
 			return fmt.Errorf("add the phase %q: %w", name, err)
 		}
@@ -243,6 +247,9 @@ func (s *Store) RenamePipelinePhase(ctx context.Context, actor Actor, id uuid.UU
 			return err
 		}
 		phase, err = scanPipelinePhase(tx.QueryRow(ctx, `UPDATE pipeline_phases SET name = $2 WHERE id = $1 RETURNING `+pipelinePhaseColumns, id, name))
+		if isUniqueViolation(err) {
+			return ErrPipelinePhaseNameUsed
+		}
 		if err != nil {
 			return err
 		}

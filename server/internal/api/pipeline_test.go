@@ -118,6 +118,9 @@ func TestPhasesAreAddedRenamedReorderedAndDeletedOnlyWhenEmpty(t *testing.T) {
 	if err := json.Unmarshal(body, &added); status != http.StatusCreated || err != nil || added.Name != "Take-home" {
 		t.Fatalf("add phase: %d %s", status, body)
 	}
+	if status, body := send(t, http.MethodPost, service.url+"/v1/pipeline/phases", ownerToken, `{"name":"take-home"}`); status != http.StatusConflict {
+		t.Errorf("duplicate phase: %d %s, want 409", status, body)
+	}
 	phaseURL := service.url + "/v1/pipeline/phases/" + added.ID.String()
 	status, body = send(t, http.MethodPatch, phaseURL, ownerToken, `{"name":"Take-home task"}`)
 	var renamed store.PipelinePhase

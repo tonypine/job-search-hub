@@ -139,3 +139,19 @@ func TestPhasesCanBeRenamedReorderedAndDeletedOnlyWhenEmpty(t *testing.T) {
 		t.Fatalf("deleting the empty Take-home: %v", err)
 	}
 }
+
+func TestAPhaseNameAlreadyInUseIsRefused(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	phases, err := hub.ListPipelinePhases(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := hub.AddPipelinePhase(ctx, owner, "saved", false); !errors.Is(err, store.ErrPipelinePhaseNameUsed) {
+		t.Errorf("add a duplicate: err = %v, want ErrPipelinePhaseNameUsed", err)
+	}
+	if _, err := hub.RenamePipelinePhase(ctx, owner, phases[1].ID, "Saved"); !errors.Is(err, store.ErrPipelinePhaseNameUsed) {
+		t.Errorf("rename to a duplicate: err = %v, want ErrPipelinePhaseNameUsed", err)
+	}
+}

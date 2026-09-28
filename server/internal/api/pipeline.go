@@ -194,7 +194,7 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrApplicationNotFound), errors.Is(err, store.ErrPipelinePhaseNotFound),
 		errors.Is(err, store.ErrJobNotFound), errors.Is(err, store.ErrCompanyNotFound):
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
-	case errors.Is(err, store.ErrPipelinePhaseInUse):
+	case errors.Is(err, store.ErrPipelinePhaseInUse), errors.Is(err, store.ErrPipelinePhaseNameUsed):
 		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
 	default:
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
