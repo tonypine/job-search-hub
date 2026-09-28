@@ -241,7 +241,8 @@ type hiring struct {
 }
 
 // checkPay applies when hourly work is refused and the job pays by the hour,
-// or when the criteria set a take-home. It estimates what the top of the
+// or when the criteria set a take-home and the posting publishes pay: most
+// postings publish none, and a missing salary says nothing against a job. It estimates what the top of the
 // published range would leave each month under every way the owner could be
 // hired and every period the pay could be for; the answer is no only when
 // even the best case is under the minimum.
@@ -255,7 +256,7 @@ func checkPay(job store.Job, facts readFacts, criteria store.JobCriteria, rates 
 		return Check{}, false
 	}
 	if job.Pay == nil || len(job.Pay.Ranges) == 0 {
-		return Check{Name: name, Verdict: VerdictUnclear, Reason: "no pay published"}, true
+		return Check{}, false
 	}
 	payRange := job.Pay.Ranges[0]
 	monthlyAmounts := getPossibleMonthlyAmounts(payRange.Max, payRange.Interval)

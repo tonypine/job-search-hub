@@ -123,7 +123,6 @@ func TestPayIsJudgedByEstimatedTakeHome(t *testing.T) {
 		{"an unstated contract under it both ways", pay(10000, "BRL", "month"), "not stated", jobfit.VerdictNo, "at most BRL 8.2k a month take-home, under the BRL 16.0k minimum"},
 		{"hourly, refused", pay(70, "USD", "hour"), "Contractor", jobfit.VerdictNo, "paid by the hour"},
 		{"a currency without a rate", pay(900000, "ARS", "month"), "Contractor", jobfit.VerdictUnclear, "no exchange rate from ARS to BRL"},
-		{"no pay published", nil, "CLT", jobfit.VerdictUnclear, "no pay published"},
 	} {
 		job := store.Job{BoardFacts: store.BoardFacts{Pay: test.pay}}
 		check := findCheck(t, jobfit.Judge(job, facts(t, map[string]any{"contract_type": test.contract}), withTakeHome, rates), "Pay")
@@ -131,6 +130,18 @@ func TestPayIsJudgedByEstimatedTakeHome(t *testing.T) {
 			t.Errorf("%s: %+v, want %s %q", test.name, check, test.want, test.reason)
 		}
 	}
+}
+
+func TestUnpublishedPayIsLeftOutOfTheFit(t *testing.T) {
+	withTakeHome := criteria
+	withTakeHome.TakeHome = &takeHome
+
+	for _, check := range jobfit.Judge(store.Job{Title: "Senior Frontend Engineer"}, nil, withTakeHome, rates).Checks {
+		if check.Name == "Pay" {
+			t.Fatalf("a posting without pay got %+v", check)
+		}
+	}
+	findCheck(t, jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: pay(25000, "BRL", "month")}}, nil, withTakeHome, rates), "Pay")
 }
 
 func TestAContractorPostingWithoutACurrencyRateStaysUnclear(t *testing.T) {
