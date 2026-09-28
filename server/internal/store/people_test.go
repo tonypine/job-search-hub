@@ -38,3 +38,17 @@ func TestAPersonsEmailIsStoredAndFilledInLater(t *testing.T) {
 		t.Fatalf("directory = %+v", directory)
 	}
 }
+
+func TestAnEngineerOnTheTeamCanBeStored(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+
+	person, created, err := hub.AddPerson(ctx, owner, store.PersonInput{
+		CompanyID: company.ID, Name: "Grace Hopper", Relevance: "engineer", SourceURL: "https://acme.com/blog/compilers",
+	})
+	if err != nil || !created || person.Relevance != "engineer" {
+		t.Fatalf("add = %+v, %v, %v", person, created, err)
+	}
+}
+

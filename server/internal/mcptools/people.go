@@ -14,7 +14,7 @@ type addPersonInput struct {
 	CompanyID  uuid.UUID `json:"company_id"`
 	Name       string    `json:"name" jsonschema:"the person's full name as the source gives it"`
 	RoleTitle  string    `json:"role_title,omitempty" jsonschema:"their title at the company, e.g. Engineering Manager, Payments"`
-	Relevance  string    `json:"relevance" jsonschema:"one of hiring_manager, engineering_lead, recruiter, founder, other"`
+	Relevance  string    `json:"relevance" jsonschema:"one of hiring_manager, engineering_lead (an engineering manager or tech lead), engineer (a senior or staff engineer on the team), recruiter, founder, other"`
 	ProfileURL string    `json:"profile_url,omitempty" jsonschema:"a public profile URL, e.g. from a team page or search result; never fetched by the hub"`
 	SourceURL  string    `json:"source_url" jsonschema:"the page that names this person at this company; required"`
 	Notes      string    `json:"notes,omitempty" jsonschema:"anything useful for a first message, e.g. a talk they gave or a team they lead"`

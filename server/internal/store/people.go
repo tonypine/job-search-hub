@@ -13,7 +13,7 @@ import (
 )
 
 // PersonRelevances are why a person is worth contacting.
-var PersonRelevances = []string{"hiring_manager", "engineering_lead", "recruiter", "founder", "other"}
+var PersonRelevances = []string{"hiring_manager", "engineering_lead", "engineer", "recruiter", "founder", "other"}
 
 type Person struct {
 	ID         uuid.UUID `json:"id"`
