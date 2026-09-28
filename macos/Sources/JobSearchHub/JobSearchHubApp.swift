@@ -61,6 +61,7 @@ struct ContentView: View {
             case .settings: SettingsPage()
             case .companies: CompaniesPage()
             case .profile: ProfilePage()
+            case .jobs: JobsPage()
             case let page?: PlaceholderPage(page: page)
             case nil: EmptyView()
             }

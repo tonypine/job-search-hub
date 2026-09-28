@@ -21,8 +21,10 @@ public struct HubClient: Sendable {
         self.session = session
     }
 
-    public func get<Response: Decodable>(_ path: String, as responseType: Response.Type = Response.self) async throws -> Response {
-        try await perform(makeRequest(method: "GET", path: path, body: nil))
+    public func get<Response: Decodable>(
+        _ path: String, query: [URLQueryItem] = [], as responseType: Response.Type = Response.self
+    ) async throws -> Response {
+        try await perform(makeRequest(method: "GET", path: path, query: query, body: nil))
     }
 
     public func send<Body: Encodable, Response: Decodable>(
@@ -37,8 +39,12 @@ public struct HubClient: Sendable {
         return try await perform(makeRequest(method: method, path: path, body: encoded))
     }
 
-    func makeRequest(method: String, path: String, body: Data?) -> URLRequest {
-        var request = URLRequest(url: baseURL.appending(path: path))
+    func makeRequest(method: String, path: String, query: [URLQueryItem] = [], body: Data?) -> URLRequest {
+        var url = baseURL.appending(path: path)
+        if !query.isEmpty {
+            url.append(queryItems: query)
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
