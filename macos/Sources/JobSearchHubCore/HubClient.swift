@@ -39,6 +39,29 @@ public struct HubClient: Sendable {
         return try await perform(makeRequest(method: method, path: path, body: encoded))
     }
 
+    /// Opens a server-sent event stream and returns its lines as they arrive,
+    /// resuming after lastEventID when there is one.
+    public func openEventStream(_ path: String, lastEventID: String?) async throws -> EventStreamLines<URLSession.AsyncBytes> {
+        var request = makeRequest(method: "GET", path: path, body: nil)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 90
+        if let lastEventID {
+            request.setValue(lastEventID, forHTTPHeaderField: "Last-Event-ID")
+        }
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            throw HubError.unreachable(error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if let failure = Self.mapFailure(status: status, body: Data()) {
+            throw failure
+        }
+        return EventStreamLines(bytes)
+    }
+
     /// Sends a DELETE, which the hub answers with no body on success.
     public func delete(_ path: String) async throws {
         _ = try await exchange(makeRequest(method: "DELETE", path: path, body: nil))

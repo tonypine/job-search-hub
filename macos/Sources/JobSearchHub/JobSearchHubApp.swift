@@ -4,7 +4,9 @@ import SwiftUI
 
 @main
 struct JobSearchHubApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var connection: HubConnection
+    @State private var events = HubEventStream()
 
     init() {
         Self.importOwnerTokenIfAsked()
@@ -18,7 +20,13 @@ struct JobSearchHubApp: App {
                 opensSession: ProcessInfo.processInfo.arguments.contains("--session")
             )
                 .environment(connection)
+                .environment(events)
                 .frame(minWidth: 900, minHeight: 600)
+                .task(id: connection.hubURLText) {
+                    if let client = connection.makeClient() {
+                        await events.run(with: client)
+                    }
+                }
         }
         .defaultSize(width: 1400, height: 860)
     }

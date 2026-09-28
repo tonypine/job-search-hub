@@ -14,7 +14,9 @@ import (
 // a follow-up falling due. It is about a job, a company, both, or nothing in
 // particular, and is unseen until SeenAt is set.
 type Update struct {
-	ID          uuid.UUID  `json:"id"`
+	ID uuid.UUID `json:"id"`
+	// Sequence orders updates as they were recorded.
+	Sequence    int64      `json:"sequence"`
 	Kind        string     `json:"kind"`
 	Title       string     `json:"title"`
 	Body        string     `json:"body,omitempty"`
@@ -54,7 +56,7 @@ type UpdateSelection struct {
 	All       bool        `json:"all"`
 }
 
-const updateColumns = `updates.id, updates.kind, updates.title, updates.body, updates.job_id, updates.company_id, updates.source_url,
+const updateColumns = `updates.id, updates.sequence, updates.kind, updates.title, updates.body, updates.job_id, updates.company_id, updates.source_url,
 	updates.created_at, updates.seen_at, jobs.title, COALESCE(companies.name, NULLIF(jobs.company_name, ''))`
 
 const updateJoins = `FROM updates
@@ -63,7 +65,7 @@ const updateJoins = `FROM updates
 
 func scanUpdate(row pgx.Row) (Update, error) {
 	var update Update
-	err := row.Scan(&update.ID, &update.Kind, &update.Title, &update.Body, &update.JobID, &update.CompanyID, &update.SourceURL,
+	err := row.Scan(&update.ID, &update.Sequence, &update.Kind, &update.Title, &update.Body, &update.JobID, &update.CompanyID, &update.SourceURL,
 		&update.CreatedAt, &update.SeenAt, &update.JobTitle, &update.CompanyName)
 	return update, err
 }
@@ -106,6 +108,16 @@ func (s *Store) ListUpdates(ctx context.Context, limit int, unseenOnly bool) (Up
 	}
 	err = s.pool.QueryRow(ctx, `SELECT count(*) FROM updates WHERE seen_at IS NULL`).Scan(&list.UnseenCount)
 	return list, err
+}
+
+// ListUpdatesAfter returns the updates recorded after the one with the given
+// sequence, oldest first, for a stream catching up.
+func (s *Store) ListUpdatesAfter(ctx context.Context, sequence int64) ([]Update, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+updateColumns+` `+updateJoins+` WHERE updates.sequence > $1 ORDER BY updates.sequence`, sequence)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Update, error) { return scanUpdate(row) })
 }
 
 // MarkUpdatesSeen marks the selected unseen updates seen and returns how many

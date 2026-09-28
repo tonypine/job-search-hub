@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -44,7 +45,9 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
-	api.RegisterUpdateRoutes(routes, hub, requireOwner)
+	broadcaster := hubevents.NewBroadcaster()
+	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
+	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, stubRates{}, requireOwner)
 	api.RegisterGoogleRoutes(routes, hub, nil, requireOwner)
 	server := httptest.NewServer(routes)

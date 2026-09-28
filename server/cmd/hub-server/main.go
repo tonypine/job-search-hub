@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/google"
+	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
@@ -80,7 +82,9 @@ func run() error {
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
-	api.RegisterUpdateRoutes(routes, hub, requireOwner)
+	broadcaster := hubevents.NewBroadcaster()
+	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
+	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
@@ -103,6 +107,9 @@ func run() error {
 		Addr:              settings.address,
 		Handler:           routes,
 		ReadHeaderTimeout: readHeaderTimeout,
+		// Requests end with the server, so open event streams don't hold up
+		// a shutdown.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.ListenAndServe() }()
