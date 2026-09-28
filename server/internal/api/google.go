@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strconv"
 
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -14,6 +15,10 @@ type googleStatusResponse struct {
 	// Configured is false when the hub has no OAuth client file.
 	Configured bool                    `json:"configured"`
 	Connection *store.GoogleConnection `json:"connection,omitempty"`
+}
+
+type gmailMessagesResponse struct {
+	Messages []google.MessageSummary `json:"messages"`
 }
 
 type googleSignInResponse struct {
@@ -65,6 +70,29 @@ func RegisterGoogleRoutes(routes *http.ServeMux, hub *store.Store, connector *go
 		}
 		writeCallbackPage(w, http.StatusOK, fmt.Sprintf("Connected to Google as %s. You can close this tab.", connection.Email))
 	})
+
+	routes.Handle("GET /v1/google/gmail/messages", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if connector == nil {
+			writeJSON(w, http.StatusServiceUnavailable, notConfigured)
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("max"))
+		messages, err := connector.SearchMessages(r.Context(), r.URL.Query().Get("q"), limit)
+		if err == nil {
+			writeJSON(w, http.StatusOK, gmailMessagesResponse{Messages: messages})
+			return
+		}
+		writeGoogleResult(w, nil, err)
+	})))
+
+	routes.Handle("GET /v1/google/gmail/messages/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if connector == nil {
+			writeJSON(w, http.StatusServiceUnavailable, notConfigured)
+			return
+		}
+		message, err := connector.GetMessage(r.Context(), r.PathValue("id"))
+		writeGoogleResult(w, message, err)
+	})))
 
 	routes.Handle("GET /v1/google/check", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if connector == nil {

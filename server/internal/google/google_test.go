@@ -44,6 +44,24 @@ func startFakeGoogle(t *testing.T) (*Client, *store.Store) {
 	routes.HandleFunc("GET /calendar/v3/users/me/calendarList", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"items":[{"id":"primary"}]}`)
 	})
+	routes.HandleFunc("GET /gmail/v1/users/me/messages", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") != "from:greenhouse.io" || r.URL.Query().Get("maxResults") != "5" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		fmt.Fprint(w, `{"messages":[{"id":"m1","threadId":"t1"}]}`)
+	})
+	routes.HandleFunc("GET /gmail/v1/users/me/messages/m1", func(w http.ResponseWriter, r *http.Request) {
+		headers := `"headers":[{"name":"From","value":"Acme Recruiting <no-reply@greenhouse.io>"},{"name":"Subject","value":"Thank you for applying"}]`
+		if r.URL.Query().Get("format") == "metadata" {
+			fmt.Fprintf(w, `{"id":"m1","threadId":"t1","labelIds":["INBOX"],"snippet":"We&#39;ve received your application","internalDate":"1790600000000","payload":{"mimeType":"multipart/alternative",%s}}`, headers)
+			return
+		}
+		// "Hi Tony," and an HTML alternative; the plain part wins.
+		fmt.Fprintf(w, `{"id":"m1","threadId":"t1","internalDate":"1790600000000","payload":{"mimeType":"multipart/alternative",%s,"parts":[
+			{"mimeType":"text/html","body":{"data":"PHA-SGkgPGI-VG9ueTwvYj4sPC9wPg"}},
+			{"mimeType":"text/plain","body":{"data":"SGkgVG9ueSw"}}]}}`, headers)
+	})
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 
@@ -105,5 +123,31 @@ func TestARefusedGrantAsksForASignInAgain(t *testing.T) {
 	}
 	if _, err := client.Check(ctx); !errors.Is(err, ErrReconnectNeeded) {
 		t.Fatalf("a second check: err = %v", err)
+	}
+}
+
+func TestGmailIsSearchedAndReadAsText(t *testing.T) {
+	client, hub := startFakeGoogle(t)
+	ctx := context.Background()
+	if _, err := hub.SaveGoogleConnection(ctx, store.Actor{Kind: store.ActorOwner}, "owner@example.com", "refresh-1", Scopes); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, err := client.SearchMessages(ctx, "from:greenhouse.io", 5)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("search = %+v, %v", messages, err)
+	}
+	found := messages[0]
+	if found.Subject != "Thank you for applying" || found.From != "Acme Recruiting <no-reply@greenhouse.io>" || found.ThreadID != "t1" ||
+		found.Snippet != "We've received your application" || found.Date.Unix() != 1790600000 {
+		t.Fatalf("summary = %+v", found)
+	}
+
+	message, err := client.GetMessage(ctx, "m1")
+	if err != nil || message.Text != "Hi Tony," || message.Subject != "Thank you for applying" {
+		t.Fatalf("message = %+v, %v", message, err)
+	}
+	if text := convertHTMLToText("<p>Hi <b>Tony</b>,</p><style>x{}</style><div>Next steps</div>"); text != "Hi Tony,\nNext steps" {
+		t.Fatalf("html text = %q", text)
 	}
 }
