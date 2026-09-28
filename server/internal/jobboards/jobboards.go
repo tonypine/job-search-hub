@@ -44,6 +44,7 @@ type Verifier struct {
 	LeverAPIBase      string
 	AshbyAPIBase      string
 	AshbyBoardBase    string
+	HimalayasAPIBase  string
 }
 
 func NewVerifier() *Verifier {
@@ -53,6 +54,7 @@ func NewVerifier() *Verifier {
 		LeverAPIBase:      "https://api.lever.co",
 		AshbyAPIBase:      "https://api.ashbyhq.com",
 		AshbyBoardBase:    "https://jobs.ashbyhq.com",
+		HimalayasAPIBase:  "https://himalayas.app",
 	}
 }
 

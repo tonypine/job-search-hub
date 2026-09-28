@@ -33,6 +33,7 @@ services:
       HUB_DATABASE_URL: postgres://hub:${HUB_DATABASE_PASSWORD}@db:5432/hub
       HUB_OWNER_TOKEN: ${HUB_OWNER_TOKEN:?set HUB_OWNER_TOKEN in .env; see .env.example}
       HUB_BOARD_POLL_INTERVAL: ${HUB_BOARD_POLL_INTERVAL:-1h}
+      HUB_FEED_POLL_INTERVAL: ${HUB_FEED_POLL_INTERVAL:-3h}
       # The model that reads job facts, through LM Studio on the host by default.
       # An empty HUB_JOB_FACTS_MODEL_URL turns reading off.
       HUB_JOB_FACTS_MODEL_URL: ${HUB_JOB_FACTS_MODEL_URL-http://host.docker.internal:1234/v1}

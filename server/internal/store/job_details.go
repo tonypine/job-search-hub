@@ -44,7 +44,7 @@ type JobFactEntry struct {
 func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, error) {
 	var details JobDetails
 	job, err := scanJob(s.pool.QueryRow(ctx, `
-		SELECT `+prefixedJobColumns+`, companies.name
+		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, ''))
 		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
 		WHERE jobs.id = $1`, id), &details.CompanyName)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -1,0 +1,116 @@
+package store
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+// JobSourceHimalayas marks jobs gathered from the Himalayas job feed.
+const JobSourceHimalayas = "himalayas"
+
+// FeedSyncResult counts what one sync of a job feed changed.
+type FeedSyncResult struct {
+	Created  int `json:"created"`
+	Closed   int `json:"closed"`
+	Reopened int `json:"reopened"`
+	Seen     int `json:"seen"`
+}
+
+// SyncFeedJobs stores the postings a feed returned, as seen at seenAt, then
+// closes the feed's jobs whose expiry has passed. A feed returns only what a
+// search matches, so a posting missing from it is not closed. A new posting
+// is linked to the hub's company of the same name when there is one. Only
+// lifecycle events are recorded as changes.
+func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, postings []JobPosting, seenAt time.Time) (FeedSyncResult, error) {
+	result := FeedSyncResult{Seen: len(postings)}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		externalIDs := make([]string, 0, len(postings))
+		for _, posting := range postings {
+			externalIDs = append(externalIDs, posting.ExternalID)
+		}
+		rows, err := tx.Query(ctx, `SELECT external_id, id, closed_at FROM jobs WHERE source = $1 AND external_id = ANY($2) FOR UPDATE`, source, externalIDs)
+		if err != nil {
+			return err
+		}
+		type knownJob struct {
+			id       uuid.UUID
+			closedAt *time.Time
+		}
+		known := map[string]knownJob{}
+		for rows.Next() {
+			var externalID string
+			var job knownJob
+			if err := rows.Scan(&externalID, &job.id, &job.closedAt); err != nil {
+				return err
+			}
+			known[externalID] = job
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, posting := range postings {
+			existing, isKnown := known[posting.ExternalID]
+			if !isKnown {
+				job, err := scanJob(tx.QueryRow(ctx, `
+					INSERT INTO jobs (company_id, source, external_id, company_name, title, location, workplace_type, url, description, raw,
+						first_seen_at, last_seen_at, expires_at, pay, employment_type, department, other_locations, published_at)
+					VALUES ((SELECT id FROM companies WHERE lower(name) = lower($3) ORDER BY created_at LIMIT 1),
+						$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15, $16)
+					RETURNING `+jobColumns,
+					append([]any{source, posting.ExternalID, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType,
+						posting.URL, posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...)...))
+				if err != nil {
+					return err
+				}
+				result.Created++
+				if err := insertChange(ctx, tx, actor, change{
+					entityType: "job", entityID: job.ID, operation: "create",
+					after: map[string]string{"title": job.Title, "url": job.URL}, sourceURL: job.URL,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if _, err := tx.Exec(ctx, `
+				UPDATE jobs SET company_name = $2, title = $3, location = $4, workplace_type = $5, url = $6, description = $7, raw = $8,
+					last_seen_at = $9, expires_at = $10, closed_at = NULL,
+					pay = $11, employment_type = $12, department = $13, other_locations = $14, published_at = $15
+				WHERE id = $1`,
+				append([]any{existing.id, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType, posting.URL,
+					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...)...); err != nil {
+				return err
+			}
+			if existing.closedAt != nil {
+				result.Reopened++
+				if err := insertChange(ctx, tx, actor, change{entityType: "job", entityID: existing.id, operation: "reopen", sourceURL: posting.URL}); err != nil {
+					return err
+				}
+			}
+		}
+
+		closedRows, err := tx.Query(ctx, `
+			UPDATE jobs SET closed_at = $2
+			WHERE source = $1 AND closed_at IS NULL AND expires_at < $2
+			RETURNING id`, source, seenAt)
+		if err != nil {
+			return err
+		}
+		closedIDs, err := pgx.CollectRows(closedRows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		result.Closed = len(closedIDs)
+		for _, closedID := range closedIDs {
+			if err := insertChange(ctx, tx, actor, change{entityType: "job", entityID: closedID, operation: "close"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return result, err
+}

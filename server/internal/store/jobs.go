@@ -78,9 +78,13 @@ func scanJob(row pgx.Row, extra ...any) (Job, error) {
 	return job, err
 }
 
-// JobPosting is one open posting as a job board lists it.
+// JobPosting is one open posting as a job board or a job feed lists it.
+// CompanyName and ExpiresAt come from feeds, whose postings belong to no
+// board of the hub's.
 type JobPosting struct {
 	ExternalID    string
+	CompanyName   string
+	ExpiresAt     *time.Time
 	Title         string
 	Location      string
 	WorkplaceType string
@@ -322,7 +326,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 
 	const matches = `
 		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
-		WHERE ($1 = '' OR strpos(lower(jobs.title), $1) > 0 OR strpos(lower(jobs.location), $1) > 0 OR strpos(lower(companies.name), $1) > 0)
+		WHERE ($1 = '' OR strpos(lower(jobs.title), $1) > 0 OR strpos(lower(jobs.location), $1) > 0
+		       OR strpos(lower(COALESCE(companies.name, jobs.company_name)), $1) > 0)
 		  AND ($2::uuid IS NULL OR jobs.company_id = $2)
 		  AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL))`
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
@@ -332,7 +337,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		return nil, 0, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+prefixedJobColumns+`, companies.name
+		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, ''))
 		`+matches+`
 		ORDER BY jobs.first_seen_at DESC, jobs.title
 		LIMIT $4 OFFSET $5`, query, filter.CompanyID, status, limit, filter.Offset)

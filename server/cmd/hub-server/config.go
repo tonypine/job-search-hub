@@ -12,6 +12,7 @@ const (
 	defaultBoardPollInterval = time.Hour
 	defaultJobFactsModel     = "qwen/qwen3.5-9b"
 	defaultJobFactsInterval  = 10 * time.Minute
+	defaultFeedPollInterval  = 3 * time.Hour
 )
 
 type config struct {
@@ -19,6 +20,7 @@ type config struct {
 	databaseURL       string
 	ownerToken        string
 	boardPollInterval time.Duration
+	feedPollInterval  time.Duration
 	// jobFactsModelURL is the chat-completions API root of the model that
 	// reads job facts; empty turns reading off.
 	jobFactsModelURL string
@@ -57,6 +59,9 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	// Intervals are Go durations such as 30m; 0 turns the work off.
 	var err error
 	if parsed.boardPollInterval, err = parseInterval(lookup, "HUB_BOARD_POLL_INTERVAL", defaultBoardPollInterval); err != nil {
+		return config{}, err
+	}
+	if parsed.feedPollInterval, err = parseInterval(lookup, "HUB_FEED_POLL_INTERVAL", defaultFeedPollInterval); err != nil {
 		return config{}, err
 	}
 	if parsed.jobFactsInterval, err = parseInterval(lookup, "HUB_JOB_FACTS_INTERVAL", defaultJobFactsInterval); err != nil {

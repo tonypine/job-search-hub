@@ -18,6 +18,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
@@ -82,6 +83,9 @@ func run() error {
 
 	if settings.boardPollInterval > 0 {
 		go boardpoller.New(hub, boards).Run(ctx, settings.boardPollInterval)
+	}
+	if settings.feedPollInterval > 0 {
+		go feedpoller.New(hub, boards).Run(ctx, settings.feedPollInterval)
 	}
 	if settings.jobFactsModelURL != "" && settings.jobFactsInterval > 0 {
 		extractor := jobfacts.NewExtractor(hub, chatcompletions.NewClient(settings.jobFactsModelURL), settings.jobFactsModel)
