@@ -59,9 +59,11 @@ type ActorKind string
 const (
 	ActorOwner    ActorKind = "owner"
 	ActorAgentRun ActorKind = "agent_run"
+	ActorSystem   ActorKind = "system"
 )
 
-// Actor is who made a write: the owner, or one agent run.
+// Actor is who made a write: the owner, one agent run, or the hub itself
+// (the board poller).
 type Actor struct {
 	Kind       ActorKind
 	AgentRunID uuid.UUID
