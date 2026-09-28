@@ -133,7 +133,7 @@ struct PipelinePage: View {
     @ViewBuilder
     private func selectedCardDetail(client: HubClient) -> some View {
         if let jobID = model.board.cards.first(where: { $0.id == selectedCardID })?.application.jobID {
-            JobDetailView(jobID: jobID, client: client)
+            JobPanel(jobID: jobID, client: client)
         } else {
             ContentUnavailableView("No job on this card", systemImage: "building.2", description: Text("This application is to a company, not a posting."))
         }

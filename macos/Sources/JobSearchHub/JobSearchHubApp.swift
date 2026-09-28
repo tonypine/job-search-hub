@@ -13,7 +13,10 @@ struct JobSearchHubApp: App {
 
     var body: some Scene {
         WindowGroup("Job Search Hub") {
-            ContentView(initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments())
+            ContentView(
+                initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments(),
+                opensSession: ProcessInfo.processInfo.arguments.contains("--session")
+            )
                 .environment(connection)
                 .frame(minWidth: 900, minHeight: 600)
         }
@@ -30,7 +33,8 @@ struct JobSearchHubApp: App {
         return page
     }
 
-    /// `--job <id>` opens that job's details on the Jobs or Pipeline page.
+    /// `--job <id>` opens that job's details on the Jobs or Pipeline page;
+    /// with `--session`, the Jobs page opens its session instead.
     private static func jobFromLaunchArguments() -> UUID? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flagIndex = arguments.firstIndex(of: "--job"), flagIndex + 1 < arguments.count else { return nil }
@@ -53,10 +57,12 @@ struct JobSearchHubApp: App {
 struct ContentView: View {
     @State private var selectedPage: Page?
     let initialJobID: UUID?
+    let opensSession: Bool
 
-    init(initialPage: Page, initialJobID: UUID?) {
+    init(initialPage: Page, initialJobID: UUID?, opensSession: Bool) {
         _selectedPage = State(initialValue: initialPage)
         self.initialJobID = initialJobID
+        self.opensSession = opensSession
     }
 
     var body: some View {
@@ -70,7 +76,7 @@ struct ContentView: View {
             case .settings: SettingsPage()
             case .companies: CompaniesPage()
             case .profile: ProfilePage()
-            case .jobs: JobsPage(initialJobID: initialJobID)
+            case .jobs: JobsPage(initialJobID: initialJobID, opensSession: opensSession)
             case .pipeline: PipelinePage(initialJobID: initialJobID)
             case nil: EmptyView()
             }

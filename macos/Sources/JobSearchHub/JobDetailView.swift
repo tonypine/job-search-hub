@@ -35,6 +35,40 @@ final class JobDetailModel {
 
 /// One job's details, read from the hub: what the board publishes, the facts
 /// read from the posting, and the posting itself.
+/// Which side of a job or company panel shows: what the hub knows, or its
+/// Claude session.
+enum PanelSide: String, CaseIterable, Identifiable {
+    case details = "Details"
+    case session = "Session"
+
+    var id: String { rawValue }
+}
+
+/// A job's panel: its details, or its Claude session.
+struct JobPanel: View {
+    let jobID: UUID
+    let client: HubClient
+    /// Opens on the Session side and starts or resumes the session there.
+    var opensSession = false
+    @State private var side: PanelSide = .details
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Show", selection: $side) {
+                ForEach(PanelSide.allCases) { side in Text(side.rawValue).tag(side) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(8)
+            switch side {
+            case .details: JobDetailView(jobID: jobID, client: client)
+            case .session: ClaudeSessionPane(subject: .job(jobID), client: client, startsOnAppear: opensSession)
+            }
+        }
+        .onAppear { if opensSession { side = .session } }
+    }
+}
+
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient

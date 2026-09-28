@@ -83,7 +83,12 @@ struct JobsPage: View {
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
 
-    init(initialJobID: UUID? = nil) {
+    private let initialJobID: UUID?
+    private let opensSession: Bool
+
+    init(initialJobID: UUID? = nil, opensSession: Bool = false) {
+        self.initialJobID = initialJobID
+        self.opensSession = opensSession
         let model = JobsModel()
         model.selectedID = initialJobID
         _model = State(initialValue: model)
@@ -99,7 +104,7 @@ struct JobsPage: View {
                     }
                     .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
                         if let selectedID = model.selectedID {
-                            JobDetailView(jobID: selectedID, client: client)
+                            JobPanel(jobID: selectedID, client: client, opensSession: opensSession && selectedID == initialJobID)
                                 .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
                         }
                     }

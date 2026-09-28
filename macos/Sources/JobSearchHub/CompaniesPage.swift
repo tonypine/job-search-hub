@@ -40,6 +40,7 @@ final class CompaniesModel {
 struct CompaniesPage: View {
     @Environment(HubConnection.self) private var connection
     @State private var model = CompaniesModel()
+    @State private var side: PanelSide = .details
 
     var body: some View {
         Group {
@@ -47,7 +48,7 @@ struct CompaniesPage: View {
                 HStack(spacing: 0) {
                     companyTable
                     Divider()
-                    DossierPane(dossier: model.dossier).frame(width: 400)
+                    companyPanel(client: client).frame(width: 460)
                 }
                 .task { await model.load(with: client) }
                 .task(id: model.selectedID) { await model.loadDossier(with: client) }
@@ -60,6 +61,23 @@ struct CompaniesPage: View {
             }
         }
         .navigationTitle("Companies")
+    }
+
+    private func companyPanel(client: HubClient) -> some View {
+        VStack(spacing: 0) {
+            Picker("Show", selection: $side) {
+                ForEach(PanelSide.allCases) { side in Text(side.rawValue).tag(side) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(8)
+            .disabled(model.selectedID == nil)
+            if side == .session, let companyID = model.selectedID {
+                ClaudeSessionPane(subject: .company(companyID), client: client)
+            } else {
+                DossierPane(dossier: model.dossier)
+            }
+        }
     }
 
     private var companyTable: some View {
