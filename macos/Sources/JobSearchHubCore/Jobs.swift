@@ -10,15 +10,48 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     public var workplaceType: String?
     public var url: String
     public var description: String?
+    public var pay: Pay?
+    public var employmentType: String?
+    public var department: String?
+    public var otherLocations: [String]?
+    public var publishedAt: Date?
     public var firstSeenAt: Date
     public var lastSeenAt: Date
     public var closedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, source, title, location, workplaceType, url, description, firstSeenAt, lastSeenAt, closedAt
+        case id, source, title, location, workplaceType, url, description, pay, employmentType, department, otherLocations, publishedAt
+        case firstSeenAt, lastSeenAt, closedAt
         case companyID = "companyId"
         case jobBoardID = "jobBoardId"
     }
+}
+
+/// The pay a posting publishes: one range per region or tier, and the
+/// board's own summary when it gives one, such as "$230K • Offers Equity".
+public struct Pay: Codable, Equatable, Sendable {
+    public var ranges: [PayRange]
+    public var summary: String?
+}
+
+public struct PayRange: Codable, Equatable, Sendable {
+    public var label: String?
+    public var min: Double
+    public var max: Double
+    public var currency: String
+    /// year, month, week, day or hour; nil when the board does not say.
+    public var interval: String?
+
+    /// The range as people read it: "$152,000 – $190,000 a year", or one
+    /// amount when both ends are equal.
+    public func format(locale: Locale = .current) -> String {
+        let style = FloatingPointFormatStyle<Double>.Currency(code: currency, locale: locale).precision(.fractionLength(0...2))
+        let amounts = min == max ? min.formatted(style) : "\(min.formatted(style)) – \(max.formatted(style))"
+        guard let interval, let period = Self.periods[interval] else { return amounts }
+        return "\(amounts) \(period)"
+    }
+
+    private static let periods = ["year": "a year", "month": "a month", "week": "a week", "day": "a day", "hour": "an hour"]
 }
 
 /// One row of the jobs list: a job and its company's name.

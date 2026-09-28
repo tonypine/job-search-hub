@@ -13,7 +13,7 @@ struct JobSearchHubApp: App {
 
     var body: some Scene {
         WindowGroup("Job Search Hub") {
-            ContentView(initialPage: Self.pageFromLaunchArguments())
+            ContentView(initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments())
                 .environment(connection)
                 .frame(minWidth: 900, minHeight: 600)
         }
@@ -28,6 +28,13 @@ struct JobSearchHubApp: App {
               let page = Page(rawValue: arguments[flagIndex + 1])
         else { return .pipeline }
         return page
+    }
+
+    /// `--job <id>` opens that job's details on the Jobs or Pipeline page.
+    private static func jobFromLaunchArguments() -> UUID? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flagIndex = arguments.firstIndex(of: "--job"), flagIndex + 1 < arguments.count else { return nil }
+        return UUID(uuidString: arguments[flagIndex + 1])
     }
 
     /// `--import-owner-token` saves HUB_OWNER_TOKEN from the app's environment
@@ -45,9 +52,11 @@ struct JobSearchHubApp: App {
 
 struct ContentView: View {
     @State private var selectedPage: Page?
+    let initialJobID: UUID?
 
-    init(initialPage: Page) {
+    init(initialPage: Page, initialJobID: UUID?) {
         _selectedPage = State(initialValue: initialPage)
+        self.initialJobID = initialJobID
     }
 
     var body: some View {
@@ -61,8 +70,8 @@ struct ContentView: View {
             case .settings: SettingsPage()
             case .companies: CompaniesPage()
             case .profile: ProfilePage()
-            case .jobs: JobsPage()
-            case .pipeline: PipelinePage()
+            case .jobs: JobsPage(initialJobID: initialJobID)
+            case .pipeline: PipelinePage(initialJobID: initialJobID)
             case nil: EmptyView()
             }
         }

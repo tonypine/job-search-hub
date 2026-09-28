@@ -68,6 +68,12 @@ struct JobsPage: View {
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
 
+    init(initialJobID: UUID? = nil) {
+        let model = JobsModel()
+        model.selectedID = initialJobID
+        _model = State(initialValue: model)
+    }
+
     var body: some View {
         Group {
             if let client = connection.makeClient() {
@@ -75,6 +81,12 @@ struct JobsPage: View {
                     .task(id: "\(model.search)|\(model.status.rawValue)") {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
+                    }
+                    .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
+                        if let selectedID = model.selectedID {
+                            JobDetailView(jobID: selectedID, client: client)
+                                .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
+                        }
                     }
                     .sheet(isPresented: $isAddingByURL) {
                         AddJobSheet(client: client) { added in

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Opens the built app on one page, captures only its window, and quits it.
-# Usage: Scripts/screenshot-page.sh <page> <output.png>
+# Usage: Scripts/screenshot-page.sh <page> <output.png> [more app arguments, e.g. --job <id>]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -10,7 +10,7 @@ HELPER="build/window-id"
 
 [ -x "$HELPER" ] || swiftc -O Scripts/window-id.swift -o "$HELPER"
 pkill -x JobSearchHub || true
-open -n build/JobSearchHub.app --args --page "$PAGE"
+open -n build/JobSearchHub.app --args --page "$PAGE" "${@:3}"
 sleep "${SCREENSHOT_WAIT_SECONDS:-3}"
 
 WINDOW_ID="$("$HELPER" "Job Search Hub")"

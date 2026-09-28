@@ -55,12 +55,28 @@ struct PipelinePage: View {
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
+    @State private var selectedCardID: UUID?
+    /// A job whose card is selected once the board loads.
+    let initialJobID: UUID?
+
+    init(initialJobID: UUID? = nil) {
+        self.initialJobID = initialJobID
+    }
 
     var body: some View {
         Group {
             if let client = connection.makeClient() {
                 board(client: client)
-                    .task { await model.load(with: client) }
+                    .task {
+                        await model.load(with: client)
+                        if let initialJobID, selectedCardID == nil {
+                            selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
+                        }
+                    }
+                    .inspector(isPresented: Binding(get: { selectedCardID != nil }, set: { if !$0 { selectedCardID = nil } })) {
+                        selectedCardDetail(client: client)
+                            .inspectorColumnWidth(min: 360, ideal: 460, max: 720)
+                    }
             } else {
                 ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
             }
@@ -77,7 +93,7 @@ struct PipelinePage: View {
                     ForEach(model.board.phases) { phase in
                         PipelineColumn(
                             phase: phase, cards: model.board.getCards(in: phase), phases: model.board.phases,
-                            movingCardID: model.movingCardID, width: columnWidth
+                            movingCardID: model.movingCardID, width: columnWidth, selectedCardID: $selectedCardID
                         ) { cardID, target in
                             requestMove(cardID, to: target, with: client)
                         }
@@ -114,6 +130,15 @@ struct PipelinePage: View {
         }
     }
 
+    @ViewBuilder
+    private func selectedCardDetail(client: HubClient) -> some View {
+        if let jobID = model.board.cards.first(where: { $0.id == selectedCardID })?.application.jobID {
+            JobDetailView(jobID: jobID, client: client)
+        } else {
+            ContentUnavailableView("No job on this card", systemImage: "building.2", description: Text("This application is to a company, not a posting."))
+        }
+    }
+
     /// Shares the width among the columns so every phase shows at once, down
     /// to a readable minimum; below it the board scrolls sideways.
     private func getColumnWidth(availableWidth: CGFloat) -> CGFloat {
@@ -138,6 +163,7 @@ struct PipelineColumn: View {
     let phases: [PipelinePhase]
     let movingCardID: UUID?
     let width: CGFloat
+    @Binding var selectedCardID: UUID?
     let onMove: (UUID, PipelinePhase) -> Void
     @State private var isTargeted = false
 
@@ -151,7 +177,8 @@ struct PipelineColumn: View {
             ScrollView(.vertical) {
                 LazyVStack(spacing: 8) {
                     ForEach(cards) { card in
-                        PipelineCardView(card: card, isMoving: card.id == movingCardID)
+                        PipelineCardView(card: card, isMoving: card.id == movingCardID, isSelected: card.id == selectedCardID)
+                            .onTapGesture { selectedCardID = card.id }
                             .draggable(card.id.uuidString)
                             .contextMenu {
                                 if let jobURL = card.jobURL.flatMap(URL.init(string:)) {
@@ -184,6 +211,7 @@ struct PipelineColumn: View {
 struct PipelineCardView: View {
     let card: PipelineCard
     let isMoving: Bool
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -207,7 +235,7 @@ struct PipelineCardView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator), lineWidth: isSelected ? 2 : 1))
         .opacity(isMoving ? 0.6 : 1)
         .help(card.application.notes ?? "")
     }
