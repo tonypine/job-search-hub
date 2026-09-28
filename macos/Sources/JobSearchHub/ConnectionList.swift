@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The owner's connections at a company, each with their position, since
-/// when they are connected, and a link to their profile.
+/// The owner's connections at a company, closest first, each with their
+/// position, how close the owner is to them, and a link to their profile.
 struct ConnectionList: View {
     let connections: [Connection]
 
@@ -14,7 +14,9 @@ struct ConnectionList: View {
                     Text(position).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 12) {
-                    if let connectedSince = connection.connectedSince {
+                    if let closeness = connection.closeness, !closeness.isEmpty {
+                        Text(closeness).foregroundStyle(.secondary)
+                    } else if let connectedSince = connection.connectedSince {
                         Text(connectedSince).foregroundStyle(.secondary)
                     }
                     if let profile = URL(string: connection.profileURL) {

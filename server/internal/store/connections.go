@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +34,52 @@ type Connection struct {
 	FirstMessageAt    *time.Time `json:"first_message_at,omitempty"`
 	LastMessageAt     *time.Time `json:"last_message_at,omitempty"`
 	TheyWroteFirst    bool       `json:"they_wrote_first"`
+	// Closeness says how close the owner is to them, e.g. "12 messages, last
+	// in Mar 2025" or "connected in 2013, never talked"; connections are
+	// listed closest first.
+	Closeness string `json:"closeness"`
+}
+
+// rankByCloseness orders connections closest first: the ones the owner has
+// talked with, the more and the more recently the closer, then the ones
+// never talked with, the longest connected first. It fills each Closeness.
+func rankByCloseness(connections []Connection, now time.Time) []Connection {
+	for index := range connections {
+		connections[index].Closeness = describeCloseness(connections[index])
+	}
+	sort.SliceStable(connections, func(a, b int) bool {
+		return getClosenessScore(connections[a], now) > getClosenessScore(connections[b], now)
+	})
+	return connections
+}
+
+func getClosenessScore(connection Connection, now time.Time) float64 {
+	if connection.MessageCount == 0 || connection.LastMessageAt == nil {
+		if connection.ConnectedOn == nil {
+			return 0
+		}
+		yearsConnected := now.Sub(*connection.ConnectedOn).Hours() / hoursPerYear
+		return min(yearsConnected, 10) / 10
+	}
+	yearsSinceTalking := now.Sub(*connection.LastMessageAt).Hours() / hoursPerYear
+	recency := max(0, 5-yearsSinceTalking) * 10
+	return 10 + recency + float64(min(connection.MessageCount, 30))
+}
+
+const hoursPerYear = 24 * 365
+
+func describeCloseness(connection Connection) string {
+	if connection.MessageCount == 0 || connection.LastMessageAt == nil {
+		if connection.ConnectedOn == nil {
+			return "never talked"
+		}
+		return fmt.Sprintf("connected in %d, never talked", connection.ConnectedOn.Year())
+	}
+	messages := "1 message"
+	if connection.MessageCount != 1 {
+		messages = fmt.Sprintf("%d messages", connection.MessageCount)
+	}
+	return fmt.Sprintf("%s, last in %s", messages, connection.LastMessageAt.Format("Jan 2006"))
 }
 
 const connectionColumns = `id, first_name, last_name, profile_url, email, company_name, position, connected_on, company_id, imported_at, updated_at,
@@ -209,7 +257,7 @@ func (s *Store) ListCompanyConnections(ctx context.Context, companyID uuid.UUID)
 	if connections == nil {
 		connections = []Connection{}
 	}
-	return connections, err
+	return rankByCloseness(connections, time.Now()), err
 }
 
 // ListConnectionsAtCompanyName returns the connections who work at a company
@@ -235,7 +283,7 @@ func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName st
 			connections = append(connections, connection)
 		}
 	}
-	return connections, nil
+	return rankByCloseness(connections, time.Now()), nil
 }
 
 // tieJobsToCompanies gives each job that names its company without being

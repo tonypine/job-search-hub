@@ -75,3 +75,50 @@ func TestAFeedJobIsTiedToItsCompanyWhenTheCompanyArrives(t *testing.T) {
 		t.Fatalf("card = %+v; the job's card follows it to Globex", found)
 	}
 }
+
+func TestConnectionsAreListedClosestFirstWithWhy(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.ImportConnections(ctx, owner, []store.NewConnection{
+		{FirstName: "Old", LastName: "Acquaintance", ProfileURL: "https://www.linkedin.com/in/old", CompanyName: "Acme", ConnectedOn: date(2013, 4, 1)},
+		{FirstName: "Recent", LastName: "Colleague", ProfileURL: "https://www.linkedin.com/in/recent", CompanyName: "Acme", ConnectedOn: date(2022, 1, 1)},
+		{FirstName: "Long", LastName: "Ago", ProfileURL: "https://www.linkedin.com/in/long-ago", CompanyName: "Acme", ConnectedOn: date(2014, 1, 1)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ownerURL := "https://www.linkedin.com/in/owner-example"
+	message := func(conversation, sender string, at time.Time) store.NewLinkedInMessage {
+		recipient := ownerURL
+		if sender == ownerURL {
+			recipient = "https://www.linkedin.com/in/recent"
+		}
+		return store.NewLinkedInMessage{ConversationID: conversation, SenderProfileURL: sender, RecipientProfileURLs: []string{recipient}, SentAt: at}
+	}
+	recently := time.Now().AddDate(0, -2, 0)
+	if _, err := hub.ImportLinkedInMessages(ctx, owner, []store.NewLinkedInMessage{
+		message("c1", "https://www.linkedin.com/in/recent", recently),
+		message("c1", ownerURL, recently.Add(time.Hour)),
+		{ConversationID: "c2", SenderProfileURL: "https://www.linkedin.com/in/long-ago", RecipientProfileURLs: []string{ownerURL}, SentAt: time.Date(2016, 5, 1, 0, 0, 0, 0, time.UTC)},
+		{ConversationID: "c3", SenderProfileURL: ownerURL, RecipientProfileURLs: []string{"https://www.linkedin.com/in/someone"}, SentAt: recently},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+
+	connections, err := hub.ListCompanyConnections(ctx, acme.ID)
+	if err != nil || len(connections) != 3 {
+		t.Fatalf("connections = %+v, %v", connections, err)
+	}
+	order := []string{connections[0].FirstName, connections[1].FirstName, connections[2].FirstName}
+	if order[0] != "Recent" || order[1] != "Long" || order[2] != "Old" {
+		t.Fatalf("order = %v; want the recent talk first, then the old talk, then never talked", order)
+	}
+	if connections[0].Closeness != "2 messages, last in "+recently.Add(time.Hour).UTC().Format("Jan 2006") || connections[2].Closeness != "connected in 2013, never talked" {
+		t.Fatalf("closeness = %q, %q", connections[0].Closeness, connections[2].Closeness)
+	}
+}
+
+func date(year int, month time.Month, day int) *time.Time {
+	value := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return &value
+}

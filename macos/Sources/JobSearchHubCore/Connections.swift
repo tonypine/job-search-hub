@@ -36,6 +36,8 @@ public struct Connection: Codable, Equatable, Identifiable, Sendable {
     public var position: String?
     /// The day they connected, at midnight UTC.
     public var connectedOn: Date?
+    /// How close the owner is to them, e.g. "12 messages, last in Mar 2025".
+    public var closeness: String?
 
     public var fullName: String { [firstName, lastName].filter { !$0.isEmpty }.joined(separator: " ") }
 
@@ -48,7 +50,7 @@ public struct Connection: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, firstName, lastName, email, companyName, position, connectedOn
+        case id, firstName, lastName, email, companyName, position, connectedOn, closeness
         case profileURL = "profileUrl"
     }
 }
