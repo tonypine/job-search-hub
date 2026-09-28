@@ -11,6 +11,8 @@ final class JobsModel {
     private(set) var total = 0
     private(set) var isLoading = false
     private(set) var loadError: String?
+    private(set) var isAddingToPipeline = false
+    private(set) var pipelineNotice: String?
     var search = ""
     var status: JobStatusFilter = .open
     var selectedID: UUID?
@@ -28,6 +30,36 @@ final class JobsModel {
         } catch {
             loadError = String(describing: error)
         }
+    }
+
+    /// Adds each job to the pipeline's first phase and reports what the
+    /// server answered; a job already on the pipeline stays where it is.
+    func addToPipeline(_ ids: Set<UUID>, with client: HubClient) async {
+        isAddingToPipeline = true
+        defer { isAddingToPipeline = false }
+        var addedCount = 0
+        var alreadyThereCount = 0
+        for id in ids {
+            do {
+                let response = try await client.send("POST", "v1/applications", body: AddApplicationRequest(jobID: id), as: ApplicationResponse.self)
+                if response.created { addedCount += 1 } else { alreadyThereCount += 1 }
+            } catch {
+                pipelineNotice = "Could not add to the pipeline: \(error)"
+                return
+            }
+        }
+        pipelineNotice = getPipelineAdditionsNotice(added: addedCount, alreadyThere: alreadyThereCount)
+    }
+
+    func clearPipelineNotice() {
+        pipelineNotice = nil
+    }
+
+    private func getPipelineAdditionsNotice(added: Int, alreadyThere: Int) -> String {
+        var parts: [String] = []
+        if added > 0 { parts.append(added == 1 ? "Added 1 job to the pipeline" : "Added \(added) jobs to the pipeline") }
+        if alreadyThere > 0 { parts.append(alreadyThere == 1 ? "1 was already on it" : "\(alreadyThere) were already on it") }
+        return parts.joined(separator: "; ")
     }
 }
 
@@ -70,9 +102,8 @@ struct JobsPage: View {
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
-            Button("Add to pipeline") {}
-                .disabled(true)
-                .help("Arrives with the pipeline board")
+            Button("Add to pipeline") { Task { await model.addToPipeline(ids, with: client) } }
+                .disabled(ids.isEmpty || model.isAddingToPipeline)
         } primaryAction: { ids in
             open(ids)
         }
@@ -91,6 +122,19 @@ struct JobsPage: View {
                 ContentUnavailableView("Could not load jobs", systemImage: "exclamationmark.triangle", description: Text(loadError))
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("No jobs", systemImage: "briefcase", description: Text("Jobs from watched companies' boards appear here after the next poll."))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let notice = model.pipelineNotice {
+                Text(notice)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.bottom, 16)
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(4))
+                        model.clearPipelineNotice()
+                    }
             }
         }
     }

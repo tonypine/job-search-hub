@@ -62,18 +62,10 @@ struct ContentView: View {
             case .companies: CompaniesPage()
             case .profile: ProfilePage()
             case .jobs: JobsPage()
-            case let page?: PlaceholderPage(page: page)
+            case .pipeline: PipelinePage()
             case nil: EmptyView()
             }
         }
     }
 }
 
-struct PlaceholderPage: View {
-    let page: Page
-
-    var body: some View {
-        ContentUnavailableView(page.title, systemImage: page.symbolName, description: Text("Coming next."))
-            .navigationTitle(page.title)
-    }
-}
