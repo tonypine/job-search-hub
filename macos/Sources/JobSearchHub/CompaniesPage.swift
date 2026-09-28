@@ -66,7 +66,7 @@ struct CompaniesPage: View {
                 .task { await model.load(with: client) }
                 .onChange(of: [events.revision, unseen.revision, research.revision]) { Task { await model.load(with: client) } }
                 .sheet(isPresented: $isAddingCompany) {
-                    AddCompanySheet(client: client) { companyID in
+                    AddCompanySheet(client: client, getCompanyName: { id in model.summaries.first { $0.id == id }?.company.name }) { companyID in
                         model.selectedID = companyID
                         Task { await model.load(with: client) }
                     }

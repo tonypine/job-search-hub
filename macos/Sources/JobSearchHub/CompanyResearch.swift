@@ -102,11 +102,14 @@ final class CompanyResearch {
 /// The form that starts a company's research, then its progress.
 struct AddCompanySheet: View {
     let client: HubClient
+    /// The name of a company in the list, for saying which one was added.
+    let getCompanyName: (UUID) -> String?
     let onShowCompany: (UUID) -> Void
     @Environment(CompanyResearch.self) private var research
     @Environment(\.dismiss) private var dismiss
     @State private var company = ""
     @State private var foundVia = ""
+    @FocusState private var isCompanyFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -130,6 +133,8 @@ struct AddCompanySheet: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Company", text: $company, prompt: Text("A name, its site, or a careers or posting link"))
+                .focused($isCompanyFieldFocused)
+                .onAppear { isCompanyFieldFocused = true }
             TextField("Found via", text: $foundVia, prompt: Text("How you came across it, e.g. a referral (optional)"))
             Text("An agent researches it: what it does, where it lists its jobs, and who to reach there. It takes a few minutes, and its jobs follow.")
                 .font(.callout)
@@ -202,8 +207,9 @@ struct AddCompanySheet: View {
                 ProgressView().controlSize(.small)
                 Text("Researching \(research.company)…")
             }
-        case .succeeded:
-            Label("Added \(research.company).", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+        case let .succeeded(companyID):
+            let name = companyID.flatMap(getCompanyName) ?? research.company
+            Label("Added \(name).", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case let .failed(reason):
             Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         case .idle:
