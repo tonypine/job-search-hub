@@ -61,3 +61,28 @@ func TestAgentsCanReadButNotEditPrompts(t *testing.T) {
 		t.Fatalf("prompt versions = %d, err = %v, want only the seed", versions, err)
 	}
 }
+
+func TestAgentsReadTheCriteriaAndOnlyTheOwnerSavesThem(t *testing.T) {
+	hub := startHub(t)
+	_, token := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	agent := connect(t, hub, token)
+	owner := connect(t, hub, ownerToken)
+
+	criteria := map[string]any{
+		"roles": []string{}, "search_terms": []string{"react"}, "technologies": []string{}, "seniority_levels": []string{}, "home_country": "Brazil",
+		"eligible_location_terms": []string{"Americas"}, "ineligible_location_terms": []string{}, "refuse_hourly_work": true,
+	}
+	saved := callTool[store.SavedJobCriteria](t, owner, "update_job_criteria", criteria)
+	if len(saved.Criteria.SearchTerms) != 1 || !saved.Criteria.RefuseHourlyWork {
+		t.Fatalf("saved = %+v", saved)
+	}
+	if read := callTool[store.SavedJobCriteria](t, agent, "get_job_criteria", map[string]any{}); read.Criteria.EligibleLocationTerms[0] != "Americas" {
+		t.Fatalf("agent read = %+v", read)
+	}
+	if text := callFailingTool(t, agent, "update_job_criteria", criteria); !strings.Contains(text, "only the owner") {
+		t.Fatalf("agent save error = %q", text)
+	}
+	if text := callFailingTool(t, owner, "update_job_criteria", map[string]any{"salary_floor": 1}); text == "" {
+		t.Fatal("an unknown field was accepted")
+	}
+}
