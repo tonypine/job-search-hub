@@ -54,18 +54,45 @@ struct SessionSidebarSection: View {
     private func row(_ session: ClaudeSession) -> some View {
         let isRunning = host.isRunning(session.id)
         return HStack(spacing: 8) {
-            Circle()
-                .fill(isRunning ? AnyShapeStyle(.green) : AnyShapeStyle(.clear))
-                .strokeBorder(isRunning ? AnyShapeStyle(.clear) : AnyShapeStyle(.secondary), lineWidth: 1)
-                .frame(width: 8, height: 8)
+            SessionLamp(isRunning: isRunning, activity: host.activities[session.id])
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.name).lineLimit(1)
-                Text(isRunning ? "Running" : session.lastActiveAt.formatted(.relative(presentation: .named)))
+                Text(isRunning ? SessionLamp.describe(host.activities[session.id]) : session.lastActiveAt.formatted(.relative(presentation: .named)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .contentShape(Rectangle())
         .help(isRunning ? "Show this session" : "Resume this session")
+    }
+}
+
+/// A session's state at a glance: blue while working, orange while waiting
+/// for the owner, green when its turn is done, an empty ring when not running.
+struct SessionLamp: View {
+    let isRunning: Bool
+    let activity: SessionActivity?
+
+    var body: some View {
+        Circle()
+            .fill(isRunning ? AnyShapeStyle(color) : AnyShapeStyle(.clear))
+            .strokeBorder(isRunning ? AnyShapeStyle(.clear) : AnyShapeStyle(.secondary), lineWidth: 1)
+            .frame(width: 8, height: 8)
+    }
+
+    private var color: Color {
+        switch activity {
+        case .working: .blue
+        case .blocked: .orange
+        case .idle, nil: .green
+        }
+    }
+
+    static func describe(_ activity: SessionActivity?) -> String {
+        switch activity {
+        case .working: "Working"
+        case .blocked: "Waiting for you"
+        case .idle, nil: "Running"
+        }
     }
 }

@@ -25,8 +25,8 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     let start = ClaudeLaunch.getShellCommand(claude: "/Users/me/.local/bin/claude", session: session, hasConversation: false)
     let resume = ClaudeLaunch.getShellCommand(claude: "/Users/me/.local/bin/claude", session: session, hasConversation: true)
 
-    #expect(start == "exec '/Users/me/.local/bin/claude' '--session-id' 'bbbbbbbb-0000-0000-0000-000000000002' '--name' 'Frontend Engineer · Acme' '--append-system-prompt-file' 'aaaaaaaa-0000-0000-0000-000000000001.context.md'")
-    #expect(resume == "exec '/Users/me/.local/bin/claude' '--resume' 'bbbbbbbb-0000-0000-0000-000000000002' '--append-system-prompt-file' 'aaaaaaaa-0000-0000-0000-000000000001.context.md'")
+    #expect(start == "exec '/Users/me/.local/bin/claude' '--settings' 'hub-session-hooks.json' '--session-id' 'bbbbbbbb-0000-0000-0000-000000000002' '--name' 'Frontend Engineer · Acme' '--append-system-prompt-file' 'aaaaaaaa-0000-0000-0000-000000000001.context.md'")
+    #expect(resume == "exec '/Users/me/.local/bin/claude' '--settings' 'hub-session-hooks.json' '--resume' 'bbbbbbbb-0000-0000-0000-000000000002' '--append-system-prompt-file' 'aaaaaaaa-0000-0000-0000-000000000001.context.md'")
 }
 
 @Test func aNameWithQuotesStaysOneArgument() {
@@ -58,4 +58,16 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
 
     #expect(sorted.map(\.name) == ["running old", "recent", "old"])
     #expect(runningOld.subject == .company(runningOld.companyID!))
+}
+
+@Test func theHooksWriteEachEventsActivityToTheSessionsStateFile() throws {
+    let settings = try #require(try JSONSerialization.jsonObject(with: Data(ClaudeHooks.getSettingsJSON().utf8)) as? [String: Any])
+    let hooks = try #require(settings["hooks"] as? [String: [[String: Any]]])
+
+    #expect(Set(hooks.keys) == ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop"])
+    let stop = try #require((hooks["Stop"]?.first?["hooks"] as? [[String: String]])?.first)
+    #expect(stop["type"] == "command")
+    #expect(stop["command"] == #"[ -n "$JOB_SEARCH_HUB_SESSION_STATE_FILE" ] && printf '%s' idle > "$JOB_SEARCH_HUB_SESSION_STATE_FILE" || true"#)
+    #expect(ClaudeHooks.parseActivity("blocked\n") == .blocked)
+    #expect(ClaudeHooks.parseActivity("?") == nil)
 }

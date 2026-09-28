@@ -57,8 +57,9 @@ struct ClaudeSessionPane: View {
             if let running = model.sessions.first(where: { host.isRunning($0.id) }), let terminal = host.getTerminal(for: running.id) {
                 VStack(spacing: 0) {
                     HStack {
-                        Circle().fill(.green).frame(width: 8, height: 8)
+                        SessionLamp(isRunning: true, activity: host.activities[running.id])
                         Text(running.name).lineLimit(1)
+                        Text(SessionLamp.describe(host.activities[running.id])).foregroundStyle(.secondary)
                         Spacer()
                         Button("Stop", systemImage: "stop.fill") { host.stop(running.id) }
                     }
@@ -66,6 +67,8 @@ struct ClaudeSessionPane: View {
                     Divider()
                     TerminalHostView(terminal: terminal)
                 }
+                .onAppear { host.shownSessionIDs.insert(running.id) }
+                .onDisappear { host.shownSessionIDs.remove(running.id) }
             } else {
                 startOptions
             }

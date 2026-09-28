@@ -100,9 +100,10 @@ public enum ClaudeLaunch {
 
     /// The command a login shell runs: a session with a conversation is
     /// resumed, and one without starts under its own ID. Either way it reads
-    /// its context fresh.
+    /// its context fresh and loads the app's hooks on top of the owner's own
+    /// settings.
     public static func getShellCommand(claude: String, session: ClaudeSession, hasConversation: Bool) -> String {
-        var arguments = [claude]
+        var arguments = [claude, "--settings", ClaudeHooks.settingsFileName]
         if hasConversation {
             arguments += ["--resume", session.claudeSessionID.uuidString.lowercased()]
         } else {
@@ -138,5 +139,43 @@ extension ClaudeSession {
         if let jobID { return .job(jobID) }
         if let companyID { return .company(companyID) }
         return nil
+    }
+}
+
+/// What a running session is doing, as its hooks report it.
+public enum SessionActivity: String, Sendable {
+    case working
+    /// Waiting for the owner: a permission prompt or a question.
+    case blocked
+    /// Finished its turn.
+    case idle
+}
+
+/// The hooks the app adds to its own sessions, and only to them, through
+/// `--settings`. Each writes the session's activity to the file named by
+/// `stateFileVariable`, which the app sets for each session.
+public enum ClaudeHooks {
+    public static let settingsFileName = "hub-session-hooks.json"
+    public static let stateFileVariable = "JOB_SEARCH_HUB_SESSION_STATE_FILE"
+
+    /// Which hook events mean which activity.
+    static let activityByEvent: [(event: String, activity: SessionActivity)] = [
+        ("SessionStart", .idle), ("UserPromptSubmit", .working), ("PreToolUse", .working),
+        ("PostToolUse", .working), ("Notification", .blocked), ("Stop", .idle),
+    ]
+
+    public static func getSettingsJSON() -> String {
+        var hooks: [String: Any] = [:]
+        for (event, activity) in activityByEvent {
+            let command = "[ -n \"$\(stateFileVariable)\" ] && printf '%s' \(activity.rawValue) > \"$\(stateFileVariable)\" || true"
+            hooks[event] = [["hooks": [["type": "command", "command": command]]]]
+        }
+        let data = try! JSONSerialization.data(withJSONObject: ["hooks": hooks], options: [.prettyPrinted, .sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Reads a state file's text; anything unknown reads as nil.
+    public static func parseActivity(_ text: String) -> SessionActivity? {
+        SessionActivity(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

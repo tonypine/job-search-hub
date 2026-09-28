@@ -1,6 +1,7 @@
 import AppKit
 import JobSearchHubCore
 import SwiftTerm
+import UserNotifications
 
 enum ClaudeSessionLaunchError: LocalizedError {
     case claudeNotFound
@@ -23,8 +24,15 @@ final class ClaudeSessionHost {
     static let shared = ClaudeSessionHost()
 
     private(set) var runningSessionIDs: Set<UUID> = []
+    /// What each running session is doing, as its hooks last reported.
+    private(set) var activities: [UUID: SessionActivity] = [:]
+    /// The sessions a pane is showing; they raise no notifications.
+    var shownSessionIDs: Set<UUID> = []
     @ObservationIgnored private var terminals: [UUID: LocalProcessTerminalView] = [:]
     @ObservationIgnored private var watchers: [UUID: ProcessEndWatcher] = [:]
+    @ObservationIgnored private var names: [UUID: String] = [:]
+    @ObservationIgnored private var stateFiles: [UUID: URL] = [:]
+    @ObservationIgnored private var activityTimer: Timer?
 
     func isRunning(_ sessionID: UUID) -> Bool {
         runningSessionIDs.contains(sessionID)
@@ -47,6 +55,11 @@ final class ClaudeSessionHost {
         let folder = ClaudeLaunch.getWorkingDirectory(applicationSupport: applicationSupport)
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         try context.context.write(to: folder.appending(path: ClaudeLaunch.getContextFileName(for: session)), atomically: true, encoding: .utf8)
+        try ClaudeHooks.getSettingsJSON().write(to: folder.appending(path: ClaudeHooks.settingsFileName), atomically: true, encoding: .utf8)
+        let states = applicationSupport.appending(path: "JobSearchHub/SessionStates", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: states, withIntermediateDirectories: true)
+        let stateFile = states.appending(path: "\(session.id.uuidString.lowercased()).state")
+        try? fileManager.removeItem(at: stateFile)
         let transcript = ClaudeLaunch.getTranscriptURL(for: session, workingDirectory: folder, home: fileManager.homeDirectoryForCurrentUser)
         let command = ClaudeLaunch.getShellCommand(claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path))
 
@@ -56,13 +69,18 @@ final class ClaudeSessionHost {
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
+        environment[ClaudeHooks.stateFileVariable] = stateFile.path
         terminal.startProcess(
             executable: "/bin/zsh", args: ["-l", "-i", "-c", command],
             environment: environment.map { "\($0.key)=\($0.value)" }, execName: nil, currentDirectory: folder.path
         )
         terminals[session.id] = terminal
         watchers[session.id] = watcher
+        names[session.id] = session.name
+        stateFiles[session.id] = stateFile
         runningSessionIDs.insert(session.id)
+        startReadingActivities()
+        requestNotificationPermission()
         _ = try? await client.send("POST", "v1/claude-sessions/\(session.id.uuidString)/start", body: EmptyRequest(), as: ClaudeSession.self)
     }
 
@@ -74,8 +92,49 @@ final class ClaudeSessionHost {
     private func handleEnd(of sessionID: UUID, client: HubClient) {
         terminals[sessionID] = nil
         watchers[sessionID] = nil
+        stateFiles[sessionID] = nil
+        activities[sessionID] = nil
         runningSessionIDs.remove(sessionID)
         Task { _ = try? await client.send("POST", "v1/claude-sessions/\(sessionID.uuidString)/stop", body: EmptyRequest(), as: ClaudeSession.self) }
+    }
+
+    /// Reads each running session's state file once a second, the file its
+    /// hooks write.
+    private func startReadingActivities() {
+        guard activityTimer == nil else { return }
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor in ClaudeSessionHost.shared.readActivities() }
+        }
+    }
+
+    private func readActivities() {
+        for (sessionID, stateFile) in stateFiles {
+            guard let text = try? String(contentsOf: stateFile, encoding: .utf8), let activity = ClaudeHooks.parseActivity(text) else { continue }
+            let previous = activities[sessionID]
+            guard activity != previous else { continue }
+            activities[sessionID] = activity
+            if previous == .working, activity != .working {
+                notifyAboutTurn(of: sessionID, activity: activity)
+            }
+        }
+        if stateFiles.isEmpty {
+            activityTimer?.invalidate()
+            activityTimer = nil
+        }
+    }
+
+    /// A session that stopped working while nobody looks at it says so.
+    private func notifyAboutTurn(of sessionID: UUID, activity: SessionActivity) {
+        guard !(shownSessionIDs.contains(sessionID) && NSApp.isActive) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = names[sessionID] ?? "Claude session"
+        content.body = activity == .blocked ? "Waiting for you" : "Finished its turn"
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 }
 
