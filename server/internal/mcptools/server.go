@@ -33,6 +33,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier) *mcp.Server {
 	addJobBoardTools(server, hub, verifier)
 	addPeopleTools(server, hub)
 	addAgentPromptTools(server, hub)
+	addOwnerProfileTools(server, hub)
 	return server
 }
 
