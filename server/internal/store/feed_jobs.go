@@ -110,7 +110,8 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 				return err
 			}
 		}
-		return nil
+		_, err = tieJobsToCompanies(ctx, tx)
+		return err
 	})
 	return result, err
 }

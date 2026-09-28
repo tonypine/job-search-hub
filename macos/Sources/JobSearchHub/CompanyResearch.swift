@@ -170,7 +170,11 @@ struct AddCompanySheet: View {
                     Button("Close") { dismiss() }
                         .help("The research goes on; the Companies page shows when it ends.")
                 case let .succeeded(companyID):
-                    Button("Add another") { research.reset() }
+                    Button("Add another") {
+                        company = ""
+                        foundVia = ""
+                        research.reset()
+                    }
                     if let companyID {
                         Button("Show company") {
                             onShowCompany(companyID)

@@ -47,3 +47,31 @@ func TestConnectionsShowAsWarmPathsAtTheirCompany(t *testing.T) {
 		t.Fatalf("details connections = %+v, %v; a feed job's company name finds its connections", details.Connections, err)
 	}
 }
+
+func TestAFeedJobIsTiedToItsCompanyWhenTheCompanyArrives(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	now := time.Now().UTC()
+	expiresAt := now.Add(48 * time.Hour)
+	posting := store.JobPosting{
+		ExternalID: "1", CompanyName: "Globex Inc.", Title: "Frontend Engineer", Location: "Worldwide",
+		URL: "https://himalayas.app/companies/globex/jobs/1", ExpiresAt: &expiresAt,
+	}
+	if _, err := hub.SyncFeedJobs(ctx, owner, store.JobSourceHimalayas, []store.JobPosting{posting}, now); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ := hub.ListJobs(ctx, store.JobFilter{})
+	card, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &jobs[0].Job.ID})
+
+	globex, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ = hub.ListJobs(ctx, store.JobFilter{CompanyID: &globex.ID})
+	if len(jobs) != 1 {
+		t.Fatalf("Globex's jobs = %+v; the feed job should now be Globex's", jobs)
+	}
+	if found, _ := hub.FindCompanyApplication(ctx, globex.ID); found.ID != card.ID {
+		t.Fatalf("card = %+v; the job's card follows it to Globex", found)
+	}
+}

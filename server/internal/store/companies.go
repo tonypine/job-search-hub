@@ -83,7 +83,7 @@ func (s *Store) CreateCompany(ctx context.Context, actor Actor, input NewCompany
 		}
 		company = inserted
 		created = true
-		if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+		if err := matchCompanyNames(ctx, tx); err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{
@@ -194,7 +194,7 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 			return err
 		}
 		if _, renamed := after["name"]; renamed {
-			if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+			if err := matchCompanyNames(ctx, tx); err != nil {
 				return err
 			}
 		}
@@ -221,4 +221,14 @@ func NormalizeDomain(raw string) (string, error) {
 		return "", fmt.Errorf("%q is not a domain", raw)
 	}
 	return host, nil
+}
+
+// matchCompanyNames ties the connections and the jobs that name a company to
+// the hub company of that name, as when a company is added or renamed.
+func matchCompanyNames(ctx context.Context, tx pgx.Tx) error {
+	if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+		return err
+	}
+	_, err := tieJobsToCompanies(ctx, tx)
+	return err
 }

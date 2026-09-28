@@ -92,27 +92,35 @@ func (s *Store) ImportConnections(ctx context.Context, actor Actor, connections 
 	return result, err
 }
 
-// matchConnectionsToCompanies ties each connection to the company whose
-// name, without case, accents or a legal suffix, equals theirs, and returns
-// how many connections are tied to one.
-func matchConnectionsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
+// getCompanyIDsByName maps each company's name, as normalizeCompanyName
+// writes it, to the company.
+func getCompanyIDsByName(ctx context.Context, tx pgx.Tx) (map[string]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT id, name FROM companies`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	defer rows.Close()
 	companyIDs := map[string]uuid.UUID{}
 	for rows.Next() {
 		var id uuid.UUID
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			return 0, err
+			return nil, err
 		}
 		companyIDs[normalizeCompanyName(name)] = id
 	}
-	if err := rows.Err(); err != nil {
+	return companyIDs, rows.Err()
+}
+
+// matchConnectionsToCompanies ties each connection to the company whose
+// name, without case, accents or a legal suffix, equals theirs, and returns
+// how many connections are tied to one.
+func matchConnectionsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
+	companyIDs, err := getCompanyIDsByName(ctx, tx)
+	if err != nil {
 		return 0, err
 	}
-	rows, err = tx.Query(ctx, `SELECT id, company_name FROM connections`)
+	rows, err := tx.Query(ctx, `SELECT id, company_name FROM connections`)
 	if err != nil {
 		return 0, err
 	}
@@ -210,4 +218,41 @@ func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName st
 		}
 	}
 	return connections, nil
+}
+
+// tieJobsToCompanies gives each job that names its company without being
+// tied to one, as a feed posting does, the hub company of that name, and
+// moves the job's card with it. It returns how many jobs it tied.
+func tieJobsToCompanies(ctx context.Context, tx pgx.Tx) (int, error) {
+	companyIDs, err := getCompanyIDsByName(ctx, tx)
+	if err != nil || len(companyIDs) == 0 {
+		return 0, err
+	}
+	rows, err := tx.Query(ctx, `SELECT id, company_name FROM jobs WHERE company_id IS NULL AND company_name <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	matches := map[uuid.UUID]uuid.UUID{}
+	for rows.Next() {
+		var jobID uuid.UUID
+		var companyName string
+		if err := rows.Scan(&jobID, &companyName); err != nil {
+			return 0, err
+		}
+		if companyID, found := companyIDs[normalizeCompanyName(companyName)]; found {
+			matches[jobID] = companyID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for jobID, companyID := range matches {
+		if _, err := tx.Exec(ctx, `UPDATE jobs SET company_id = $2 WHERE id = $1`, jobID, companyID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE applications SET company_id = $2, updated_at = now() WHERE job_id = $1 AND company_id IS NULL`, jobID, companyID); err != nil {
+			return 0, err
+		}
+	}
+	return len(matches), nil
 }
