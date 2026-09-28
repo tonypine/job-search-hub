@@ -124,3 +124,39 @@ public struct ApplicationResponse: Decodable, Equatable, Sendable {
         created = try container.decodeIfPresent(Bool.self, forKey: .created) ?? false
     }
 }
+
+/// The body that adds a phase or renames one.
+public struct PipelinePhaseNameRequest: Encodable, Equatable, Sendable {
+    public var name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+}
+
+public struct ReorderPipelinePhasesRequest: Encodable, Equatable, Sendable {
+    public var phaseIDs: [UUID]
+
+    public init(phaseIDs: [UUID]) {
+        self.phaseIDs = phaseIDs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case phaseIDs = "phaseIds"
+    }
+}
+
+public struct PipelinePhasesResponse: Decodable, Equatable, Sendable {
+    public var phases: [PipelinePhase]
+}
+
+public enum PipelinePhaseOrder {
+    /// The phases' IDs in order with one phase moved `offset` places, or nil
+    /// when the move would take it past either end.
+    public static func getIDs(of phases: [PipelinePhase], moving phaseID: UUID, by offset: Int) -> [UUID]? {
+        var ids = phases.map(\.id)
+        guard let index = ids.firstIndex(of: phaseID), ids.indices.contains(index + offset) else { return nil }
+        ids.swapAt(index, index + offset)
+        return ids
+    }
+}

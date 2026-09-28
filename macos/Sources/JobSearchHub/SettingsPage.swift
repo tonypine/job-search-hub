@@ -33,6 +33,9 @@ struct SettingsPage: View {
                 Label(connection.status.message, systemImage: statusSymbol)
                     .foregroundStyle(statusColor)
             }
+            if let client = connection.makeClient() {
+                PipelinePhasesSection(client: client)
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")

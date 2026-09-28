@@ -39,6 +39,11 @@ public struct HubClient: Sendable {
         return try await perform(makeRequest(method: method, path: path, body: encoded))
     }
 
+    /// Sends a DELETE, which the hub answers with no body on success.
+    public func delete(_ path: String) async throws {
+        _ = try await exchange(makeRequest(method: "DELETE", path: path, body: nil))
+    }
+
     func makeRequest(method: String, path: String, query: [URLQueryItem] = [], body: Data?) -> URLRequest {
         var url = baseURL.appending(path: path)
         if !query.isEmpty {
@@ -56,6 +61,17 @@ public struct HubClient: Sendable {
     }
 
     private func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
+        let data = try await exchange(request)
+        do {
+            return try HubJSON.makeDecoder().decode(Response.self, from: data)
+        } catch {
+            throw HubError.undecodable(String(describing: error))
+        }
+    }
+
+    /// Sends the request and returns the body of a 2xx answer; any other
+    /// answer throws the error it stands for.
+    private func exchange(_ request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -67,11 +83,7 @@ public struct HubClient: Sendable {
         if let failure = Self.mapFailure(status: status, body: data) {
             throw failure
         }
-        do {
-            return try HubJSON.makeDecoder().decode(Response.self, from: data)
-        } catch {
-            throw HubError.undecodable(String(describing: error))
-        }
+        return data
     }
 
     /// The error a non-2xx answer stands for, or nil for a success.

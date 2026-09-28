@@ -77,3 +77,33 @@ private func decodeBoard() throws -> PipelineBoard {
 
     #expect(!response.created)
 }
+
+@Test func movingAPhaseSwapsItWithItsNeighbourAndStopsAtTheEnds() throws {
+    let phases = try decodeBoard().phases
+
+    #expect(PipelinePhaseOrder.getIDs(of: phases, moving: phases[1].id, by: -1) == [phases[1].id, phases[0].id, phases[2].id])
+    #expect(PipelinePhaseOrder.getIDs(of: phases, moving: phases[1].id, by: 1) == [phases[0].id, phases[2].id, phases[1].id])
+    #expect(PipelinePhaseOrder.getIDs(of: phases, moving: phases[0].id, by: -1) == nil)
+    #expect(PipelinePhaseOrder.getIDs(of: phases, moving: phases[2].id, by: 1) == nil)
+}
+
+@Test func theReorderRequestUsesTheServersKey() throws {
+    let id = UUID(uuidString: savedID)!
+    let body = String(decoding: try HubJSON.makeEncoder().encode(ReorderPipelinePhasesRequest(phaseIDs: [id])), as: UTF8.self)
+
+    #expect(body == #"{"phase_ids":["\#(savedID.uppercased())"]}"#)
+}
+
+@Test func aDeleteSucceedsOnAnEmptyAnswerAndCarriesARefusal() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/pipeline/phases/empty": .init(status: 204, body: ""),
+        "/v1/pipeline/phases/busy": .init(status: 409, body: #"{"error":"the phase still has applications; move them first"}"#),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    try await client.delete("v1/pipeline/phases/empty")
+    #expect(recording.lastRequest?.httpMethod == "DELETE")
+    await #expect(throws: HubError.server(status: 409, message: "the phase still has applications; move them first")) {
+        try await client.delete("v1/pipeline/phases/busy")
+    }
+}
