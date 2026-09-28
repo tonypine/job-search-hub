@@ -44,3 +44,18 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     let transcript = ClaudeLaunch.getTranscriptURL(for: session, workingDirectory: folder, home: URL(filePath: "/Users/me", directoryHint: .isDirectory))
     #expect(transcript.path == "/Users/me/.claude/projects/-Users-me-Library-Application-Support-JobSearchHub-Sessions/bbbbbbbb-0000-0000-0000-000000000002.jsonl")
 }
+
+@Test func runningSessionsListFirstThenTheMostRecentlyActive() {
+    func session(_ name: String, activeAt: TimeInterval) -> ClaudeSession {
+        ClaudeSession(id: UUID(), companyID: UUID(), jobID: nil, claudeSessionID: UUID(), name: name,
+                      createdAt: Date(timeIntervalSince1970: activeAt), lastStartedAt: nil, lastStoppedAt: nil)
+    }
+    let old = session("old", activeAt: 100)
+    let recent = session("recent", activeAt: 300)
+    let runningOld = session("running old", activeAt: 50)
+
+    let sorted = ClaudeSessionList.sort([old, recent, runningOld], running: [runningOld.id])
+
+    #expect(sorted.map(\.name) == ["running old", "recent", "old"])
+    #expect(runningOld.subject == .company(runningOld.companyID!))
+}

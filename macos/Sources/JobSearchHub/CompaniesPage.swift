@@ -41,6 +41,15 @@ struct CompaniesPage: View {
     @Environment(HubConnection.self) private var connection
     @State private var model = CompaniesModel()
     @State private var side: PanelSide = .details
+    private let opensSession: Bool
+
+    init(initialCompanyID: UUID? = nil, opensSession: Bool = false) {
+        let model = CompaniesModel()
+        model.selectedID = initialCompanyID
+        _model = State(initialValue: model)
+        _side = State(initialValue: opensSession ? .session : .details)
+        self.opensSession = opensSession
+    }
 
     var body: some View {
         Group {
@@ -73,7 +82,7 @@ struct CompaniesPage: View {
             .padding(8)
             .disabled(model.selectedID == nil)
             if side == .session, let companyID = model.selectedID {
-                ClaudeSessionPane(subject: .company(companyID), client: client)
+                ClaudeSessionPane(subject: .company(companyID), client: client, startsOnAppear: opensSession)
             } else {
                 DossierPane(dossier: model.dossier)
             }

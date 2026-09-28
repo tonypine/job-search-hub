@@ -55,7 +55,9 @@ struct JobSearchHubApp: App {
 }
 
 struct ContentView: View {
+    @Environment(HubConnection.self) private var connection
     @State private var selectedPage: Page?
+    @State private var focus: SessionFocus?
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -67,19 +69,47 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(Page.allCases, selection: $selectedPage) { page in
-                Label(page.title, systemImage: page.symbolName).tag(page)
+            List(selection: $selectedPage) {
+                Section {
+                    ForEach(Page.allCases) { page in
+                        Label(page.title, systemImage: page.symbolName).tag(page)
+                    }
+                }
+                if let client = connection.makeClient() {
+                    SessionSidebarSection(client: client) { subject in open(subject) }
+                }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             switch selectedPage {
             case .settings: SettingsPage()
-            case .companies: CompaniesPage()
+            case .companies:
+                CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil).id(focus?.id)
             case .profile: ProfilePage()
-            case .jobs: JobsPage(initialJobID: initialJobID, opensSession: opensSession)
+            case .jobs:
+                JobsPage(initialJobID: focusedJobID ?? initialJobID, opensSession: focusedJobID != nil || opensSession).id(focus?.id)
             case .pipeline: PipelinePage(initialJobID: initialJobID)
             case nil: EmptyView()
             }
+        }
+    }
+
+    private var focusedJobID: UUID? {
+        if case let .job(id)? = focus?.subject { return id }
+        return nil
+    }
+
+    private var focusedCompanyID: UUID? {
+        if case let .company(id)? = focus?.subject { return id }
+        return nil
+    }
+
+    /// Shows a session's job or company on its Session side.
+    private func open(_ subject: ClaudeSessionSubject) {
+        focus = SessionFocus(subject: subject)
+        switch subject {
+        case .job: selectedPage = .jobs
+        case .company: selectedPage = .companies
         }
     }
 }

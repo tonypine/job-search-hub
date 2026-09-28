@@ -117,3 +117,26 @@ public enum ClaudeLaunch {
         "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
+
+public enum ClaudeSessionList {
+    /// Running sessions first, then the rest; each group most recently active first.
+    public static func sort(_ sessions: [ClaudeSession], running: Set<UUID>) -> [ClaudeSession] {
+        sessions.sorted { left, right in
+            let leftRuns = running.contains(left.id)
+            let rightRuns = running.contains(right.id)
+            if leftRuns != rightRuns {
+                return leftRuns
+            }
+            return left.lastActiveAt > right.lastActiveAt
+        }
+    }
+}
+
+extension ClaudeSession {
+    /// What the session is about.
+    public var subject: ClaudeSessionSubject? {
+        if let jobID { return .job(jobID) }
+        if let companyID { return .company(companyID) }
+        return nil
+    }
+}
