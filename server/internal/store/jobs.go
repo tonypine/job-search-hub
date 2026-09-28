@@ -307,9 +307,10 @@ type JobFilter struct {
 // JobListItem is one row of the jobs list: a job, its company's name, and
 // the facts read from it, which the fit is judged from.
 type JobListItem struct {
-	Job         Job             `json:"job"`
-	CompanyName *string         `json:"company_name,omitempty"`
-	Facts       json.RawMessage `json:"-"`
+	Job           Job             `json:"job"`
+	CompanyName   *string         `json:"company_name,omitempty"`
+	UnseenUpdates int             `json:"unseen_updates"`
+	Facts         json.RawMessage `json:"-"`
 }
 
 // ListJobs returns one page of jobs, newest first, with the total that match.
@@ -339,7 +340,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		return nil, 0, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')),
+		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), `+jobUnseenUpdates+`,
 		       (SELECT facts FROM job_facts WHERE job_facts.job_id = jobs.id)
 		`+matches+`
 		ORDER BY jobs.first_seen_at DESC, jobs.title
@@ -349,7 +350,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobListItem, error) {
 		var item JobListItem
-		job, err := scanJob(row, &item.CompanyName, &item.Facts)
+		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts)
 		item.Job = job
 		return item, err
 	})

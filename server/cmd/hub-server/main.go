@@ -80,6 +80,7 @@ func run() error {
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
+	api.RegisterUpdateRoutes(routes, hub, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)

@@ -15,13 +15,15 @@ type CompanySummary struct {
 	WatchedSince *time.Time `json:"watched_since,omitempty"`
 	JobBoards    []JobBoard `json:"job_boards"`
 	PeopleCount  int        `json:"people_count"`
+	// UnseenUpdates counts the company's unseen updates, its jobs' included.
+	UnseenUpdates int `json:"unseen_updates"`
 }
 
 // ListCompanySummaries returns every stored company, by name, in two queries
 // whatever the number of companies.
 func (s *Store) ListCompanySummaries(ctx context.Context) ([]CompanySummary, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+companyColumns+`, watched.added_at, COALESCE(counted.people_count, 0)
+		SELECT `+companyColumns+`, watched.added_at, COALESCE(counted.people_count, 0), `+companyUnseenUpdates+`
 		FROM companies
 		LEFT JOIN (SELECT company_id, added_at FROM watch_list_entries WHERE removed_at IS NULL) AS watched
 			ON watched.company_id = companies.id
@@ -33,7 +35,7 @@ func (s *Store) ListCompanySummaries(ctx context.Context) ([]CompanySummary, err
 	}
 	summaries, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (CompanySummary, error) {
 		summary := CompanySummary{JobBoards: []JobBoard{}}
-		company, err := scanCompany(row, &summary.WatchedSince, &summary.PeopleCount)
+		company, err := scanCompany(row, &summary.WatchedSince, &summary.PeopleCount, &summary.UnseenUpdates)
 		summary.Company = company
 		return summary, err
 	})

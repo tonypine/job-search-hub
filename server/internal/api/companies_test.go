@@ -74,6 +74,9 @@ func TestTheAppRoutesAreForTheOwnerOnly(t *testing.T) {
 		{http.MethodPost, "/v1/claude-sessions", `{}`},
 		{http.MethodPost, "/v1/claude-sessions/7c9e6679-7425-40de-944b-e07fc1f90ae7/start", ""},
 		{http.MethodGet, "/v1/google", ""},
+		{http.MethodGet, "/v1/updates", ""},
+		{http.MethodPost, "/v1/updates", `{"kind":"x","title":"y"}`},
+		{http.MethodPost, "/v1/updates/seen", `{"all":true}`},
 		{http.MethodPost, "/v1/google/sign-in", ""},
 		{http.MethodGet, "/v1/google/check", ""},
 	} {

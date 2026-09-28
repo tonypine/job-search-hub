@@ -196,6 +196,7 @@ type PipelineCard struct {
 	// FollowUpDueAt is when the card's phase wants a follow-up; nil when the
 	// phase asks for none.
 	FollowUpDueAt *time.Time `json:"follow_up_due_at,omitempty"`
+	UnseenUpdates int        `json:"unseen_updates"`
 }
 
 func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
@@ -204,7 +205,8 @@ func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.created_at, applications.updated_at,
 		       jobs.title, jobs.url, companies.name,
 		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
-		           + make_interval(days => pipeline_phases.follow_up_days)
+		           + make_interval(days => pipeline_phases.follow_up_days),
+		       `+cardUnseenUpdates+`
 		FROM applications
 		JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
 		LEFT JOIN jobs ON jobs.id = applications.job_id
@@ -215,7 +217,7 @@ func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PipelineCard, error) {
 		var card PipelineCard
-		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName, &card.FollowUpDueAt)
+		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName, &card.FollowUpDueAt, &card.UnseenUpdates)
 		card.Application = application
 		return card, err
 	})

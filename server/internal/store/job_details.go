@@ -21,6 +21,8 @@ type JobDetails struct {
 	Facts       *LabelledJobFacts `json:"facts,omitempty"`
 	Application *Application      `json:"application,omitempty"`
 	Phase       *PipelinePhase    `json:"phase,omitempty"`
+	// UnseenUpdates counts the job's unseen updates.
+	UnseenUpdates int `json:"unseen_updates"`
 	// RawFacts are the facts as read, which the fit is judged from.
 	RawFacts json.RawMessage `json:"-"`
 }
@@ -46,9 +48,9 @@ type JobFactEntry struct {
 func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, error) {
 	var details JobDetails
 	job, err := scanJob(s.pool.QueryRow(ctx, `
-		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, ''))
+		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), `+jobUnseenUpdates+`
 		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
-		WHERE jobs.id = $1`, id), &details.CompanyName)
+		WHERE jobs.id = $1`, id), &details.CompanyName, &details.UnseenUpdates)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JobDetails{}, ErrJobNotFound
 	}
