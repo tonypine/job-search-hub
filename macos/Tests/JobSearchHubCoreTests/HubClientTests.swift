@@ -5,7 +5,6 @@ import Testing
 private let hubURL = URL(string: "http://localhost:8090")!
 private let profileJSON = ##"{"body":"# Candidate","updated_at":"2026-09-28T12:38:11.635355Z"}"##
 
-@Suite(.serialized)
 struct HubClientTests {
     @Test func requestsCarryTheOwnerTokenAndTheJSONBody() throws {
         let client = HubClient(baseURL: hubURL, token: "owner-token")
@@ -35,7 +34,7 @@ struct HubClientTests {
     }
 
     @Test func aStoppedServerIsNotReportedAsABadToken() async {
-        let session = StubHub.makeSession(answers: [:], isDown: true)
+        let (session, _) = StubHub.makeSession(answers: [:], isDown: true)
         let status = await ConnectionStatus.check(baseURL: hubURL, token: "owner-token", session: session)
         guard case .serverUnreachable = status else {
             Issue.record("status = \(status), want serverUnreachable")
@@ -44,7 +43,7 @@ struct HubClientTests {
     }
 
     @Test func aRefusedTokenIsReportedAsSuch() async {
-        let session = StubHub.makeSession(answers: [
+        let (session, _) = StubHub.makeSession(answers: [
             "/v1/health": .init(status: 200, body: #"{"database":"ok"}"#),
             "/v1/profile": .init(status: 401, body: ""),
         ])
@@ -52,16 +51,16 @@ struct HubClientTests {
     }
 
     @Test func aWorkingTokenConnects() async {
-        let session = StubHub.makeSession(answers: [
+        let (session, recording) = StubHub.makeSession(answers: [
             "/v1/health": .init(status: 200, body: #"{"database":"ok"}"#),
             "/v1/profile": .init(status: 200, body: profileJSON),
         ])
         #expect(await ConnectionStatus.check(baseURL: hubURL, token: "owner-token", session: session) == .connected)
-        #expect(StubHub.seenRequests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer owner-token")
+        #expect(recording.lastRequest?.value(forHTTPHeaderField: "Authorization") == "Bearer owner-token")
     }
 
     @Test func noSavedTokenIsSaidSo() async {
-        let session = StubHub.makeSession(answers: ["/v1/health": .init(status: 200, body: "{}")])
+        let (session, _) = StubHub.makeSession(answers: ["/v1/health": .init(status: 200, body: "{}")])
         #expect(await ConnectionStatus.check(baseURL: hubURL, token: nil, session: session) == .missingToken)
     }
 }

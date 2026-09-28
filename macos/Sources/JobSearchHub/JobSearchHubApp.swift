@@ -60,6 +60,7 @@ struct ContentView: View {
             switch selectedPage {
             case .settings: SettingsPage()
             case .companies: CompaniesPage()
+            case .profile: ProfilePage()
             case let page?: PlaceholderPage(page: page)
             case nil: EmptyView()
             }
