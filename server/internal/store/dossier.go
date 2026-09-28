@@ -13,6 +13,9 @@ type CompanyDossier struct {
 	WatchedSince *time.Time `json:"watched_since,omitempty" jsonschema:"when the company was put on the watch list; absent when it is not on it"`
 	JobBoards    []JobBoard `json:"job_boards"`
 	People       []Person   `json:"people"`
+	// Connections are the owner's LinkedIn connections who work here: warm
+	// paths, to try before anyone the owner doesn't know.
+	Connections []Connection `json:"connections" jsonschema:"the owner's LinkedIn connections who work here: warm paths to try before anyone the owner doesn't know"`
 }
 
 func (s *Store) GetCompanyDossier(ctx context.Context, companyID uuid.UUID) (CompanyDossier, error) {
@@ -32,5 +35,9 @@ func (s *Store) GetCompanyDossier(ctx context.Context, companyID uuid.UUID) (Com
 	if err != nil {
 		return CompanyDossier{}, err
 	}
-	return CompanyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards, People: people}, nil
+	connections, err := s.ListCompanyConnections(ctx, companyID)
+	if err != nil {
+		return CompanyDossier{}, err
+	}
+	return CompanyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards, People: people, Connections: connections}, nil
 }

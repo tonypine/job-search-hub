@@ -22,3 +22,32 @@ public struct ConnectionsImport: Decodable, Equatable, Sendable {
         return "Imported: \(parts.joined(separator: ", ")). \(matched) work at companies in the hub."
     }
 }
+
+/// Someone in the owner's LinkedIn network: a warm path to their company.
+public struct Connection: Codable, Equatable, Identifiable, Sendable {
+    public var id: UUID
+    public var firstName: String
+    public var lastName: String
+    public var profileURL: String
+    public var email: String?
+    public var companyName: String?
+    public var position: String?
+    /// The day they connected, at midnight UTC.
+    public var connectedOn: Date?
+
+    public var fullName: String { [firstName, lastName].filter { !$0.isEmpty }.joined(separator: " ") }
+
+    /// "Connected since Sep 2026", read in UTC so the day never shifts.
+    public var connectedSince: String? {
+        guard let connectedOn else { return nil }
+        var style = Date.FormatStyle.dateTime.month(.abbreviated).year()
+        style.timeZone = .gmt
+        return "Connected since \(connectedOn.formatted(style))"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, firstName, lastName, email, companyName, position, connectedOn
+        case profileURL = "profileUrl"
+    }
+}
+

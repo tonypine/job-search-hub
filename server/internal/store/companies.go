@@ -83,6 +83,9 @@ func (s *Store) CreateCompany(ctx context.Context, actor Actor, input NewCompany
 		}
 		company = inserted
 		created = true
+		if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+			return err
+		}
 		return insertChange(ctx, tx, actor, change{
 			entityType: "company", entityID: company.ID, operation: "create", after: company, sourceURL: input.SourceURL,
 		})
@@ -189,6 +192,11 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 			id, update.Name, update.WebsiteURL, update.CareersURL, update.HeadquartersCountry, update.EmployeeCountRange, update.Summary, update.FoundVia))
 		if err != nil {
 			return err
+		}
+		if _, renamed := after["name"]; renamed {
+			if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+				return err
+			}
 		}
 		return insertChange(ctx, tx, actor, change{
 			entityType: "company", entityID: id, operation: "update", before: before, after: after, sourceURL: update.SourceURL,

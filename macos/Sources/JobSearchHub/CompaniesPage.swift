@@ -116,6 +116,11 @@ struct CompaniesPage: View {
                 Text("\(summary.peopleCount)")
             }
             .width(60)
+            TableColumn("You know") { summary in
+                Text(summary.connectionCount > 0 ? "\(summary.connectionCount)" : "–")
+                    .fontWeight(summary.connectionCount > 0 ? .semibold : .regular)
+            }
+            .width(70)
             TableColumn("Found via") { summary in
                 Text(summary.company.foundVia ?? "")
                     .help(summary.company.foundVia ?? "")
@@ -153,6 +158,12 @@ struct DossierPane: View {
                         }
                         ForEach(dossier.jobBoards) { board in
                             linkOrText(board.summaryLine, url: board.boardURL)
+                        }
+                    }
+
+                    if let connections = dossier.connections, !connections.isEmpty {
+                        section("People you know") {
+                            ConnectionList(connections: connections)
                         }
                     }
 

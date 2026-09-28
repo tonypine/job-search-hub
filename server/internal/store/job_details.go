@@ -23,6 +23,9 @@ type JobDetails struct {
 	Phase       *PipelinePhase    `json:"phase,omitempty"`
 	// UnseenUpdates counts the job's unseen updates.
 	UnseenUpdates int `json:"unseen_updates"`
+	// Connections are the owner's connections at the job's company, whether
+	// the hub knows the company or only the posting's company name.
+	Connections []Connection `json:"connections"`
 	// RawFacts are the facts as read, which the fit is judged from.
 	RawFacts json.RawMessage `json:"-"`
 }
@@ -91,7 +94,17 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 	case !errors.Is(err, ErrApplicationNotFound):
 		return JobDetails{}, err
 	}
-	return details, nil
+
+	var connectionsErr error
+	switch {
+	case job.CompanyID != nil:
+		details.Connections, connectionsErr = s.ListCompanyConnections(ctx, *job.CompanyID)
+	case details.CompanyName != nil:
+		details.Connections, connectionsErr = s.ListConnectionsAtCompanyName(ctx, *details.CompanyName)
+	default:
+		details.Connections = []Connection{}
+	}
+	return details, connectionsErr
 }
 
 // labelJobFacts orders the facts as the schema's required list does, then

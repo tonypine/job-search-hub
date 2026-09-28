@@ -82,6 +82,11 @@ struct JobDetailView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         header(details)
                         actions(details)
+                        if let connections = details.connections, !connections.isEmpty {
+                            section("People you know at \(details.companyName ?? "this company")") {
+                                ConnectionList(connections: connections)
+                            }
+                        }
                         fitChecks(details.fit)
                         boardFacts(details.job)
                         readFacts(details.facts)

@@ -179,5 +179,35 @@ func (s *Store) ListCompanyConnections(ctx context.Context, companyID uuid.UUID)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Connection, error) { return scanConnection(row) })
+	connections, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Connection, error) { return scanConnection(row) })
+	if connections == nil {
+		connections = []Connection{}
+	}
+	return connections, err
+}
+
+// ListConnectionsAtCompanyName returns the connections who work at a company
+// the hub doesn't hold, such as one a feed posting names, compared as
+// ListCompanyConnections' matching compares names.
+func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName string) ([]Connection, error) {
+	wanted := normalizeCompanyName(companyName)
+	connections := []Connection{}
+	if wanted == "" {
+		return connections, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+connectionColumns+` FROM connections WHERE company_name <> '' ORDER BY connected_on NULLS LAST, last_name`)
+	if err != nil {
+		return nil, err
+	}
+	all, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Connection, error) { return scanConnection(row) })
+	if err != nil {
+		return nil, err
+	}
+	for _, connection := range all {
+		if normalizeCompanyName(connection.CompanyName) == wanted {
+			connections = append(connections, connection)
+		}
+	}
+	return connections, nil
 }

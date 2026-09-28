@@ -76,6 +76,8 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var watchedSince: Date?
     public var jobBoards: [JobBoard]
     public var peopleCount: Int
+    /// How many of the owner's connections work here.
+    public var connectionCount: Int
     /// Updates about the company or its jobs the owner hasn't seen yet.
     public var unseenUpdates: Int
 
@@ -88,6 +90,8 @@ public struct CompanyDossier: Codable, Equatable, Sendable {
     public var watchedSince: Date?
     public var jobBoards: [JobBoard]
     public var people: [Person]
+    /// The owner's connections who work here.
+    public var connections: [Connection]?
 }
 
 public struct CompaniesResponse: Codable, Equatable, Sendable {

@@ -10,6 +10,8 @@ public struct JobDetails: Decodable, Equatable, Sendable {
     public var phase: PipelinePhase?
     public var fit: JobFit
     public var unseenUpdates: Int
+    /// The owner's connections at the job's company.
+    public var connections: [Connection]?
 }
 
 /// A job's facts in the order and with the labels of the prompt version they
