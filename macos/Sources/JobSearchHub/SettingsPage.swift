@@ -34,6 +34,7 @@ struct SettingsPage: View {
                     .foregroundStyle(statusColor)
             }
             if let client = connection.makeClient() {
+                JobCriteriaSection(client: client)
                 PipelinePhasesSection(client: client)
             }
         }
