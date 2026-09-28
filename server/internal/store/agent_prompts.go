@@ -17,7 +17,16 @@ var ErrAgentPromptNotFound = errors.New("agent prompt not found")
 // description; its ResultSchema lists the facts.
 const AgentPromptKindJobFacts = "job_facts"
 
-var agentPromptKinds = map[string]bool{AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true}
+// AgentPromptKindCompanySession and AgentPromptKindJobSession start the Claude
+// sessions the owner opens on a company or a job.
+const (
+	AgentPromptKindCompanySession = "company_session"
+	AgentPromptKindJobSession     = "job_session"
+)
+
+var agentPromptKinds = map[string]bool{
+	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
+}
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON
 // schema its answer must match when the prompt carries one. Versions are

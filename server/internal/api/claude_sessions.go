@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -20,9 +21,16 @@ type claudeSessionsResponse struct {
 	Sessions []store.ClaudeSession `json:"sessions"`
 }
 
+// claudeSessionContextResponse is what a session starts knowing, rendered
+// from the prompt version it names.
+type claudeSessionContextResponse struct {
+	Context       string `json:"context"`
+	PromptVersion int    `json:"prompt_version"`
+}
+
 // RegisterClaudeSessionRoutes adds the owner-only routes that keep the
 // app's Claude sessions tied to the company or job each is about.
-func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
+func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	handle := func(pattern string, handler http.HandlerFunc) { routes.Handle(pattern, requireOwner(handler)) }
 
@@ -74,6 +82,32 @@ func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, requir
 			return
 		}
 		writeJSON(w, http.StatusOK, session)
+	})
+
+	handle("GET /v1/claude-sessions/{id}/context", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		session, err := hub.GetClaudeSession(r.Context(), id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		var rendered prompts.Rendered
+		if session.CompanyID != nil {
+			rendered, err = prompts.RenderCompanySessionContext(r.Context(), hub, *session.CompanyID)
+		} else {
+			var details judgedJobDetails
+			if details, err = getJudgedJobDetails(r.Context(), hub, rateSource, *session.JobID); err == nil {
+				rendered, err = prompts.RenderJobSessionContext(r.Context(), hub, details, details.Job.CompanyID)
+			}
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the context: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, claudeSessionContextResponse{Context: rendered.Body, PromptVersion: rendered.Version})
 	})
 
 	for _, event := range []struct {

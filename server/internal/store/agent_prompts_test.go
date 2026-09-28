@@ -127,3 +127,17 @@ func jsonEqual(t *testing.T, left, right json.RawMessage) bool {
 	}
 	return reflect.DeepEqual(leftValue, rightValue)
 }
+
+func TestTheSessionPromptsAreSeededAndEditable(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	for kind, placeholder := range map[string]string{store.AgentPromptKindCompanySession: "{{company_dossier}}", store.AgentPromptKindJobSession: "{{job_details}}"} {
+		seeded, err := hub.GetLatestAgentPrompt(ctx, kind)
+		if err != nil || !strings.Contains(seeded.Body, placeholder) || !strings.Contains(seeded.Body, "{{owner_profile}}") {
+			t.Fatalf("%s = %+v, %v", kind, seeded, err)
+		}
+		if saved, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: kind, Body: "Be brief. " + placeholder}); err != nil || saved.Version != 2 {
+			t.Fatalf("save %s = %+v, %v", kind, saved, err)
+		}
+	}
+}

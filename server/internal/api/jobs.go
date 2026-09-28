@@ -24,6 +24,19 @@ type exchangeRateSource interface {
 	GetRates(ctx context.Context, base string) (map[string]float64, error)
 }
 
+// getJudgedJobDetails reads a job's details and judges its fit.
+func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource exchangeRateSource, id uuid.UUID) (judgedJobDetails, error) {
+	details, err := hub.GetJobDetails(ctx, id)
+	if err != nil {
+		return judgedJobDetails{}, err
+	}
+	criteria, rates, err := readFitInputs(ctx, hub, rateSource)
+	if err != nil {
+		return judgedJobDetails{}, err
+	}
+	return judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria, rates)}, nil
+}
+
 // readFitInputs reads the criteria and, when they judge take-home, the day's
 // exchange rates. A failed rate fetch is logged and leaves foreign pay unclear.
 func readFitInputs(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (store.JobCriteria, jobfit.ExchangeRates, error) {
@@ -109,7 +122,7 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
 			return
 		}
-		details, err := hub.GetJobDetails(r.Context(), id)
+		details, err := getJudgedJobDetails(r.Context(), hub, rateSource, id)
 		if errors.Is(err, store.ErrJobNotFound) {
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
 			return
@@ -118,12 +131,7 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		criteria, rates, err := readFitInputs(r.Context(), hub, rateSource)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria, rates)})
+		writeJSON(w, http.StatusOK, details)
 	})))
 
 	routes.Handle("POST /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

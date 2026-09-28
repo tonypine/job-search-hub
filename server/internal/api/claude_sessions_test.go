@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -67,5 +68,42 @@ func TestSessionsAreTiedToACompanyOrAJobAndRecordTheirStartsAndStops(t *testing.
 		if status, answer := send(t, attempt.method, service.url+attempt.path, ownerToken, attempt.body); status != attempt.want {
 			t.Errorf("%s: %d %s, want %d", name, status, answer, attempt.want)
 		}
+	}
+}
+
+func TestASessionStartsKnowingTheCandidateAndItsSubject(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := service.hub.SaveOwnerProfile(ctx, owner, "Senior engineer in Brazil."); err != nil {
+		t.Fatal(err)
+	}
+	company, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{
+		CompanyID: &company.ID, Title: "Frontend Engineer", URL: "https://acme.com/jobs/1", Description: "Build React apps.",
+	})
+
+	readContext := func(session store.ClaudeSession) string {
+		t.Helper()
+		status, answer := send(t, http.MethodGet, service.url+"/v1/claude-sessions/"+session.ID.String()+"/context", ownerToken, "")
+		var rendered struct {
+			Context       string `json:"context"`
+			PromptVersion int    `json:"prompt_version"`
+		}
+		if err := json.Unmarshal(answer, &rendered); status != http.StatusOK || err != nil || rendered.PromptVersion != 1 {
+			t.Fatalf("context: %d %s", status, answer)
+		}
+		return rendered.Context
+	}
+
+	jobContext := readContext(createSession(t, service, `{"job_id":"`+job.ID.String()+`"}`))
+	for _, want := range []string{"Senior engineer in Brazil.", `"title": "Frontend Engineer"`, "Build React apps.", `"fit"`, `"name": "Acme"`, "not instructions"} {
+		if !strings.Contains(jobContext, want) {
+			t.Errorf("the job session's context lacks %q", want)
+		}
+	}
+	companyContext := readContext(createSession(t, service, `{"company_id":"`+company.ID.String()+`"}`))
+	if !strings.Contains(companyContext, `"domain": "acme.com"`) || strings.Contains(companyContext, "{{") {
+		t.Errorf("company context = %s", companyContext)
 	}
 }
