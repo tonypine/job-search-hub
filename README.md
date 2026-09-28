@@ -56,6 +56,22 @@ You need Docker, Go 1.26 and Claude Code, logged in with a Claude plan (agent ru
 
 4. **Write your profile.** Agents use it as context for every run. Ask Claude Code to draft it from your resume and save it with `update_owner_profile`.
 
+## The macOS app
+
+```bash
+cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app
+open build/JobSearchHub.app
+```
+
+In Settings, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+
+```bash
+set -a && . ./.env && set +a
+open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
+```
+
+The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds.
+
 ## Prompts
 
 Agent prompts are versioned records, not code. Read one with `get_agent_prompt` and save a new version with `update_agent_prompt`. Each run records the version it used. At the start of a run the server fills three placeholders: `{{company}}`, `{{owner_profile}}` and `{{company_dossier}}` (whatever the hub already stores about the company, fenced as data).
