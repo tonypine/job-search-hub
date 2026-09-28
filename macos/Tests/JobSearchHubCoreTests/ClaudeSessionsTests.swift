@@ -78,3 +78,18 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     #expect(command.hasSuffix("'--' '-draft this'"))
     #expect(ClaudeLaunch.getPastedMessage("line one\nline two") == "\u{1b}[200~line one\nline two\u{1b}[201~\r")
 }
+
+@Test func aSessionInheritsNoClaudeCodeVariables() {
+    let inherited = [
+        "HOME": "/Users/me", "LANG": "pt_BR.UTF-8", "SSH_AUTH_SOCK": "/tmp/agent", "PATH": "/odd/path",
+        "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "SOME_TOKEN": "secret",
+    ]
+
+    let environment = SessionEnvironment.make(from: inherited, stateFile: "/tmp/s.state")
+
+    #expect(environment["HOME"] == "/Users/me" && environment["LANG"] == "pt_BR.UTF-8" && environment["SSH_AUTH_SOCK"] == "/tmp/agent")
+    #expect(environment["CLAUDE_CODE_CHILD_SESSION"] == nil && environment["CLAUDECODE"] == nil && environment["CLAUDE_CODE_ENTRYPOINT"] == nil)
+    #expect(environment["SOME_TOKEN"] == nil)
+    #expect(environment["PATH"] == SessionEnvironment.basePath)
+    #expect(environment[ClaudeHooks.stateFileVariable] == "/tmp/s.state" && environment["TERM"] == "xterm-256color")
+}

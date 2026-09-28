@@ -68,10 +68,7 @@ final class ClaudeSessionHost {
         let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         let watcher = ProcessEndWatcher { [weak self] in self?.handleEnd(of: session.id, client: client) }
         terminal.processDelegate = watcher
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
-        environment[ClaudeHooks.stateFileVariable] = stateFile.path
+        let environment = SessionEnvironment.make(from: ProcessInfo.processInfo.environment, stateFile: stateFile.path)
         terminal.startProcess(
             executable: "/bin/zsh", args: ["-l", "-i", "-c", command],
             environment: environment.map { "\($0.key)=\($0.value)" }, execName: nil, currentDirectory: folder.path

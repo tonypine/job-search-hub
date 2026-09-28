@@ -195,3 +195,23 @@ public struct AgentPrompt: Decodable, Sendable {
     public var version: Int
     public var body: String
 }
+
+/// The environment a session starts in. Only what a login shell needs is
+/// passed on, never the app's whole environment: an app launched from a
+/// Claude Code session carries that session's variables, and a session that
+/// inherits them takes itself for its child and stops saving its transcript.
+public enum SessionEnvironment {
+    static let passedVariables: Set<String> = [
+        "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "__CF_USER_TEXT_ENCODING",
+    ]
+    static let basePath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+
+    public static func make(from inherited: [String: String], stateFile: String) -> [String: String] {
+        var environment = inherited.filter { passedVariables.contains($0.key) }
+        environment["PATH"] = basePath
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment[ClaudeHooks.stateFileVariable] = stateFile
+        return environment
+    }
+}
