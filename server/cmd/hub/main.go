@@ -4,20 +4,28 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 const usage = `usage:
-  hub watch-list              list the watched companies
-  hub company show <domain>   print a company's dossier
+  hub watch-list                    list the watched companies
+  hub company show <domain>         print a company's dossier
+  hub company add <name-or-url>     research a company with an agent and watch it
+      [--model <model>] [--effort <level>]
 `
 
 func main() {
-	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -37,6 +45,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		err = showWatchList(ctx, config, stdout)
 	case len(args) == 3 && args[0] == "company" && args[1] == "show":
 		err = showCompany(ctx, config, args[2], stdout)
+	case len(args) >= 3 && args[0] == "company" && args[1] == "add":
+		flags := flag.NewFlagSet("company add", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		var options triageOptions
+		flags.StringVar(&options.model, "model", "", "the Claude model for the session")
+		flags.StringVar(&options.effort, "effort", "", "the effort level for the session")
+		if flags.Parse(args[3:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = addCompany(ctx, config, args[2], options, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2
