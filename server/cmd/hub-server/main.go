@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 const (
@@ -51,6 +52,9 @@ func run() error {
 		return fmt.Errorf("configure the database pool: %w", err)
 	}
 	defer database.Close()
+	if err := store.Migrate(ctx, database); err != nil {
+		return err
+	}
 
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
