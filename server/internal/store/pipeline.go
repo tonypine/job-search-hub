@@ -215,7 +215,7 @@ func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
 		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.contacted_at, applications.created_at,
 		       applications.updated_at,
-		       jobs.title, jobs.url, companies.name,
+		       jobs.title, jobs.url, COALESCE(companies.name, NULLIF(jobs.company_name, '')),
 		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
 		           + make_interval(days => pipeline_phases.follow_up_days),
 		       `+cardUnseenUpdates+`

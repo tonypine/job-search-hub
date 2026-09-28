@@ -33,7 +33,7 @@ final class NetworkSectionModel {
                 imports = [(.connections, picked)]
             }
             guard !imports.isEmpty else {
-                errorMessage = "No Connections.csv, messages.csv or Invitations.csv found there."
+                errorMessage = "No file of a LinkedIn export found there, such as Connections.csv or messages.csv."
                 return
             }
             for (kind, file) in imports {
@@ -45,6 +45,12 @@ final class NetworkSectionModel {
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: MessagesImport.self).summary)
                 case .invitations:
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: InvitationsImport.self).summary)
+                case .jobApplications:
+                    importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: LinkedInJobsImport.self)
+                        .makeSummary(of: "LinkedIn applications"))
+                case .savedJobs:
+                    importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: LinkedInJobsImport.self)
+                        .makeSummary(of: "Saved jobs"))
                 }
             }
             errorMessage = nil

@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/linkedinexport"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -70,6 +72,24 @@ func RegisterConnectionRoutes(routes *http.ServeMux, hub *store.Store, requireOw
 		}
 		writeJSON(w, http.StatusOK, imported)
 	})
+
+	importLinkedInJobs := func(parse func(io.Reader) ([]store.NewLinkedInJob, int, error)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			jobs, unreadable, err := parse(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
+			if !writeImportReadError(w, err) {
+				return
+			}
+			imported, err := hub.ImportLinkedInJobs(r.Context(), store.Actor{Kind: store.ActorOwner}, jobs, time.Now())
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			imported.Skipped += unreadable
+			writeJSON(w, http.StatusOK, imported)
+		}
+	}
+	handle("POST /v1/linkedin/applications/import", importLinkedInJobs(linkedinexport.ParseJobApplications))
+	handle("POST /v1/linkedin/saved-jobs/import", importLinkedInJobs(linkedinexport.ParseSavedJobs))
 }
 
 // writeImportReadError answers a file that couldn't be read, and reports

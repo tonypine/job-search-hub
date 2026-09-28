@@ -4,11 +4,14 @@ import Testing
 
 @Test func anExportsKnownFilesAreImportedConnectionsFirst() {
     let folder = URL(fileURLWithPath: "/tmp/export")
-    let files = ["messages.csv", "Skills.csv", "Invitations.csv", "Connections.csv"].map { folder.appending(path: $0) }
+    let files = ["messages.csv", "Skills.csv", "Jobs/Saved Jobs.csv", "Invitations.csv", "Jobs/Job Applications.csv", "Connections.csv"]
+        .map { folder.appending(path: $0) }
 
     let imports = LinkedInArchive.findImports(in: files)
 
-    #expect(imports.map(\.kind) == [.connections, .messages, .invitations])
+    #expect(imports.map(\.kind) == [.connections, .messages, .invitations, .jobApplications, .savedJobs])
+    #expect(LinkedInJobsImport(active: 0, closed: 5, skipped: 0, alreadyOnBoard: 0).makeSummary(of: "LinkedIn applications")
+        == "LinkedIn applications: 0 on the board, 5 kept as history.")
     #expect(imports.first?.kind.importPath == "v1/connections/import")
 }
 

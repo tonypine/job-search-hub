@@ -133,3 +133,41 @@ func TestTheRecruitersListCountsTheOpeningsAtTheirCompany(t *testing.T) {
 		t.Fatalf("messages: %d %s", status, body)
 	}
 }
+
+func TestLinkedInApplicationsJoinThePipelineAsActiveCardsOrHistory(t *testing.T) {
+	service := startAPI(t)
+	recent := time.Now().AddDate(0, 0, -10).Format("1/2/06, 3:04 PM")
+	applications := "Application Date,Contact Email,Contact Phone Number,Company Name,Job Title,Job Url,Resume Name,Question And Answers\n" +
+		"\"" + recent + "\",,,Acme,Frontend Engineer,http://www.linkedin.com/jobs/view/1,resume.pdf,\n" +
+		"\"3/24/23, 4:11 PM\",,,Globex,Backend Engineer,http://www.linkedin.com/jobs/view/2,resume.pdf,\n"
+	saved := "Saved Date,Job Url,Job Title,Company Name\n" +
+		"\"" + recent + "\",http://www.linkedin.com/jobs/view/3,Staff Engineer,Initech\n" +
+		"\"6/1/20, 11:51 AM\",http://www.linkedin.com/jobs/view/4,Old Save,Umbrella\n"
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		status, body := send(t, http.MethodPost, service.url+"/v1/linkedin/applications/import", ownerToken, applications)
+		var imported store.LinkedInJobsImport
+		json.Unmarshal(body, &imported)
+		want := store.LinkedInJobsImport{Active: 1, Closed: 1}
+		if attempt == 2 {
+			want = store.LinkedInJobsImport{AlreadyOnBoard: 2}
+		}
+		if status != http.StatusOK || imported != want {
+			t.Fatalf("applications import %d: %d %s", attempt, status, body)
+		}
+	}
+	status, body := send(t, http.MethodPost, service.url+"/v1/linkedin/saved-jobs/import", ownerToken, saved)
+	var imported store.LinkedInJobsImport
+	if json.Unmarshal(body, &imported); status != http.StatusOK || imported != (store.LinkedInJobsImport{Active: 1, Skipped: 1}) {
+		t.Fatalf("saved import: %d %s", status, body)
+	}
+
+	cards, _ := service.hub.ListPipelineCards(context.Background())
+	phases := map[string]string{}
+	for _, card := range cards {
+		phases[*card.JobTitle] = card.Application.ClosedReason
+	}
+	if len(cards) != 3 || phases["Backend Engineer"] != "Applied on LinkedIn on 2023-03-24; no outcome recorded" {
+		t.Fatalf("cards = %+v", phases)
+	}
+}

@@ -83,12 +83,16 @@ public enum LinkedInArchive {
         case connections = "Connections.csv"
         case messages = "messages.csv"
         case invitations = "Invitations.csv"
+        case jobApplications = "Job Applications.csv"
+        case savedJobs = "Saved Jobs.csv"
 
         public var importPath: String {
             switch self {
             case .connections: "v1/connections/import"
             case .messages: "v1/linkedin/messages/import"
             case .invitations: "v1/linkedin/invitations/import"
+            case .jobApplications: "v1/linkedin/applications/import"
+            case .savedJobs: "v1/linkedin/saved-jobs/import"
             }
         }
     }
@@ -100,3 +104,20 @@ public enum LinkedInArchive {
         }
     }
 }
+
+/// What an import of LinkedIn applications or saved jobs put on the pipeline.
+public struct LinkedInJobsImport: Decodable, Equatable, Sendable {
+    public var active: Int
+    public var closed: Int
+    public var skipped: Int
+    public var alreadyOnBoard: Int
+
+    /// The import in one line, naming what it read.
+    public func makeSummary(of what: String) -> String {
+        var parts = ["\(active) on the board", "\(closed) kept as history"]
+        if skipped > 0 { parts.append("\(skipped) too old to keep") }
+        if alreadyOnBoard > 0 { parts.append("\(alreadyOnBoard) already there") }
+        return "\(what): \(parts.joined(separator: ", "))."
+    }
+}
+
