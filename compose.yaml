@@ -21,5 +21,25 @@ services:
       retries: 10
       start_period: 5s
 
+  server:
+    build: ./server
+    image: job-search-hub-server:dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HUB_ADDR: ":8090"
+      HUB_DATABASE_URL: postgres://hub:${HUB_DATABASE_PASSWORD}@db:5432/hub
+      HUB_OWNER_TOKEN: ${HUB_OWNER_TOKEN:?set HUB_OWNER_TOKEN in .env; see .env.example}
+    ports:
+      - "127.0.0.1:8090:8090"
+    healthcheck:
+      test: ["CMD", "/hub-server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 volumes:
   hub-db:
