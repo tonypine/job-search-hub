@@ -33,8 +33,8 @@ type addJobResponse struct {
 	Created bool      `json:"created"`
 }
 
-// RegisterJobRoutes adds the owner-only routes for listing jobs and adding
-// one by URL.
+// RegisterJobRoutes adds the owner-only routes for listing jobs, reading one
+// job's details, and adding one by URL.
 func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parameters := r.URL.Query()
@@ -56,6 +56,24 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			return
 		}
 		writeJSON(w, http.StatusOK, jobsResponse{Jobs: jobs, Total: total})
+	})))
+
+	routes.Handle("GET /v1/jobs/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		details, err := hub.GetJobDetails(r.Context(), id)
+		if errors.Is(err, store.ErrJobNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, details)
 	})))
 
 	routes.Handle("POST /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

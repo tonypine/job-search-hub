@@ -123,3 +123,71 @@ func TestTheJobsListFiltersBySearchCompanyAndStatus(t *testing.T) {
 		}
 	}
 }
+
+type jobDetailsAnswer struct {
+	Job         store.Job               `json:"job"`
+	CompanyName *string                 `json:"company_name"`
+	Facts       *store.LabelledJobFacts `json:"facts"`
+	Application *store.Application      `json:"application"`
+	Phase       *store.PipelinePhase    `json:"phase"`
+}
+
+func readJobDetails(t *testing.T, service apiUnderTest, id string) (int, jobDetailsAnswer) {
+	t.Helper()
+	status, body := send(t, http.MethodGet, service.url+"/v1/jobs/"+id, ownerToken, "")
+	var details jobDetailsAnswer
+	if status == http.StatusOK {
+		if err := json.Unmarshal(body, &details); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+	}
+	return status, details
+}
+
+func TestAJobsDetailsCarryItsFactsAndItsPhase(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	company, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	read, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &company.ID, Title: "Backend Engineer", URL: "https://acme.com/jobs/1", Description: "Go."})
+	unread, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Designer", URL: "https://other.com/jobs/2"})
+
+	prompt, _ := service.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	awaiting, _ := service.hub.ListJobsAwaitingFacts(ctx, prompt.ID, 10)
+	for _, job := range awaiting {
+		if job.ID == read.ID {
+			if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: "test-model", TextHash: job.TextHash, Facts: json.RawMessage(`{"technologies":["Go"]}`)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, _, err := service.hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &read.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, details := readJobDetails(t, service, read.ID.String())
+	if status != http.StatusOK || details.Job.Description != "Go." || details.CompanyName == nil || *details.CompanyName != "Acme" {
+		t.Fatalf("details = %d %+v", status, details)
+	}
+	if details.Facts == nil || len(details.Facts.Entries) != 1 || details.Facts.Model != "test-model" || details.Facts.PromptVersion != 1 {
+		t.Fatalf("facts = %+v", details.Facts)
+	}
+	entry := details.Facts.Entries[0]
+	var technologies []string
+	if err := json.Unmarshal(entry.Value, &technologies); err != nil || entry.Key != "technologies" || entry.Title != "Technologies" ||
+		entry.Description == "" || len(technologies) != 1 || technologies[0] != "Go" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if details.Application == nil || details.Phase == nil || details.Phase.Name != "Saved" || details.Application.PhaseID != details.Phase.ID {
+		t.Fatalf("application = %+v, phase = %+v", details.Application, details.Phase)
+	}
+
+	if status, bare := readJobDetails(t, service, unread.ID.String()); status != http.StatusOK || bare.Facts != nil || bare.Application != nil || bare.Phase != nil || bare.CompanyName != nil {
+		t.Fatalf("unread job = %d %+v", status, bare)
+	}
+	for _, id := range []string{"7c9e6679-7425-40de-944b-e07fc1f90ae7", "not-an-id"} {
+		if status, _ := readJobDetails(t, service, id); status != http.StatusNotFound {
+			t.Errorf("job %s: %d, want 404", id, status)
+		}
+	}
+}
