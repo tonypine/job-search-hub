@@ -45,7 +45,7 @@ func (verifier *Verifier) FetchPosting(ctx context.Context, reference PostingRef
 	escapedID := url.PathEscape(reference.PostingID)
 	switch reference.Provider {
 	case Greenhouse:
-		return verifier.fetchOnePosting(ctx, Greenhouse, verifier.GreenhouseAPIBase+"/v1/boards/"+escapedToken+"/jobs/"+escapedID, parseGreenhousePosting)
+		return verifier.fetchOnePosting(ctx, Greenhouse, verifier.GreenhouseAPIBase+"/v1/boards/"+escapedToken+"/jobs/"+escapedID+"?pay_transparency=true", parseGreenhousePosting)
 	case Lever:
 		return verifier.fetchOnePosting(ctx, Lever, verifier.LeverAPIBase+"/v0/postings/"+escapedToken+"/"+escapedID+"?mode=json", parseLeverPosting)
 	case Ashby:

@@ -6,29 +6,51 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
+	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 func startPostingProviders(t *testing.T) *jobboards.Verifier {
 	t.Helper()
 	routes := http.NewServeMux()
-	routes.HandleFunc("GET /v1/boards/acme/jobs", func(w http.ResponseWriter, _ *http.Request) {
+	// Like the real APIs, Greenhouse and Ashby publish pay only when asked.
+	routes.HandleFunc("GET /v1/boards/acme/jobs", func(w http.ResponseWriter, r *http.Request) {
+		pay := ""
+		if r.URL.Query().Get("pay_transparency") == "true" {
+			pay = `"pay_input_ranges":[{"min_cents":15200000,"max_cents":19000000,"currency_type":"USD","title":"US Pay Range","blurb":""}],`
+		}
 		w.Write([]byte(`{"jobs":[{"id":4721289005,"title":"Frontend Engineer","absolute_url":"https://job-boards.greenhouse.io/acme/jobs/4721289005",
-			"location":{"name":"Remote (Americas)"},
+			"location":{"name":"Remote (Americas)"},` + pay + `
+			"first_published":"2026-08-04T14:21:42-04:00","departments":[{"id":1,"name":"Engineering"}],
+			"offices":[{"id":1,"name":"Remote (Canada)"},{"id":2,"name":"Remote (Americas) "}],
+			"metadata":[{"id":1,"name":"Employment Type","value":"Full-time","value_type":"single_select"}],
 			"content":"&lt;p&gt;Build &amp;amp; ship.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;React&lt;/li&gt;&lt;li&gt;TypeScript&lt;/li&gt;&lt;/ul&gt;"}]}`))
 	})
 	routes.HandleFunc("GET /v0/postings/acme", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`[{"id":"69616656","text":"Full-stack Engineer","hostedUrl":"https://jobs.lever.co/acme/69616656","workplaceType":"remote",
-			"categories":{"location":"Toronto, Ontario"},"descriptionPlain":"About the role.",
+			"categories":{"location":"Toronto, Ontario","allLocations":["Toronto, Ontario","Vancouver, British Columbia"],
+				"commitment":"Full-time","department":"Engineering","team":"Payments"},
+			"createdAt":1786394912472,"salaryRange":{"min":120000,"max":150000,"currency":"CAD","interval":"per-year-salary"},
+			"descriptionPlain":"About the role.",
 			"lists":[{"text":"You will","content":"<li>Ship features</li><li>Talk to customers</li>"}],"additionalPlain":"Benefits."}]`))
 	})
-	routes.HandleFunc("GET /posting-api/job-board/acme", func(w http.ResponseWriter, _ *http.Request) {
+	routes.HandleFunc("GET /posting-api/job-board/acme", func(w http.ResponseWriter, r *http.Request) {
+		compensation := ""
+		if r.URL.Query().Get("includeCompensation") == "true" {
+			compensation = `"compensation":{"compensationTierSummary":"$230K • Offers Equity","compensationTiers":[{"title":null,"components":[
+				{"compensationType":"EquityPercentage","interval":"NONE","currencyCode":null,"minValue":null,"maxValue":null},
+				{"compensationType":"Salary","interval":"1 YEAR","currencyCode":"USD","minValue":230000,"maxValue":230000}]}]},`
+		}
 		w.Write([]byte(`{"jobs":[
-			{"id":"c3fe","title":"Senior Product Engineer","location":"Americas","workplaceType":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/c3fe","descriptionPlain":"Plain text.","isListed":true},
+			{"id":"c3fe","title":"Senior Product Engineer","location":"Americas","workplaceType":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/c3fe",` + compensation + `
+				"employmentType":"FullTime","department":"Engineering","publishedAt":"2026-09-02T10:22:06.450+00:00",
+				"secondaryLocations":[{"location":"EMEA","address":{}}],"descriptionPlain":"Plain text.","isListed":true},
+			{"id":"b7aa","title":"Support Engineer","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/b7aa","descriptionPlain":"No pay here.","isListed":true},
 			{"id":"hidden","title":"Internal role","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/hidden","descriptionPlain":"","isListed":false}]}`))
 	})
 	server := httptest.NewServer(routes)
@@ -71,8 +93,54 @@ func TestLeverPostingsIncludeTheirLists(t *testing.T) {
 
 func TestAshbyDropsUnlistedPostings(t *testing.T) {
 	postings, err := startPostingProviders(t).FetchPostings(context.Background(), jobboards.Ashby, "acme")
-	if err != nil || len(postings) != 1 || postings[0].ExternalID != "c3fe" || postings[0].Location != "Americas" {
+	if err != nil || len(postings) != 2 || postings[0].ExternalID != "c3fe" || postings[0].Location != "Americas" || postings[1].ExternalID != "b7aa" {
 		t.Fatalf("postings = %+v, %v", postings, err)
+	}
+}
+
+func TestEachProviderPublishesPayAndHiringFacts(t *testing.T) {
+	verifier := startPostingProviders(t)
+	publishedAt := func(text string) time.Time {
+		parsed, err := time.Parse(time.RFC3339, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed
+	}
+	for _, want := range []struct {
+		provider       string
+		pay            store.Pay
+		employmentType string
+		department     string
+		otherLocations []string
+		publishedAt    time.Time
+	}{
+		{jobboards.Greenhouse, store.Pay{Ranges: []store.PayRange{{Label: "US Pay Range", Min: 152000, Max: 190000, Currency: "USD"}}},
+			"Full-time", "Engineering", []string{"Remote (Canada)"}, publishedAt("2026-08-04T14:21:42-04:00")},
+		{jobboards.Lever, store.Pay{Ranges: []store.PayRange{{Min: 120000, Max: 150000, Currency: "CAD", Interval: "year"}}},
+			"Full-time", "Engineering", []string{"Vancouver, British Columbia"}, time.UnixMilli(1786394912472)},
+		{jobboards.Ashby, store.Pay{Ranges: []store.PayRange{{Min: 230000, Max: 230000, Currency: "USD", Interval: "year"}}, Summary: "$230K • Offers Equity"},
+			"Full-time", "Engineering", []string{"EMEA"}, publishedAt("2026-09-02T10:22:06.450Z")},
+	} {
+		postings, err := verifier.FetchPostings(context.Background(), want.provider, "acme")
+		if err != nil {
+			t.Fatalf("%s: %v", want.provider, err)
+		}
+		facts := postings[0].BoardFacts
+		if facts.Pay == nil || !reflect.DeepEqual(*facts.Pay, want.pay) {
+			t.Errorf("%s pay = %+v, want %+v", want.provider, facts.Pay, want.pay)
+		}
+		if facts.EmploymentType != want.employmentType || facts.Department != want.department || !reflect.DeepEqual(facts.OtherLocations, want.otherLocations) {
+			t.Errorf("%s facts = %+v", want.provider, facts)
+		}
+		if facts.PublishedAt == nil || !facts.PublishedAt.Equal(want.publishedAt) {
+			t.Errorf("%s published at %v, want %v", want.provider, facts.PublishedAt, want.publishedAt)
+		}
+	}
+
+	ashby, _ := verifier.FetchPostings(context.Background(), jobboards.Ashby, "acme")
+	if ashby[1].Pay != nil {
+		t.Errorf("a posting without published pay got %+v", ashby[1].Pay)
 	}
 }
 

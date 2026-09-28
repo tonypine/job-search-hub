@@ -136,3 +136,42 @@ func TestAJobAddedByHandForAnUnknownCompanyFails(t *testing.T) {
 		t.Fatalf("err = %v, want ErrCompanyNotFound", err)
 	}
 }
+
+func TestASyncKeepsAndRefreshesTheBoardFacts(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	board := createBoard(t, hub)
+	publishedAt := time.Date(2026, 9, 2, 10, 22, 6, 0, time.UTC)
+	withFacts := posting("1", "Engineer")
+	withFacts.BoardFacts = store.BoardFacts{
+		Pay:            &store.Pay{Ranges: []store.PayRange{{Min: 120000, Max: 150000, Currency: "CAD", Interval: "year"}}, Summary: "CA$120K – CA$150K"},
+		EmploymentType: "Full-time", Department: "Engineering", OtherLocations: []string{"EMEA"}, PublishedAt: &publishedAt,
+	}
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{withFacts, posting("2", "Designer")}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, _, err := hub.ListJobs(ctx, store.JobFilter{})
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v, %v", jobs, err)
+	}
+	byTitle := map[string]store.Job{jobs[0].Job.Title: jobs[0].Job, jobs[1].Job.Title: jobs[1].Job}
+	engineer := byTitle["Engineer"]
+	if engineer.Pay == nil || engineer.Pay.Summary != "CA$120K – CA$150K" || engineer.Pay.Ranges[0].Max != 150000 || engineer.EmploymentType != "Full-time" ||
+		engineer.Department != "Engineering" || len(engineer.OtherLocations) != 1 || engineer.PublishedAt == nil || !engineer.PublishedAt.Equal(publishedAt) {
+		t.Fatalf("engineer facts = %+v", engineer.BoardFacts)
+	}
+	if designer := byTitle["Designer"]; designer.Pay != nil || designer.PublishedAt != nil || len(designer.OtherLocations) != 0 {
+		t.Fatalf("designer facts = %+v, want none", designer.BoardFacts)
+	}
+
+	// The next sync sees the pay taken down.
+	withFacts.Pay = nil
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{withFacts}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ = hub.ListJobs(ctx, store.JobFilter{})
+	if len(jobs) != 1 || jobs[0].Job.Pay != nil {
+		t.Fatalf("after the pay was taken down: %+v", jobs)
+	}
+}

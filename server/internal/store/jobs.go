@@ -27,23 +27,53 @@ type Job struct {
 	WorkplaceType string     `json:"workplace_type,omitempty"`
 	URL           string     `json:"url"`
 	Description   string     `json:"description,omitempty"`
-	FirstSeenAt   time.Time  `json:"first_seen_at"`
-	LastSeenAt    time.Time  `json:"last_seen_at"`
-	ClosedAt      *time.Time `json:"closed_at,omitempty"`
+	BoardFacts
+	FirstSeenAt time.Time  `json:"first_seen_at"`
+	LastSeenAt  time.Time  `json:"last_seen_at"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
 }
 
-const jobColumns = `id, company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, first_seen_at, last_seen_at, closed_at`
+// BoardFacts are what a job board publishes about a posting beyond its text.
+type BoardFacts struct {
+	Pay            *Pay       `json:"pay,omitempty"`
+	EmploymentType string     `json:"employment_type,omitempty"`
+	Department     string     `json:"department,omitempty"`
+	OtherLocations []string   `json:"other_locations,omitempty"`
+	PublishedAt    *time.Time `json:"published_at,omitempty"`
+}
+
+// Pay is the pay a posting publishes: one range per region or tier, and the
+// board's own summary when it gives one, such as "$230K • Offers Equity".
+type Pay struct {
+	Ranges  []PayRange `json:"ranges"`
+	Summary string     `json:"summary,omitempty"`
+}
+
+// PayRange is one published range. Interval is year, month, week, day or
+// hour, and empty when the board does not say.
+type PayRange struct {
+	Label    string  `json:"label,omitempty"`
+	Min      float64 `json:"min"`
+	Max      float64 `json:"max"`
+	Currency string  `json:"currency"`
+	Interval string  `json:"interval,omitempty"`
+}
+
+const jobColumns = `id, company_id, job_board_id, external_id, source, title, location, workplace_type, url, description,
+	pay, employment_type, department, other_locations, published_at, first_seen_at, last_seen_at, closed_at`
 
 // prefixedJobColumns are the jobColumns qualified for queries that join
 // companies, whose id would otherwise be ambiguous.
-const prefixedJobColumns = `jobs.id, jobs.company_id, jobs.job_board_id, jobs.external_id, jobs.source, jobs.title, jobs.location, jobs.workplace_type, jobs.url, jobs.description, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at`
+const prefixedJobColumns = `jobs.id, jobs.company_id, jobs.job_board_id, jobs.external_id, jobs.source, jobs.title, jobs.location, jobs.workplace_type, jobs.url, jobs.description,
+	jobs.pay, jobs.employment_type, jobs.department, jobs.other_locations, jobs.published_at, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at`
 
 // scanJob reads the jobColumns, then any extra columns the query selects
 // after them into extra.
 func scanJob(row pgx.Row, extra ...any) (Job, error) {
 	var job Job
 	destinations := append([]any{&job.ID, &job.CompanyID, &job.JobBoardID, &job.ExternalID, &job.Source, &job.Title, &job.Location,
-		&job.WorkplaceType, &job.URL, &job.Description, &job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt}, extra...)
+		&job.WorkplaceType, &job.URL, &job.Description, &job.Pay, &job.EmploymentType, &job.Department, &job.OtherLocations, &job.PublishedAt,
+		&job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt}, extra...)
 	err := row.Scan(destinations...)
 	return job, err
 }
@@ -56,7 +86,18 @@ type JobPosting struct {
 	WorkplaceType string
 	URL           string
 	Description   string
-	Raw           json.RawMessage
+	BoardFacts
+	Raw json.RawMessage
+}
+
+// boardFactsArguments are the posting's facts as query arguments, in the
+// order pay, employment_type, department, other_locations, published_at.
+func (posting JobPosting) boardFactsArguments() []any {
+	otherLocations := posting.OtherLocations
+	if otherLocations == nil {
+		otherLocations = []string{}
+	}
+	return []any{posting.Pay, posting.EmploymentType, posting.Department, otherLocations, posting.PublishedAt}
 }
 
 // BoardSyncResult counts what one sync of a board changed.
@@ -102,11 +143,12 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 			existing, isKnown := known[posting.ExternalID]
 			if !isKnown {
 				job, err := scanJob(tx.QueryRow(ctx, `
-					INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at)
-					VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10)
+					INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
+						pay, employment_type, department, other_locations, published_at)
+					VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15)
 					RETURNING `+jobColumns,
-					board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
-					posting.URL, posting.Description, posting.Raw, seenAt))
+					append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+						posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...))
 				if err != nil {
 					return err
 				}
@@ -122,9 +164,11 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 
 			if _, err := tx.Exec(ctx, `
 				UPDATE jobs SET title = $2, location = $3, workplace_type = $4, url = $5, description = $6, raw = $7,
-					last_seen_at = $8, closed_at = NULL
+					last_seen_at = $8, closed_at = NULL,
+					pay = $9, employment_type = $10, department = $11, other_locations = $12, published_at = $13
 				WHERE id = $1`,
-				existing.id, posting.Title, posting.Location, posting.WorkplaceType, posting.URL, posting.Description, posting.Raw, seenAt); err != nil {
+				append([]any{existing.id, posting.Title, posting.Location, posting.WorkplaceType, posting.URL, posting.Description, posting.Raw, seenAt},
+					posting.boardFactsArguments()...)...); err != nil {
 				return err
 			}
 			if existing.closedAt != nil {
@@ -212,14 +256,17 @@ func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard,
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		job, err = scanJob(tx.QueryRow(ctx, `
-			INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at)
-			VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10)
+			INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
+				pay, employment_type, department, other_locations, published_at)
+			VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15)
 			ON CONFLICT (job_board_id, external_id) DO UPDATE SET
 				title = EXCLUDED.title, location = EXCLUDED.location, workplace_type = EXCLUDED.workplace_type, url = EXCLUDED.url,
-				description = EXCLUDED.description, raw = EXCLUDED.raw, last_seen_at = EXCLUDED.last_seen_at, closed_at = NULL
+				description = EXCLUDED.description, raw = EXCLUDED.raw, last_seen_at = EXCLUDED.last_seen_at, closed_at = NULL,
+				pay = EXCLUDED.pay, employment_type = EXCLUDED.employment_type, department = EXCLUDED.department,
+				other_locations = EXCLUDED.other_locations, published_at = EXCLUDED.published_at
 			RETURNING `+jobColumns+`, (xmax = 0)`,
-			board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
-			posting.URL, posting.Description, posting.Raw, seenAt), &created)
+			append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+				posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...), &created)
 		if err != nil {
 			return err
 		}
