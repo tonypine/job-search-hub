@@ -73,3 +73,24 @@ func TestParseEnvironmentReadsTheBoardPollInterval(t *testing.T) {
 		t.Error("expected an error for an invalid interval")
 	}
 }
+
+func TestJobFactsReadingIsOffWithoutAModelURLAndDefaultsOtherwise(t *testing.T) {
+	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
+	if err != nil || parsed.jobFactsModelURL != "" || parsed.jobFactsModel != defaultJobFactsModel || parsed.jobFactsInterval != defaultJobFactsInterval {
+		t.Fatalf("defaults = %+v, %v", parsed, err)
+	}
+
+	environment := map[string]string{"HUB_JOB_FACTS_MODEL_URL": "http://host.docker.internal:1234/v1", "HUB_JOB_FACTS_MODEL": "other", "HUB_JOB_FACTS_INTERVAL": "2m"}
+	for name, value := range validEnvironment {
+		environment[name] = value
+	}
+	parsed, err = parseEnvironment(lookupFrom(environment))
+	if err != nil || parsed.jobFactsModelURL != environment["HUB_JOB_FACTS_MODEL_URL"] || parsed.jobFactsModel != "other" || parsed.jobFactsInterval != 2*time.Minute {
+		t.Fatalf("parsed = %+v, %v", parsed, err)
+	}
+
+	environment["HUB_JOB_FACTS_INTERVAL"] = "soon"
+	if _, err := parseEnvironment(lookupFrom(environment)); err == nil || !strings.Contains(err.Error(), "HUB_JOB_FACTS_INTERVAL") {
+		t.Fatalf("a bad interval: err = %v", err)
+	}
+}
