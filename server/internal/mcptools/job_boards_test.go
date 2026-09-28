@@ -60,3 +60,15 @@ func TestSetJobBoardStoresUnsupportedProvidersUnverified(t *testing.T) {
 		t.Fatalf("board = %+v", board)
 	}
 }
+
+func TestSetJobBoardStoresAVerifiedBoardWhosePostingsCannotBeCounted(t *testing.T) {
+	session := connect(t, startHub(t), ownerToken)
+	created := callTool[createdCompany](t, session, "create_company", map[string]any{"name": "Acme", "domain": "acme.com"})
+
+	board := callTool[store.JobBoard](t, session, "set_job_board", map[string]any{
+		"company_id": created.Company.ID, "provider": "ashby", "board_token": "pageonly",
+	})
+	if board.VerifiedAt == nil || board.OpenPostingCount != nil {
+		t.Fatalf("board = %+v, want verified with no count", board)
+	}
+}

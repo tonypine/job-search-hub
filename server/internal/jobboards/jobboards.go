@@ -4,6 +4,7 @@
 package jobboards
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,19 +28,22 @@ const (
 	userAgent      = "job-search-hub/0.1"
 )
 
+// Verification is what a provider confirmed about a board. OpenPostingCount is
+// nil when the board exists but its postings could not be counted.
 type Verification struct {
 	Verified         bool   `json:"verified"`
-	OpenPostingCount int    `json:"open_posting_count"`
+	OpenPostingCount *int   `json:"open_posting_count,omitempty"`
 	BoardURL         string `json:"board_url,omitempty"`
 }
 
-// Verifier calls the providers' public posting APIs. The API base URLs are
-// fields so tests can point them at a local server.
+// Verifier calls the providers' public posting APIs. The base URLs are fields
+// so tests can point them at a local server.
 type Verifier struct {
 	HTTPClient        *http.Client
 	GreenhouseAPIBase string
 	LeverAPIBase      string
 	AshbyAPIBase      string
+	AshbyBoardBase    string
 }
 
 func NewVerifier() *Verifier {
@@ -48,6 +52,7 @@ func NewVerifier() *Verifier {
 		GreenhouseAPIBase: "https://boards-api.greenhouse.io",
 		LeverAPIBase:      "https://api.lever.co",
 		AshbyAPIBase:      "https://api.ashbyhq.com",
+		AshbyBoardBase:    "https://jobs.ashbyhq.com",
 	}
 }
 
@@ -71,24 +76,48 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 	}
 
 	body, found, err := verifier.fetch(ctx, provider, apiURL)
-	if err != nil || !found {
+	if err != nil {
 		return Verification{}, err
+	}
+	if !found {
+		if provider == Ashby {
+			return verifier.verifyAshbyBoardPage(ctx, boardToken, boardURL)
+		}
+		return Verification{}, nil
 	}
 	count, err := countPostings(provider, body)
 	if err != nil {
 		return Verification{}, fmt.Errorf("read the %s board %q: %w", provider, boardToken, err)
 	}
-	return Verification{Verified: true, OpenPostingCount: count, BoardURL: boardURL}, nil
+	return Verification{Verified: true, OpenPostingCount: &count, BoardURL: boardURL}, nil
+}
+
+// verifyAshbyBoardPage covers Ashby customers who turn the posting API off.
+// Their public board page answers 200 for any name, but only a real board
+// embeds its own slug, so the slug's presence confirms the board. Its
+// postings cannot be counted from the page.
+func (verifier *Verifier) verifyAshbyBoardPage(ctx context.Context, boardToken, boardURL string) (Verification, error) {
+	page, found, err := verifier.fetch(ctx, Ashby, verifier.AshbyBoardBase+"/"+url.PathEscape(boardToken))
+	if err != nil || !found {
+		return Verification{}, err
+	}
+	slug, err := json.Marshal(boardToken)
+	if err != nil {
+		return Verification{}, err
+	}
+	if !bytes.Contains(page, append([]byte(`"hostedJobsPageSlug":`), slug...)) {
+		return Verification{}, nil
+	}
+	return Verification{Verified: true, BoardURL: boardURL}, nil
 }
 
 // fetch returns the body of a 200, or found=false for a 404.
-func (verifier *Verifier) fetch(ctx context.Context, provider, apiURL string) ([]byte, bool, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) ([]byte, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return nil, false, err
 	}
 	request.Header.Set("User-Agent", userAgent)
-	request.Header.Set("Accept", "application/json")
 
 	response, err := verifier.HTTPClient.Do(request)
 	if err != nil {

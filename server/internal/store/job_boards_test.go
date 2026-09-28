@@ -23,13 +23,13 @@ func TestSetJobBoardStoresOneRowPerBoardAndRecordsEachWrite(t *testing.T) {
 	firstCount, secondCount := 5, 7
 
 	first, err := hub.SetJobBoard(ctx, owner, store.JobBoardInput{
-		CompanyID: company.ID, Provider: "greenhouse", BoardToken: "acme", OpenPostingCount: &firstCount, SourceURL: "https://acme.com/careers",
+		CompanyID: company.ID, Provider: "greenhouse", BoardToken: "acme", Verified: true, OpenPostingCount: &firstCount, SourceURL: "https://acme.com/careers",
 	})
 	if err != nil || first.VerifiedAt == nil || *first.OpenPostingCount != 5 {
 		t.Fatalf("first set = %+v, err = %v", first, err)
 	}
 	second, err := hub.SetJobBoard(ctx, owner, store.JobBoardInput{
-		CompanyID: company.ID, Provider: "greenhouse", BoardToken: "acme", OpenPostingCount: &secondCount,
+		CompanyID: company.ID, Provider: "greenhouse", BoardToken: "acme", Verified: true, OpenPostingCount: &secondCount,
 	})
 	if err != nil || second.ID != first.ID || *second.OpenPostingCount != 7 {
 		t.Fatalf("second set = %+v, err = %v", second, err)

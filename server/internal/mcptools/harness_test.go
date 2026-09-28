@@ -50,17 +50,24 @@ func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.A
 	return run, token
 }
 
-// stubJobBoards knows one board, "acme", on each provider it can verify.
+// stubJobBoards knows one board, "acme", on each provider it can verify, with
+// five postings, and one Ashby board, "pageonly", whose postings it cannot count.
 type stubJobBoards struct{}
 
 func (stubJobBoards) Verify(_ context.Context, provider, boardToken string) (jobboards.Verification, error) {
 	if !slices.Contains([]string{jobboards.Greenhouse, jobboards.Lever, jobboards.Ashby}, provider) {
 		return jobboards.Verification{}, jobboards.ErrUnsupportedProvider
 	}
-	if boardToken != "acme" {
+	boardURL := "https://boards.example/" + provider + "/" + boardToken
+	switch {
+	case boardToken == "acme":
+		openPostings := 5
+		return jobboards.Verification{Verified: true, OpenPostingCount: &openPostings, BoardURL: boardURL}, nil
+	case boardToken == "pageonly" && provider == jobboards.Ashby:
+		return jobboards.Verification{Verified: true, BoardURL: boardURL}, nil
+	default:
 		return jobboards.Verification{}, nil
 	}
-	return jobboards.Verification{Verified: true, OpenPostingCount: 5, BoardURL: "https://boards.example/" + provider + "/acme"}, nil
 }
 
 type bearerTransport struct{ token string }

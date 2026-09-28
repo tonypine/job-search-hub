@@ -49,8 +49,9 @@ func addJobBoardTools(server *mcp.Server, hub *store.Store, verifier jobBoardVer
 		case !verification.Verified:
 			return nil, store.JobBoard{}, fmt.Errorf("%s has no job board %q; check the token in the careers page's links", input.Provider, input.BoardToken)
 		default:
+			board.Verified = true
 			board.BoardURL = verification.BoardURL
-			board.OpenPostingCount = &verification.OpenPostingCount
+			board.OpenPostingCount = verification.OpenPostingCount
 		}
 
 		stored, err := hub.SetJobBoard(ctx, actor, board)

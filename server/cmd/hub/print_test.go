@@ -41,3 +41,17 @@ func TestPrintDossierShowsBoardsAndPeopleWithSources(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeVerificationCoversEachState(t *testing.T) {
+	verifiedAt := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	openPostings := 7
+	for want, board := range map[string]store.JobBoard{
+		"unverified": {},
+		"verified 2026-09-28, open postings unknown": {VerifiedAt: &verifiedAt},
+		"verified 2026-09-28, 7 open postings":       {VerifiedAt: &verifiedAt, OpenPostingCount: &openPostings},
+	} {
+		if got := describeVerification(board); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	}
+}

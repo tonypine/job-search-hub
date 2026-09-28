@@ -73,8 +73,12 @@ func printDossier(out io.Writer, dossier store.CompanyDossier) {
 }
 
 func describeVerification(board store.JobBoard) string {
-	if board.VerifiedAt == nil || board.OpenPostingCount == nil {
+	switch {
+	case board.VerifiedAt == nil:
 		return "unverified"
+	case board.OpenPostingCount == nil:
+		return fmt.Sprintf("verified %s, open postings unknown", board.VerifiedAt.Format(time.DateOnly))
+	default:
+		return fmt.Sprintf("verified %s, %d open postings", board.VerifiedAt.Format(time.DateOnly), *board.OpenPostingCount)
 	}
-	return fmt.Sprintf("verified %s, %d open postings", board.VerifiedAt.Format(time.DateOnly), *board.OpenPostingCount)
 }

@@ -35,13 +35,14 @@ func scanJobBoard(row pgx.Row) (JobBoard, error) {
 	return board, err
 }
 
-// JobBoardInput is a board to store. A nil OpenPostingCount means the board
-// could not be verified; it is stored unverified.
+// JobBoardInput is a board to store. A verified board may still have a nil
+// OpenPostingCount when its provider confirms the board but not its postings.
 type JobBoardInput struct {
 	CompanyID        uuid.UUID
 	Provider         string
 	BoardToken       string
 	BoardURL         string
+	Verified         bool
 	OpenPostingCount *int
 	SourceURL        string
 }
@@ -57,7 +58,7 @@ func (s *Store) SetJobBoard(ctx context.Context, actor Actor, input JobBoardInpu
 		return JobBoard{}, errors.New("a job board needs a board token")
 	}
 	var verifiedAt *time.Time
-	if input.OpenPostingCount != nil {
+	if input.Verified {
 		now := time.Now()
 		verifiedAt = &now
 	}
