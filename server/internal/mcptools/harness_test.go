@@ -43,7 +43,7 @@ func startHub(t *testing.T) hubUnderTest {
 func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.AgentRun, string) {
 	t.Helper()
 	token, tokenHash := tokens.NewAgentRunToken()
-	run, err := hub.store.StartAgentRun(context.Background(), store.AgentRunKindCompanyTriage, "stripe.com", tokenHash, expiresAt)
+	run, err := hub.store.StartAgentRun(context.Background(), store.AgentRunKindCompanyTriage, "stripe.com", 1, tokenHash, expiresAt)
 	if err != nil {
 		t.Fatalf("start agent run: %v", err)
 	}

@@ -48,7 +48,7 @@ func TestAddPersonStoresThemOnTheDossierWithTheirSource(t *testing.T) {
 		t.Fatalf("second add = %+v, want the stored person", again)
 	}
 
-	dossier := callTool[companyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID})
+	dossier := callTool[store.CompanyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID})
 	if len(dossier.People) != 1 || dossier.People[0].SourceURL != "https://acme.com/team" {
 		t.Fatalf("dossier people = %+v", dossier.People)
 	}

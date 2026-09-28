@@ -25,26 +25,27 @@ const (
 )
 
 type AgentRun struct {
-	ID              uuid.UUID       `json:"id"`
-	Kind            string          `json:"kind"`
-	Input           string          `json:"input"`
-	Status          string          `json:"status"`
-	TokenExpiresAt  time.Time       `json:"token_expires_at"`
-	ClaudeSessionID string          `json:"claude_session_id,omitempty"`
-	CostUSDEstimate *string         `json:"cost_usd_estimate,omitempty"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Error           string          `json:"error,omitempty"`
-	StartedAt       time.Time       `json:"started_at"`
-	FinishedAt      *time.Time      `json:"finished_at,omitempty"`
+	ID                 uuid.UUID       `json:"id"`
+	Kind               string          `json:"kind"`
+	Input              string          `json:"input"`
+	Status             string          `json:"status"`
+	AgentPromptVersion *int            `json:"agent_prompt_version,omitempty"`
+	TokenExpiresAt     time.Time       `json:"token_expires_at"`
+	ClaudeSessionID    string          `json:"claude_session_id,omitempty"`
+	CostUSDEstimate    *string         `json:"cost_usd_estimate,omitempty"`
+	Result             json.RawMessage `json:"result,omitempty"`
+	Error              string          `json:"error,omitempty"`
+	StartedAt          time.Time       `json:"started_at"`
+	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
 }
 
 // The cost is read as text so the decimal Claude reported is never rounded
 // through a float.
-const agentRunColumns = `id, kind, input, status, token_expires_at, claude_session_id, cost_usd_estimate::text, result, error, started_at, finished_at`
+const agentRunColumns = `id, kind, input, status, agent_prompt_version, token_expires_at, claude_session_id, cost_usd_estimate::text, result, error, started_at, finished_at`
 
 func scanAgentRun(row pgx.Row) (AgentRun, error) {
 	var run AgentRun
-	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.Status, &run.TokenExpiresAt, &run.ClaudeSessionID,
+	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.Status, &run.AgentPromptVersion, &run.TokenExpiresAt, &run.ClaudeSessionID,
 		&run.CostUSDEstimate, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentRun{}, ErrAgentRunNotFound
@@ -52,12 +53,13 @@ func scanAgentRun(row pgx.Row) (AgentRun, error) {
 	return run, err
 }
 
-// StartAgentRun records a running agent run. Only the token's hash is stored;
-// the token itself exists only in the caller's hands.
-func (s *Store) StartAgentRun(ctx context.Context, kind, input string, tokenHash []byte, tokenExpiresAt time.Time) (AgentRun, error) {
+// StartAgentRun records a running agent run given version promptVersion of its
+// prompt. Only the token's hash is stored; the token itself exists only in the
+// caller's hands.
+func (s *Store) StartAgentRun(ctx context.Context, kind, input string, promptVersion int, tokenHash []byte, tokenExpiresAt time.Time) (AgentRun, error) {
 	return scanAgentRun(s.pool.QueryRow(ctx, `
-		INSERT INTO agent_runs (kind, input, token_hash, token_expires_at) VALUES ($1, $2, $3, $4)
-		RETURNING `+agentRunColumns, kind, input, tokenHash, tokenExpiresAt))
+		INSERT INTO agent_runs (kind, input, agent_prompt_version, token_hash, token_expires_at) VALUES ($1, $2, $3, $4, $5)
+		RETURNING `+agentRunColumns, kind, input, promptVersion, tokenHash, tokenExpiresAt))
 }
 
 type AgentRunOutcome struct {

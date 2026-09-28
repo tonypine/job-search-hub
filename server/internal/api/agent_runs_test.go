@@ -154,3 +154,35 @@ func TestUnknownRunsAndBadRequests(t *testing.T) {
 		t.Errorf("unknown kind: %d, want 400", status)
 	}
 }
+
+func TestStartingARunReturnsTheRenderedPromptAndItsSchema(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := service.hub.SaveOwnerProfile(ctx, owner, "# Candidate\nSenior engineer."); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	status, body := send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, `{"kind":"company_triage","input":"acme.com"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("start: %d %s", status, body)
+	}
+	var started struct {
+		AgentRun     store.AgentRun  `json:"agent_run"`
+		Prompt       string          `json:"prompt"`
+		ResultSchema json.RawMessage `json:"result_schema"`
+	}
+	if err := json.Unmarshal(body, &started); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(started.Prompt, "The company to research: acme.com") || !strings.Contains(started.Prompt, "Senior engineer.") {
+		t.Fatalf("prompt lacks the company or the profile:\n%s", started.Prompt)
+	}
+	if started.AgentRun.AgentPromptVersion == nil || *started.AgentRun.AgentPromptVersion != 1 {
+		t.Fatalf("agent_prompt_version = %v, want 1", started.AgentRun.AgentPromptVersion)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(started.ResultSchema, &schema); err != nil || schema["type"] != "object" {
+		t.Fatalf("result_schema = %s", started.ResultSchema)
+	}
+}

@@ -41,7 +41,7 @@ func TestTheWatchListOverMCP(t *testing.T) {
 	if len(listed.Companies) != 1 || listed.Companies[0].Company.ID != created.Company.ID {
 		t.Fatalf("watch list = %+v", listed)
 	}
-	if dossier := callTool[companyDossier](t, session, "get_company", companyID); dossier.WatchedSince == nil {
+	if dossier := callTool[store.CompanyDossier](t, session, "get_company", companyID); dossier.WatchedSince == nil {
 		t.Fatal("get_company does not report the company as watched")
 	}
 
@@ -51,7 +51,7 @@ func TestTheWatchListOverMCP(t *testing.T) {
 	if after := callTool[watchList](t, session, "list_watch_list", map[string]any{}); len(after.Companies) != 0 {
 		t.Fatalf("watch list after remove = %+v", after)
 	}
-	if dossier := callTool[companyDossier](t, session, "get_company", companyID); dossier.WatchedSince != nil {
+	if dossier := callTool[store.CompanyDossier](t, session, "get_company", companyID); dossier.WatchedSince != nil {
 		t.Fatalf("get_company still reports watched since %v", dossier.WatchedSince)
 	}
 }

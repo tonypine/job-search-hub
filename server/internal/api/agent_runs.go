@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/agents/companytriage"
+	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
@@ -19,9 +21,13 @@ type startAgentRunRequest struct {
 	Input string `json:"input"`
 }
 
+// startAgentRunResponse hands the runner everything a run needs: its token,
+// the rendered prompt, and the schema its result must match.
 type startAgentRunResponse struct {
-	AgentRun store.AgentRun `json:"agent_run"`
-	Token    string         `json:"token"`
+	AgentRun     store.AgentRun  `json:"agent_run"`
+	Token        string          `json:"token"`
+	Prompt       string          `json:"prompt"`
+	ResultSchema json.RawMessage `json:"result_schema"`
 }
 
 type finishAgentRunRequest struct {
@@ -54,13 +60,20 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			return
 		}
 
+		rendered, err := prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the prompt: " + err.Error()})
+			return
+		}
 		token, tokenHash := tokens.NewAgentRunToken()
-		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, tokenHash, time.Now().Add(agentRunTokenLifetime))
+		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, rendered.Version, tokenHash, time.Now().Add(agentRunTokenLifetime))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusCreated, startAgentRunResponse{AgentRun: run, Token: token})
+		writeJSON(w, http.StatusCreated, startAgentRunResponse{
+			AgentRun: run, Token: token, Prompt: rendered.Body, ResultSchema: json.RawMessage(companytriage.ResultSchema),
+		})
 	})))
 
 	routes.Handle("POST /v1/agent-runs/{id}/finish", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

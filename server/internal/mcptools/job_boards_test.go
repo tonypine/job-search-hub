@@ -23,13 +23,13 @@ func TestSetJobBoardStoresAVerifiedBoardOnTheDossier(t *testing.T) {
 		"company_id": created.Company.ID, "provider": "greenhouse", "board_token": "acme",
 	})
 
-	dossier := callTool[companyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID})
+	dossier := callTool[store.CompanyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID})
 	if len(dossier.JobBoards) != 1 || dossier.JobBoards[0].ID != board.ID {
 		t.Fatalf("dossier job boards = %+v, want the one board", dossier.JobBoards)
 	}
 	var boardChanges int
-	hub.pool.QueryRow(context.Background(), `SELECT count(*) FROM changes WHERE entity_type = 'job_board'`).Scan(&boardChanges)
-	if boardChanges != 2 {
+	err := hub.pool.QueryRow(context.Background(), `SELECT count(*) FROM changes WHERE entity_type = 'job_board'`).Scan(&boardChanges)
+	if err != nil || boardChanges != 2 {
 		t.Fatalf("job board changes = %d, want 2", boardChanges)
 	}
 }
@@ -44,7 +44,7 @@ func TestSetJobBoardRejectsABoardTheProviderDoesNotKnow(t *testing.T) {
 	if !strings.Contains(text, "wrong-guess") {
 		t.Fatalf("error = %q", text)
 	}
-	if dossier := callTool[companyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID}); len(dossier.JobBoards) != 0 {
+	if dossier := callTool[store.CompanyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID}); len(dossier.JobBoards) != 0 {
 		t.Fatalf("job boards = %+v, want none stored", dossier.JobBoards)
 	}
 }

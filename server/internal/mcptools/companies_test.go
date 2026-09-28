@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -14,13 +13,6 @@ import (
 type createdCompany struct {
 	Company store.Company `json:"company"`
 	Created bool          `json:"created"`
-}
-
-type companyDossier struct {
-	Company      store.Company    `json:"company"`
-	WatchedSince *time.Time       `json:"watched_since"`
-	JobBoards    []store.JobBoard `json:"job_boards"`
-	People       []store.Person   `json:"people"`
 }
 
 type foundCompanies struct {
@@ -77,8 +69,8 @@ func TestCreatedCompaniesRoundTripAndRecordTheOwner(t *testing.T) {
 		t.Fatalf("create = %+v", created)
 	}
 
-	byID := callTool[companyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID}).Company
-	byDomain := callTool[companyDossier](t, session, "get_company", map[string]any{"domain": "stripe.com"}).Company
+	byID := callTool[store.CompanyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID}).Company
+	byDomain := callTool[store.CompanyDossier](t, session, "get_company", map[string]any{"domain": "stripe.com"}).Company
 	if byID.ID != created.Company.ID || byDomain.ID != created.Company.ID || byID.Name != "Stripe" {
 		t.Fatalf("by id = %+v, by domain = %+v", byID, byDomain)
 	}
