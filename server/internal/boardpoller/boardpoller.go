@@ -63,18 +63,12 @@ func (poller *Poller) PollOnce(ctx context.Context) (PollSummary, error) {
 	}
 	summary := PollSummary{Boards: len(boards)}
 	for _, board := range boards {
-		postings, err := poller.fetcher.FetchPostings(ctx, board.Provider, board.BoardToken)
+		result, err := poller.SyncBoard(ctx, board)
 		if errors.Is(err, jobboards.ErrPostingAPIOff) {
 			summary.Skipped++
 			slog.Info("board skipped: its posting API is off", "provider", board.Provider, "board", board.BoardToken)
 			continue
 		}
-		if err != nil {
-			summary.Failed++
-			slog.Warn("board fetch failed", "provider", board.Provider, "board", board.BoardToken, "error", err)
-			continue
-		}
-		result, err := poller.hub.SyncBoardJobs(ctx, store.Actor{Kind: store.ActorSystem}, board, postings, poller.now())
 		if err != nil {
 			summary.Failed++
 			slog.Warn("board sync failed", "provider", board.Provider, "board", board.BoardToken, "error", err)
@@ -86,4 +80,13 @@ func (poller *Poller) PollOnce(ctx context.Context) (PollSummary, error) {
 		summary.Totals.Seen += result.Seen
 	}
 	return summary, nil
+}
+
+// SyncBoard reads one board's open postings and stores them as its jobs.
+func (poller *Poller) SyncBoard(ctx context.Context, board store.JobBoard) (store.BoardSyncResult, error) {
+	postings, err := poller.fetcher.FetchPostings(ctx, board.Provider, board.BoardToken)
+	if err != nil {
+		return store.BoardSyncResult{}, err
+	}
+	return poller.hub.SyncBoardJobs(ctx, store.Actor{Kind: store.ActorSystem}, board, postings, poller.now())
 }

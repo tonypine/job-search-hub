@@ -23,19 +23,21 @@ import (
 var ownerToken = strings.Repeat("o", 64)
 
 type hubUnderTest struct {
-	pool  *pgxpool.Pool
-	store *store.Store
-	url   string
+	pool   *pgxpool.Pool
+	store  *store.Store
+	url    string
+	synced chan store.JobBoard
 }
 
 func startHub(t *testing.T) hubUnderTest {
 	t.Helper()
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
-	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}), tokens.NewVerifier(ownerToken, hub))
+	syncer := recordingSyncer{synced: make(chan store.JobBoard, 10)}
+	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}, syncer), tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return hubUnderTest{pool: pool, store: hub, url: server.URL}
+	return hubUnderTest{pool: pool, store: hub, url: server.URL, synced: syncer.synced}
 }
 
 // startAgentRun records a running agent run whose token expires at
@@ -48,6 +50,16 @@ func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.A
 		t.Fatalf("start agent run: %v", err)
 	}
 	return run, token
+}
+
+// recordingSyncer notes each board it is asked to read.
+type recordingSyncer struct {
+	synced chan store.JobBoard
+}
+
+func (syncer recordingSyncer) SyncBoard(_ context.Context, board store.JobBoard) (store.BoardSyncResult, error) {
+	syncer.synced <- board
+	return store.BoardSyncResult{}, nil
 }
 
 // stubJobBoards knows one board, "acme", on each provider it can verify, with

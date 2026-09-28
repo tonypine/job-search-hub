@@ -19,6 +19,12 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
+# The hub's command runs the company triage agent for "Add company"; the app
+# starts it because the agent needs Claude Code on this Mac.
+echo "==> Building the hub command"
+mkdir -p "$APP_DIR/Contents/Resources"
+(cd ../server && go build -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -61,6 +67,7 @@ if ! security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
   echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY." >&2
   exit 1
 fi
+codesign --force --options runtime --sign "$IDENTITY" "$APP_DIR/Contents/Resources/hub"
 codesign --force --options runtime --sign "$IDENTITY" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 

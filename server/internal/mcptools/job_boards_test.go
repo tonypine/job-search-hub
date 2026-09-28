@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -18,6 +19,14 @@ func TestSetJobBoardStoresAVerifiedBoardOnTheDossier(t *testing.T) {
 	})
 	if board.VerifiedAt == nil || board.OpenPostingCount == nil || *board.OpenPostingCount != 5 || board.BoardURL != "https://boards.example/greenhouse/acme" {
 		t.Fatalf("board = %+v", board)
+	}
+	select {
+	case synced := <-hub.synced:
+		if synced.ID != board.ID {
+			t.Fatalf("synced %+v; want the board just stored", synced)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a verified board's jobs should be read at once")
 	}
 	callTool[store.JobBoard](t, session, "set_job_board", map[string]any{
 		"company_id": created.Company.ID, "provider": "greenhouse", "board_token": "acme",

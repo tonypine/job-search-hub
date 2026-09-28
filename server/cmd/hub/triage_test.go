@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -43,7 +44,8 @@ func startHub(t *testing.T) hubUnderTest {
 	api.RegisterAgentRunRoutes(routes, hub, auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	}))
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, jobboards.NewVerifier()), verifier))
+	boards := jobboards.NewVerifier()
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards)), verifier))
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, store: hub, config: cliConfig{HubURL: server.URL, OwnerToken: testOwnerToken}}

@@ -41,6 +41,8 @@ struct CompaniesPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(CompanyResearch.self) private var research
+    @State private var isAddingCompany = false
     @State private var model = CompaniesModel()
     @State private var side: PanelSide = .details
     private let opensSession: Bool
@@ -62,7 +64,13 @@ struct CompaniesPage: View {
                     companyPanel(client: client).frame(width: 460)
                 }
                 .task { await model.load(with: client) }
-                .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
+                .onChange(of: [events.revision, unseen.revision, research.revision]) { Task { await model.load(with: client) } }
+                .sheet(isPresented: $isAddingCompany) {
+                    AddCompanySheet(client: client) { companyID in
+                        model.selectedID = companyID
+                        Task { await model.load(with: client) }
+                    }
+                }
                 .task(id: model.selectedID) {
                     await model.loadDossier(with: client)
                     if let companyID = model.selectedID {
@@ -70,6 +78,18 @@ struct CompaniesPage: View {
                     }
                 }
                 .toolbar {
+                    if research.isRunning {
+                        Button {
+                            isAddingCompany = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Researching \(research.company)")
+                            }
+                        }
+                        .help("Show the research's progress")
+                    }
+                    Button("Add company", systemImage: "plus") { isAddingCompany = true }
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                         .disabled(model.isLoading)
                 }

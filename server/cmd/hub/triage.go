@@ -85,5 +85,6 @@ func addCompany(ctx context.Context, config cliConfig, company string, options t
 	}
 	fmt.Fprintln(out)
 	printDossier(out, dossier)
+	fmt.Fprintf(out, "\nCompany id: %s\n", companyID)
 	return nil
 }

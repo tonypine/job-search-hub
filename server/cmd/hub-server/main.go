@@ -98,10 +98,11 @@ func run() error {
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
 	googleClient := makeGoogleClient(settings, hub)
 	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
+	boardPoller := boardpoller.New(hub, boards)
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardPoller), verifier))
 
 	if settings.boardPollInterval > 0 {
-		go boardpoller.New(hub, boards).Run(ctx, settings.boardPollInterval)
+		go boardPoller.Run(ctx, settings.boardPollInterval)
 	}
 	if settings.feedPollInterval > 0 {
 		go feedpoller.New(hub, boards).Run(ctx, settings.feedPollInterval)

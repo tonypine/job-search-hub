@@ -28,12 +28,13 @@ var schemaOptions = &jsonschema.ForOptions{
 }
 
 // NewServer registers every hub tool against the store. Job boards are
-// checked through verifier before they are stored.
-func NewServer(hub *store.Store, verifier jobBoardVerifier) *mcp.Server {
+// checked through verifier before they are stored, and a verified board's
+// jobs are read through syncer at once.
+func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "job-search-hub", Version: "0.1.0"}, nil)
 	addCompanyTools(server, hub)
 	addWatchListTools(server, hub)
-	addJobBoardTools(server, hub, verifier)
+	addJobBoardTools(server, hub, verifier, syncer)
 	addJobTools(server, hub)
 	addPeopleTools(server, hub)
 	addAgentPromptTools(server, hub)
