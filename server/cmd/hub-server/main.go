@@ -15,7 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
 const (
@@ -58,6 +60,7 @@ func run() error {
 
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(store.New(database)), tokens.NewVerifier(settings.ownerToken)))
 
 	server := &http.Server{
 		Addr:              settings.address,
