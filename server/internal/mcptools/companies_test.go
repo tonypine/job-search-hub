@@ -20,6 +20,7 @@ type companyDossier struct {
 	Company      store.Company    `json:"company"`
 	WatchedSince *time.Time       `json:"watched_since"`
 	JobBoards    []store.JobBoard `json:"job_boards"`
+	People       []store.Person   `json:"people"`
 }
 
 type foundCompanies struct {
@@ -57,7 +58,7 @@ func TestTheOwnerSeesEveryTool(t *testing.T) {
 	}
 	slices.Sort(names)
 	want := []string{
-		"add_to_watch_list", "create_company", "find_companies", "get_company",
+		"add_person", "add_to_watch_list", "create_company", "find_companies", "get_company",
 		"list_watch_list", "remove_from_watch_list", "set_job_board", "update_company",
 	}
 	if !slices.Equal(names, want) {

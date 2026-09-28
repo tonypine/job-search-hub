@@ -34,6 +34,7 @@ type companyDossier struct {
 	Company      store.Company    `json:"company"`
 	WatchedSince *time.Time       `json:"watched_since,omitempty" jsonschema:"when the company was put on the watch list; absent when it is not on it"`
 	JobBoards    []store.JobBoard `json:"job_boards"`
+	People       []store.Person   `json:"people"`
 }
 
 type findCompaniesInput struct {
@@ -93,7 +94,11 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 			return nil, companyDossier{}, err
 		}
 		jobBoards, err := hub.ListJobBoards(ctx, company.ID)
-		return nil, companyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards}, err
+		if err != nil {
+			return nil, companyDossier{}, err
+		}
+		people, err := hub.ListPeople(ctx, company.ID)
+		return nil, companyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards, People: people}, err
 	})
 
 	addTool(server, &mcp.Tool{
