@@ -28,6 +28,24 @@ func TestTheOwnerEditsAPromptAndOldVersionsStayReadable(t *testing.T) {
 	}
 }
 
+func TestTheOwnerChangesTheJobFactsSchema(t *testing.T) {
+	session := connect(t, startHub(t), ownerToken)
+
+	saved := callTool[store.AgentPrompt](t, session, "update_agent_prompt", map[string]any{
+		"kind": "job_facts", "body": "Record the stack.", "note": "stack only",
+		"result_schema": map[string]any{"type": "object", "properties": map[string]any{
+			"stack": map[string]any{"title": "Stack", "description": "Tools named.", "type": "array", "items": map[string]any{"type": "string"}},
+		}},
+	})
+	if saved.Version != 2 || !strings.Contains(string(saved.ResultSchema), `"Stack"`) {
+		t.Fatalf("saved = %+v", saved)
+	}
+	latest := callTool[store.AgentPrompt](t, session, "get_agent_prompt", map[string]any{"kind": "job_facts"})
+	if string(latest.ResultSchema) != string(saved.ResultSchema) {
+		t.Fatalf("latest schema = %s", latest.ResultSchema)
+	}
+}
+
 func TestAgentsCanReadButNotEditPrompts(t *testing.T) {
 	hub := startHub(t)
 	_, token := startAgentRun(t, hub, time.Now().Add(time.Hour))
@@ -39,7 +57,7 @@ func TestAgentsCanReadButNotEditPrompts(t *testing.T) {
 		t.Fatalf("error = %q", text)
 	}
 	var versions int
-	if err := hub.pool.QueryRow(context.Background(), `SELECT count(*) FROM agent_prompts`).Scan(&versions); err != nil || versions != 1 {
+	if err := hub.pool.QueryRow(context.Background(), `SELECT count(*) FROM agent_prompts WHERE kind = 'company_triage'`).Scan(&versions); err != nil || versions != 1 {
 		t.Fatalf("prompt versions = %d, err = %v, want only the seed", versions, err)
 	}
 }

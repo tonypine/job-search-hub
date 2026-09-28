@@ -4,6 +4,7 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,6 +22,8 @@ import (
 var schemaOptions = &jsonschema.ForOptions{
 	TypeSchemas: map[reflect.Type]*jsonschema.Schema{
 		reflect.TypeFor[uuid.UUID](): {Type: "string", Format: "uuid"},
+		// Raw JSON is any JSON value, such as a prompt's answer schema, not the byte array its Go type suggests.
+		reflect.TypeFor[json.RawMessage](): {},
 	},
 }
 

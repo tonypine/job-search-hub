@@ -62,7 +62,7 @@ func TestPlaceholdersInsideStoredTextStayLiteral(t *testing.T) {
 	if _, err := hub.SaveOwnerProfile(ctx, owner, "My profile mentions {{company_dossier}} literally."); err != nil {
 		t.Fatalf("save profile: %v", err)
 	}
-	if _, err := hub.SaveAgentPrompt(ctx, owner, store.AgentRunKindCompanyTriage, "Profile: {{owner_profile}}", "no dossier"); err != nil {
+	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentRunKindCompanyTriage, Body: "Profile: {{owner_profile}}", Note: "no dossier"}); err != nil {
 		t.Fatalf("save prompt: %v", err)
 	}
 

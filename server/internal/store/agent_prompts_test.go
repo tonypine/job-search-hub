@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,7 +35,7 @@ func TestSavingAPromptAddsTheNextVersionAndKeepsTheOld(t *testing.T) {
 		t.Fatalf("latest: %v", err)
 	}
 
-	saved, err := hub.SaveAgentPrompt(ctx, owner, store.AgentRunKindCompanyTriage, "Research {{company}} briefly.", "shorter")
+	saved, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentRunKindCompanyTriage, Body: "Research {{company}} briefly.", Note: "shorter"})
 	if err != nil || saved.Version != 2 || saved.Note != "shorter" {
 		t.Fatalf("saved = %+v, err = %v", saved, err)
 	}
@@ -54,13 +56,74 @@ func TestSavingAPromptRefusesAnUnknownKindOrAnEmptyBody(t *testing.T) {
 	hub := store.New(testdatabase.New(t))
 	ctx := context.Background()
 
-	if _, err := hub.SaveAgentPrompt(ctx, owner, "outreach_draft", "body", ""); !errors.Is(err, store.ErrAgentPromptNotFound) {
+	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: "outreach_draft", Body: "body"}); !errors.Is(err, store.ErrAgentPromptNotFound) {
 		t.Errorf("unknown kind: err = %v", err)
 	}
-	if _, err := hub.SaveAgentPrompt(ctx, owner, store.AgentRunKindCompanyTriage, "  ", ""); err == nil {
+	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentRunKindCompanyTriage, Body: "  "}); err == nil {
 		t.Error("expected an error for an empty body")
 	}
 	if _, err := hub.GetAgentPrompt(ctx, store.AgentRunKindCompanyTriage, 99); !errors.Is(err, store.ErrAgentPromptNotFound) {
 		t.Errorf("missing version: err = %v", err)
 	}
+}
+
+func TestTheJobFactsPromptIsSeededWithALabelledSchema(t *testing.T) {
+	prompt, err := store.New(testdatabase.New(t)).GetLatestAgentPrompt(context.Background(), store.AgentPromptKindJobFacts)
+	if err != nil || prompt.Version != 1 {
+		t.Fatalf("prompt = %+v, err = %v", prompt, err)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(prompt.ResultSchema, &schema); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	for _, fact := range []string{"summary", "technologies", "seniority", "years_of_experience", "location_restriction",
+		"timezone_requirement", "visa_sponsorship", "contract_type", "pay_in_text", "languages"} {
+		property, found := schema.Properties[fact]
+		if !found || property.Title == "" || property.Description == "" {
+			t.Errorf("fact %q is missing or unlabelled: %+v", fact, property)
+		}
+	}
+	if strings.Contains(string(prompt.ResultSchema), `"type": [`) || strings.Contains(string(prompt.ResultSchema), `"type":[`) {
+		t.Error("the seeded schema lists several types under type")
+	}
+}
+
+func TestSavingAJobFactsPromptKeepsOrReplacesItsSchema(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	seeded, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+
+	kept, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "Record the facts."})
+	if err != nil || kept.Version != 2 || !jsonEqual(t, kept.ResultSchema, seeded.ResultSchema) {
+		t.Fatalf("saved without a schema = %+v, err = %v; want the seeded schema kept", kept, err)
+	}
+	newSchema := json.RawMessage(`{"type":"object","properties":{"stack":{"title":"Stack","description":"The stack.","type":"array","items":{"type":"string"}}}}`)
+	replaced, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "Record the stack.", ResultSchema: newSchema})
+	if err != nil || !jsonEqual(t, replaced.ResultSchema, newSchema) {
+		t.Fatalf("saved with a schema = %+v, err = %v", replaced, err)
+	}
+
+	for name, schema := range map[string]string{
+		"a list":      `[1, 2]`,
+		"not JSON":    `{"type":`,
+		"a type list": `{"type":"object","properties":{"years":{"type":["integer","null"]}}}`,
+	} {
+		if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "x", ResultSchema: json.RawMessage(schema)}); err == nil {
+			t.Errorf("%s: saved, want refused", name)
+		}
+	}
+}
+
+func jsonEqual(t *testing.T, left, right json.RawMessage) bool {
+	t.Helper()
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
