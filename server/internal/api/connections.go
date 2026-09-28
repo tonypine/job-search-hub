@@ -90,6 +90,39 @@ func RegisterConnectionRoutes(routes *http.ServeMux, hub *store.Store, requireOw
 	}
 	handle("POST /v1/linkedin/applications/import", importLinkedInJobs(linkedinexport.ParseJobApplications))
 	handle("POST /v1/linkedin/saved-jobs/import", importLinkedInJobs(linkedinexport.ParseSavedJobs))
+
+	importEndorsements := func(parse func(io.Reader) ([]store.NewLinkedInEndorsement, error)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			endorsements, err := parse(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
+			if !writeImportReadError(w, err) {
+				return
+			}
+			imported, err := hub.ImportLinkedInEndorsements(r.Context(), store.Actor{Kind: store.ActorOwner}, endorsements)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, imported)
+		}
+	}
+	importRecommendations := func(parse func(io.Reader) ([]store.NewLinkedInRecommendation, error)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			recommendations, err := parse(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
+			if !writeImportReadError(w, err) {
+				return
+			}
+			imported, err := hub.ImportLinkedInRecommendations(r.Context(), store.Actor{Kind: store.ActorOwner}, recommendations)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, imported)
+		}
+	}
+	handle("POST /v1/linkedin/endorsements-received/import", importEndorsements(linkedinexport.ParseEndorsementsReceived))
+	handle("POST /v1/linkedin/endorsements-given/import", importEndorsements(linkedinexport.ParseEndorsementsGiven))
+	handle("POST /v1/linkedin/recommendations-received/import", importRecommendations(linkedinexport.ParseRecommendationsReceived))
+	handle("POST /v1/linkedin/recommendations-given/import", importRecommendations(linkedinexport.ParseRecommendationsGiven))
 }
 
 // writeImportReadError answers a file that couldn't be read, and reports

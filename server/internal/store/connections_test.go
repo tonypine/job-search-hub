@@ -122,3 +122,36 @@ func date(year int, month time.Month, day int) *time.Time {
 	value := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	return &value
 }
+
+func TestVouchesRaiseAConnectionAndSayWhy(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.ImportConnections(ctx, owner, []store.NewConnection{
+		{FirstName: "Plain", LastName: "Contact", ProfileURL: "https://www.linkedin.com/in/plain", CompanyName: "Acme", ConnectedOn: date(2013, 1, 1)},
+		{FirstName: "Ada", LastName: "Lovelace", ProfileURL: "https://www.linkedin.com/in/ada", CompanyName: "Acme", ConnectedOn: date(2015, 1, 1)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.ImportLinkedInEndorsements(ctx, owner, []store.NewLinkedInEndorsement{
+		{Direction: store.VouchedReceived, Skill: "React", FirstName: "Ada", LastName: "Lovelace", ProfileURL: "https://www.linkedin.com/in/ada/", Status: "accepted"},
+		{Direction: store.VouchedReceived, Skill: "Go", FirstName: "Ada", LastName: "Lovelace", ProfileURL: "https://www.linkedin.com/in/ada", Status: "rejected"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := hub.ImportLinkedInRecommendations(ctx, owner, []store.NewLinkedInRecommendation{
+		{Direction: store.VouchedReceived, FirstName: "Ada", LastName: "Lovelace", Company: "Acme", JobTitle: "CTO", Text: "Tony ships.", WrittenAt: date(2013, 1, 19), Status: "visible"},
+	})
+	if err != nil || imported.ConnectionsWithVouches != 1 {
+		t.Fatalf("import = %+v, %v", imported, err)
+	}
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+
+	connections, _ := hub.ListCompanyConnections(ctx, acme.ID)
+	if connections[0].FirstName != "Ada" || connections[0].Closeness != "connected in 2015, never talked; recommended you; endorsed you for React" {
+		t.Fatalf("first = %q %q; want Ada first, vouched for React only, since the Go endorsement was rejected", connections[0].FirstName, connections[0].Closeness)
+	}
+	recommendations, _ := hub.ListRecommendationsReceived(ctx)
+	if len(recommendations) != 1 || recommendations[0].Text != "Tony ships." {
+		t.Fatalf("recommendations = %+v", recommendations)
+	}
+}

@@ -72,3 +72,17 @@ Rita Recruiter,Owner Example,"9/20/26, 4:10 PM","Hi, a role for you",INCOMING,ht
 		t.Fatalf("invitations = %+v, %v", invitations, err)
 	}
 }
+
+func TestEndorsementsAndRecommendationsAreRead(t *testing.T) {
+	endorsements, err := ParseEndorsementsReceived(strings.NewReader("Endorsement Date,Skill Name,Endorser First Name,Endorser Last Name,Endorser Public Url,Endorsement Status\n" +
+		"2025/06/10 23:13:46 UTC,React,Ada,Lovelace,www.linkedin.com/in/ada-example,ACCEPTED\n"))
+	if err != nil || len(endorsements) != 1 || endorsements[0].ProfileURL != "https://www.linkedin.com/in/ada-example" ||
+		endorsements[0].Status != "accepted" || endorsements[0].EndorsedAt == nil {
+		t.Fatalf("endorsements = %+v, %v", endorsements, err)
+	}
+	recommendations, err := ParseRecommendationsReceived(strings.NewReader("First Name,Last Name,Company,Job Title,Text,Creation Date,Status\n" +
+		"Ada,Lovelace,Acme,CTO,\"Great, reliable engineer\",\"01/19/13, 12:10 AM\",VISIBLE\n"))
+	if err != nil || len(recommendations) != 1 || recommendations[0].Text != "Great, reliable engineer" || recommendations[0].WrittenAt.Year() != 2013 {
+		t.Fatalf("recommendations = %+v, %v", recommendations, err)
+	}
+}

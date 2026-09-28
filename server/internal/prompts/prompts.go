@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -31,7 +32,7 @@ func RenderCompanyPrompt(ctx context.Context, hub *store.Store, kind, company st
 	if err != nil {
 		return Rendered{}, err
 	}
-	profile, err := hub.GetOwnerProfile(ctx)
+	profileText, err := getOwnerProfileText(ctx, hub)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -44,7 +45,7 @@ func RenderCompanyPrompt(ctx context.Context, hub *store.Store, kind, company st
 	// stays literal text rather than being filled in turn.
 	filled := strings.NewReplacer(
 		"{{company}}", company,
-		"{{owner_profile}}", getProfileText(profile),
+		"{{owner_profile}}", profileText,
 		"{{company_dossier}}", dossierText,
 	).Replace(prompt.Body)
 	return Rendered{Body: filled, Version: prompt.Version}, nil
@@ -68,7 +69,7 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 	if err != nil {
 		return Rendered{}, err
 	}
-	profile, err := hub.GetOwnerProfile(ctx)
+	profileText, err := getOwnerProfileText(ctx, hub)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -89,18 +90,42 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 		}
 	}
 	filled := strings.NewReplacer(
-		"{{owner_profile}}", getProfileText(profile),
+		"{{owner_profile}}", profileText,
 		"{{company_dossier}}", dossierText,
 		"{{job_details}}", jobText,
 	).Replace(prompt.Body)
 	return Rendered{Body: filled, Version: prompt.Version}, nil
 }
 
-func getProfileText(profile store.OwnerProfile) string {
-	if strings.TrimSpace(profile.Body) == "" {
-		return missingProfileText
+// getOwnerProfileText is what the agents know about the owner: the profile
+// they wrote, and the recommendations others wrote about them on LinkedIn.
+func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) {
+	profile, err := hub.GetOwnerProfile(ctx)
+	if err != nil {
+		return "", err
 	}
-	return profile.Body
+	text := strings.TrimSpace(profile.Body)
+	if text == "" {
+		text = missingProfileText
+	}
+	recommendations, err := hub.ListRecommendationsReceived(ctx)
+	if err != nil || len(recommendations) == 0 {
+		return text, err
+	}
+	var written strings.Builder
+	written.WriteString(text)
+	written.WriteString("\n\nRecommendations others wrote about me on LinkedIn:\n")
+	for _, recommendation := range recommendations {
+		fmt.Fprintf(&written, "\n- %s %s", recommendation.FirstName, recommendation.LastName)
+		if recommendation.JobTitle != "" || recommendation.Company != "" {
+			fmt.Fprintf(&written, ", %s", strings.Trim(recommendation.JobTitle+" at "+recommendation.Company, " at"))
+		}
+		if recommendation.WrittenAt != nil {
+			fmt.Fprintf(&written, " (%d)", recommendation.WrittenAt.Year())
+		}
+		fmt.Fprintf(&written, ": \"%s\"", recommendation.Text)
+	}
+	return written.String(), nil
 }
 
 // formatAsData fences stored data so it never reads as instructions: agents
@@ -163,7 +188,7 @@ func RenderRecruiterReply(ctx context.Context, hub *store.Store, conversation st
 	if err != nil {
 		return Rendered{}, err
 	}
-	profile, err := hub.GetOwnerProfile(ctx)
+	profileText, err := getOwnerProfileText(ctx, hub)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -176,7 +201,7 @@ func RenderRecruiterReply(ctx context.Context, hub *store.Store, conversation st
 		return Rendered{}, err
 	}
 	filled := strings.NewReplacer(
-		"{{owner_profile}}", getProfileText(profile),
+		"{{owner_profile}}", profileText,
 		"{{recruiter_conversation}}", conversationText,
 		"{{openings}}", openingsText,
 	).Replace(prompt.Body)

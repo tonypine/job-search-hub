@@ -34,6 +34,12 @@ type Connection struct {
 	FirstMessageAt    *time.Time `json:"first_message_at,omitempty"`
 	LastMessageAt     *time.Time `json:"last_message_at,omitempty"`
 	TheyWroteFirst    bool       `json:"they_wrote_first"`
+	// Vouches between them and the owner: the skills they endorsed the owner
+	// for, and recommendations either way.
+	EndorsedOwnerFor []string `json:"endorsed_owner_for,omitempty"`
+	OwnerEndorsed    bool     `json:"owner_endorsed"`
+	RecommendedOwner bool     `json:"recommended_owner"`
+	OwnerRecommended bool     `json:"owner_recommended"`
 	// Closeness says how close the owner is to them, e.g. "12 messages, last
 	// in Mar 2025" or "connected in 2013, never talked"; connections are
 	// listed closest first.
@@ -54,6 +60,27 @@ func rankByCloseness(connections []Connection, now time.Time) []Connection {
 }
 
 func getClosenessScore(connection Connection, now time.Time) float64 {
+	return getConversationScore(connection, now) + getVouchScore(connection)
+}
+
+// getVouchScore weighs vouching: a recommendation either way says they know
+// the owner's work well, an endorsement of the owner says they vouch for a
+// skill, and the owner's endorsement of them says the owner knows theirs.
+func getVouchScore(connection Connection) float64 {
+	score := 0.0
+	if connection.RecommendedOwner || connection.OwnerRecommended {
+		score += 25
+	}
+	if len(connection.EndorsedOwnerFor) > 0 {
+		score += 12
+	}
+	if connection.OwnerEndorsed {
+		score += 4
+	}
+	return score
+}
+
+func getConversationScore(connection Connection, now time.Time) float64 {
 	if connection.MessageCount == 0 || connection.LastMessageAt == nil {
 		if connection.ConnectedOn == nil {
 			return 0
@@ -69,6 +96,24 @@ func getClosenessScore(connection Connection, now time.Time) float64 {
 const hoursPerYear = 24 * 365
 
 func describeCloseness(connection Connection) string {
+	parts := []string{describeConversations(connection)}
+	switch {
+	case connection.RecommendedOwner:
+		parts = append(parts, "recommended you")
+	case connection.OwnerRecommended:
+		parts = append(parts, "you recommended them")
+	}
+	if len(connection.EndorsedOwnerFor) > 0 {
+		skills := connection.EndorsedOwnerFor
+		if len(skills) > 3 {
+			skills = append(skills[:3:3], "more")
+		}
+		parts = append(parts, "endorsed you for "+strings.Join(skills, ", "))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func describeConversations(connection Connection) string {
 	if connection.MessageCount == 0 || connection.LastMessageAt == nil {
 		if connection.ConnectedOn == nil {
 			return "never talked"
@@ -83,13 +128,15 @@ func describeCloseness(connection Connection) string {
 }
 
 const connectionColumns = `id, first_name, last_name, profile_url, email, company_name, position, connected_on, company_id, imported_at, updated_at,
-	conversation_count, message_count, first_message_at, last_message_at, they_wrote_first`
+	conversation_count, message_count, first_message_at, last_message_at, they_wrote_first,
+	endorsed_owner_for, owner_endorsed, recommended_owner, owner_recommended`
 
 func scanConnection(row pgx.Row) (Connection, error) {
 	var connection Connection
 	err := row.Scan(&connection.ID, &connection.FirstName, &connection.LastName, &connection.ProfileURL, &connection.Email,
 		&connection.CompanyName, &connection.Position, &connection.ConnectedOn, &connection.CompanyID, &connection.ImportedAt, &connection.UpdatedAt,
-		&connection.ConversationCount, &connection.MessageCount, &connection.FirstMessageAt, &connection.LastMessageAt, &connection.TheyWroteFirst)
+		&connection.ConversationCount, &connection.MessageCount, &connection.FirstMessageAt, &connection.LastMessageAt, &connection.TheyWroteFirst,
+		&connection.EndorsedOwnerFor, &connection.OwnerEndorsed, &connection.RecommendedOwner, &connection.OwnerRecommended)
 	return connection, err
 }
 
@@ -145,6 +192,9 @@ func (s *Store) ImportConnections(ctx context.Context, actor Actor, connections 
 		}
 		result.Matched = matched
 		if _, err := refreshConnectionHistory(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := refreshConnectionVouches(ctx, tx); err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{entityType: "connections", entityID: uuid.New(), operation: "import", after: result})

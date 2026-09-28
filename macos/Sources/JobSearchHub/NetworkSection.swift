@@ -51,6 +51,9 @@ final class NetworkSectionModel {
                 case .savedJobs:
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: LinkedInJobsImport.self)
                         .makeSummary(of: "Saved jobs"))
+                case .endorsementsReceived, .endorsementsGiven, .recommendationsReceived, .recommendationsGiven:
+                    importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: VouchingImport.self)
+                        .makeSummary(of: kind.vouchingTitle))
                 }
             }
             errorMessage = nil
