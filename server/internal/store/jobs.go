@@ -252,6 +252,43 @@ func (s *Store) AddManualJob(ctx context.Context, actor Actor, input ManualJobIn
 	return job, created, nil
 }
 
+// ErrJobCompanyFromBoard means the job came from a company's own board, which
+// already says whose it is.
+var ErrJobCompanyFromBoard = errors.New("a job from a company's board keeps that company")
+
+// SetJobCompany ties a job added by hand or found in a feed to its company,
+// and moves the job's application to that company too.
+func (s *Store) SetJobCompany(ctx context.Context, actor Actor, jobID, companyID uuid.UUID) (Job, error) {
+	var job Job
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		current, err := scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = $1 FOR UPDATE`, jobID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrJobNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.Source == JobSourceJobBoard {
+			return ErrJobCompanyFromBoard
+		}
+		job, err = scanJob(tx.QueryRow(ctx, `UPDATE jobs SET company_id = $2 WHERE id = $1 RETURNING `+jobColumns, jobID, companyID))
+		if isForeignKeyViolation(err) {
+			return ErrCompanyNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE applications SET company_id = $2, updated_at = now() WHERE job_id = $1`, jobID, companyID); err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{
+			entityType: "job", entityID: jobID, operation: "update",
+			before: map[string]any{"company_id": current.CompanyID}, after: map[string]any{"company_id": companyID},
+		})
+	})
+	return job, err
+}
+
 // UpsertBoardJob stores one posting of a stored board, as a board sync would,
 // without closing the board's other jobs; created reports whether it was new.
 func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard, posting JobPosting, seenAt time.Time) (Job, bool, error) {

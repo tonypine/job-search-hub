@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -173,5 +174,28 @@ func TestASyncKeepsAndRefreshesTheBoardFacts(t *testing.T) {
 	jobs, _, _ = hub.ListJobs(ctx, store.JobFilter{})
 	if len(jobs) != 1 || jobs[0].Job.Pay != nil {
 		t.Fatalf("after the pay was taken down: %+v", jobs)
+	}
+}
+
+func TestAJobAddedByHandIsGivenItsCompanyAndItsCardFollows(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://jobs.example.com/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &job.ID})
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+
+	updated, err := hub.SetJobCompany(ctx, owner, job.ID, acme.ID)
+	if err != nil || updated.CompanyID == nil || *updated.CompanyID != acme.ID {
+		t.Fatalf("job = %+v, %v", updated, err)
+	}
+	card, _ := hub.FindCompanyApplication(ctx, acme.ID)
+	if card.ID != application.ID {
+		t.Fatalf("card = %+v; want the job's card under Acme", card)
+	}
+	if _, err := hub.SetJobCompany(ctx, owner, job.ID, uuid.New()); !errors.Is(err, store.ErrCompanyNotFound) {
+		t.Fatalf("an unknown company: err = %v", err)
 	}
 }

@@ -51,7 +51,7 @@ func TestTheOwnerSeesEveryTool(t *testing.T) {
 	slices.Sort(names)
 	want := []string{
 		"add_person", "add_to_watch_list", "create_company", "find_companies", "get_agent_prompt", "get_company", "get_job_criteria",
-		"get_owner_profile", "list_watch_list", "remove_from_watch_list", "set_job_board", "update_agent_prompt", "update_company",
+		"get_owner_profile", "list_watch_list", "remove_from_watch_list", "set_job_board", "set_job_company", "update_agent_prompt", "update_company",
 		"update_job_criteria", "update_owner_profile",
 	}
 	if !slices.Equal(names, want) {
