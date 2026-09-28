@@ -19,7 +19,8 @@ private let detailsJSON = #"""
  "application":{"id":"22222222-0000-0000-0000-000000000001","job_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"11111111-0000-0000-0000-000000000001",
                 "phase_entered_at":"2026-09-28T10:00:00Z","created_at":"2026-09-28T10:00:00Z","updated_at":"2026-09-28T10:00:00Z"},
  "phase":{"id":"11111111-0000-0000-0000-000000000001","name":"Saved","position":1,"is_closed":false},
- "fit":{"level":"unclear","checks":[{"name":"Where they hire","verdict":"yes","reason":"names \"Americas\""},{"name":"Level","verdict":"unclear","reason":"the posting doesn't say"}]}}
+ "fit":{"level":"unclear","checks":[{"name":"Where they hire","verdict":"yes","reason":"names \"Americas\""},{"name":"Level","verdict":"unclear","reason":"the posting doesn't say"}]},
+ "unseen_updates":1}
 """#
 
 @Test func jobDetailsDecodeWithBoardFactsFactsAndPhase() throws {
@@ -32,6 +33,7 @@ private let detailsJSON = #"""
     #expect(details.facts?.promptVersion == 2 && details.facts?.entries.count == 6)
     #expect(details.phase?.name == "Saved" && details.application?.phaseID == details.phase?.id)
     #expect(details.fit.level == .unclear && details.fit.checks.first?.verdict == .yes)
+    #expect(details.unseenUpdates == 1)
 }
 
 @Test func factsDisplayAsTextListsOrNotStated() throws {

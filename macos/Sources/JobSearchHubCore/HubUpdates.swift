@@ -41,6 +41,29 @@ public struct HubUpdateList: Decodable, Equatable, Sendable {
     public var unseenCount: Int
 }
 
+/// The updates recorded on one calendar day.
+public struct UpdateDay: Equatable, Identifiable, Sendable {
+    /// The day's start.
+    public var day: Date
+    public var updates: [HubUpdate]
+
+    public var id: Date { day }
+
+    /// Groups updates by the day they were recorded, keeping their order.
+    public static func makeDays(from updates: [HubUpdate], calendar: Calendar = .current) -> [UpdateDay] {
+        var days: [UpdateDay] = []
+        for update in updates {
+            let day = calendar.startOfDay(for: update.createdAt)
+            if days.last?.day == day {
+                days[days.count - 1].updates.append(update)
+            } else {
+                days.append(UpdateDay(day: day, updates: [update]))
+            }
+        }
+        return days
+    }
+}
+
 /// Which updates to mark seen.
 public struct UpdateSelection: Encodable, Sendable {
     public var ids: [UUID]?
@@ -60,6 +83,10 @@ public struct UpdateSelection: Encodable, Sendable {
         case jobID = "jobId"
         case companyID = "companyId"
     }
+}
+
+public struct MarkSeenResponse: Decodable, Equatable, Sendable {
+    public var marked: Int
 }
 
 /// One server-sent event.

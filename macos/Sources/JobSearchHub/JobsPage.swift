@@ -80,6 +80,8 @@ final class JobsModel {
 
 struct JobsPage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
 
@@ -102,6 +104,7 @@ struct JobsPage: View {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
                     }
+                    .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
                     .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
                         if let selectedID = model.selectedID {
                             JobPanel(jobID: selectedID, client: client, opensSession: opensSession && selectedID == initialJobID)
@@ -134,6 +137,7 @@ struct JobsPage: View {
                 .width(70)
             TableColumn("Title") { item in
                 HStack(spacing: 6) {
+                    UnseenDot(count: item.unseenUpdates)
                     Text(item.job.title).help(item.job.title)
                     if item.isNew(since: model.previousVisit) {
                         Text("New").font(.caption2.weight(.semibold)).padding(.horizontal, 5).padding(.vertical, 1)

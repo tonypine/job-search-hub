@@ -59,6 +59,8 @@ public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
     public var job: Job
     public var companyName: String?
     public var fit: JobFit
+    /// Updates about the job the owner hasn't seen yet.
+    public var unseenUpdates: Int
 
     public var id: UUID { job.id }
 

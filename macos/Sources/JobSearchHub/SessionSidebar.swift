@@ -1,13 +1,6 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// A request to show a session: its job or company, on the Session side,
-/// resumed when it has ended. Each request is new, so asking for the same
-/// session twice still opens it.
-struct SessionFocus: Equatable {
-    let id = UUID()
-    let subject: ClaudeSessionSubject
-}
 
 @MainActor
 @Observable

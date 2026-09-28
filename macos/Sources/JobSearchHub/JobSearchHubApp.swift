@@ -7,6 +7,7 @@ struct JobSearchHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var connection: HubConnection
     @State private var events = HubEventStream()
+    @State private var unseen = UnseenUpdates()
 
     init() {
         Self.importOwnerTokenIfAsked()
@@ -21,6 +22,7 @@ struct JobSearchHubApp: App {
             )
                 .environment(connection)
                 .environment(events)
+                .environment(unseen)
                 .frame(minWidth: 900, minHeight: 600)
                 .task(id: connection.hubURLText) {
                     if let client = connection.makeClient() {
@@ -62,10 +64,21 @@ struct JobSearchHubApp: App {
     }
 }
 
+/// A request to show a job or a company, on its Details side or on its
+/// Session side, where the session is resumed when it has ended. Each request
+/// is new, so asking for the same one twice still opens it.
+struct SubjectFocus: Equatable {
+    let id = UUID()
+    let subject: ClaudeSessionSubject
+    let opensSession: Bool
+}
+
 struct ContentView: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var selectedPage: Page?
-    @State private var focus: SessionFocus?
+    @State private var focus: SubjectFocus?
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -81,23 +94,37 @@ struct ContentView: View {
                 Section {
                     ForEach(Page.allCases) { page in
                         Label(page.title, systemImage: page.symbolName).tag(page)
+                            .badge(page == .updates ? unseen.count : 0)
                     }
                 }
                 if let client = connection.makeClient() {
-                    SessionSidebarSection(client: client) { subject in open(subject) }
+                    SessionSidebarSection(client: client) { subject in open(subject, opensSession: true) }
                 }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             switch selectedPage {
             case .settings: SettingsPage()
+            case .updates:
+                UpdatesPage(
+                    onOpenJob: { open(.job($0), opensSession: false) },
+                    onOpenCompany: { open(.company($0), opensSession: false) }
+                )
             case .companies:
-                CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil).id(focus?.id)
+                CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil && focus?.opensSession == true).id(focus?.id)
             case .profile: ProfilePage()
             case .jobs:
-                JobsPage(initialJobID: focusedJobID ?? initialJobID, opensSession: focusedJobID != nil || opensSession).id(focus?.id)
+                JobsPage(
+                    initialJobID: focusedJobID ?? initialJobID,
+                    opensSession: focusedJobID == nil ? opensSession : focus?.opensSession == true
+                ).id(focus?.id)
             case .pipeline: PipelinePage(initialJobID: initialJobID)
             case nil: EmptyView()
+            }
+        }
+        .task(id: events.revision) {
+            if let client = connection.makeClient() {
+                await unseen.refresh(with: client)
             }
         }
     }
@@ -112,9 +139,9 @@ struct ContentView: View {
         return nil
     }
 
-    /// Shows a session's job or company on its Session side.
-    private func open(_ subject: ClaudeSessionSubject) {
-        focus = SessionFocus(subject: subject)
+    /// Shows a job or company, on its Session side when asked.
+    private func open(_ subject: ClaudeSessionSubject, opensSession: Bool) {
+        focus = SubjectFocus(subject: subject, opensSession: opensSession)
         switch subject {
         case .job: selectedPage = .jobs
         case .company: selectedPage = .companies

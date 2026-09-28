@@ -8,10 +8,10 @@ private let jobsJSON = #"""
                  "title":"Senior Product Engineer","location":"Americas","workplace_type":"Remote",
                  "url":"https://jobs.ashbyhq.com/acme/x1","description":"Build things.",
                  "first_seen_at":"2026-09-28T13:57:13.161025Z","last_seen_at":"2026-09-28T13:57:13.161025Z"},
-          "company_name":"Acme","fit":{"level":"good","checks":[{"name":"Stack","verdict":"yes","reason":"React"}]}},
+          "company_name":"Acme","fit":{"level":"good","checks":[{"name":"Stack","verdict":"yes","reason":"React"}]},"unseen_updates":2},
          {"job":{"id":"8d9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Staff Engineer",
                  "url":"https://other.com/jobs/9","first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z",
-                 "closed_at":"2026-09-29T10:00:00Z"},"fit":{"level":"poor","checks":[]}}],
+                 "closed_at":"2026-09-29T10:00:00Z"},"fit":{"level":"poor","checks":[]},"unseen_updates":0}],
  "total":2}
 """#
 
@@ -24,6 +24,7 @@ private let jobsJSON = #"""
     #expect(response.jobs[0].job.workplaceType == "Remote")
     #expect(response.jobs[1].job.companyID == nil && response.jobs[1].companyName == nil)
     #expect(response.jobs[1].job.closedAt != nil)
+    #expect(response.jobs.map(\.unseenUpdates) == [2, 0])
 }
 
 @Test func theJobsQueryCarriesTheSearchOnlyWhenThereIsOne() {
@@ -46,7 +47,7 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     JobListItem(
         job: Job(id: UUID(), source: "manual", title: title, url: "https://acme.com/\(title)",
                  firstSeenAt: Date(timeIntervalSince1970: firstSeen), lastSeenAt: Date(timeIntervalSince1970: firstSeen)),
-        companyName: nil, fit: JobFit(level: level, checks: [])
+        companyName: nil, fit: JobFit(level: level, checks: []), unseenUpdates: 0
     )
 }
 

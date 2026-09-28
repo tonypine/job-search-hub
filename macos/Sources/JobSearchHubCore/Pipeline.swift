@@ -39,6 +39,9 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     public var companyName: String?
     /// When the card's phase wants a follow-up; nil when it asks for none.
     public var followUpDueAt: Date?
+    /// Unseen updates about the card's job, or about its company when the
+    /// application has no job.
+    public var unseenUpdates: Int
 
     public var id: UUID { application.id }
 
@@ -61,7 +64,7 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case application, jobTitle, companyName, followUpDueAt
+        case application, jobTitle, companyName, followUpDueAt, unseenUpdates
         case jobURL = "jobUrl"
     }
 }

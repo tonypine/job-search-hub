@@ -13,11 +13,11 @@ private let pipelineJSON = """
  "cards":[{"application":{"id":"22222222-0000-0000-0000-000000000001","job_id":"33333333-0000-0000-0000-000000000001",
                           "company_id":"44444444-0000-0000-0000-000000000001","phase_id":"\(savedID)",
                           "phase_entered_at":"2026-09-20T10:00:00Z","created_at":"2026-09-20T10:00:00Z","updated_at":"2026-09-20T10:00:00Z"},
-           "job_title":"Backend Engineer","job_url":"https://acme.com/careers/backend","company_name":"Acme"},
+           "job_title":"Backend Engineer","job_url":"https://acme.com/careers/backend","company_name":"Acme","unseen_updates":1},
           {"application":{"id":"22222222-0000-0000-0000-000000000002","company_id":"44444444-0000-0000-0000-000000000002",
                           "phase_id":"\(savedID)","notes":"Ask about the team.",
                           "phase_entered_at":"2026-09-27T10:00:00.5Z","created_at":"2026-09-27T10:00:00Z","updated_at":"2026-09-27T10:00:00Z"},
-           "company_name":"Globex"}]}
+           "company_name":"Globex","unseen_updates":0}]}
 """
 
 private func decodeBoard() throws -> PipelineBoard {
@@ -32,6 +32,7 @@ private func decodeBoard() throws -> PipelineBoard {
     #expect(board.getCards(in: board.phases[1]).isEmpty)
     #expect(board.cards[1].jobURL == "https://acme.com/careers/backend")
     #expect(board.cards[0].application.notes == "Ask about the team.")
+    #expect(board.cards.map(\.unseenUpdates) == [0, 1])
 }
 
 @Test func aMovedApplicationReplacesItsCardAndKeepsTheJob() throws {

@@ -39,3 +39,21 @@ import Testing
 
     #expect(lines == ["id: 1", "event: update", "data: {}", "", ": ping", ""])
 }
+
+@Test func updatesGroupByTheLocalDayTheyWereRecorded() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Sao_Paulo"))
+    func makeUpdate(_ title: String, at createdAt: String) throws -> HubUpdate {
+        let json = #"{"id":"\#(UUID().uuidString)","sequence":1,"kind":"reply","title":"\#(title)","created_at":"\#(createdAt)"}"#
+        return try HubJSON.makeDecoder().decode(HubUpdate.self, from: Data(json.utf8))
+    }
+    let updates = [
+        try makeUpdate("after midnight", at: "2026-09-29T04:00:00Z"),
+        try makeUpdate("before midnight", at: "2026-09-29T02:00:00Z"),
+        try makeUpdate("morning", at: "2026-09-28T12:00:00Z"),
+    ]
+
+    let days = UpdateDay.makeDays(from: updates, calendar: calendar)
+
+    #expect(days.map { $0.updates.map(\.title) } == [["after midnight"], ["before midnight", "morning"]])
+}

@@ -14,10 +14,10 @@ private let companiesJSON = ##"""
    "job_boards":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
                   "provider":"ashby","board_token":"acme","board_url":"https://jobs.ashbyhq.com/acme",
                   "verified_at":"2026-09-28T12:01:00Z","open_posting_count":42}],
-   "people_count":4},
+   "people_count":4,"unseen_updates":3},
   {"company":{"id":"1bb55565-58d2-4247-ba01-cba65060a316","name":"Zeta","domain":"zeta.com",
               "created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
-   "job_boards":[],"people_count":0}
+   "job_boards":[],"people_count":0,"unseen_updates":0}
 ]}
 """##
 
@@ -42,7 +42,7 @@ private let dossierJSON = ##"""
     #expect(acme.company.foundVia == "Referral: a former colleague")
     #expect(acme.watchedSince != nil)
     #expect(acme.jobBoards.first?.summaryLine == "ashby/acme · 42 open")
-    #expect(acme.peopleCount == 4)
+    #expect(acme.peopleCount == 4 && acme.unseenUpdates == 3)
 
     let zeta = listed[1]
     #expect(zeta.company.websiteURL == nil)

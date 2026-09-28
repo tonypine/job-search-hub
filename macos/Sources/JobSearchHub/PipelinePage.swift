@@ -70,6 +70,8 @@ struct PipelinePage: View {
     private static let columnWidthRange: ClosedRange<CGFloat> = 180...320
 
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
@@ -93,6 +95,7 @@ struct PipelinePage: View {
                             selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
                         }
                     }
+                    .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
                     .inspector(isPresented: Binding(get: { selectedCardID != nil }, set: { if !$0 { selectedCardID = nil } })) {
                         selectedCardDetail(client: client)
                             .inspectorColumnWidth(min: 360, ideal: 460, max: 720)
@@ -166,12 +169,20 @@ struct PipelinePage: View {
         }
     }
 
+    /// A card's job panel. A card for a company alone has no panel, so
+    /// selecting it is what marks the company's updates seen.
     @ViewBuilder
     private func selectedCardDetail(client: HubClient) -> some View {
-        if let jobID = model.board.cards.first(where: { $0.id == selectedCardID })?.application.jobID {
+        let application = model.board.cards.first(where: { $0.id == selectedCardID })?.application
+        if let jobID = application?.jobID {
             JobPanel(jobID: jobID, client: client)
         } else {
             ContentUnavailableView("No job on this card", systemImage: "building.2", description: Text("This application is to a company, not a posting."))
+                .task(id: application?.id) {
+                    if let companyID = application?.companyID {
+                        await unseen.markSeen(UpdateSelection(companyID: companyID), with: client)
+                    }
+                }
         }
     }
 
@@ -253,7 +264,13 @@ struct PipelineCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(card.title).fontWeight(.medium).lineLimit(2)
+            HStack(alignment: .firstTextBaseline) {
+                Text(card.title).fontWeight(.medium).lineLimit(2)
+                Spacer(minLength: 0)
+                if card.unseenUpdates > 0 {
+                    UnseenDot(count: card.unseenUpdates)
+                }
+            }
             if card.jobTitle != nil, let companyName = card.companyName {
                 Text(companyName).foregroundStyle(.secondary)
             }

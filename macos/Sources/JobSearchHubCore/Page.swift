@@ -1,6 +1,7 @@
 /// The app's top-level pages, in sidebar order.
 public enum Page: String, CaseIterable, Identifiable, Sendable {
     case pipeline
+    case updates
     case jobs
     case companies
     case profile
@@ -11,6 +12,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .pipeline: "Pipeline"
+        case .updates: "Updates"
         case .jobs: "Jobs"
         case .companies: "Companies"
         case .profile: "Profile"
@@ -22,6 +24,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     public var symbolName: String {
         switch self {
         case .pipeline: "rectangle.split.3x1"
+        case .updates: "bell"
         case .jobs: "briefcase"
         case .companies: "building.2"
         case .profile: "person.crop.circle"

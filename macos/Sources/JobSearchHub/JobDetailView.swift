@@ -72,6 +72,7 @@ struct JobPanel: View {
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = JobDetailModel()
 
     var body: some View {
@@ -99,7 +100,12 @@ struct JobDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .task(id: jobID) { await model.load(jobID, with: client) }
+        .task(id: jobID) {
+            await model.load(jobID, with: client)
+            if let details = model.details, details.unseenUpdates > 0 {
+                await unseen.markSeen(UpdateSelection(jobID: jobID), with: client)
+            }
+        }
         .alert("Could not add to the pipeline", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
             Button("OK") {}
         } message: {

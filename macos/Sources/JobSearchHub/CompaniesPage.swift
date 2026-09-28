@@ -39,6 +39,8 @@ final class CompaniesModel {
 
 struct CompaniesPage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = CompaniesModel()
     @State private var side: PanelSide = .details
     private let opensSession: Bool
@@ -60,7 +62,13 @@ struct CompaniesPage: View {
                     companyPanel(client: client).frame(width: 460)
                 }
                 .task { await model.load(with: client) }
-                .task(id: model.selectedID) { await model.loadDossier(with: client) }
+                .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
+                .task(id: model.selectedID) {
+                    await model.loadDossier(with: client)
+                    if let companyID = model.selectedID {
+                        await unseen.markSeen(UpdateSelection(companyID: companyID), with: client)
+                    }
+                }
                 .toolbar {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                         .disabled(model.isLoading)
@@ -91,7 +99,12 @@ struct CompaniesPage: View {
 
     private var companyTable: some View {
         Table(model.summaries, selection: $model.selectedID) {
-            TableColumn("Company", value: \.company.name)
+            TableColumn("Company") { summary in
+                HStack(spacing: 6) {
+                    UnseenDot(count: summary.unseenUpdates)
+                    Text(summary.company.name)
+                }
+            }
             TableColumn("Domain", value: \.company.domain)
             TableColumn("Watched since") { summary in
                 Text(summary.watchedSince.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "–")

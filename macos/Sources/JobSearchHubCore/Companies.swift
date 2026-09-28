@@ -75,6 +75,8 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var watchedSince: Date?
     public var jobBoards: [JobBoard]
     public var peopleCount: Int
+    /// Updates about the company or its jobs the owner hasn't seen yet.
+    public var unseenUpdates: Int
 
     public var id: UUID { company.id }
 }
