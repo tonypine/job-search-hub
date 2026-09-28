@@ -27,6 +27,16 @@ func (stubPostings) FetchPosting(_ context.Context, reference jobboards.PostingR
 	return store.JobPosting{}, errors.New("no such posting")
 }
 
+// stubRates price one BRL at 0.2 USD.
+type stubRates struct{}
+
+func (stubRates) GetRates(_ context.Context, base string) (map[string]float64, error) {
+	if base != "BRL" {
+		return nil, errors.New("no rates for " + base)
+	}
+	return map[string]float64{"USD": 0.2}, nil
+}
+
 type addedJob struct {
 	Job     store.Job `json:"job"`
 	Created bool      `json:"created"`
@@ -224,5 +234,43 @@ func TestTheJobsListAndDetailsCarryTheFit(t *testing.T) {
 	}
 	if err := json.Unmarshal(body, &details); status != http.StatusOK || err != nil || details.Fit.Level != jobfit.LevelGood {
 		t.Fatalf("details: %d %s", status, body)
+	}
+}
+
+func TestTheFitJudgesPayInTheTakeHomeCurrency(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	hiring := store.HiringTakeHome{Share: 0.84, PaymentsPerYear: 12}
+	if _, err := service.hub.SaveJobCriteria(ctx, owner, store.JobCriteria{TakeHome: &store.TakeHome{
+		Currency: "BRL", MinimumMonthly: 16000, TargetMonthly: 44000, CLT: hiring, PJ: hiring, ForeignContractor: hiring,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	company, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	board, _ := service.hub.SetJobBoard(ctx, owner, store.JobBoardInput{CompanyID: company.ID, Provider: "lever", BoardToken: "acme", Verified: true})
+	posting := store.JobPosting{ExternalID: "1", Title: "Engineer", URL: "https://jobs.lever.co/acme/1"}
+	posting.Pay = &store.Pay{Ranges: []store.PayRange{{Min: 60000, Max: 60000, Currency: "USD", Interval: "year"}}}
+	if _, err := service.hub.SyncBoardJobs(ctx, owner, board, []store.JobPosting{posting}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/jobs", ownerToken, "")
+	var list struct {
+		Jobs []struct {
+			Fit jobfit.Fit `json:"fit"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(body, &list); status != http.StatusOK || err != nil || len(list.Jobs) != 1 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	var payCheck *jobfit.Check
+	for index := range list.Jobs[0].Fit.Checks {
+		if list.Jobs[0].Fit.Checks[index].Name == "Pay" {
+			payCheck = &list.Jobs[0].Fit.Checks[index]
+		}
+	}
+	if payCheck == nil || payCheck.Verdict != jobfit.VerdictYes || payCheck.Reason != "about BRL 21.0k a month take-home, 48% of the target" {
+		t.Fatalf("pay check = %+v", payCheck)
 	}
 }

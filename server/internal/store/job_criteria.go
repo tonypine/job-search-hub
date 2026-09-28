@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"time"
@@ -32,15 +33,35 @@ type JobCriteria struct {
 	// IneligibleLocationTerms are words that exclude the owner even beside an
 	// eligible one, e.g. "must reside in the US".
 	IneligibleLocationTerms []string `json:"ineligible_location_terms"`
-	// MinimumYearlyPay is the pay floor; nil applies no pay filter.
-	MinimumYearlyPay *MinimumYearlyPay `json:"minimum_yearly_pay,omitempty"`
+	// TakeHome judges pay by what it would leave the owner each month; nil
+	// applies no pay check.
+	TakeHome *TakeHome `json:"take_home,omitempty"`
 	// RefuseHourlyWork marks jobs paid by the hour as a poor fit.
 	RefuseHourlyWork bool `json:"refuse_hourly_work"`
 }
 
-type MinimumYearlyPay struct {
-	Amount   float64 `json:"amount"`
-	Currency string  `json:"currency"`
+// TakeHome is the pay the owner needs, as monthly take-home in Currency, and
+// how much of a posting's pay each way of being hired would leave.
+type TakeHome struct {
+	Currency string `json:"currency"`
+	// MinimumMonthly is the least that pays the bills.
+	MinimumMonthly float64 `json:"minimum_monthly"`
+	// TargetMonthly is the take-home worth aiming for, such as the last job's.
+	TargetMonthly float64 `json:"target_monthly"`
+	// CLT covers Brazilian employment, including through an employer of record.
+	CLT HiringTakeHome `json:"clt"`
+	// PJ covers invoicing a Brazilian client as a company.
+	PJ HiringTakeHome `json:"pj"`
+	// ForeignContractor covers invoicing a company abroad.
+	ForeignContractor HiringTakeHome `json:"foreign_contractor"`
+}
+
+// HiringTakeHome is the share of each payment one way of being hired leaves
+// after taxes and fees, and how many payments a year it makes: 13.33 for CLT,
+// with the 13th salary and the vacation third.
+type HiringTakeHome struct {
+	Share           float64 `json:"share"`
+	PaymentsPerYear float64 `json:"payments_per_year"`
 }
 
 // SavedJobCriteria are the criteria with the time they were last saved.
@@ -52,12 +73,19 @@ type SavedJobCriteria struct {
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 
 func (criteria JobCriteria) validate() error {
-	if pay := criteria.MinimumYearlyPay; pay != nil {
-		if pay.Amount < 0 {
-			return errors.New("the minimum yearly pay cannot be negative")
-		}
-		if !currencyCode.MatchString(pay.Currency) {
-			return errors.New("the minimum yearly pay needs a three-letter currency code, such as USD")
+	takeHome := criteria.TakeHome
+	if takeHome == nil {
+		return nil
+	}
+	if !currencyCode.MatchString(takeHome.Currency) {
+		return errors.New("the take-home needs a three-letter currency code, such as BRL")
+	}
+	if takeHome.MinimumMonthly < 0 || takeHome.TargetMonthly < 0 {
+		return errors.New("the take-home minimum and target cannot be negative")
+	}
+	for name, hiring := range map[string]HiringTakeHome{"clt": takeHome.CLT, "pj": takeHome.PJ, "foreign_contractor": takeHome.ForeignContractor} {
+		if hiring.Share <= 0 || hiring.Share > 1 || hiring.PaymentsPerYear <= 0 {
+			return fmt.Errorf("the %s take-home needs a share above 0 and up to 1, and payments per year above 0", name)
 		}
 	}
 	return nil

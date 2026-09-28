@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,6 +18,28 @@ import (
 
 type postingSource interface {
 	FetchPosting(ctx context.Context, reference jobboards.PostingReference) (store.JobPosting, error)
+}
+
+type exchangeRateSource interface {
+	GetRates(ctx context.Context, base string) (map[string]float64, error)
+}
+
+// readFitInputs reads the criteria and, when they judge take-home, the day's
+// exchange rates. A failed rate fetch is logged and leaves foreign pay unclear.
+func readFitInputs(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (store.JobCriteria, jobfit.ExchangeRates, error) {
+	saved, err := hub.GetJobCriteria(ctx)
+	if err != nil {
+		return store.JobCriteria{}, jobfit.ExchangeRates{}, err
+	}
+	takeHome := saved.Criteria.TakeHome
+	if takeHome == nil {
+		return saved.Criteria, jobfit.ExchangeRates{}, nil
+	}
+	rates := jobfit.ExchangeRates{Base: takeHome.Currency}
+	if rates.PerBase, err = rateSource.GetRates(ctx, takeHome.Currency); err != nil {
+		slog.Warn("exchange rates unavailable; foreign pay reads unclear", "error", err)
+	}
+	return saved.Criteria, rates, nil
 }
 
 type jobsResponse struct {
@@ -48,7 +71,7 @@ type addJobResponse struct {
 
 // RegisterJobRoutes adds the owner-only routes for listing jobs, reading one
 // job's details, and adding one by URL.
-func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, requireOwner func(http.Handler) http.Handler) {
+func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parameters := r.URL.Query()
 		filter := store.JobFilter{Query: parameters.Get("query"), Status: parameters.Get("status")}
@@ -68,14 +91,14 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
 		}
-		criteria, err := hub.GetJobCriteria(r.Context())
+		criteria, rates, err := readFitInputs(r.Context(), hub, rateSource)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
 		judged := make([]judgedJobListItem, 0, len(jobs))
 		for _, item := range jobs {
-			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: jobfit.Judge(item.Job, item.Facts, criteria.Criteria)})
+			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: jobfit.Judge(item.Job, item.Facts, criteria, rates)})
 		}
 		writeJSON(w, http.StatusOK, jobsResponse{Jobs: judged, Total: total})
 	})))
@@ -95,12 +118,12 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		criteria, err := hub.GetJobCriteria(r.Context())
+		criteria, rates, err := readFitInputs(r.Context(), hub, rateSource)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria.Criteria)})
+		writeJSON(w, http.StatusOK, judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria, rates)})
 	})))
 
 	routes.Handle("POST /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,7 @@ func TestTheCriteriaStartEmptyAndRoundTrip(t *testing.T) {
 	criteria := store.JobCriteria{
 		Roles: []string{"Senior Full-Stack Engineer"}, SearchTerms: []string{"react"}, Technologies: []string{"TypeScript"},
 		SeniorityLevels: []string{"Senior"}, HomeCountry: "Brazil", EligibleLocationTerms: []string{"Americas"}, IneligibleLocationTerms: []string{"must reside in the US"},
-		MinimumYearlyPay: &store.MinimumYearlyPay{Amount: 120000, Currency: "USD"}, RefuseHourlyWork: true,
+		TakeHome: &validTakeHome, RefuseHourlyWork: true,
 	}
 	saved, err := hub.SaveJobCriteria(ctx, owner, criteria)
 	if err != nil || !reflect.DeepEqual(saved.Criteria, criteria) {
@@ -43,14 +43,24 @@ func TestTheCriteriaStartEmptyAndRoundTrip(t *testing.T) {
 	}
 }
 
+var validTakeHome = store.TakeHome{
+	Currency: "BRL", MinimumMonthly: 16000, TargetMonthly: 44000,
+	CLT: store.HiringTakeHome{Share: 0.73, PaymentsPerYear: 13.33}, PJ: store.HiringTakeHome{Share: 0.82, PaymentsPerYear: 12},
+	ForeignContractor: store.HiringTakeHome{Share: 0.84, PaymentsPerYear: 12},
+}
+
 func TestInvalidCriteriaAreRefused(t *testing.T) {
 	hub := store.New(testdatabase.New(t))
-	for name, pay := range map[string]store.MinimumYearlyPay{
-		"negative pay":    {Amount: -1, Currency: "USD"},
-		"no currency":     {Amount: 100000},
-		"a currency name": {Amount: 100000, Currency: "dollars"},
+	for name, change := range map[string]func(*store.TakeHome){
+		"a negative minimum": func(takeHome *store.TakeHome) { takeHome.MinimumMonthly = -1 },
+		"no currency":        func(takeHome *store.TakeHome) { takeHome.Currency = "" },
+		"a currency name":    func(takeHome *store.TakeHome) { takeHome.Currency = "reais" },
+		"a share above one":  func(takeHome *store.TakeHome) { takeHome.PJ.Share = 1.2 },
+		"no payments":        func(takeHome *store.TakeHome) { takeHome.CLT.PaymentsPerYear = 0 },
 	} {
-		if _, err := hub.SaveJobCriteria(context.Background(), owner, store.JobCriteria{MinimumYearlyPay: &pay}); err == nil {
+		takeHome := validTakeHome
+		change(&takeHome)
+		if _, err := hub.SaveJobCriteria(context.Background(), owner, store.JobCriteria{TakeHome: &takeHome}); err == nil {
 			t.Errorf("%s: saved, want refused", name)
 		}
 	}

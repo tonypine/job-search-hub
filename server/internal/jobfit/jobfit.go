@@ -6,6 +6,7 @@ package jobfit
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -48,13 +49,14 @@ type readFacts struct {
 	Technologies        []string `json:"technologies"`
 	Seniority           string   `json:"seniority"`
 	PayInText           string   `json:"pay_in_text"`
+	ContractType        string   `json:"contract_type"`
 }
 
 const notStated = "not stated"
 
 // Judge answers each check for the job. rawFacts may be empty when the job
-// has not been read yet.
-func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria) Fit {
+// has not been read yet; rates may be empty, which leaves foreign pay unclear.
+func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria, rates ExchangeRates) Fit {
 	var facts readFacts
 	if len(rawFacts) > 0 {
 		_ = json.Unmarshal(rawFacts, &facts)
@@ -64,7 +66,7 @@ func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria) 
 		checkStack(job, facts, criteria),
 		checkLevel(job, facts, criteria),
 	}
-	if pay, applies := checkPay(job, facts, criteria); applies {
+	if pay, applies := checkPay(job, facts, criteria, rates); applies {
 		checks = append(checks, pay)
 	}
 	return Fit{Level: getLevel(checks), Checks: checks}
@@ -155,32 +157,145 @@ func checkLevel(job store.Job, facts readFacts, criteria store.JobCriteria) Chec
 	return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
 }
 
+// ExchangeRates convert pay to the take-home currency: PerBase[c] is how much
+// of currency c one unit of Base buys.
+type ExchangeRates struct {
+	Base    string
+	PerBase map[string]float64
+}
+
+func (rates ExchangeRates) convertToBase(amount float64, currency string) (float64, bool) {
+	if strings.EqualFold(currency, rates.Base) {
+		return amount, true
+	}
+	rate, known := rates.PerBase[strings.ToUpper(currency)]
+	if !known || rate <= 0 {
+		return 0, false
+	}
+	return amount / rate, true
+}
+
+// hiring is one way the owner could be hired for a job.
+type hiring struct {
+	name     string
+	takeHome store.HiringTakeHome
+}
+
 // checkPay applies when hourly work is refused and the job pays by the hour,
-// or when the criteria set a pay floor.
-func checkPay(job store.Job, facts readFacts, criteria store.JobCriteria) (Check, bool) {
+// or when the criteria set a take-home. It estimates what the top of the
+// published range would leave each month under every way the owner could be
+// hired and every period the pay could be for; the answer is no only when
+// even the best case is under the minimum.
+func checkPay(job store.Job, facts readFacts, criteria store.JobCriteria, rates ExchangeRates) (Check, bool) {
 	const name = "Pay"
 	if criteria.RefuseHourlyWork && isPaidHourly(job, facts) {
 		return Check{Name: name, Verdict: VerdictNo, Reason: "paid by the hour"}, true
 	}
-	floor := criteria.MinimumYearlyPay
-	if floor == nil {
+	takeHome := criteria.TakeHome
+	if takeHome == nil {
 		return Check{}, false
 	}
 	if job.Pay == nil || len(job.Pay.Ranges) == 0 {
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "no pay published"}, true
 	}
 	payRange := job.Pay.Ranges[0]
-	yearlyMaximum, isYearly := getYearlyAmount(payRange.Max, payRange.Interval)
-	switch {
-	case !strings.EqualFold(payRange.Currency, floor.Currency):
-		return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("paid in %s; the floor is in %s", payRange.Currency, floor.Currency)}, true
-	case !isYearly:
-		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the pay period isn't stated"}, true
-	case yearlyMaximum >= floor.Amount:
-		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("up to %.0f %s a year", yearlyMaximum, payRange.Currency)}, true
-	default:
-		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("up to %.0f %s a year", yearlyMaximum, payRange.Currency)}, true
+	monthlyAmounts := getPossibleMonthlyAmounts(payRange.Max, payRange.Interval)
+	if len(monthlyAmounts) == 0 {
+		return Check{Name: name, Verdict: VerdictUnclear, Reason: "paid by the " + payRange.Interval}, true
 	}
+
+	var estimates []float64
+	for _, monthly := range monthlyAmounts {
+		converted, known := rates.convertToBase(monthly, payRange.Currency)
+		if !known {
+			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("no exchange rate from %s to %s", payRange.Currency, takeHome.Currency)}, true
+		}
+		for _, possible := range getPossibleHirings(job, facts, payRange.Currency, *takeHome) {
+			estimates = append(estimates, converted*possible.takeHome.Share*possible.takeHome.PaymentsPerYear/12)
+		}
+	}
+	lowest, highest := slices.Min(estimates), slices.Max(estimates)
+	isEstimateExact := formatAmount(lowest, takeHome.Currency) == formatAmount(highest, takeHome.Currency)
+	switch {
+	case highest < takeHome.MinimumMonthly:
+		qualifier := "at most"
+		if isEstimateExact {
+			qualifier = "about"
+		}
+		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("%s %s a month take-home, under the %s minimum",
+			qualifier, formatAmount(highest, takeHome.Currency), formatAmount(takeHome.MinimumMonthly, takeHome.Currency))}, true
+	case lowest >= takeHome.MinimumMonthly:
+		qualifier := "at least"
+		if isEstimateExact {
+			qualifier = "about"
+		}
+		reason := fmt.Sprintf("%s %s a month take-home", qualifier, formatAmount(lowest, takeHome.Currency))
+		if takeHome.TargetMonthly > 0 {
+			reason += fmt.Sprintf(", %.0f%% of the target", lowest/takeHome.TargetMonthly*100)
+		}
+		return Check{Name: name, Verdict: VerdictYes, Reason: reason}, true
+	default:
+		return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("%s to %.1fk a month take-home, depending on the contract or pay period",
+			formatAmount(lowest, takeHome.Currency), highest/1000)}, true
+	}
+}
+
+// getPossibleMonthlyAmounts reads an amount as monthly pay. A board that
+// doesn't state the period could mean a year or a month, so both are
+// returned; hourly and daily pay are not converted.
+func getPossibleMonthlyAmounts(amount float64, interval string) []float64 {
+	switch interval {
+	case "year":
+		return []float64{amount / 12}
+	case "month":
+		return []float64{amount}
+	case "week":
+		return []float64{amount * 52 / 12}
+	case "":
+		return []float64{amount / 12, amount}
+	default:
+		return nil
+	}
+}
+
+// getPossibleHirings reads how the owner would be hired from the Contract
+// fact and the employment type: CLT or an employer of record means CLT, PJ
+// means PJ, and a contractor is PJ at home or a foreign contractor abroad. An
+// unstated contract could be either kind.
+func getPossibleHirings(job store.Job, facts readFacts, currency string, takeHome store.TakeHome) []hiring {
+	clt := hiring{"CLT", takeHome.CLT}
+	pj := hiring{"PJ", takeHome.PJ}
+	foreignContractor := hiring{"contractor", takeHome.ForeignContractor}
+	contract := []string{facts.ContractType, job.EmploymentType}
+	isLocal := strings.EqualFold(currency, takeHome.Currency)
+
+	switch {
+	case hasAnyTerm(contract, "clt", "eor", "employer of record"):
+		return []hiring{clt}
+	case hasAnyTerm(contract, "pj"):
+		return []hiring{pj}
+	case hasAnyTerm(contract, "contractor", "contract", "freelance", "freelancer", "independent"):
+		if isLocal {
+			return []hiring{pj}
+		}
+		return []hiring{foreignContractor}
+	case hasAnyTerm(contract, "employee", "employment", "permanent"):
+		return []hiring{clt}
+	case isLocal:
+		return []hiring{clt, pj}
+	default:
+		return []hiring{foreignContractor, clt}
+	}
+}
+
+func hasAnyTerm(texts []string, terms ...string) bool {
+	_, found := findTerm(texts, terms)
+	return found
+}
+
+// formatAmount writes an amount in thousands, such as "BRL 20.3k".
+func formatAmount(amount float64, currency string) string {
+	return fmt.Sprintf("%s %.1fk", currency, amount/1000)
 }
 
 func isPaidHourly(job store.Job, facts readFacts) bool {
@@ -193,15 +308,6 @@ func isPaidHourly(job store.Job, facts readFacts) bool {
 	}
 	text := strings.ToLower(facts.PayInText)
 	return strings.Contains(text, "per hour") || strings.Contains(text, "/hour") || strings.Contains(text, "/hr") || strings.Contains(text, "hourly")
-}
-
-var periodsPerYear = map[string]float64{"year": 1, "month": 12, "week": 52}
-
-// getYearlyAmount converts a yearly, monthly or weekly amount to a yearly one;
-// isYearly is false for other or unstated periods.
-func getYearlyAmount(amount float64, interval string) (float64, bool) {
-	periods, known := periodsPerYear[interval]
-	return amount * periods, known
 }
 
 // findTerm returns the first term found in any text as whole words, ignoring

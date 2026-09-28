@@ -18,6 +18,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
@@ -78,7 +79,7 @@ func run() error {
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	boards := jobboards.NewVerifier()
-	api.RegisterJobRoutes(routes, hub, boards, requireOwner)
+	api.RegisterJobRoutes(routes, hub, boards, exchangerates.NewCache(exchangerates.DefaultAPIBase), requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
 
 	if settings.boardPollInterval > 0 {

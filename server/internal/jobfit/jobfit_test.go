@@ -51,7 +51,7 @@ func TestWhereTheyHire(t *testing.T) {
 		{"nothing said", store.Job{Location: "Remote"}, "not stated", jobfit.VerdictUnclear},
 		{"a term inside another word", store.Job{Location: "Remote"}, "Across the Americas; our focus only matters", jobfit.VerdictYes},
 	} {
-		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria)
+		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != test.want {
 			t.Errorf("%s: %+v, want %s", test.name, check, test.want)
 		}
@@ -76,7 +76,7 @@ func TestStackAndLevel(t *testing.T) {
 		if test.read != nil {
 			raw = facts(t, test.read)
 		}
-		fit := jobfit.Judge(store.Job{Title: test.title, Location: "Americas"}, raw, criteria)
+		fit := jobfit.Judge(store.Job{Title: test.title, Location: "Americas"}, raw, criteria, rates)
 		if stack := findCheck(t, fit, "Stack"); stack.Verdict != test.wantStack {
 			t.Errorf("%s stack: %+v, want %s", test.name, stack, test.wantStack)
 		}
@@ -86,44 +86,66 @@ func TestStackAndLevel(t *testing.T) {
 	}
 }
 
-func TestPay(t *testing.T) {
-	yearly := &store.Pay{Ranges: []store.PayRange{{Min: 100000, Max: 150000, Currency: "USD", Interval: "year"}}}
-	monthly := &store.Pay{Ranges: []store.PayRange{{Min: 8000, Max: 10000, Currency: "USD", Interval: "month"}}}
-	hourly := &store.Pay{Ranges: []store.PayRange{{Min: 50, Max: 70, Currency: "USD", Interval: "hour"}}}
-	withFloor := criteria
-	withFloor.MinimumYearlyPay = &store.MinimumYearlyPay{Amount: 120000, Currency: "USD"}
+var rates = jobfit.ExchangeRates{Base: "BRL", PerBase: map[string]float64{"USD": 0.2, "CAD": 0.27}}
 
-	if fit := jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: yearly}}, nil, criteria); len(fit.Checks) != 3 {
-		t.Errorf("without a floor or hourly pay there is no pay check: %+v", fit.Checks)
+var takeHome = store.TakeHome{
+	Currency: "BRL", MinimumMonthly: 16000, TargetMonthly: 44000,
+	CLT: store.HiringTakeHome{Share: 0.73, PaymentsPerYear: 13.33}, PJ: store.HiringTakeHome{Share: 0.82, PaymentsPerYear: 12},
+	ForeignContractor: store.HiringTakeHome{Share: 0.84, PaymentsPerYear: 12},
+}
+
+func pay(maximum float64, currency, interval string) *store.Pay {
+	return &store.Pay{Ranges: []store.PayRange{{Min: maximum * 0.8, Max: maximum, Currency: currency, Interval: interval}}}
+}
+
+func TestPayIsJudgedByEstimatedTakeHome(t *testing.T) {
+	if fit := jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: pay(25000, "BRL", "month")}}, nil, criteria, rates); len(fit.Checks) != 3 {
+		t.Errorf("without a take-home or hourly pay there is no pay check: %+v", fit.Checks)
 	}
+	withTakeHome := criteria
+	withTakeHome.TakeHome = &takeHome
+
 	for _, test := range []struct {
-		name string
-		pay  *store.Pay
-		text string
-		want jobfit.Verdict
+		name     string
+		pay      *store.Pay
+		contract string
+		want     jobfit.Verdict
+		reason   string
 	}{
-		{"above the floor", yearly, "", jobfit.VerdictYes},
-		{"monthly, above the floor over a year", monthly, "", jobfit.VerdictYes},
-		{"hourly", hourly, "", jobfit.VerdictNo},
-		{"hourly in the text", nil, "$60 per hour", jobfit.VerdictNo},
-		{"no pay published", nil, "not stated", jobfit.VerdictUnclear},
+		{"CLT in reais", pay(25000, "BRL", "month"), "CLT", jobfit.VerdictYes, "about BRL 20.3k a month take-home, 46% of the target"},
+		{"a foreign contract in dollars", pay(60000, "USD", "year"), "Contractor", jobfit.VerdictYes, "about BRL 21.0k a month take-home, 48% of the target"},
+		{"PJ under the minimum", pay(12000, "BRL", "month"), "PJ", jobfit.VerdictNo, "about BRL 9.8k a month take-home, under the BRL 16.0k minimum"},
+		{"an unstated contract across the minimum", pay(46560, "USD", "year"), "not stated", jobfit.VerdictUnclear, ""},
+		{"an unstated period across the minimum", pay(20000, "USD", ""), "Contractor", jobfit.VerdictUnclear, ""},
+		{"an unstated period above it both ways", pay(150000, "USD", ""), "Contractor", jobfit.VerdictYes, "at least BRL 52.5k a month take-home, 119% of the target"},
+		{"an unstated contract under it both ways", pay(10000, "BRL", "month"), "not stated", jobfit.VerdictNo, "at most BRL 8.2k a month take-home, under the BRL 16.0k minimum"},
+		{"hourly, refused", pay(70, "USD", "hour"), "Contractor", jobfit.VerdictNo, "paid by the hour"},
+		{"a currency without a rate", pay(900000, "ARS", "month"), "Contractor", jobfit.VerdictUnclear, "no exchange rate from ARS to BRL"},
+		{"no pay published", nil, "CLT", jobfit.VerdictUnclear, "no pay published"},
 	} {
-		fit := jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: test.pay}}, facts(t, map[string]any{"pay_in_text": test.text}), withFloor)
-		if check := findCheck(t, fit, "Pay"); check.Verdict != test.want {
-			t.Errorf("%s: %+v, want %s", test.name, check, test.want)
+		job := store.Job{BoardFacts: store.BoardFacts{Pay: test.pay}}
+		check := findCheck(t, jobfit.Judge(job, facts(t, map[string]any{"contract_type": test.contract}), withTakeHome, rates), "Pay")
+		if check.Verdict != test.want || (test.reason != "" && check.Reason != test.reason) {
+			t.Errorf("%s: %+v, want %s %q", test.name, check, test.want, test.reason)
 		}
 	}
-	lowFloor := withFloor
-	lowFloor.MinimumYearlyPay = &store.MinimumYearlyPay{Amount: 200000, Currency: "USD"}
-	if check := findCheck(t, jobfit.Judge(store.Job{BoardFacts: store.BoardFacts{Pay: yearly}}, nil, lowFloor), "Pay"); check.Verdict != jobfit.VerdictNo {
-		t.Errorf("below the floor: %+v", check)
+}
+
+func TestAContractorPostingWithoutACurrencyRateStaysUnclear(t *testing.T) {
+	withTakeHome := criteria
+	withTakeHome.TakeHome = &takeHome
+	job := store.Job{BoardFacts: store.BoardFacts{Pay: pay(120000, "USD", "year")}}
+
+	check := findCheck(t, jobfit.Judge(job, nil, withTakeHome, jobfit.ExchangeRates{}), "Pay")
+	if check.Verdict != jobfit.VerdictUnclear {
+		t.Fatalf("with no rates fetched: %+v", check)
 	}
 }
 
 func TestTheFitLevel(t *testing.T) {
-	good := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria)
-	unclear := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "Remote"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria)
-	poor := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"Java"}}), criteria)
+	good := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
+	unclear := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "Remote"}, facts(t, map[string]any{"technologies": []string{"TypeScript"}}), criteria, rates)
+	poor := jobfit.Judge(store.Job{Title: "Senior Engineer", Location: "LATAM"}, facts(t, map[string]any{"technologies": []string{"Java"}}), criteria, rates)
 
 	if good.Level != jobfit.LevelGood || unclear.Level != jobfit.LevelUnclear || poor.Level != jobfit.LevelPoor {
 		t.Fatalf("levels = %s, %s, %s", good.Level, unclear.Level, poor.Level)

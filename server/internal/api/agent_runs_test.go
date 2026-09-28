@@ -41,7 +41,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
-	api.RegisterJobRoutes(routes, hub, stubPostings{}, requireOwner)
+	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	server := httptest.NewServer(routes)
