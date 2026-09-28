@@ -13,6 +13,7 @@ const (
 	defaultJobFactsModel     = "qwen/qwen3.5-9b"
 	defaultJobFactsInterval  = 10 * time.Minute
 	defaultFeedPollInterval  = 3 * time.Hour
+	defaultPublicURL         = "http://localhost:8090"
 )
 
 type config struct {
@@ -26,6 +27,12 @@ type config struct {
 	jobFactsModelURL string
 	jobFactsModel    string
 	jobFactsInterval time.Duration
+	// googleClientFile is the OAuth client Google issued for the hub; empty
+	// leaves Google off.
+	googleClientFile string
+	// publicURL is where the owner's browser reaches the hub, for Google's
+	// redirect after sign-in.
+	publicURL string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -66,6 +73,11 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	}
 	if parsed.jobFactsInterval, err = parseInterval(lookup, "HUB_JOB_FACTS_INTERVAL", defaultJobFactsInterval); err != nil {
 		return config{}, err
+	}
+	parsed.googleClientFile = lookup("HUB_GOOGLE_OAUTH_CLIENT_FILE")
+	parsed.publicURL = strings.TrimSuffix(lookup("HUB_PUBLIC_URL"), "/")
+	if parsed.publicURL == "" {
+		parsed.publicURL = defaultPublicURL
 	}
 	parsed.jobFactsModelURL = lookup("HUB_JOB_FACTS_MODEL_URL")
 	parsed.jobFactsModel = lookup("HUB_JOB_FACTS_MODEL")

@@ -73,6 +73,9 @@ func TestTheAppRoutesAreForTheOwnerOnly(t *testing.T) {
 		{http.MethodGet, "/v1/claude-sessions", ""},
 		{http.MethodPost, "/v1/claude-sessions", `{}`},
 		{http.MethodPost, "/v1/claude-sessions/7c9e6679-7425-40de-944b-e07fc1f90ae7/start", ""},
+		{http.MethodGet, "/v1/google", ""},
+		{http.MethodPost, "/v1/google/sign-in", ""},
+		{http.MethodGet, "/v1/google/check", ""},
 	} {
 		if status, _ := send(t, attempt.method, service.url+attempt.path, agentToken, attempt.body); status != http.StatusForbidden {
 			t.Errorf("agent token on %s %s: %d, want 403", attempt.method, attempt.path, status)

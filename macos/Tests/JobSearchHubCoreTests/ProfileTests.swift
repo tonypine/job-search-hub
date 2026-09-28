@@ -60,3 +60,16 @@ struct ProfileEditorTests {
         #expect(editor.errorMessage?.contains("database down") == true)
     }
 }
+
+@Test func theGoogleStatusSaysWhatTheOwnerMustDo() throws {
+    let decoder = HubJSON.makeDecoder()
+    let off = try decoder.decode(GoogleStatus.self, from: Data(#"{"configured":false}"#.utf8))
+    let unconnected = try decoder.decode(GoogleStatus.self, from: Data(#"{"configured":true}"#.utf8))
+    let expired = try decoder.decode(GoogleStatus.self, from: Data(#"{"configured":true,"connection":{"email":"me@example.com","scopes":[],"connected_at":"2026-09-28T15:00:00Z","needs_reconnect_since":"2026-10-05T15:00:00Z","last_error":"Token has been expired or revoked."}}"#.utf8))
+    let connected = try decoder.decode(GoogleStatus.self, from: Data(#"{"configured":true,"connection":{"email":"me@example.com","scopes":["x"],"connected_at":"2026-09-28T15:00:00Z"}}"#.utf8))
+
+    #expect(!off.needsSignIn && off.summary.contains("no Google OAuth client"))
+    #expect(unconnected.needsSignIn && unconnected.summary == "Not connected.")
+    #expect(expired.needsSignIn && expired.summary == "Google needs you to connect again.")
+    #expect(!connected.needsSignIn && connected.summary.hasPrefix("Connected as me@example.com"))
+}

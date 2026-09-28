@@ -45,6 +45,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, stubRates{}, requireOwner)
+	api.RegisterGoogleRoutes(routes, hub, nil, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, url: server.URL}

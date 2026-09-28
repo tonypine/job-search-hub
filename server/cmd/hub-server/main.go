@@ -20,6 +20,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
+	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
@@ -82,6 +83,7 @@ func run() error {
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
+	api.RegisterGoogleRoutes(routes, hub, makeGoogleClient(settings, hub), requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
 
 	if settings.boardPollInterval > 0 {
@@ -118,4 +120,24 @@ func run() error {
 	}
 	slog.Info("hub-server shut down")
 	return nil
+}
+
+// makeGoogleClient reads the hub's Google OAuth client, or returns nil,
+// leaving Google off, when there is none or it can't be read.
+func makeGoogleClient(settings config, hub *store.Store) *google.Client {
+	if settings.googleClientFile == "" {
+		return nil
+	}
+	clientJSON, err := os.ReadFile(settings.googleClientFile)
+	if err != nil {
+		slog.Warn("Google stays off: the OAuth client file can't be read", "file", settings.googleClientFile, "error", err)
+		return nil
+	}
+	client, err := google.NewClient(clientJSON, settings.publicURL+"/v1/google/callback", hub)
+	if err != nil {
+		slog.Warn("Google stays off", "error", err)
+		return nil
+	}
+	slog.Info("Google sign-in on", "redirect", settings.publicURL+"/v1/google/callback")
+	return client
 }
