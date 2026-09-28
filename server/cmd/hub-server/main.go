@@ -69,6 +69,8 @@ func run() error {
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	api.RegisterCompanyRoutes(routes, hub, requireOwner)
+	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, jobboards.NewVerifier()), verifier))
 
 	server := &http.Server{

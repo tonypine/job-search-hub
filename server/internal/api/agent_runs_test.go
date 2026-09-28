@@ -34,10 +34,13 @@ func startAPI(t *testing.T) apiUnderTest {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
 	verifier := tokens.NewVerifier(ownerToken, hub)
-	routes := http.NewServeMux()
-	api.RegisterAgentRunRoutes(routes, hub, auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
+	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
-	}))
+	})
+	routes := http.NewServeMux()
+	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	api.RegisterCompanyRoutes(routes, hub, requireOwner)
+	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, url: server.URL}
