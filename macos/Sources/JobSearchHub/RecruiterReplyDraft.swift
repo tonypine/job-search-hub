@@ -32,7 +32,9 @@ final class RecruiterReplyDraft {
         let environment = BundledHubCommand.makeEnvironment(
             from: ProcessInfo.processInfo.environment, hubURL: client.baseURL, ownerToken: client.token, claude: claude
         )
-        let finished = await Self.run(command, arguments: RecruiterReplyLaunch.makeArguments(conversationID: conversationID), environment: environment)
+        let finished = await BundledHubCommandRunner.run(
+            command, arguments: RecruiterReplyLaunch.makeArguments(conversationID: conversationID), environment: environment
+        )
         guard self.conversationID == conversationID else { return }
         let output = finished.output.trimmingCharacters(in: .whitespacesAndNewlines)
         if finished.status == 0, !output.isEmpty {
@@ -47,10 +49,12 @@ final class RecruiterReplyDraft {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
+}
 
-    /// Runs the command to its end off the main thread, returning what it
-    /// printed and how it exited.
-    private nonisolated static func run(_ command: URL, arguments: [String], environment: [String: String]) async -> (output: String, status: Int32) {
+/// Runs the bundled `hub` command to its end, off the main thread.
+enum BundledHubCommandRunner {
+    /// Returns what the command printed and how it exited.
+    static func run(_ command: URL, arguments: [String], environment: [String: String]) async -> (output: String, status: Int32) {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = command

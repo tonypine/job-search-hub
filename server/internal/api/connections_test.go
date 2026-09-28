@@ -251,6 +251,12 @@ func TestTheLinkedInProfileIsImportedComparedAndItsEmployersNotSuggested(t *test
 		t.Fatalf("differences = %q", differences)
 	}
 
+	status, body = send(t, http.MethodGet, service.url+"/v1/linkedin/profile/audit-prompt", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(body), "Senior Front-End Engineer") || !strings.Contains(string(body), "fitting_postings") ||
+		!strings.Contains(string(body), "From my LinkedIn profile") {
+		t.Fatalf("audit prompt: %d %s; want the criteria, the market and the LinkedIn profile in it", status, body)
+	}
+
 	follows := "Organization,Followed On\nGlobex,Wed Jun 24 12:43:42 UTC 2026\nInitech,Thu Oct 24 16:49:32 UTC 2024\nUmbrella,Thu Oct 24 16:49:32 UTC 2024\n"
 	send(t, http.MethodPost, service.url+"/v1/linkedin/company-follows/import", ownerToken, follows)
 	status, body = send(t, http.MethodGet, service.url+"/v1/company-suggestions", ownerToken, "")

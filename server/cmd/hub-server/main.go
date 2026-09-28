@@ -95,7 +95,7 @@ func run() error {
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	api.RegisterRecruiterRoutes(routes, hub, rates, requireOwner)
 	api.RegisterCompanySuggestionRoutes(routes, hub, rates, requireOwner)
-	api.RegisterLinkedInProfileRoutes(routes, hub, requireOwner)
+	api.RegisterLinkedInProfileRoutes(routes, hub, rates, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)

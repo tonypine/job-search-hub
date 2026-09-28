@@ -14,18 +14,30 @@ import (
 	"time"
 )
 
-// replyTimeout bounds one draft; it needs a single turn and no tools.
+// replyTimeout bounds one piece of writing; it needs a single turn and no
+// tools.
 const replyTimeout = 3 * time.Minute
 
 // draftRecruiterReply drafts a message back to the recruiter who started a
-// conversation, from the prompt the hub fills in, and prints it. The draft
-// runs in a `claude -p` session with no tools and no MCP servers: it only
-// writes text.
+// conversation, from the prompt the hub fills in, and prints it.
 func draftRecruiterReply(ctx context.Context, config cliConfig, conversationID, model string, out io.Writer) error {
+	return writeFromHubPrompt(ctx, config, "/v1/recruiters/"+url.PathEscape(conversationID)+"/reply-prompt", model, out)
+}
+
+// auditProfile writes an audit of the owner's LinkedIn profile for the
+// recruiters who search, from the prompt the hub fills in, and prints it.
+func auditProfile(ctx context.Context, config cliConfig, model string, out io.Writer) error {
+	return writeFromHubPrompt(ctx, config, "/v1/linkedin/profile/audit-prompt", model, out)
+}
+
+// writeFromHubPrompt reads a prompt the hub fills in and prints what Claude
+// writes from it, in a `claude -p` session with no tools and no MCP servers:
+// it only writes text.
+func writeFromHubPrompt(ctx context.Context, config cliConfig, promptPath, model string, out io.Writer) error {
 	var rendered struct {
 		Prompt string `json:"prompt"`
 	}
-	if err := getJSON(ctx, config, "/v1/recruiters/"+url.PathEscape(conversationID)+"/reply-prompt", &rendered); err != nil {
+	if err := getJSON(ctx, config, promptPath, &rendered); err != nil {
 		return err
 	}
 	workingDirectory, err := agentWorkingDirectory()
@@ -54,7 +66,7 @@ func draftRecruiterReply(ctx context.Context, config cliConfig, conversationID, 
 		return fmt.Errorf("read claude's answer: %w", err)
 	}
 	if result.IsError || strings.TrimSpace(result.Result) == "" {
-		return errors.New("claude wrote no draft: " + result.Result)
+		return errors.New("claude wrote nothing: " + result.Result)
 	}
 	_, err = fmt.Fprintln(out, strings.TrimSpace(result.Result))
 	return err

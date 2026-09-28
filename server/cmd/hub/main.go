@@ -21,6 +21,8 @@ const usage = `usage:
       [--found-via <note>] [--model <model>] [--effort <level>]
   hub recruiter reply <conversation-id>
       [--model <model>]             draft a message back to a recruiter who wrote before
+  hub profile audit [--model <model>]
+                                    audit the LinkedIn profile for recruiters searching
 `
 
 func main() {
@@ -68,6 +70,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = draftRecruiterReply(ctx, config, args[2], *model, stdout)
+	case len(args) >= 2 && args[0] == "profile" && args[1] == "audit":
+		flags := flag.NewFlagSet("profile audit", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		model := flags.String("model", "", "the Claude model for the audit")
+		if flags.Parse(args[2:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = auditProfile(ctx, config, *model, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2

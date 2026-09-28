@@ -33,12 +33,15 @@ const (
 	// AgentPromptKindRecruiterReply drafts a message back to a recruiter
 	// who wrote to the owner before.
 	AgentPromptKindRecruiterReply = "recruiter_reply"
+	// AgentPromptKindProfileAudit audits the owner's LinkedIn profile for the
+	// recruiters who search for the roles they want.
+	AgentPromptKindProfileAudit = "profile_audit"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
-	AgentPromptKindRecruiterReply: true,
+	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

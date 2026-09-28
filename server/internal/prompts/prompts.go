@@ -254,3 +254,27 @@ func describeLinkedInProfile(profile store.LinkedInProfile) string {
 	}
 	return text.String()
 }
+
+// RenderProfileAudit fills the active profile_audit prompt with the owner's
+// profile, the job criteria, what fitting postings ask for, and what
+// recruiters approached the owner for.
+func RenderProfileAudit(ctx context.Context, hub *store.Store, criteria, market, recruiterHistory any) (Rendered, error) {
+	prompt, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindProfileAudit)
+	if err != nil {
+		return Rendered{}, err
+	}
+	profileText, err := getOwnerProfileText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
+	filled := prompt.Body
+	for placeholder, value := range map[string]any{"{{criteria}}": criteria, "{{market}}": market, "{{recruiter_history}}": recruiterHistory} {
+		text, err := formatAsData(value)
+		if err != nil {
+			return Rendered{}, err
+		}
+		filled = strings.ReplaceAll(filled, placeholder, text)
+	}
+	filled = strings.ReplaceAll(filled, "{{owner_profile}}", profileText)
+	return Rendered{Body: filled, Version: prompt.Version}, nil
+}

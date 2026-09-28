@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/linkedinexport"
+	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
 )
@@ -27,9 +32,10 @@ type profileImportResponse struct {
 }
 
 // RegisterLinkedInProfileRoutes adds the owner-only routes for the owner's
-// LinkedIn profile: importing the export's profile files at once, and reading
-// the profile with how it differs from the job criteria.
-func RegisterLinkedInProfileRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
+// LinkedIn profile: importing the export's profile files at once, reading the
+// profile with how it differs from the job criteria, and the prompt of an
+// audit for the recruiters who search.
+func RegisterLinkedInProfileRoutes(routes *http.ServeMux, hub *store.Store, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	handle := func(pattern string, handler http.HandlerFunc) { routes.Handle(pattern, requireOwner(handler)) }
 
 	handle("GET /v1/linkedin/profile", func(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +50,30 @@ func RegisterLinkedInProfileRoutes(routes *http.ServeMux, hub *store.Store, requ
 			return
 		}
 		writeJSON(w, http.StatusOK, linkedInProfileResponse{Profile: profile, CriteriaDifferences: getCriteriaDifferences(profile, criteria.Criteria)})
+	})
+
+	handle("GET /v1/linkedin/profile/audit-prompt", func(w http.ResponseWriter, r *http.Request) {
+		saved, err := hub.GetJobCriteria(r.Context())
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		market, err := getMarket(r.Context(), hub, rateSource)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		recruiterHistory, err := getRecruiterHistory(r.Context(), hub)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		rendered, err := prompts.RenderProfileAudit(r.Context(), hub, saved.Criteria, market, recruiterHistory)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, replyPromptResponse{Prompt: rendered.Body, Version: rendered.Version})
 	})
 
 	handle("POST /v1/linkedin/profile/import", func(w http.ResponseWriter, r *http.Request) {
@@ -122,4 +152,93 @@ func quoteAll(values []string) string {
 		quoted[index] = `"` + value + `"`
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// marketTopCount is how many titles and technologies the audit sees.
+const marketTopCount = 15
+
+// market is what the open postings that fit ask for: their most common
+// titles and technologies, with how many postings name each.
+type market struct {
+	FittingPostings int          `json:"fitting_postings"`
+	Titles          []namedCount `json:"titles"`
+	Technologies    []namedCount `json:"technologies"`
+}
+
+type namedCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// getMarket counts the titles and technologies of the open jobs judged a
+// good or unclear fit.
+func getMarket(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (market, error) {
+	criteria, rates, err := readFitInputs(ctx, hub, rateSource)
+	if err != nil {
+		return market{}, err
+	}
+	titles, technologies := map[string]int{}, map[string]int{}
+	var result market
+	for offset := 0; ; offset += openJobsPageSize {
+		jobs, total, err := hub.ListJobs(ctx, store.JobFilter{Status: store.JobStatusOpen, Limit: openJobsPageSize, Offset: offset})
+		if err != nil {
+			return market{}, err
+		}
+		for _, item := range jobs {
+			if jobfit.Judge(item.Job, item.Facts, criteria, rates).Level == jobfit.LevelPoor {
+				continue
+			}
+			result.FittingPostings++
+			titles[item.Job.Title]++
+			var facts struct {
+				Technologies []string `json:"technologies"`
+			}
+			if json.Unmarshal(item.Facts, &facts) == nil {
+				for _, technology := range facts.Technologies {
+					technologies[technology]++
+				}
+			}
+		}
+		if offset+len(jobs) >= total || len(jobs) == 0 {
+			break
+		}
+	}
+	result.Titles, result.Technologies = getTopCounts(titles), getTopCounts(technologies)
+	return result, nil
+}
+
+// getRecruiterHistory counts the roles and companies recruiters approached
+// the owner for on LinkedIn: how recruiters read the profile.
+func getRecruiterHistory(ctx context.Context, hub *store.Store) (map[string]any, error) {
+	conversations, err := hub.ListRecruiterConversations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles, companies := map[string]int{}, map[string]int{}
+	for _, conversation := range conversations {
+		if conversation.Role != "" {
+			roles[conversation.Role]++
+		}
+		if conversation.HiringCompany != "" {
+			companies[conversation.HiringCompany]++
+		}
+	}
+	return map[string]any{"conversations": len(conversations), "roles": getTopCounts(roles), "companies": getTopCounts(companies)}, nil
+}
+
+func getTopCounts(counts map[string]int) []namedCount {
+	named := make([]namedCount, 0, len(counts))
+	for name, count := range counts {
+		named = append(named, namedCount{Name: name, Count: count})
+	}
+	sort.Slice(named, func(a, b int) bool {
+		if named[a].Count != named[b].Count {
+			return named[a].Count > named[b].Count
+		}
+		return named[a].Name < named[b].Name
+	})
+	if len(named) > marketTopCount {
+		named = named[:marketTopCount]
+	}
+	return named
 }

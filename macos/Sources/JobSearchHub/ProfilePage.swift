@@ -5,6 +5,7 @@ struct ProfilePage: View {
     @Environment(HubConnection.self) private var connection
     @State private var editor = ProfileEditor()
     @State private var linkedIn: LinkedInProfileResponse?
+    @State private var audit = ProfileAudit()
 
     var body: some View {
         Group {
@@ -37,7 +38,7 @@ struct ProfilePage: View {
                     VStack(alignment: .leading, spacing: 28) {
                         ProfileDocument(markdown: profile.body)
                         if let linkedIn, !linkedIn.profile.isEmpty {
-                            LinkedInProfileSection(response: linkedIn)
+                            LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
                         }
                     }
                     .padding(24)
@@ -105,6 +106,8 @@ struct ProfileDocument: View {
 /// hub's criteria.
 struct LinkedInProfileSection: View {
     let response: LinkedInProfileResponse
+    let audit: ProfileAudit
+    let client: HubClient
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -144,8 +147,36 @@ struct LinkedInProfileSection: View {
             }
             Text("Agents read this with your profile above. Import again from Settings › Network to update it.")
                 .font(.caption).foregroundStyle(.secondary)
+            auditView
         }
         .textSelection(.enabled)
+    }
+
+    /// The audit for recruiters: a button, then Claude's suggested edits.
+    @ViewBuilder
+    private var auditView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Audit for recruiters").font(.headline)
+            switch audit.state {
+            case .idle:
+                Button("Audit my LinkedIn profile", systemImage: "wand.and.stars") { Task { await audit.audit(with: client) } }
+                Text("Claude compares your profile with the postings that fit you and what recruiters approached you for, and suggests edits to make on LinkedIn.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .auditing:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Auditing…").foregroundStyle(.secondary)
+                }
+            case let .audited(markdown):
+                ProfileDocument(markdown: markdown)
+                    .padding(12)
+                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                Button("Audit again") { Task { await audit.audit(with: client) } }
+            case let .failed(reason):
+                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Button("Try again") { Task { await audit.audit(with: client) } }
+            }
+        }
     }
 }
 

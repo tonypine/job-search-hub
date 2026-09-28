@@ -45,3 +45,9 @@ public enum RecruiterReplyLaunch {
     }
 }
 
+/// How the app audits the LinkedIn profile: `hub profile audit`, which prints
+/// the audit as Markdown.
+public enum ProfileAuditLaunch {
+    public static let arguments = ["profile", "audit"]
+}
+
