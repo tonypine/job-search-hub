@@ -17,6 +17,7 @@ struct JobSearchHubApp: App {
                 .environment(connection)
                 .frame(minWidth: 900, minHeight: 600)
         }
+        .defaultSize(width: 1400, height: 860)
     }
 
     /// `--page <name>` opens the app on that page, so a build can be checked
@@ -58,6 +59,7 @@ struct ContentView: View {
         } detail: {
             switch selectedPage {
             case .settings: SettingsPage()
+            case .companies: CompaniesPage()
             case let page?: PlaceholderPage(page: page)
             case nil: EmptyView()
             }
