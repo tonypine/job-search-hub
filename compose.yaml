@@ -42,6 +42,9 @@ services:
       # The Google OAuth client for a desktop app, from the folder mounted below.
       HUB_GOOGLE_OAUTH_CLIENT_FILE: ${HUB_GOOGLE_OAUTH_CLIENT_FILE-/config/google-oauth-client.json}
       HUB_PUBLIC_URL: ${HUB_PUBLIC_URL:-http://localhost:8090}
+      # Where Gmail announces mailbox changes; both empty leaves it off.
+      HUB_GMAIL_PUBSUB_TOPIC: ${HUB_GMAIL_PUBSUB_TOPIC:-}
+      HUB_GMAIL_PUBSUB_SUBSCRIPTION: ${HUB_GMAIL_PUBSUB_SUBSCRIPTION:-}
     volumes:
       # Local secrets that stay out of the repo, read-only.
       - ${HUB_CONFIG_DIR:-${HOME}/.config/job-search-hub}:/config:ro

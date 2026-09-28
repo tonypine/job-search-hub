@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -62,6 +63,35 @@ func startFakeGoogle(t *testing.T) (*Client, *store.Store) {
 			{"mimeType":"text/html","body":{"data":"PHA-SGkgPGI-VG9ueTwvYj4sPC9wPg"}},
 			{"mimeType":"text/plain","body":{"data":"SGkgVG9ueSw"}}]}}`, headers)
 	})
+	routes.HandleFunc("POST /gmail/v1/users/me/watch", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			TopicName string `json:"topicName"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.TopicName != "projects/p/topics/gmail" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		fmt.Fprint(w, `{"historyId":"100","expiration":"1790600000000"}`)
+	})
+	routes.HandleFunc("GET /gmail/v1/users/me/history", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch {
+		case query.Get("startHistoryId") == "1":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"code":404,"message":"Requested entity was not found."}}`)
+		case query.Get("historyTypes") != "messageAdded":
+			w.WriteHeader(http.StatusBadRequest)
+		case query.Get("pageToken") == "":
+			fmt.Fprint(w, `{"history":[{"id":"101","messagesAdded":[{"message":{"id":"m1","threadId":"t1"}}]},
+				{"id":"102","messagesAdded":[{"message":{"id":"m2","threadId":"t2"}},{"message":{"id":"m1","threadId":"t1"}}]}],
+				"nextPageToken":"page-2","historyId":"105"}`)
+		default:
+			fmt.Fprint(w, `{"history":[{"id":"104","messagesAdded":[{"message":{"id":"m3","threadId":"t3"}}]}],"historyId":"106"}`)
+		}
+	})
+	routes.HandleFunc("GET /gmail/v1/users/me/messages/gone", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 
@@ -94,7 +124,7 @@ func TestASignInStoresTheGrantAndTheCheckReadsMailAndCalendars(t *testing.T) {
 		t.Fatalf("finish = %+v, %v", connection, err)
 	}
 	stored, _ := hub.GetGoogleConnection(ctx)
-	if stored.RefreshToken != "refresh-1" || len(stored.Scopes) != 2 {
+	if stored.RefreshToken != "refresh-1" || len(stored.Scopes) != len(Scopes) {
 		t.Fatalf("stored = %+v", stored)
 	}
 	if _, err := client.FinishSignIn(ctx, query.Get("state"), "good-code"); !errors.Is(err, ErrUnknownSignIn) {
@@ -149,5 +179,29 @@ func TestGmailIsSearchedAndReadAsText(t *testing.T) {
 	}
 	if text := convertHTMLToText("<p>Hi <b>Tony</b>,</p><style>x{}</style><div>Next steps</div>"); text != "Hi Tony,\nNext steps" {
 		t.Fatalf("html text = %q", text)
+	}
+}
+
+func TestTheMailboxIsWatchedAndItsAddedMessagesListed(t *testing.T) {
+	client, hub := startFakeGoogle(t)
+	ctx := context.Background()
+	if _, err := hub.SaveGoogleConnection(ctx, store.Actor{Kind: store.ActorOwner}, "owner@example.com", "refresh-1", Scopes); err != nil {
+		t.Fatal(err)
+	}
+
+	watch, err := client.WatchMailbox(ctx, "projects/p/topics/gmail")
+	if err != nil || watch.HistoryID != "100" || watch.ExpiresAt.Unix() != 1790600000 {
+		t.Fatalf("watch = %+v, %v", watch, err)
+	}
+
+	changes, err := client.ListAddedMessages(ctx, "100")
+	if err != nil || strings.Join(changes.AddedMessageIDs, ",") != "m1,m2,m3" || changes.HistoryID != "106" {
+		t.Fatalf("changes = %+v, %v; want each message once, across pages, and the last history ID", changes, err)
+	}
+	if _, err := client.ListAddedMessages(ctx, "1"); !errors.Is(err, ErrHistoryTooOld) {
+		t.Fatalf("a history ID Gmail no longer keeps: err = %v", err)
+	}
+	if _, err := client.GetMessageSummary(ctx, "gone"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("a deleted message: err = %v", err)
 	}
 }

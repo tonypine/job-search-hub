@@ -58,8 +58,8 @@ final class GoogleSectionModel {
     }
 }
 
-/// Settings' Google connection: read-only Gmail and Calendar access that the
-/// hub asks for again when Google expires it.
+/// Settings' Google connection: read-only Gmail and Calendar access, and Pub/Sub
+/// access to hear new mail, that the hub asks for again when Google expires it.
 struct GoogleSection: View {
     let client: HubClient
     @State private var model = GoogleSectionModel()
@@ -95,7 +95,7 @@ struct GoogleSection: View {
         } header: {
             Text("Google")
         } footer: {
-            Text("Read-only access to Gmail and Calendar, for follow-ups and replies. Google expires it every 7 days while the app is in testing, and the hub asks you to connect again.")
+            Text("Read-only access to Gmail and Calendar, for follow-ups and replies, and Pub/Sub access to hear new mail as it arrives. Google expires it every 7 days while the app is in testing, and the hub asks you to connect again.")
                 .foregroundStyle(.secondary)
         }
         .task { await model.load(with: client) }

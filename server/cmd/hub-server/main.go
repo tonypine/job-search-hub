@@ -21,6 +21,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
+	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
@@ -88,7 +89,8 @@ func run() error {
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
-	api.RegisterGoogleRoutes(routes, hub, makeGoogleClient(settings, hub), requireOwner)
+	googleClient := makeGoogleClient(settings, hub)
+	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards), verifier))
 
 	if settings.boardPollInterval > 0 {
@@ -101,6 +103,11 @@ func run() error {
 		extractor := jobfacts.NewExtractor(hub, chatcompletions.NewClient(settings.jobFactsModelURL), settings.jobFactsModel)
 		go extractor.Run(ctx, settings.jobFactsInterval)
 		slog.Info("job facts reading on", "model", settings.jobFactsModel, "every", settings.jobFactsInterval.String())
+	}
+
+	if googleClient != nil && settings.gmailSubscription != "" {
+		go gmailwatch.New(hub, googleClient, settings.gmailTopic, settings.gmailSubscription).Run(ctx)
+		slog.Info("gmail changes on", "topic", settings.gmailTopic)
 	}
 
 	server := &http.Server{

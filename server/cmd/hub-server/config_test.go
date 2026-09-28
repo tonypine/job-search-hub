@@ -95,3 +95,21 @@ func TestJobFactsReadingIsOffWithoutAModelURLAndDefaultsOtherwise(t *testing.T) 
 		t.Fatalf("a bad interval: err = %v", err)
 	}
 }
+
+func TestGmailChangesNeedBothPubSubNamesOrNeither(t *testing.T) {
+	both := map[string]string{
+		"HUB_GMAIL_PUBSUB_TOPIC": "projects/p/topics/t", "HUB_GMAIL_PUBSUB_SUBSCRIPTION": "projects/p/subscriptions/s",
+	}
+	for name, value := range validEnvironment {
+		both[name] = value
+	}
+	parsed, err := parseEnvironment(lookupFrom(both))
+	if err != nil || parsed.gmailTopic != "projects/p/topics/t" || parsed.gmailSubscription != "projects/p/subscriptions/s" {
+		t.Fatalf("parsed = %+v, %v", parsed, err)
+	}
+
+	delete(both, "HUB_GMAIL_PUBSUB_SUBSCRIPTION")
+	if _, err := parseEnvironment(lookupFrom(both)); err == nil || !strings.Contains(err.Error(), "HUB_GMAIL_PUBSUB_SUBSCRIPTION") {
+		t.Fatalf("a topic without a subscription: err = %v", err)
+	}
+}

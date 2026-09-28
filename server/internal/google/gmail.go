@@ -3,7 +3,9 @@ package google
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"html"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -14,12 +16,17 @@ import (
 // maximumSearchResults bounds one search; each result costs a request.
 const maximumSearchResults = 100
 
+// ErrMessageNotFound means Gmail has no such message, e.g. one deleted since
+// it was announced.
+var ErrMessageNotFound = errors.New("gmail has no such message")
+
 // MessageSummary is one message as a search lists it.
 type MessageSummary struct {
 	ID       string    `json:"id"`
 	ThreadID string    `json:"thread_id"`
 	From     string    `json:"from"`
 	To       string    `json:"to,omitempty"`
+	Cc       string    `json:"cc,omitempty"`
 	Subject  string    `json:"subject"`
 	Date     time.Time `json:"date"`
 	Snippet  string    `json:"snippet"`
@@ -72,16 +79,39 @@ func (client *Client) SearchMessages(ctx context.Context, query string, limit in
 	if err := client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages?"+search.Encode(), &listed); err != nil {
 		return nil, err
 	}
-	metadata := url.Values{"format": {"metadata"}, "metadataHeaders": {"From", "To", "Subject"}}
 	summaries := make([]MessageSummary, 0, len(listed.Messages))
 	for _, listedMessage := range listed.Messages {
-		var message gmailMessage
-		if err := client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages/"+url.PathEscape(listedMessage.ID)+"?"+metadata.Encode(), &message); err != nil {
+		summary, err := client.getMessageSummary(ctx, httpClient, listedMessage.ID)
+		if err != nil {
 			return nil, err
 		}
-		summaries = append(summaries, summarize(message))
+		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+// GetMessageSummary returns one message's headers, labels and snippet,
+// without its text.
+func (client *Client) GetMessageSummary(ctx context.Context, id string) (MessageSummary, error) {
+	httpClient, _, err := client.getAuthorizedClient(ctx)
+	if err != nil {
+		return MessageSummary{}, err
+	}
+	return client.getMessageSummary(ctx, httpClient, id)
+}
+
+func (client *Client) getMessageSummary(ctx context.Context, httpClient *http.Client, id string) (MessageSummary, error) {
+	metadata := url.Values{"format": {"metadata"}, "metadataHeaders": {"From", "To", "Cc", "Subject"}}
+	var message gmailMessage
+	err := client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages/"+url.PathEscape(id)+"?"+metadata.Encode(), &message)
+	var status *StatusError
+	if errors.As(err, &status) && status.Status == http.StatusNotFound {
+		return MessageSummary{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return MessageSummary{}, err
+	}
+	return summarize(message), nil
 }
 
 // GetMessage returns one message with its text: the plain-text part when it
@@ -110,6 +140,8 @@ func summarize(message gmailMessage) MessageSummary {
 			summary.From = header.Value
 		case "to":
 			summary.To = header.Value
+		case "cc":
+			summary.Cc = header.Value
 		case "subject":
 			summary.Subject = header.Value
 		}

@@ -1,8 +1,10 @@
 // Package google signs the owner in to Google with the hub's own OAuth
-// client and reads Gmail and Calendar with the stored, read-only grant.
+// client, reads Gmail and Calendar read-only with the stored grant, and lends
+// that grant to the Pub/Sub client that hears Gmail's changes.
 package google
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -19,8 +21,12 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-// Scopes are what the hub asks for: reading mail and calendars, nothing else.
-var Scopes = []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/calendar.readonly"}
+// Scopes are what the hub asks for: reading mail and calendars, and hearing
+// Gmail announce mailbox changes through a Pub/Sub subscription.
+var Scopes = []string{
+	"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/calendar.readonly",
+	"https://www.googleapis.com/auth/pubsub",
+}
 
 // ErrReconnectNeeded means Google refused the stored grant: expired, as a
 // "Testing" app's grants do after 7 days, or revoked.
@@ -112,7 +118,7 @@ func (client *Client) FinishSignIn(ctx context.Context, state, code string) (sto
 	var profile struct {
 		EmailAddress string `json:"emailAddress"`
 	}
-	if err := client.getJSON(ctx, client.config.Client(ctx, token), client.gmailBase+"/gmail/v1/users/me/profile", &profile); err != nil {
+	if err := sendJSON(ctx, client.config.Client(ctx, token), http.MethodGet, client.gmailBase+"/gmail/v1/users/me/profile", nil, &profile); err != nil {
 		return store.GoogleConnection{}, err
 	}
 	return client.hub.SaveGoogleConnection(ctx, store.Actor{Kind: store.ActorOwner}, profile.EmailAddress, token.RefreshToken, Scopes)
@@ -146,6 +152,19 @@ func (client *Client) Check(ctx context.Context) (CheckResult, error) {
 	return CheckResult{Email: connection.Email, LabelCount: len(labels.Labels), CalendarCount: len(calendars.Items)}, nil
 }
 
+// GetTokenSource gives access tokens for the stored grant, for Google
+// clients that take a token source. ctx bounds every refresh it makes.
+func (client *Client) GetTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
+	connection, err := client.hub.GetGoogleConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if connection.NeedsReconnectSince != nil {
+		return nil, ErrReconnectNeeded
+	}
+	return client.config.TokenSource(ctx, &oauth2.Token{RefreshToken: connection.RefreshToken}), nil
+}
+
 func (client *Client) getAuthorizedClient(ctx context.Context) (*http.Client, store.GoogleConnection, error) {
 	connection, err := client.hub.GetGoogleConnection(ctx)
 	if err != nil {
@@ -159,10 +178,15 @@ func (client *Client) getAuthorizedClient(ctx context.Context) (*http.Client, st
 	return httpClient, connection, nil
 }
 
-// callGoogle reads a Google API. A grant Google refuses is recorded, so the
-// owner is asked to connect again.
+// callGoogle reads a Google API.
 func (client *Client) callGoogle(ctx context.Context, httpClient *http.Client, apiURL string, into any) error {
-	err := client.getJSON(ctx, httpClient, apiURL, into)
+	return client.sendGoogle(ctx, httpClient, http.MethodGet, apiURL, nil, into)
+}
+
+// sendGoogle calls a Google API, sending body as JSON when there is one. A
+// grant Google refuses is recorded, so the owner is asked to connect again.
+func (client *Client) sendGoogle(ctx context.Context, httpClient *http.Client, method, apiURL string, body, into any) error {
+	err := sendJSON(ctx, httpClient, method, apiURL, body, into)
 	var refused *oauth2.RetrieveError
 	if errors.As(err, &refused) && refused.ErrorCode == "invalid_grant" {
 		if markErr := client.hub.MarkGoogleConnectionRefused(ctx, refused.ErrorDescription); markErr != nil {
@@ -173,10 +197,31 @@ func (client *Client) callGoogle(ctx context.Context, httpClient *http.Client, a
 	return err
 }
 
-func (client *Client) getJSON(ctx context.Context, httpClient *http.Client, apiURL string, into any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+// StatusError is a Google API's answer other than 200 OK.
+type StatusError struct {
+	Status int
+	Body   string
+}
+
+func (err *StatusError) Error() string {
+	return fmt.Sprintf("google answered %d: %s", err.Status, err.Body)
+}
+
+func sendJSON(ctx context.Context, httpClient *http.Client, method, apiURL string, body, into any) error {
+	var requestBody io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		requestBody = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, apiURL, requestBody)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
@@ -187,12 +232,12 @@ func (client *Client) getJSON(ctx context.Context, httpClient *http.Client, apiU
 		return err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
+	answer, err := io.ReadAll(response.Body)
 	if err != nil {
 		return err
 	}
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("google answered %d: %s", response.StatusCode, body)
+		return &StatusError{Status: response.StatusCode, Body: string(answer)}
 	}
-	return json.Unmarshal(body, into)
+	return json.Unmarshal(answer, into)
 }

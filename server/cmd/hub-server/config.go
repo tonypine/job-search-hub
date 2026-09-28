@@ -33,6 +33,10 @@ type config struct {
 	// publicURL is where the owner's browser reaches the hub, for Google's
 	// redirect after sign-in.
 	publicURL string
+	// gmailTopic and gmailSubscription are the full Pub/Sub names Gmail
+	// announces mailbox changes through; empty leaves listening off.
+	gmailTopic        string
+	gmailSubscription string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -78,6 +82,11 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	parsed.publicURL = strings.TrimSuffix(lookup("HUB_PUBLIC_URL"), "/")
 	if parsed.publicURL == "" {
 		parsed.publicURL = defaultPublicURL
+	}
+	parsed.gmailTopic = lookup("HUB_GMAIL_PUBSUB_TOPIC")
+	parsed.gmailSubscription = lookup("HUB_GMAIL_PUBSUB_SUBSCRIPTION")
+	if (parsed.gmailTopic == "") != (parsed.gmailSubscription == "") {
+		return config{}, errors.New("set both HUB_GMAIL_PUBSUB_TOPIC and HUB_GMAIL_PUBSUB_SUBSCRIPTION, or neither")
 	}
 	parsed.jobFactsModelURL = lookup("HUB_JOB_FACTS_MODEL_URL")
 	parsed.jobFactsModel = lookup("HUB_JOB_FACTS_MODEL")

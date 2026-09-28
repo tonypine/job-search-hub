@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 func TestAHubWithoutAGoogleClientSaysSo(t *testing.T) {
@@ -17,5 +20,18 @@ func TestAHubWithoutAGoogleClientSaysSo(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/google/callback?state=x&code=y", "", ""); status != http.StatusServiceUnavailable {
 		t.Fatalf("callback: %d", status)
+	}
+}
+
+func TestTheStatusNamesWhatAnOlderSignInDidntGrant(t *testing.T) {
+	service := startAPI(t)
+	olderScopes := []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/calendar.readonly"}
+	if _, err := service.hub.SaveGoogleConnection(context.Background(), store.Actor{Kind: store.ActorOwner}, "owner@example.com", "refresh-1", olderScopes); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/google", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"missing_scopes":["https://www.googleapis.com/auth/pubsub"]`) {
+		t.Fatalf("status: %d %s", status, body)
 	}
 }

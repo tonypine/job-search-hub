@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/tonypine/job-search-hub/server/internal/google"
@@ -15,6 +16,9 @@ type googleStatusResponse struct {
 	// Configured is false when the hub has no OAuth client file.
 	Configured bool                    `json:"configured"`
 	Connection *store.GoogleConnection `json:"connection,omitempty"`
+	// MissingScopes are what the hub now asks for that the stored sign-in
+	// didn't grant; connecting again grants them.
+	MissingScopes []string `json:"missing_scopes,omitempty"`
 }
 
 type gmailMessagesResponse struct {
@@ -38,6 +42,11 @@ func RegisterGoogleRoutes(routes *http.ServeMux, hub *store.Store, connector *go
 		switch {
 		case err == nil:
 			status.Connection = &connection
+			for _, scope := range google.Scopes {
+				if !slices.Contains(connection.Scopes, scope) {
+					status.MissingScopes = append(status.MissingScopes, scope)
+				}
+			}
 		case !errors.Is(err, store.ErrGoogleNotConnected):
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return

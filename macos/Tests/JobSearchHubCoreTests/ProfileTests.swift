@@ -72,4 +72,6 @@ struct ProfileEditorTests {
     #expect(unconnected.needsSignIn && unconnected.summary == "Not connected.")
     #expect(expired.needsSignIn && expired.summary == "Google needs you to connect again.")
     #expect(!connected.needsSignIn && connected.summary.hasPrefix("Connected as me@example.com"))
+    let older = try decoder.decode(GoogleStatus.self, from: Data(#"{"configured":true,"connection":{"email":"me@example.com","scopes":["x"],"connected_at":"2026-09-28T15:00:00Z"},"missing_scopes":["y"]}"#.utf8))
+    #expect(older.needsSignIn && older.summary.contains("Connect again"))
 }
