@@ -93,8 +93,9 @@ struct ContentView: View {
             List(selection: $selectedPage) {
                 Section {
                     ForEach(Page.allCases) { page in
-                        Label(page.title, systemImage: page.symbolName).tag(page)
+                        Label(page.title, systemImage: page.symbolName)
                             .badge(page == .updates ? unseen.count : 0)
+                            .tag(page)
                     }
                 }
                 if let client = connection.makeClient() {
