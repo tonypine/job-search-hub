@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -13,6 +14,11 @@ import (
 type createdCompany struct {
 	Company store.Company `json:"company"`
 	Created bool          `json:"created"`
+}
+
+type companyDossier struct {
+	Company      store.Company `json:"company"`
+	WatchedSince *time.Time    `json:"watched_since"`
 }
 
 type foundCompanies struct {
@@ -37,7 +43,7 @@ func TestRequestsWithoutTheOwnerTokenAreRefused(t *testing.T) {
 	}
 }
 
-func TestTheOwnerSeesTheCompanyTools(t *testing.T) {
+func TestTheOwnerSeesEveryTool(t *testing.T) {
 	session := connect(t, startHub(t), ownerToken)
 
 	listed, err := session.ListTools(context.Background(), nil)
@@ -49,7 +55,10 @@ func TestTheOwnerSeesTheCompanyTools(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	want := []string{"create_company", "find_companies", "get_company", "update_company"}
+	want := []string{
+		"add_to_watch_list", "create_company", "find_companies", "get_company",
+		"list_watch_list", "remove_from_watch_list", "update_company",
+	}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -66,8 +75,8 @@ func TestCreatedCompaniesRoundTripAndRecordTheOwner(t *testing.T) {
 		t.Fatalf("create = %+v", created)
 	}
 
-	byID := callTool[store.Company](t, session, "get_company", map[string]any{"company_id": created.Company.ID})
-	byDomain := callTool[store.Company](t, session, "get_company", map[string]any{"domain": "stripe.com"})
+	byID := callTool[companyDossier](t, session, "get_company", map[string]any{"company_id": created.Company.ID}).Company
+	byDomain := callTool[companyDossier](t, session, "get_company", map[string]any{"domain": "stripe.com"}).Company
 	if byID.ID != created.Company.ID || byDomain.ID != created.Company.ID || byID.Name != "Stripe" {
 		t.Fatalf("by id = %+v, by domain = %+v", byID, byDomain)
 	}

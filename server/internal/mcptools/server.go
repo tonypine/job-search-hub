@@ -25,6 +25,7 @@ var schemaOptions = &jsonschema.ForOptions{
 func NewServer(hub *store.Store) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "job-search-hub", Version: "0.1.0"}, nil)
 	addCompanyTools(server, hub)
+	addWatchListTools(server, hub)
 	return server
 }
 

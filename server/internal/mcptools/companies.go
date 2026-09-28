@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,6 +27,12 @@ type createCompanyOutput struct {
 type getCompanyInput struct {
 	CompanyID *uuid.UUID `json:"company_id,omitempty" jsonschema:"the company's id; give this or domain"`
 	Domain    string     `json:"domain,omitempty" jsonschema:"the company's domain or any URL on it; give this or company_id"`
+}
+
+// companyDossier is everything the hub knows about one company.
+type companyDossier struct {
+	Company      store.Company `json:"company"`
+	WatchedSince *time.Time    `json:"watched_since,omitempty" jsonschema:"when the company was put on the watch list; absent when it is not on it"`
 }
 
 type findCompaniesInput struct {
@@ -64,19 +71,24 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 
 	addTool(server, &mcp.Tool{
 		Name:        "get_company",
-		Description: "Get a stored company by id or domain.",
+		Description: "Get a stored company's dossier by id or domain.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getCompanyInput) (*mcp.CallToolResult, store.Company, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getCompanyInput) (*mcp.CallToolResult, companyDossier, error) {
+		var company store.Company
+		var err error
 		switch {
 		case input.CompanyID != nil:
-			company, err := hub.GetCompany(ctx, *input.CompanyID)
-			return nil, company, err
+			company, err = hub.GetCompany(ctx, *input.CompanyID)
 		case input.Domain != "":
-			company, err := hub.GetCompanyByDomain(ctx, input.Domain)
-			return nil, company, err
+			company, err = hub.GetCompanyByDomain(ctx, input.Domain)
 		default:
-			return nil, store.Company{}, errors.New("give company_id or domain")
+			err = errors.New("give company_id or domain")
 		}
+		if err != nil {
+			return nil, companyDossier{}, err
+		}
+		watchedSince, err := hub.GetWatchedSince(ctx, company.ID)
+		return nil, companyDossier{Company: company, WatchedSince: watchedSince}, err
 	})
 
 	addTool(server, &mcp.Tool{

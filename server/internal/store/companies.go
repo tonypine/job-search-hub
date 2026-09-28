@@ -31,10 +31,13 @@ type Company struct {
 
 const companyColumns = `id, name, domain, website_url, careers_url, headquarters_country, employee_count_range, summary, created_at, updated_at`
 
-func scanCompany(row pgx.Row) (Company, error) {
+// scanCompany reads the companyColumns, then any extra columns the query
+// selects after them into extra.
+func scanCompany(row pgx.Row, extra ...any) (Company, error) {
 	var company Company
-	err := row.Scan(&company.ID, &company.Name, &company.Domain, &company.WebsiteURL, &company.CareersURL,
-		&company.HeadquartersCountry, &company.EmployeeCountRange, &company.Summary, &company.CreatedAt, &company.UpdatedAt)
+	destinations := append([]any{&company.ID, &company.Name, &company.Domain, &company.WebsiteURL, &company.CareersURL,
+		&company.HeadquartersCountry, &company.EmployeeCountRange, &company.Summary, &company.CreatedAt, &company.UpdatedAt}, extra...)
+	err := row.Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Company{}, ErrCompanyNotFound
 	}
