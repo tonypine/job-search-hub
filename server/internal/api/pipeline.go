@@ -59,12 +59,12 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 	handle("GET /v1/pipeline", func(w http.ResponseWriter, r *http.Request) {
 		phases, err := hub.ListPipelinePhases(r.Context())
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		cards, err := hub.ListPipelineCards(r.Context())
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, pipelineResponse{Phases: phases, Cards: cards})
@@ -72,12 +72,12 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 
 	handle("POST /v1/applications", func(w http.ResponseWriter, r *http.Request) {
 		var request addApplicationRequest
-		if !decodeBody(w, r, &request) {
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
 		application, created, err := hub.AddApplication(r.Context(), owner, store.ApplicationInput{JobID: request.JobID, CompanyID: request.CompanyID, Notes: request.Notes})
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		status := http.StatusOK
@@ -88,12 +88,12 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 	})
 
 	handle("PATCH /v1/applications/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := parsePathID(w, r)
+		id, ok := parsePathIDOrWriteNotFound(w, r)
 		if !ok {
 			return
 		}
 		var request updateApplicationRequest
-		if !decodeBody(w, r, &request) {
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
 		if request.PhaseID == nil && request.Notes == nil {
@@ -109,7 +109,7 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			application, err = hub.UpdateApplicationNotes(r.Context(), owner, id, *request.Notes)
 		}
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
@@ -117,29 +117,29 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 
 	handle("POST /v1/pipeline/phases", func(w http.ResponseWriter, r *http.Request) {
 		var request addPhaseRequest
-		if !decodeBody(w, r, &request) {
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
 		phase, err := hub.AddPipelinePhase(r.Context(), owner, request.Name, request.IsClosed)
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, phase)
 	})
 
 	handle("PATCH /v1/pipeline/phases/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := parsePathID(w, r)
+		id, ok := parsePathIDOrWriteNotFound(w, r)
 		if !ok {
 			return
 		}
 		var request renamePhaseRequest
-		if !decodeBody(w, r, &request) {
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
 		phase, err := hub.RenamePipelinePhase(r.Context(), owner, id, request.Name)
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, phase)
@@ -147,31 +147,31 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 
 	handle("PUT /v1/pipeline/phases/order", func(w http.ResponseWriter, r *http.Request) {
 		var request reorderPhasesRequest
-		if !decodeBody(w, r, &request) {
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
 		phases, err := hub.ReorderPipelinePhases(r.Context(), owner, request.PhaseIDs)
 		if err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, phasesResponse{Phases: phases})
 	})
 
 	handle("DELETE /v1/pipeline/phases/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := parsePathID(w, r)
+		id, ok := parsePathIDOrWriteNotFound(w, r)
 		if !ok {
 			return
 		}
 		if err := hub.DeletePipelinePhase(r.Context(), owner, id); err != nil {
-			writeError(w, err)
+			writeStoreError(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
-func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
+func decodeBodyOrWriteBadRequest(w http.ResponseWriter, r *http.Request, into any) bool {
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
 		return false
@@ -179,7 +179,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
 	return true
 }
 
-func parsePathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+func parsePathIDOrWriteNotFound(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
@@ -188,8 +188,8 @@ func parsePathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-// writeError answers with the status each store error stands for.
-func writeError(w http.ResponseWriter, err error) {
+// writeStoreError answers with the status each store error stands for.
+func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrApplicationNotFound), errors.Is(err, store.ErrPipelinePhaseNotFound),
 		errors.Is(err, store.ErrJobNotFound), errors.Is(err, store.ErrCompanyNotFound):
