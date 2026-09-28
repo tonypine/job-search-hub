@@ -51,16 +51,20 @@ type Application struct {
 	Notes            string     `json:"notes,omitempty"`
 	PhaseEnteredAt   time.Time  `json:"phase_entered_at"`
 	LastFollowedUpAt *time.Time `json:"last_followed_up_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// ContactedAt is when a person at the company first wrote back.
+	ContactedAt *time.Time `json:"contacted_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
-const applicationColumns = `id, job_id, company_id, phase_id, closed_reason, notes, phase_entered_at, last_followed_up_at, created_at, updated_at`
+const applicationColumns = `id, job_id, company_id, phase_id, closed_reason, notes, phase_entered_at, last_followed_up_at, contacted_at,
+	created_at, updated_at`
 
 func scanApplication(row pgx.Row, extra ...any) (Application, error) {
 	var application Application
 	destinations := append([]any{&application.ID, &application.JobID, &application.CompanyID, &application.PhaseID, &application.ClosedReason,
-		&application.Notes, &application.PhaseEnteredAt, &application.LastFollowedUpAt, &application.CreatedAt, &application.UpdatedAt}, extra...)
+		&application.Notes, &application.PhaseEnteredAt, &application.LastFollowedUpAt, &application.ContactedAt, &application.CreatedAt,
+		&application.UpdatedAt}, extra...)
 	err := row.Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Application{}, ErrApplicationNotFound
@@ -137,6 +141,13 @@ func (s *Store) AddApplication(ctx context.Context, actor Actor, input Applicati
 // phase it left. Moving into a closed phase keeps closedReason; leaving one
 // clears it.
 func (s *Store) MoveApplication(ctx context.Context, actor Actor, id, phaseID uuid.UUID, closedReason string) (Application, error) {
+	return s.MoveApplicationAsOf(ctx, actor, id, phaseID, closedReason, time.Now(), "")
+}
+
+// MoveApplicationAsOf moves the application as MoveApplication does, entering
+// the phase at enteredAt, such as the date of the mail that moved it.
+// sourceURL is what moved it, for the change log.
+func (s *Store) MoveApplicationAsOf(ctx context.Context, actor Actor, id, phaseID uuid.UUID, closedReason string, enteredAt time.Time, sourceURL string) (Application, error) {
 	var application Application
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1 FOR UPDATE`, id))
@@ -151,14 +162,14 @@ func (s *Store) MoveApplication(ctx context.Context, actor Actor, id, phaseID uu
 			closedReason = ""
 		}
 		application, err = scanApplication(tx.QueryRow(ctx, `
-			UPDATE applications SET phase_id = $2, closed_reason = $3, phase_entered_at = now(), updated_at = now()
+			UPDATE applications SET phase_id = $2, closed_reason = $3, phase_entered_at = $4, updated_at = now()
 			WHERE id = $1
-			RETURNING `+applicationColumns, id, phaseID, strings.TrimSpace(closedReason)))
+			RETURNING `+applicationColumns, id, phaseID, strings.TrimSpace(closedReason), enteredAt))
 		if err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{
-			entityType: "application", entityID: id, operation: "move",
+			entityType: "application", entityID: id, operation: "move", sourceURL: sourceURL,
 			before: map[string]any{"phase_id": current.PhaseID, "closed_reason": current.ClosedReason},
 			after:  map[string]any{"phase_id": application.PhaseID, "closed_reason": application.ClosedReason},
 		})
@@ -202,7 +213,8 @@ type PipelineCard struct {
 func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
-		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.created_at, applications.updated_at,
+		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.contacted_at, applications.created_at,
+		       applications.updated_at,
 		       jobs.title, jobs.url, companies.name,
 		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
 		           + make_interval(days => pipeline_phases.follow_up_days),
@@ -337,17 +349,87 @@ func (s *Store) DeletePipelinePhase(ctx context.Context, actor Actor, id uuid.UU
 // RecordFollowUp notes that the owner followed up on the application now,
 // which restarts its phase's follow-up count. The note goes to the change log.
 func (s *Store) RecordFollowUp(ctx context.Context, actor Actor, id uuid.UUID, note string) (Application, error) {
+	return s.RecordFollowUpAsOf(ctx, actor, id, note, time.Now(), "")
+}
+
+// RecordFollowUpAsOf notes a follow-up made at followedUpAt, such as a
+// message sent then; an earlier one than the last known changes nothing.
+// sourceURL is where it was made, for the change log.
+func (s *Store) RecordFollowUpAsOf(ctx context.Context, actor Actor, id uuid.UUID, note string, followedUpAt time.Time, sourceURL string) (Application, error) {
 	var application Application
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		application, err = scanApplication(tx.QueryRow(ctx, `
-			UPDATE applications SET last_followed_up_at = now(), updated_at = now() WHERE id = $1
-			RETURNING `+applicationColumns, id))
+			UPDATE applications SET last_followed_up_at = GREATEST(last_followed_up_at, $2), updated_at = now() WHERE id = $1
+			RETURNING `+applicationColumns, id, followedUpAt))
 		if err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{
-			entityType: "application", entityID: id, operation: "follow_up", after: map[string]string{"note": strings.TrimSpace(note)},
+			entityType: "application", entityID: id, operation: "follow_up", sourceURL: sourceURL,
+			after: map[string]any{"note": strings.TrimSpace(note), "followed_up_at": followedUpAt},
+		})
+	})
+	return application, err
+}
+
+// FindCompanyApplication returns the company's open application updated
+// last, or its closed one updated last when it has no open one.
+func (s *Store) FindCompanyApplication(ctx context.Context, companyID uuid.UUID) (Application, error) {
+	return scanApplication(s.pool.QueryRow(ctx, `
+		SELECT `+applicationColumns+` FROM applications WHERE id = (
+			SELECT a.id FROM applications a JOIN pipeline_phases p ON p.id = a.phase_id
+			WHERE a.company_id = $1 ORDER BY p.is_closed, a.updated_at DESC LIMIT 1)`, companyID))
+}
+
+// CorrectApplicationPhaseEnteredAt moves when the application entered its
+// phase back to enteredAt, such as the date of the mail confirming it; a
+// later date changes nothing.
+func (s *Store) CorrectApplicationPhaseEnteredAt(ctx context.Context, actor Actor, id uuid.UUID, enteredAt time.Time, sourceURL string) (Application, bool, error) {
+	var application Application
+	corrected := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1 FOR UPDATE`, id))
+		if err != nil {
+			return err
+		}
+		application = current
+		if !current.PhaseEnteredAt.After(enteredAt) {
+			return nil
+		}
+		if application, err = scanApplication(tx.QueryRow(ctx, `
+			UPDATE applications SET phase_entered_at = $2, updated_at = now() WHERE id = $1 RETURNING `+applicationColumns, id, enteredAt)); err != nil {
+			return err
+		}
+		corrected = true
+		return insertChange(ctx, tx, actor, change{
+			entityType: "application", entityID: id, operation: "update", sourceURL: sourceURL,
+			before: map[string]any{"phase_entered_at": current.PhaseEnteredAt}, after: map[string]any{"phase_entered_at": enteredAt},
+		})
+	})
+	return application, corrected, err
+}
+
+// MarkApplicationContacted records that a person at the company wrote back
+// at contactedAt; the earliest such time is kept.
+func (s *Store) MarkApplicationContacted(ctx context.Context, actor Actor, id uuid.UUID, contactedAt time.Time, sourceURL string) (Application, error) {
+	var application Application
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1 FOR UPDATE`, id))
+		if err != nil {
+			return err
+		}
+		application = current
+		if current.ContactedAt != nil && !current.ContactedAt.After(contactedAt) {
+			return nil
+		}
+		if application, err = scanApplication(tx.QueryRow(ctx, `
+			UPDATE applications SET contacted_at = $2, updated_at = now() WHERE id = $1 RETURNING `+applicationColumns, id, contactedAt)); err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{
+			entityType: "application", entityID: id, operation: "contact", sourceURL: sourceURL,
+			before: map[string]any{"contacted_at": current.ContactedAt}, after: map[string]any{"contacted_at": contactedAt},
 		})
 	})
 	return application, err

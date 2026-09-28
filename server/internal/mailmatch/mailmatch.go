@@ -38,9 +38,9 @@ var addressPattern = regexp.MustCompile(`[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Z
 // company an applicant-tracking system's mail names. The addresses tried are
 // the sender's for mail received and the recipients' for mail sent.
 func FindMatch(message store.MailMessage, directory store.MailDirectory) (store.MailMatch, bool) {
-	addresses := getAddresses(message.Sender)
+	addresses := GetAddresses(message.Sender)
 	if message.Direction == store.MailSent {
-		addresses = getAddresses(message.Recipients)
+		addresses = GetAddresses(message.Recipients)
 	}
 	for _, address := range addresses {
 		for _, person := range directory.PeopleWithEmail {
@@ -50,7 +50,7 @@ func FindMatch(message store.MailMessage, directory store.MailDirectory) (store.
 		}
 	}
 	for _, address := range addresses {
-		domain := getDomain(address)
+		domain := GetDomain(address)
 		if isOnDomainList(domain, webmailDomains) {
 			continue
 		}
@@ -63,16 +63,16 @@ func FindMatch(message store.MailMessage, directory store.MailDirectory) (store.
 	if companyID, found := directory.ThreadCompanies[message.ThreadID]; found {
 		return store.MailMatch{CompanyID: companyID, MatchedBy: store.MatchedByThread}, true
 	}
-	if message.Direction == store.MailReceived && len(addresses) > 0 && isOnDomainList(getDomain(addresses[0]), applicantTrackingDomains) {
-		if company, found := findNamedCompany([]string{getDisplayName(message.Sender), message.Subject}, directory.Companies); found {
+	if message.Direction == store.MailReceived && len(addresses) > 0 && isOnDomainList(GetDomain(addresses[0]), applicantTrackingDomains) {
+		if company, found := findNamedCompany([]string{GetDisplayName(message.Sender), message.Subject}, directory.Companies); found {
 			return store.MailMatch{CompanyID: company.ID, MatchedBy: store.MatchedByApplicantTracking}, true
 		}
 	}
 	return store.MailMatch{}, false
 }
 
-// getAddresses returns the email addresses in a header, lower-cased.
-func getAddresses(header string) []string {
+// GetAddresses returns the email addresses in a header, lower-cased.
+func GetAddresses(header string) []string {
 	found := addressPattern.FindAllString(header, -1)
 	for index := range found {
 		found[index] = strings.ToLower(found[index])
@@ -80,7 +80,8 @@ func getAddresses(header string) []string {
 	return found
 }
 
-func getDomain(address string) string {
+// GetDomain returns the part of an address after the @.
+func GetDomain(address string) string {
 	_, domain, _ := strings.Cut(address, "@")
 	return domain
 }
@@ -94,9 +95,9 @@ func isOnDomainList(domain string, domains []string) bool {
 	})
 }
 
-// getDisplayName returns the name part of a From header: "Acme Hiring" in
+// GetDisplayName returns the name part of a From header: "Acme Hiring" in
 // "Acme Hiring <no-reply@greenhouse.io>".
-func getDisplayName(header string) string {
+func GetDisplayName(header string) string {
 	if address, err := mail.ParseAddress(header); err == nil {
 		return address.Name
 	}
@@ -165,4 +166,11 @@ func MatchUnmatched(ctx context.Context, hub *store.Store) (int, error) {
 		return 0, err
 	}
 	return MatchMessages(ctx, hub, messages)
+}
+
+// IsCompanyAddress reports whether an address belongs to one company: not
+// webmail, and not an applicant-tracking system sending for many.
+func IsCompanyAddress(address string) bool {
+	domain := GetDomain(strings.ToLower(address))
+	return domain != "" && !isOnDomainList(domain, webmailDomains) && !isOnDomainList(domain, applicantTrackingDomains)
 }

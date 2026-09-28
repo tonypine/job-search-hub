@@ -26,6 +26,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
+	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -88,7 +89,8 @@ func run() error {
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
-	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
+	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
+	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
@@ -119,8 +121,14 @@ func run() error {
 		mailBackfiller = watcher
 		if modelClient != nil {
 			classifier := mailtriage.NewClassifier(hub, googleClient, modelClient, settings.jobFactsModel)
-			watcher.OnMailRecorded = classifier.Nudge
+			mailHandler := mailactions.NewHandler(hub, updateRecorder)
+			watcher.OnMailRecorded = func() {
+				classifier.Nudge()
+				mailHandler.Nudge()
+			}
+			classifier.OnClassified = mailHandler.Nudge
 			go classifier.Run(ctx, mailTriageInterval)
+			go mailHandler.Run(ctx, mailTriageInterval)
 		}
 		go watcher.Run(ctx)
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)

@@ -61,16 +61,20 @@ type MailMessage struct {
 	// ClassificationReason is the model's one-sentence reason, or the rule's.
 	ClassificationReason string     `json:"classification_reason,omitempty"`
 	ClassifiedAt         *time.Time `json:"classified_at,omitempty"`
+	// Action is what the hub did about the message; ActedAt is set once it
+	// acted, or found nothing to do.
+	Action  string     `json:"action,omitempty"`
+	ActedAt *time.Time `json:"acted_at,omitempty"`
 }
 
 const mailMessageColumns = `id, gmail_message_id, thread_id, direction, sender, recipients, subject, sent_at, label_ids, recorded_at,
-	company_id, person_id, matched_by, classification, classified_by, classification_reason, classified_at`
+	company_id, person_id, matched_by, classification, classified_by, classification_reason, classified_at, action, acted_at`
 
 func scanMailMessage(row pgx.Row) (MailMessage, error) {
 	var message MailMessage
 	err := row.Scan(&message.ID, &message.GmailMessageID, &message.ThreadID, &message.Direction, &message.Sender, &message.Recipients,
 		&message.Subject, &message.SentAt, &message.LabelIDs, &message.RecordedAt, &message.CompanyID, &message.PersonID, &message.MatchedBy,
-		&message.Classification, &message.ClassifiedBy, &message.ClassificationReason, &message.ClassifiedAt)
+		&message.Classification, &message.ClassifiedBy, &message.ClassificationReason, &message.ClassifiedAt, &message.Action, &message.ActedAt)
 	return message, err
 }
 
@@ -225,4 +229,33 @@ func (s *Store) GetMailDirectory(ctx context.Context) (MailDirectory, error) {
 		directory.ThreadCompanies[threadID] = companyID
 	}
 	return directory, rows.Err()
+}
+
+// ListMailAwaitingAction returns, oldest first, the messages the hub hasn't
+// acted on that may call for it: mail sent to a known company, and received
+// mail of a class that moves a card or brings news.
+func (s *Store) ListMailAwaitingAction(ctx context.Context, limit int) ([]MailMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+mailMessageColumns+` FROM mail_messages
+		WHERE acted_at IS NULL AND (
+			(direction = 'sent' AND company_id IS NOT NULL) OR
+			(direction = 'received' AND classification IN ('human_reply', 'application_confirmation', 'rejection', 'interview_invite', 'recruiter_outreach')))
+		ORDER BY sent_at LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (MailMessage, error) { return scanMailMessage(row) })
+}
+
+// MarkMailActed records what the hub did about a message, so it acts once.
+func (s *Store) MarkMailActed(ctx context.Context, messageID uuid.UUID, action string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE mail_messages SET acted_at = now(), action = $2 WHERE id = $1`, messageID, action)
+	return err
+}
+
+// SaveMailCompanyFromItsSender ties a message to a company created from its
+// own sender, keeping its class, which was given knowing the message.
+func (s *Store) SaveMailCompanyFromItsSender(ctx context.Context, messageID, companyID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `UPDATE mail_messages SET company_id = $2, matched_by = 'domain' WHERE id = $1`, messageID, companyID)
+	return err
 }

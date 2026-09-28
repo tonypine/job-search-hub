@@ -56,6 +56,8 @@ type Classifier struct {
 	client    modelClient
 	modelName string
 	nudges    chan struct{}
+	// OnClassified, when set, is called after a pass classified any mail.
+	OnClassified func()
 }
 
 func NewClassifier(hub *store.Store, mailbox mailbox, client modelClient, modelName string) *Classifier {
@@ -88,6 +90,9 @@ func (classifier *Classifier) Run(ctx context.Context, interval time.Duration) {
 			slog.Error("mail triage pass stopped", "error", err, "by rule", summary.ByRule, "by model", summary.ByModel)
 		} else if summary != (PassSummary{}) {
 			slog.Info("mail triage pass done", "by rule", summary.ByRule, "by model", summary.ByModel, "failed", summary.Failed)
+		}
+		if summary.ByRule+summary.ByModel > 0 && classifier.OnClassified != nil {
+			classifier.OnClassified()
 		}
 		select {
 		case <-ctx.Done():
@@ -163,7 +168,7 @@ func ClassifyByRule(message store.MailMessage) (store.MailClassification, bool) 
 		return byRule(store.MailJobAlert, "sent by a job board's alerts")
 	case containsAny(sender, jobBoardApplicationSenders):
 		return byRule(store.MailApplicationConfirmation, "sent by a job board when an application goes through")
-	case hasConfirmationSubject(message.Subject) && isAutomatedSender(sender):
+	case hasConfirmationSubject(message.Subject) && IsAutomatedSender(sender):
 		return byRule(store.MailApplicationConfirmation, "an automated sender with an application-received subject")
 	case message.CompanyID != nil, slices.Contains(message.LabelIDs, "CATEGORY_PERSONAL"), containsAny(sender, directMessageSenders):
 		return store.MailClassification{}, false
@@ -230,7 +235,7 @@ func hasConfirmationSubject(subject string) bool {
 	return slices.ContainsFunc(confirmationSubjects, func(phrase string) bool { return wordmatch.Contains(normalized, phrase) })
 }
 
-// isAutomatedSender reports whether an address is one nobody reads.
-func isAutomatedSender(sender string) bool {
-	return containsAny(sender, []string{"no-reply", "noreply", "do-not-reply", "donotreply", "nao-responda", "naoresponda", "notifications@"})
+// IsAutomatedSender reports whether a sender is an address nobody reads.
+func IsAutomatedSender(sender string) bool {
+	return containsAny(strings.ToLower(sender), []string{"no-reply", "noreply", "do-not-reply", "donotreply", "nao-responda", "naoresponda", "notifications@"})
 }
