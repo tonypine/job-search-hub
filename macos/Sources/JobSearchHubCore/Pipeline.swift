@@ -6,6 +6,9 @@ public struct PipelinePhase: Codable, Equatable, Identifiable, Sendable {
     public var position: Int
     /// Marks the phase where finished applications rest, with the reason they ended.
     public var isClosed: Bool
+    /// Days a card may sit here, since it entered or was last followed up,
+    /// before a follow-up is due; nil never falls due.
+    public var followUpDays: Int?
 }
 
 public struct Application: Codable, Equatable, Identifiable, Sendable {
@@ -16,11 +19,12 @@ public struct Application: Codable, Equatable, Identifiable, Sendable {
     public var closedReason: String?
     public var notes: String?
     public var phaseEnteredAt: Date
+    public var lastFollowedUpAt: Date?
     public var createdAt: Date
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, closedReason, notes, phaseEnteredAt, createdAt, updatedAt
+        case id, closedReason, notes, phaseEnteredAt, lastFollowedUpAt, createdAt, updatedAt
         case jobID = "jobId"
         case companyID = "companyId"
         case phaseID = "phaseId"
@@ -33,8 +37,21 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     public var jobTitle: String?
     public var jobURL: String?
     public var companyName: String?
+    /// When the card's phase wants a follow-up; nil when it asks for none.
+    public var followUpDueAt: Date?
 
     public var id: UUID { application.id }
+
+    /// Where the card stands on its follow-up, by calendar day.
+    public func getFollowUpStatus(now: Date, calendar: Calendar = .current) -> FollowUpStatus? {
+        guard let followUpDueAt else { return nil }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: followUpDueAt)).day ?? 0
+        switch days {
+        case 0: return .dueToday
+        case ..<0: return .overdue(days: -days)
+        default: return .dueIn(days: days)
+        }
+    }
 
     /// The job's title, or the company's name for an application with no job.
     public var title: String { jobTitle ?? companyName ?? "Untitled" }
@@ -44,7 +61,7 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case application, jobTitle, companyName
+        case application, jobTitle, companyName, followUpDueAt
         case jobURL = "jobUrl"
     }
 }
@@ -158,5 +175,42 @@ public enum PipelinePhaseOrder {
         guard let index = ids.firstIndex(of: phaseID), ids.indices.contains(index + offset) else { return nil }
         ids.swapAt(index, index + offset)
         return ids
+    }
+}
+
+public enum FollowUpStatus: Equatable, Sendable {
+    case dueIn(days: Int)
+    case dueToday
+    case overdue(days: Int)
+
+    /// Due today or earlier.
+    public var isDue: Bool {
+        if case .dueIn = self { return false }
+        return true
+    }
+
+    public var text: String {
+        switch self {
+        case let .dueIn(days): days == 1 ? "Follow up tomorrow" : "Follow up in \(days) days"
+        case .dueToday: "Follow up today"
+        case let .overdue(days): days == 1 ? "Follow-up 1 day overdue" : "Follow-up \(days) days overdue"
+        }
+    }
+}
+
+public struct FollowUpRequest: Encodable, Sendable {
+    public var note: String
+
+    public init(note: String) {
+        self.note = note
+    }
+}
+
+/// Sets a phase's follow-up interval; no days stops it asking for follow-ups.
+public struct FollowUpDaysRequest: Encodable, Sendable {
+    public var days: Int?
+
+    public init(days: Int?) {
+        self.days = days
     }
 }

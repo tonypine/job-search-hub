@@ -26,13 +26,16 @@ type PipelinePhase struct {
 	Name     string    `json:"name"`
 	Position int       `json:"position"`
 	IsClosed bool      `json:"is_closed"`
+	// FollowUpDays is how long a card may sit in the phase, since it entered
+	// or was last followed up, before a follow-up is due; nil never falls due.
+	FollowUpDays *int `json:"follow_up_days,omitempty"`
 }
 
-const pipelinePhaseColumns = `id, name, position, is_closed`
+const pipelinePhaseColumns = `id, name, position, is_closed, follow_up_days`
 
 func scanPipelinePhase(row pgx.Row) (PipelinePhase, error) {
 	var phase PipelinePhase
-	err := row.Scan(&phase.ID, &phase.Name, &phase.Position, &phase.IsClosed)
+	err := row.Scan(&phase.ID, &phase.Name, &phase.Position, &phase.IsClosed, &phase.FollowUpDays)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PipelinePhase{}, ErrPipelinePhaseNotFound
 	}
@@ -40,23 +43,24 @@ func scanPipelinePhase(row pgx.Row) (PipelinePhase, error) {
 }
 
 type Application struct {
-	ID             uuid.UUID  `json:"id"`
-	JobID          *uuid.UUID `json:"job_id,omitempty"`
-	CompanyID      *uuid.UUID `json:"company_id,omitempty"`
-	PhaseID        uuid.UUID  `json:"phase_id"`
-	ClosedReason   string     `json:"closed_reason,omitempty"`
-	Notes          string     `json:"notes,omitempty"`
-	PhaseEnteredAt time.Time  `json:"phase_entered_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID               uuid.UUID  `json:"id"`
+	JobID            *uuid.UUID `json:"job_id,omitempty"`
+	CompanyID        *uuid.UUID `json:"company_id,omitempty"`
+	PhaseID          uuid.UUID  `json:"phase_id"`
+	ClosedReason     string     `json:"closed_reason,omitempty"`
+	Notes            string     `json:"notes,omitempty"`
+	PhaseEnteredAt   time.Time  `json:"phase_entered_at"`
+	LastFollowedUpAt *time.Time `json:"last_followed_up_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
-const applicationColumns = `id, job_id, company_id, phase_id, closed_reason, notes, phase_entered_at, created_at, updated_at`
+const applicationColumns = `id, job_id, company_id, phase_id, closed_reason, notes, phase_entered_at, last_followed_up_at, created_at, updated_at`
 
 func scanApplication(row pgx.Row, extra ...any) (Application, error) {
 	var application Application
 	destinations := append([]any{&application.ID, &application.JobID, &application.CompanyID, &application.PhaseID, &application.ClosedReason,
-		&application.Notes, &application.PhaseEnteredAt, &application.CreatedAt, &application.UpdatedAt}, extra...)
+		&application.Notes, &application.PhaseEnteredAt, &application.LastFollowedUpAt, &application.CreatedAt, &application.UpdatedAt}, extra...)
 	err := row.Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Application{}, ErrApplicationNotFound
@@ -189,14 +193,20 @@ type PipelineCard struct {
 	JobTitle    *string     `json:"job_title,omitempty"`
 	JobURL      *string     `json:"job_url,omitempty"`
 	CompanyName *string     `json:"company_name,omitempty"`
+	// FollowUpDueAt is when the card's phase wants a follow-up; nil when the
+	// phase asks for none.
+	FollowUpDueAt *time.Time `json:"follow_up_due_at,omitempty"`
 }
 
 func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
-		       applications.notes, applications.phase_entered_at, applications.created_at, applications.updated_at,
-		       jobs.title, jobs.url, companies.name
+		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.created_at, applications.updated_at,
+		       jobs.title, jobs.url, companies.name,
+		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
+		           + make_interval(days => pipeline_phases.follow_up_days)
 		FROM applications
+		JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
 		LEFT JOIN jobs ON jobs.id = applications.job_id
 		LEFT JOIN companies ON companies.id = applications.company_id
 		ORDER BY applications.phase_entered_at DESC`)
@@ -205,7 +215,7 @@ func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PipelineCard, error) {
 		var card PipelineCard
-		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName)
+		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName, &card.FollowUpDueAt)
 		card.Application = application
 		return card, err
 	})
@@ -320,4 +330,47 @@ func (s *Store) DeletePipelinePhase(ctx context.Context, actor Actor, id uuid.UU
 		}
 		return insertChange(ctx, tx, actor, change{entityType: "pipeline_phase", entityID: id, operation: "delete", before: phase})
 	})
+}
+
+// RecordFollowUp notes that the owner followed up on the application now,
+// which restarts its phase's follow-up count. The note goes to the change log.
+func (s *Store) RecordFollowUp(ctx context.Context, actor Actor, id uuid.UUID, note string) (Application, error) {
+	var application Application
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		application, err = scanApplication(tx.QueryRow(ctx, `
+			UPDATE applications SET last_followed_up_at = now(), updated_at = now() WHERE id = $1
+			RETURNING `+applicationColumns, id))
+		if err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{
+			entityType: "application", entityID: id, operation: "follow_up", after: map[string]string{"note": strings.TrimSpace(note)},
+		})
+	})
+	return application, err
+}
+
+// SetPipelinePhaseFollowUpDays sets how many days a card may sit in the phase
+// before a follow-up is due; nil stops the phase asking for one.
+func (s *Store) SetPipelinePhaseFollowUpDays(ctx context.Context, actor Actor, id uuid.UUID, days *int) (PipelinePhase, error) {
+	if days != nil && *days <= 0 {
+		return PipelinePhase{}, errors.New("a follow-up is due after at least one day")
+	}
+	var phase PipelinePhase
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		current, err := scanPipelinePhase(tx.QueryRow(ctx, `SELECT `+pipelinePhaseColumns+` FROM pipeline_phases WHERE id = $1 FOR UPDATE`, id))
+		if err != nil {
+			return err
+		}
+		phase, err = scanPipelinePhase(tx.QueryRow(ctx, `UPDATE pipeline_phases SET follow_up_days = $2 WHERE id = $1 RETURNING `+pipelinePhaseColumns, id, days))
+		if err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{
+			entityType: "pipeline_phase", entityID: id, operation: "set_follow_up_days",
+			before: map[string]*int{"follow_up_days": current.FollowUpDays}, after: map[string]*int{"follow_up_days": phase.FollowUpDays},
+		})
+	})
+	return phase, err
 }

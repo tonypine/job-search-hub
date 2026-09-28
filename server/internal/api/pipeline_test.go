@@ -170,6 +170,8 @@ func TestThePipelineRoutesAreForTheOwnerOnly(t *testing.T) {
 		{http.MethodPatch, "/v1/pipeline/phases/" + someID, `{"name":"x"}`},
 		{http.MethodPut, "/v1/pipeline/phases/order", `{"phase_ids":[]}`},
 		{http.MethodDelete, "/v1/pipeline/phases/" + someID, ""},
+		{http.MethodPost, "/v1/applications/" + someID + "/follow-ups", `{"note":"x"}`},
+		{http.MethodPut, "/v1/pipeline/phases/" + someID + "/follow-up", `{"days":3}`},
 	} {
 		if status, _ := send(t, attempt.method, service.url+attempt.path, agentToken, attempt.body); status != http.StatusForbidden {
 			t.Errorf("agent token on %s %s: %d, want 403", attempt.method, attempt.path, status)
@@ -177,5 +179,35 @@ func TestThePipelineRoutesAreForTheOwnerOnly(t *testing.T) {
 		if status, _ := send(t, attempt.method, service.url+attempt.path, "", attempt.body); status != http.StatusUnauthorized {
 			t.Errorf("no token on %s %s: %d, want 401", attempt.method, attempt.path, status)
 		}
+	}
+}
+
+func TestFollowUpsAreRecordedAndPhaseIntervalsSetOverREST(t *testing.T) {
+	service := startAPI(t)
+	job := addTestJob(t, service)
+	status, body := send(t, http.MethodPost, service.url+"/v1/applications", ownerToken, `{"job_id":"`+job.ID.String()+`"}`)
+	var added applicationAnswer
+	if err := json.Unmarshal(body, &added); status != http.StatusCreated || err != nil {
+		t.Fatalf("add: %d %s", status, body)
+	}
+
+	status, body = send(t, http.MethodPost, service.url+"/v1/applications/"+added.Application.ID.String()+"/follow-ups", ownerToken, `{"note":"Emailed the hiring manager."}`)
+	var followedUp applicationAnswer
+	if err := json.Unmarshal(body, &followedUp); status != http.StatusOK || err != nil || followedUp.Application.LastFollowedUpAt == nil {
+		t.Fatalf("follow-up: %d %s", status, body)
+	}
+
+	saved := readPipeline(t, service).Phases[0]
+	status, body = send(t, http.MethodPut, service.url+"/v1/pipeline/phases/"+saved.ID.String()+"/follow-up", ownerToken, `{"days":2}`)
+	var phase store.PipelinePhase
+	if err := json.Unmarshal(body, &phase); status != http.StatusOK || err != nil || phase.FollowUpDays == nil || *phase.FollowUpDays != 2 {
+		t.Fatalf("set days: %d %s", status, body)
+	}
+	board := readPipeline(t, service)
+	if board.Cards[0].FollowUpDueAt == nil {
+		t.Fatalf("the Saved card has no due date after Saved got an interval: %+v", board.Cards[0])
+	}
+	if status, _ := send(t, http.MethodPut, service.url+"/v1/pipeline/phases/"+saved.ID.String()+"/follow-up", ownerToken, `{"days":0}`); status != http.StatusBadRequest {
+		t.Errorf("zero days: %d, want 400", status)
 	}
 }

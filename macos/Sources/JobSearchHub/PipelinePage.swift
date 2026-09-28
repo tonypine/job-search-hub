@@ -10,6 +10,24 @@ final class PipelineModel {
     private(set) var loadError: String?
     private(set) var movingCardID: UUID?
     var moveError: String?
+    var showsOnlyDue = false
+
+    /// The board's cards for a phase, only the due ones when asked.
+    func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
+        let cards = board.getCards(in: phase)
+        guard showsOnlyDue else { return cards }
+        return cards.filter { $0.getFollowUpStatus(now: .now)?.isDue == true }
+    }
+
+    /// Records a follow-up, then reads the board again for its new due date.
+    func recordFollowUp(_ cardID: UUID, note: String, with client: HubClient) async {
+        do {
+            _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            await load(with: client)
+        } catch {
+            moveError = String(describing: error)
+        }
+    }
 
     func load(with client: HubClient) async {
         isLoading = true
@@ -56,6 +74,8 @@ struct PipelinePage: View {
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
     @State private var selectedCardID: UUID?
+    @State private var followUpCardID: UUID?
+    @State private var followUpNote = ""
     /// A job whose card is selected once the board loads.
     let initialJobID: UUID?
 
@@ -92,8 +112,12 @@ struct PipelinePage: View {
                 HStack(alignment: .top, spacing: Self.columnSpacing) {
                     ForEach(model.board.phases) { phase in
                         PipelineColumn(
-                            phase: phase, cards: model.board.getCards(in: phase), phases: model.board.phases,
-                            movingCardID: model.movingCardID, width: columnWidth, selectedCardID: $selectedCardID
+                            phase: phase, cards: model.getShownCards(in: phase), phases: model.board.phases,
+                            movingCardID: model.movingCardID, width: columnWidth, selectedCardID: $selectedCardID,
+                            onFollowUp: { cardID in
+                                followUpNote = ""
+                                followUpCardID = cardID
+                            }
                         ) { cardID, target in
                             requestMove(cardID, to: target, with: client)
                         }
@@ -104,8 +128,20 @@ struct PipelinePage: View {
             }
         }
         .toolbar {
+            Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
+                .help("Show only the cards whose follow-up is due")
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                 .disabled(model.isLoading)
+        }
+        .alert("Followed up", isPresented: Binding(get: { followUpCardID != nil }, set: { if !$0 { followUpCardID = nil } })) {
+            TextField("What you did", text: $followUpNote)
+            Button("Record") {
+                guard let cardID = followUpCardID else { return }
+                Task { await model.recordFollowUp(cardID, note: followUpNote, with: client) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Restarts the count to the next follow-up.")
         }
         .overlay {
             if let loadError = model.loadError {
@@ -164,6 +200,7 @@ struct PipelineColumn: View {
     let movingCardID: UUID?
     let width: CGFloat
     @Binding var selectedCardID: UUID?
+    let onFollowUp: (UUID) -> Void
     let onMove: (UUID, PipelinePhase) -> Void
     @State private var isTargeted = false
 
@@ -184,6 +221,7 @@ struct PipelineColumn: View {
                                 if let jobURL = card.jobURL.flatMap(URL.init(string:)) {
                                     Button("Open posting") { NSWorkspace.shared.open(jobURL) }
                                 }
+                                Button("Followed up…") { onFollowUp(card.id) }
                                 Menu("Move to") {
                                     ForEach(phases.filter { $0.id != card.application.phaseID }) { target in
                                         Button(target.name) { onMove(card.id, target) }
@@ -219,6 +257,11 @@ struct PipelineCardView: View {
             if card.jobTitle != nil, let companyName = card.companyName {
                 Text(companyName).foregroundStyle(.secondary)
             }
+            if let status = card.getFollowUpStatus(now: .now) {
+                Text(status.text)
+                    .font(.caption.weight(status.isDue ? .semibold : .regular))
+                    .foregroundStyle(followUpColor(status))
+            }
             if let closedReason = card.application.closedReason {
                 Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
@@ -238,6 +281,14 @@ struct PipelineCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator), lineWidth: isSelected ? 2 : 1))
         .opacity(isMoving ? 0.6 : 1)
         .help(card.application.notes ?? "")
+    }
+
+    private func followUpColor(_ status: FollowUpStatus) -> Color {
+        switch status {
+        case .overdue: .red
+        case .dueToday: .orange
+        case .dueIn: .secondary
+        }
     }
 
     private func getTimeInPhaseText(days: Int) -> String {

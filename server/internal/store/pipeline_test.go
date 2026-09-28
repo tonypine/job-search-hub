@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -153,5 +154,65 @@ func TestAPhaseNameAlreadyInUseIsRefused(t *testing.T) {
 	}
 	if _, err := hub.RenamePipelinePhase(ctx, owner, phases[1].ID, "Saved"); !errors.Is(err, store.ErrPipelinePhaseNameUsed) {
 		t.Errorf("rename to a duplicate: err = %v, want ErrPipelinePhaseNameUsed", err)
+	}
+}
+
+func TestAFollowUpFallsDueByPhaseAndRestartsWhenRecorded(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/jobs/1"})
+	application, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &job.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phases, _ := hub.ListPipelinePhases(ctx)
+	byName := map[string]store.PipelinePhase{}
+	for _, phase := range phases {
+		byName[phase.Name] = phase
+	}
+	if byName["Saved"].FollowUpDays != nil || byName["Applied"].FollowUpDays == nil || *byName["Applied"].FollowUpDays != 7 {
+		t.Fatalf("seeded intervals = Saved %v, Applied %v", byName["Saved"].FollowUpDays, byName["Applied"].FollowUpDays)
+	}
+
+	cards, _ := hub.ListPipelineCards(ctx)
+	if cards[0].FollowUpDueAt != nil {
+		t.Fatalf("a Saved card is due at %v; Saved asks for no follow-up", cards[0].FollowUpDueAt)
+	}
+
+	// Applied ten days ago: three days overdue.
+	if _, err := hub.MoveApplication(ctx, owner, application.ID, byName["Applied"].ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE applications SET phase_entered_at = now() - interval '10 days' WHERE id = $1`, application.ID); err != nil {
+		t.Fatal(err)
+	}
+	cards, _ = hub.ListPipelineCards(ctx)
+	if due := cards[0].FollowUpDueAt; due == nil || time.Since(*due) < 71*time.Hour || time.Since(*due) > 73*time.Hour {
+		t.Fatalf("due at %v; want three days ago", due)
+	}
+
+	if _, err := hub.RecordFollowUp(ctx, owner, application.ID, "Pinged the recruiter."); err != nil {
+		t.Fatal(err)
+	}
+	cards, _ = hub.ListPipelineCards(ctx)
+	if due := cards[0].FollowUpDueAt; due == nil || time.Until(*due) < 167*time.Hour {
+		t.Fatalf("after a follow-up, due at %v; want in seven days", due)
+	}
+	var notes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM changes WHERE operation = 'follow_up' AND after->>'note' = 'Pinged the recruiter.'`).Scan(&notes); err != nil || notes != 1 {
+		t.Fatalf("follow-up changes = %d, %v", notes, err)
+	}
+
+	days := 3
+	if phase, err := hub.SetPipelinePhaseFollowUpDays(ctx, owner, byName["Applied"].ID, &days); err != nil || *phase.FollowUpDays != 3 {
+		t.Fatalf("set 3 days = %+v, %v", phase, err)
+	}
+	if phase, err := hub.SetPipelinePhaseFollowUpDays(ctx, owner, byName["Applied"].ID, nil); err != nil || phase.FollowUpDays != nil {
+		t.Fatalf("clear = %+v, %v", phase, err)
+	}
+	zero := 0
+	if _, err := hub.SetPipelinePhaseFollowUpDays(ctx, owner, byName["Applied"].ID, &zero); err == nil {
+		t.Fatal("zero days was accepted")
 	}
 }

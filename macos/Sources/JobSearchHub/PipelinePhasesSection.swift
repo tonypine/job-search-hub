@@ -43,6 +43,15 @@ final class PipelinePhasesModel {
         }
     }
 
+    func setFollowUpDays(_ phase: PipelinePhase, to days: Int?, with client: HubClient) async {
+        await perform {
+            let updated = try await client.send("PUT", "v1/pipeline/phases/\(phase.id.uuidString)/follow-up", body: FollowUpDaysRequest(days: days), as: PipelinePhase.self)
+            if let index = phases.firstIndex(where: { $0.id == updated.id }) {
+                phases[index] = updated
+            }
+        }
+    }
+
     func delete(_ phase: PipelinePhase, with client: HubClient) async {
         await perform {
             try await client.delete("v1/pipeline/phases/\(phase.id.uuidString)")
@@ -80,6 +89,7 @@ struct PipelinePhasesSection: View {
                     phase: phase, isFirst: index == 0, isLast: index == model.phases.count - 1, isSaving: model.isSaving,
                     onRename: { name in await model.rename(phase, to: name, with: client) },
                     onMove: { offset in Task { await model.move(phase, by: offset, with: client) } },
+                    onSetFollowUpDays: { days in Task { await model.setFollowUpDays(phase, to: days, with: client) } },
                     onDelete: { Task { await model.delete(phase, with: client) } }
                 )
             }
@@ -101,7 +111,7 @@ struct PipelinePhasesSection: View {
                 }
             }
         } footer: {
-            Text("The board shows one column per phase, in this order. A phase can be deleted once it holds no applications.")
+            Text("The board shows one column per phase, in this order. The days are how long a card may sit in a phase before a follow-up is due. A phase can be deleted once it holds no applications.")
                 .foregroundStyle(.secondary)
         }
         .task { await model.load(with: client) }
@@ -125,8 +135,10 @@ struct PipelinePhaseRow: View {
     let isSaving: Bool
     let onRename: (String) async -> String
     let onMove: (Int) -> Void
+    let onSetFollowUpDays: (Int?) -> Void
     let onDelete: () -> Void
     @State private var draftName = ""
+    @State private var draftFollowUpDays: Int?
 
     var body: some View {
         HStack {
@@ -140,6 +152,15 @@ struct PipelinePhaseRow: View {
             if phase.isClosed {
                 Text("Closed").font(.caption).foregroundStyle(.secondary)
             }
+            TextField("Follow up after", value: $draftFollowUpDays, format: .number, prompt: Text("–"))
+                .labelsHidden()
+                .frame(width: 36)
+                .multilineTextAlignment(.trailing)
+                .onSubmit {
+                    if draftFollowUpDays != phase.followUpDays { onSetFollowUpDays(draftFollowUpDays) }
+                }
+                .help("Days before a card here is due for a follow-up; empty for none")
+            Text("days").font(.caption).foregroundStyle(.secondary)
             Button("Move up", systemImage: "chevron.up") { onMove(-1) }
                 .disabled(isFirst || isSaving)
             Button("Move down", systemImage: "chevron.down") { onMove(1) }
@@ -149,7 +170,11 @@ struct PipelinePhaseRow: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .onAppear { draftName = phase.name }
+        .onAppear {
+            draftName = phase.name
+            draftFollowUpDays = phase.followUpDays
+        }
         .onChange(of: phase.name) { _, name in draftName = name }
+        .onChange(of: phase.followUpDays) { _, days in draftFollowUpDays = days }
     }
 }

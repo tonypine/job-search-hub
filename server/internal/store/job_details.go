@@ -77,10 +77,10 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 	var phase PipelinePhase
 	application, err := scanApplication(s.pool.QueryRow(ctx, `
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
-		       applications.notes, applications.phase_entered_at, applications.created_at, applications.updated_at,
-		       pipeline_phases.id, pipeline_phases.name, pipeline_phases.position, pipeline_phases.is_closed
+		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.created_at, applications.updated_at,
+		       pipeline_phases.id, pipeline_phases.name, pipeline_phases.position, pipeline_phases.is_closed, pipeline_phases.follow_up_days
 		FROM applications JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
-		WHERE applications.job_id = $1`, id), &phase.ID, &phase.Name, &phase.Position, &phase.IsClosed)
+		WHERE applications.job_id = $1`, id), &phase.ID, &phase.Name, &phase.Position, &phase.IsClosed, &phase.FollowUpDays)
 	switch {
 	case err == nil:
 		details.Application = &application

@@ -107,3 +107,20 @@ private func decodeBoard() throws -> PipelineBoard {
         try await client.delete("v1/pipeline/phases/busy")
     }
 }
+
+@Test func aCardsFollowUpReadsByCalendarDay() throws {
+    var card = try decodeBoard().cards[0]
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Sao_Paulo")!
+    let now = Date(timeIntervalSince1970: 1_790_600_000)
+
+    card.followUpDueAt = now.addingTimeInterval(3 * 86_400)
+    #expect(card.getFollowUpStatus(now: now, calendar: calendar) == .dueIn(days: 3))
+    card.followUpDueAt = now
+    #expect(card.getFollowUpStatus(now: now, calendar: calendar) == .dueToday)
+    card.followUpDueAt = now.addingTimeInterval(-2 * 86_400)
+    #expect(card.getFollowUpStatus(now: now, calendar: calendar) == .overdue(days: 2))
+    #expect(FollowUpStatus.overdue(days: 2).isDue && !FollowUpStatus.dueIn(days: 1).isDue)
+    card.followUpDueAt = nil
+    #expect(card.getFollowUpStatus(now: now) == nil)
+}

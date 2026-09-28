@@ -43,6 +43,16 @@ type renamePhaseRequest struct {
 	Name string `json:"name"`
 }
 
+type followUpRequest struct {
+	Note string `json:"note"`
+}
+
+// setFollowUpDaysRequest sets a phase's follow-up interval; a null days
+// stops the phase asking for follow-ups.
+type setFollowUpDaysRequest struct {
+	Days *int `json:"days"`
+}
+
 type reorderPhasesRequest struct {
 	PhaseIDs []uuid.UUID `json:"phase_ids"`
 }
@@ -113,6 +123,40 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			return
 		}
 		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
+	})
+
+	handle("POST /v1/applications/{id}/follow-ups", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		var request followUpRequest
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
+			return
+		}
+		application, err := hub.RecordFollowUp(r.Context(), owner, id, request.Note)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
+	})
+
+	handle("PUT /v1/pipeline/phases/{id}/follow-up", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		var request setFollowUpDaysRequest
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
+			return
+		}
+		phase, err := hub.SetPipelinePhaseFollowUpDays(r.Context(), owner, id, request.Days)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, phase)
 	})
 
 	handle("POST /v1/pipeline/phases", func(w http.ResponseWriter, r *http.Request) {
