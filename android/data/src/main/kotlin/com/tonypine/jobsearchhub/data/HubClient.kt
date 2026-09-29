@@ -1,0 +1,50 @@
+package com.tonypine.jobsearchhub.data
+
+import com.tonypine.jobsearchhub.core.JobDetails
+import com.tonypine.jobsearchhub.core.JobsResponse
+import com.tonypine.jobsearchhub.core.Pairing
+import com.tonypine.jobsearchhub.core.UpdatesResponse
+import com.tonypine.jobsearchhub.core.hubJson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+/** Why a call to the hub failed, in words the app can show. */
+class HubException(message: String, val isRefused: Boolean = false) : IOException(message)
+
+/** Reads the hub's REST API with the phone's device token. */
+class HubClient(
+    private val pairing: Pairing,
+    private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build(),
+) {
+    suspend fun getUpdates(): UpdatesResponse = get("/v1/updates?limit=100")
+
+    suspend fun getJobs(): JobsResponse = get("/v1/jobs?status=open&limit=500")
+
+    suspend fun getJob(id: String): JobDetails = get("/v1/jobs/$id")
+
+    private suspend inline fun <reified T> get(path: String): T = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(pairing.hubUrl + path)
+            .header("Authorization", "Bearer ${pairing.token}")
+            .build()
+        val body = try {
+            http.newCall(request).execute().use { response ->
+                when {
+                    response.code == 401 || response.code == 403 ->
+                        throw HubException("The hub refused this phone's token; pair it again from the Mac.", isRefused = true)
+                    !response.isSuccessful -> throw HubException("The hub answered ${response.code}.")
+                    else -> response.body.string()
+                }
+            }
+        } catch (error: HubException) {
+            throw error
+        } catch (error: IOException) {
+            throw HubException("Can't reach the hub at ${pairing.hubUrl}: ${error.message}")
+        }
+        hubJson.decodeFromString<T>(body)
+    }
+}

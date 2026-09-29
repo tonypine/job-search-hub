@@ -78,6 +78,10 @@ Agent prompts are versioned records, not code. Read one with `get_agent_prompt` 
 
 The prompts live only in the database; none are in this repo. A fresh database takes each prompt's first version from a private seed folder, `~/.config/job-search-hub/agent-prompts/` by default: `<kind>.md`, plus `<kind>.schema.json` when the prompt has a result schema. The server reads it at start for any kind that has no version yet. Tests use made-up prompts from `server/internal/testdatabase/agentprompts/`.
 
+## Android
+
+`android/` holds the phone companion: updates and good-fit jobs, paired with the hub through a QR code from the Mac app's Settings › Phones. See `android/README.md`.
+
 ## Layout
 
 ```
