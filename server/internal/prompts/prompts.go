@@ -99,9 +99,14 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 	if err != nil {
 		return Rendered{}, err
 	}
+	answersText, err := getApplicationAnswersText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
 	filled := strings.NewReplacer(
 		"{{owner_profile}}", profileText,
 		"{{owner_voice}}", voiceText,
+		"{{application_answers}}", answersText,
 		"{{company_dossier}}", dossierText,
 		"{{job_details}}", jobText,
 	).Replace(prompt.Body)
@@ -147,6 +152,28 @@ func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) 
 		fmt.Fprintf(&written, ": \"%s\"", recommendation.Text)
 	}
 	return written.String(), nil
+}
+
+// getApplicationAnswersText is the owner's saved answers to application form
+// questions, as data; a question without an answer says it is still open.
+func getApplicationAnswersText(ctx context.Context, hub *store.Store) (string, error) {
+	answers, err := hub.ListApplicationAnswers(ctx)
+	if err != nil || len(answers) == 0 {
+		return "No answers saved yet.", err
+	}
+	type entry struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	}
+	entries := make([]entry, 0, len(answers))
+	for _, answer := range answers {
+		text := answer.Answer
+		if text == "" {
+			text = "(not answered yet: ask me)"
+		}
+		entries = append(entries, entry{Question: answer.Question, Answer: text})
+	}
+	return formatAsData(entries)
 }
 
 // getOwnerVoiceText shows the drafting agents how the owner writes: a few of

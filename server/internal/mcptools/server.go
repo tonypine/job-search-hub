@@ -41,6 +41,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSynce
 	addJobCriteriaTools(server, hub)
 	addOwnerProfileTools(server, hub)
 	addArtifactTools(server, hub)
+	addApplicationAnswerTools(server, hub)
 	return server
 }
 

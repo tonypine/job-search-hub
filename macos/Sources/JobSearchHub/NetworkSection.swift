@@ -54,6 +54,8 @@ final class NetworkSectionModel {
                         .makeSummary(of: "Saved jobs"))
                 case .companyFollows:
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: FollowsImport.self).summary)
+                case .savedAnswers, .screeningResponses:
+                    importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: AnswersImport.self).summary)
                 case .endorsementsReceived, .endorsementsGiven, .recommendationsReceived, .recommendationsGiven:
                     importLines.append(try await client.upload(kind.importPath, data: data, contentType: "text/csv", as: VouchingImport.self)
                         .makeSummary(of: kind.vouchingTitle))

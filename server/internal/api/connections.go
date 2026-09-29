@@ -124,6 +124,19 @@ func RegisterConnectionRoutes(routes *http.ServeMux, hub *store.Store, requireOw
 	handle("POST /v1/linkedin/recommendations-received/import", importRecommendations(linkedinexport.ParseRecommendationsReceived))
 	handle("POST /v1/linkedin/recommendations-given/import", importRecommendations(linkedinexport.ParseRecommendationsGiven))
 
+	handle("POST /v1/linkedin/application-answers/import", func(w http.ResponseWriter, r *http.Request) {
+		answers, err := linkedinexport.ParseApplicationAnswers(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
+		if !writeImportReadError(w, err) {
+			return
+		}
+		imported, err := hub.ImportApplicationAnswers(r.Context(), store.Actor{Kind: store.ActorOwner}, answers)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, imported)
+	})
+
 	handle("POST /v1/linkedin/company-follows/import", func(w http.ResponseWriter, r *http.Request) {
 		follows, err := linkedinexport.ParseCompanyFollows(http.MaxBytesReader(w, r.Body, maximumArchiveFileBytes))
 		if !writeImportReadError(w, err) {

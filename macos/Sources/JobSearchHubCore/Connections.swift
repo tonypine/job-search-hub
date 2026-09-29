@@ -90,6 +90,8 @@ public enum LinkedInArchive {
         case recommendationsReceived = "Recommendations_Received.csv"
         case recommendationsGiven = "Recommendations_Given.csv"
         case companyFollows = "Company Follows.csv"
+        case savedAnswers = "Job Applicant Saved Answers.csv"
+        case screeningResponses = "Job Applicant Saved Screening Question Responses.csv"
 
         /// What the import summary calls a vouching file.
         public var vouchingTitle: String {
@@ -114,6 +116,7 @@ public enum LinkedInArchive {
             case .recommendationsReceived: "v1/linkedin/recommendations-received/import"
             case .recommendationsGiven: "v1/linkedin/recommendations-given/import"
             case .companyFollows: "v1/linkedin/company-follows/import"
+            case .savedAnswers, .screeningResponses: "v1/linkedin/application-answers/import"
             }
         }
     }
@@ -149,6 +152,16 @@ public struct VouchingImport: Decodable, Equatable, Sendable {
 
     public func makeSummary(of what: String) -> String {
         "\(what): \(stored); \(connectionsWithVouches) connections vouch for you or you for them."
+    }
+}
+
+/// What an import of saved application answers added to the library.
+public struct AnswersImport: Decodable, Equatable, Sendable {
+    public var added: Int
+    public var alreadyAnswered: Int
+
+    public var summary: String {
+        "Application answers: \(added) added" + (alreadyAnswered > 0 ? ", \(alreadyAnswered) you had already answered." : ".")
     }
 }
 

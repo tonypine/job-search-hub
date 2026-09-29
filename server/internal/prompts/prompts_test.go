@@ -159,3 +159,26 @@ func TestARunReadsTheOwnersFilesAndItsCompanysButNoOtherCompanys(t *testing.T) {
 		t.Error("the prompt carries another company's file")
 	}
 }
+
+func TestAJobSessionReadsTheSavedAnswers(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveApplicationAnswer(ctx, owner, nil, "Notice period", "30 days"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveApplicationAnswer(ctx, owner, nil, "Salary expectation", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{
+		Kind: store.AgentPromptKindJobSession, Body: "## My answers\n\n{{application_answers}}\n\n{{job_details}}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rendered, err := prompts.RenderJobSessionContext(ctx, hub, map[string]string{"title": "Engineer"}, nil)
+
+	if err != nil || !strings.Contains(rendered.Body, `"answer": "30 days"`) || !strings.Contains(rendered.Body, "not answered yet: ask me") ||
+		strings.Contains(rendered.Body, "{{") {
+		t.Fatalf("rendered = %q, %v", rendered.Body, err)
+	}
+}

@@ -40,6 +40,7 @@ struct ProfilePage: View {
                         if let linkedIn, !linkedIn.profile.isEmpty {
                             LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
                         }
+                        ApplicationAnswersSection(client: client)
                     }
                     .padding(24)
                     .frame(maxWidth: 760, alignment: .leading)
