@@ -105,6 +105,7 @@ func run() error {
 	api.RegisterAgentPromptRoutes(routes, hub, requireOwner)
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
+	api.RegisterTaskRunRoutes(routes, hub, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
 	api.RegisterDeviceRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
@@ -139,6 +140,16 @@ func run() error {
 	var modelClient *chatcompletions.Client
 	if settings.jobFactsModelURL != "" {
 		modelClient = chatcompletions.NewClient(settings.jobFactsModelURL)
+		modelClient.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
+			if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
+				Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
+				PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
+				PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, StartedAt: record.StartedAt,
+				Duration: record.Duration, Outcome: record.Outcome, Error: record.Error,
+			}); err != nil {
+				slog.Warn("record a task run", "kind", record.Kind, "error", err)
+			}
+		}
 	}
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient, settings.jobFactsModel).Run(ctx, conversationTriageInterval)

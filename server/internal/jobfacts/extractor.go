@@ -80,6 +80,7 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 		facts, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
 			Model: extractor.modelName, System: prompt.Body, User: formatJobText(job.Job),
 			SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
+			Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 		})
 		if errors.Is(err, chatcompletions.ErrUnreachable) || ctx.Err() != nil {
 			return summary, err

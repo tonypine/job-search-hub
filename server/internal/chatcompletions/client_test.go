@@ -84,3 +84,41 @@ func TestAServerThatIsNotRunningIsUnreachable(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnreachable", err)
 	}
 }
+
+func TestEveryRequestIsRecordedWithItsOutcome(t *testing.T) {
+	var records []chatcompletions.RunRecord
+	record := func(_ context.Context, run chatcompletions.RunRecord) { records = append(records, run) }
+
+	succeeding, _ := answerWith(t, http.StatusOK,
+		`{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":\"Go\"}"}}],"usage":{"prompt_tokens":120,"completion_tokens":8}}`)
+	succeeding.RecordRun = record
+	labeled := request
+	labeled.Task.PromptVersion = 3
+	if _, err := succeeding.CompleteJSON(context.Background(), labeled); err != nil {
+		t.Fatal(err)
+	}
+	invalid, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"not json"}}]}`)
+	invalid.RecordRun = record
+	invalid.CompleteJSON(context.Background(), request)
+	unreachable := chatcompletions.NewClient("http://127.0.0.1:1/v1")
+	unreachable.RecordRun = record
+	unreachable.CompleteJSON(context.Background(), request)
+
+	if len(records) != 3 {
+		t.Fatalf("records = %d, want 3", len(records))
+	}
+	first := records[0]
+	if first.Outcome != chatcompletions.RunSucceeded || first.Kind != "job_facts" || first.Model != "qwen/qwen3.5-9b" || first.PromptTokens != 120 ||
+		first.CompletionTokens != 8 || string(first.Output) != `{"stack":"Go"}` || first.Task.PromptVersion != 3 || len(first.InputHash) != 64 {
+		t.Errorf("success = %+v", first)
+	}
+	if records[1].Outcome != chatcompletions.RunInvalid || records[1].Output != nil || records[1].Error == "" {
+		t.Errorf("invalid = %+v", records[1])
+	}
+	if records[2].Outcome != chatcompletions.RunFailed || !strings.Contains(records[2].Error, "unreachable") {
+		t.Errorf("unreachable = %+v", records[2])
+	}
+	if records[0].InputHash != records[1].InputHash {
+		t.Error("the same input hashed differently")
+	}
+}

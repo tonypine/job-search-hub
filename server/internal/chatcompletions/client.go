@@ -5,6 +5,8 @@ package chatcompletions
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ErrUnreachable means the model server did not answer at all, as when it is
@@ -26,6 +30,46 @@ type Client struct {
 	// BaseURL is the API root, such as http://localhost:1234/v1.
 	BaseURL    string
 	HTTPClient *http.Client
+	// RecordRun, when set, hears about every request once it ends, whatever
+	// its outcome, for the hub's record of task runs.
+	RecordRun func(context.Context, RunRecord)
+}
+
+// The outcomes of a request.
+const (
+	RunSucceeded = "succeeded"
+	// RunFailed is a request that got no usable answer: the server was
+	// unreachable or answered with an error.
+	RunFailed = "failed"
+	// RunInvalid is an answer that isn't the JSON object asked for, or was
+	// cut off at the token limit.
+	RunInvalid = "invalid"
+)
+
+// RunRecord is one request as the record of task runs keeps it.
+type RunRecord struct {
+	// Kind is the request's schema name, which is its prompt's kind.
+	Kind             string
+	Task             TaskLabel
+	BaseURL          string
+	Model            string
+	InputHash        string
+	Output           json.RawMessage
+	PromptTokens     int
+	CompletionTokens int
+	StartedAt        time.Time
+	Duration         time.Duration
+	Outcome          string
+	Error            string
+}
+
+// TaskLabel says what a request is for: the record keeps it; the model never
+// sees it.
+type TaskLabel struct {
+	// SubjectID is the job, mail or conversation the request is about.
+	SubjectID     *uuid.UUID
+	PromptID      *uuid.UUID
+	PromptVersion int
 }
 
 func NewClient(baseURL string) *Client {
@@ -41,12 +85,44 @@ type JSONRequest struct {
 	SchemaName string
 	Schema     json.RawMessage
 	MaxTokens  int
+	Task       TaskLabel
 }
 
 // CompleteJSON returns the model's JSON object. Some models behind LM Studio,
 // such as Qwen3.5, put a constrained answer in reasoning_content and leave
 // content empty, so that is read when content is.
 func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (json.RawMessage, error) {
+	startedAt := time.Now()
+	answer, usage, outcome, err := client.complete(ctx, request)
+	if client.RecordRun != nil {
+		record := RunRecord{
+			Kind: request.SchemaName, Task: request.Task, BaseURL: client.BaseURL, Model: request.Model,
+			InputHash: hashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+			StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: outcome,
+		}
+		if err != nil {
+			record.Error = err.Error()
+		} else {
+			record.Output = answer
+		}
+		client.RecordRun(context.WithoutCancel(ctx), record)
+	}
+	return answer, err
+}
+
+type tokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+// hashInput identifies what the model was asked, so runs on the same input
+// can be compared.
+func hashInput(request JSONRequest) string {
+	sum := sha256.Sum256([]byte(request.System + "\x00" + request.User + "\x00" + string(request.Schema)))
+	return hex.EncodeToString(sum[:])
+}
+
+func (client *Client) complete(ctx context.Context, request JSONRequest) (json.RawMessage, tokenUsage, string, error) {
 	body, err := json.Marshal(map[string]any{
 		"model":       request.Model,
 		"temperature": 0,
@@ -61,25 +137,25 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (js
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, tokenUsage{}, RunFailed, err
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, tokenUsage{}, RunFailed, err
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 
 	response, err := client.HTTPClient.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+		return nil, tokenUsage{}, RunFailed, fmt.Errorf("%w: %v", ErrUnreachable, err)
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, err
+		return nil, tokenUsage{}, RunFailed, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("the model server answered %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
+		return nil, tokenUsage{}, RunFailed, fmt.Errorf("the model server answered %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
 	var completion struct {
@@ -90,16 +166,17 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (js
 				ReasoningContent string `json:"reasoning_content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage tokenUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(payload, &completion); err != nil {
-		return nil, fmt.Errorf("read the completion: %w", err)
+		return nil, tokenUsage{}, RunFailed, fmt.Errorf("read the completion: %w", err)
 	}
 	if len(completion.Choices) == 0 {
-		return nil, errors.New("the completion has no choices")
+		return nil, completion.Usage, RunFailed, errors.New("the completion has no choices")
 	}
 	choice := completion.Choices[0]
 	if choice.FinishReason == "length" {
-		return nil, errors.New("the answer was cut off at the token limit")
+		return nil, completion.Usage, RunInvalid, errors.New("the answer was cut off at the token limit")
 	}
 	answer := strings.TrimSpace(choice.Message.Content)
 	if answer == "" {
@@ -107,7 +184,7 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (js
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(answer), &object); err != nil {
-		return nil, fmt.Errorf("the answer is not a JSON object: %w", err)
+		return nil, completion.Usage, RunInvalid, fmt.Errorf("the answer is not a JSON object: %w", err)
 	}
-	return json.RawMessage(answer), nil
+	return json.RawMessage(answer), completion.Usage, RunSucceeded, nil
 }
