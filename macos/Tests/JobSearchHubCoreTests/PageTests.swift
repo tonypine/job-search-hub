@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import Testing
 
-@Test func theSidebarListsTheFivePagesInOrder() {
-    #expect(Page.allCases.map(\.title) == ["Pipeline", "Updates", "Jobs", "Companies", "Recruiters", "Profile", "Settings"])
+@Test func theSidebarListsThePagesInOrder() {
+    #expect(Page.allCases.map(\.title) == ["Pipeline", "Updates", "Jobs", "Companies", "Recruiters", "Profile", "Prompts", "Settings"])
 }
 
 @Test func eachPageNamesItsOwnSymbol() {

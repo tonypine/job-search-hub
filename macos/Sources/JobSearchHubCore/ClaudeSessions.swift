@@ -190,10 +190,15 @@ public enum ClaudeHooks {
 }
 
 /// The active version of one of the hub's prompts.
-public struct AgentPrompt: Decodable, Sendable {
+public struct AgentPrompt: Decodable, Equatable, Identifiable, Sendable {
     public var kind: String
     public var version: Int
     public var body: String
+    /// Why this version exists, as its author wrote it.
+    public var note: String?
+    public var createdAt: Date?
+
+    public var id: Int { version }
 }
 
 /// The environment a session starts in. Only what a login shell needs is

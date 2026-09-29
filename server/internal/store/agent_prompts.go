@@ -92,6 +92,16 @@ func (s *Store) GetAgentPrompt(ctx context.Context, kind string, version int) (A
 		SELECT `+agentPromptColumns+` FROM agent_prompts WHERE kind = $1 AND version = $2`, kind, version))
 }
 
+// ListAgentPromptVersions returns every version of the kind's prompt, the
+// newest first.
+func (s *Store) ListAgentPromptVersions(ctx context.Context, kind string) ([]AgentPrompt, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+agentPromptColumns+` FROM agent_prompts WHERE kind = $1 ORDER BY version DESC`, kind)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AgentPrompt, error) { return scanAgentPrompt(row) })
+}
+
 // SaveAgentPrompt adds the next version of the kind's prompt.
 func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgentPrompt) (AgentPrompt, error) {
 	if !agentPromptKinds[input.Kind] {

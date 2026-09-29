@@ -6,6 +6,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     case companies
     case recruiters
     case profile
+    case prompts
     case settings
 
     public var id: String { rawValue }
@@ -18,6 +19,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .companies: "Companies"
         case .recruiters: "Recruiters"
         case .profile: "Profile"
+        case .prompts: "Prompts"
         case .settings: "Settings"
         }
     }
@@ -31,6 +33,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .companies: "building.2"
         case .recruiters: "person.crop.rectangle.stack"
         case .profile: "person.crop.circle"
+        case .prompts: "text.bubble"
         case .settings: "gearshape"
         }
     }
