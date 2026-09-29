@@ -65,6 +65,23 @@ struct HubClientTests {
     }
 }
 
+@Test func onlyAnAddressOffTheMacReachesAPhone() {
+    #expect(PhoneHubAddress.isUnreachableFromPhone(""))
+    #expect(PhoneHubAddress.isUnreachableFromPhone("http://10.0.2.2:8090"))
+    #expect(PhoneHubAddress.isUnreachableFromPhone("http://localhost:8090"))
+    #expect(PhoneHubAddress.isUnreachableFromPhone(" http://127.0.0.1:8090 "))
+    #expect(!PhoneHubAddress.isUnreachableFromPhone("https://mac.tailnet.ts.net"))
+    #expect(!PhoneHubAddress.isUnreachableFromPhone("http://192.168.1.20:8090"))
+}
+
+@Test func tailscaleStatusGivesTheMacsHTTPSAddressOnceItHasCertificates() {
+    let withCertificates = Data(#"{"Self":{"DNSName":"mac.tailnet.ts.net."},"CertDomains":["mac.tailnet.ts.net"]}"#.utf8)
+    #expect(PhoneHubAddress.parseTailscaleStatusToAddress(withCertificates) == "https://mac.tailnet.ts.net")
+    let withoutCertificates = Data(#"{"Self":{"DNSName":"mac.tailnet.ts.net."},"CertDomains":null}"#.utf8)
+    #expect(PhoneHubAddress.parseTailscaleStatusToAddress(withoutCertificates) == nil)
+    #expect(PhoneHubAddress.parseTailscaleStatusToAddress(Data("The Tailscale CLI failed to start".utf8)) == nil)
+}
+
 @Test func aPairingLinkCarriesTheAddressAndTokenBothWays() throws {
     let link = try #require(PairingLink.make(hubURL: "https://mac.tailnet.ts.net", token: "hubdev_abc+/="))
     #expect(link.hasPrefix("jobsearchhub://pair?"))

@@ -75,6 +75,7 @@ struct PairPhoneSheet: View {
     @State private var link: String?
     @State private var errorMessage: String?
     @State private var isPairing = false
+    @State private var isReadingTailscale = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -94,8 +95,7 @@ struct PairPhoneSheet: View {
             } else {
                 TextField("Name", text: $name, prompt: Text("e.g. Tony's phone"))
                 TextField("Address the phone uses", text: $phoneHubAddress, prompt: Text("https://<mac>.<tailnet>.ts.net, or http://10.0.2.2:8090 for the emulator"))
-                Text("The hub on this Mac isn't reachable from the phone at localhost: use its Tailscale address.")
-                    .font(.callout).foregroundStyle(.secondary)
+                Text(addressHint).font(.callout).foregroundStyle(.secondary)
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
@@ -110,6 +110,22 @@ struct PairPhoneSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .task { await fillInThisMacAddress() }
+    }
+
+    private var addressHint: String {
+        let pairing = "Pair shows a QR code to scan with the Job Search Hub app on the phone."
+        guard !isReadingTailscale, PhoneHubAddress.isUnreachableFromPhone(phoneHubAddress) else { return pairing }
+        return "A phone can't reach the hub at localhost or the emulator's address. Use this Mac's Tailscale address: its name in the Tailscale menu, ending in .ts.net, with HTTPS certificates on in the Tailscale admin console. " + pairing
+    }
+
+    /// Starts the address at this Mac's Tailscale address, unless one a phone can reach is already there.
+    private func fillInThisMacAddress() async {
+        defer { isReadingTailscale = false }
+        guard PhoneHubAddress.isUnreachableFromPhone(phoneHubAddress), let address = await TailscaleCommand.readThisMacAddress(),
+              PhoneHubAddress.isUnreachableFromPhone(phoneHubAddress)
+        else { return }
+        phoneHubAddress = address
     }
 
     private func pair() async {

@@ -46,3 +46,35 @@ public enum PairingLink {
         return (hubURL, token)
     }
 }
+
+/// The address a phone reaches the hub at, which its pairing link carries.
+public enum PhoneHubAddress {
+    private static let hostsUnreachableFromPhone: Set<String> = ["10.0.2.2", "localhost", "127.0.0.1", "::1"]
+
+    /// Whether a real phone can't reach the hub at `address`: there's none
+    /// yet, or it's the emulator's alias for the Mac or the Mac's own loopback.
+    public static func isUnreachableFromPhone(_ address: String) -> Bool {
+        guard let host = URLComponents(string: address.trimmingCharacters(in: .whitespaces))?.host?.lowercased() else {
+            return true
+        }
+        return host.isEmpty || hostsUnreachableFromPhone.contains(host)
+    }
+
+    /// This Mac's HTTPS address on the tailnet, from `tailscale status --json`.
+    /// Nil until the tailnet issues it certificates, since `tailscale serve`
+    /// can't publish HTTPS without them.
+    public static func parseTailscaleStatusToAddress(_ statusJSON: Data) -> String? {
+        guard let status = try? JSONDecoder().decode(TailscaleStatus.self, from: statusJSON),
+              let domain = status.certDomains?.first(where: { !$0.isEmpty })
+        else { return nil }
+        return "https://" + domain
+    }
+
+    private struct TailscaleStatus: Decodable {
+        let certDomains: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case certDomains = "CertDomains"
+        }
+    }
+}
