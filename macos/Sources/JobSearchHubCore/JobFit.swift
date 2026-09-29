@@ -46,9 +46,4 @@ public enum JobsOrder {
             return left.job.firstSeenAt > right.job.firstSeenAt
         }
     }
-
-    /// Hides the jobs judged poor; good and unclear stay.
-    public static func hidePoorFits(_ items: [JobListItem]) -> [JobListItem] {
-        items.filter { $0.fit.level != .poor }
-    }
 }

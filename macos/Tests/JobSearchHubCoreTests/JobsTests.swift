@@ -72,14 +72,13 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     )
 }
 
-@Test func jobsSortByFitThenNewestAndPoorFitsCanBeHidden() {
+@Test func jobsSortByFitThenNewest() {
     let items = [
         makeItem("old good", .good, firstSeen: 100), makeItem("poor", .poor, firstSeen: 500),
         makeItem("new unclear", .unclear, firstSeen: 400), makeItem("new good", .good, firstSeen: 300),
     ]
 
     #expect(JobsOrder.sort(items).map(\.job.title) == ["new good", "old good", "new unclear", "poor"])
-    #expect(JobsOrder.hidePoorFits(items).map(\.job.title) == ["old good", "new unclear", "new good"])
 }
 
 @Test func aJobIsNewWhenFirstSeenAfterTheLastVisit() {

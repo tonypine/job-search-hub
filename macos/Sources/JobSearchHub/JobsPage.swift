@@ -8,7 +8,6 @@ final class JobsModel {
     private static let lastVisitPreferenceKey = "jobsLastVisitedAt"
 
     private(set) var items: [JobListItem] = []
-    var hidesPoorFits = false
     /// When the Jobs page was opened before this visit; jobs first seen since
     /// are marked new.
     let previousVisit: Date?
@@ -18,11 +17,15 @@ final class JobsModel {
         UserDefaults.standard.set(Date.now, forKey: Self.lastVisitPreferenceKey)
     }
 
-    /// The rows shown, without poor fits when hidden: in the chosen order, or
-    /// else best fit first, then newest.
-    func getShownItems(sortedBy sortOrder: [JobsSortComparator]) -> [JobListItem] {
-        let keptItems = hidesPoorFits ? JobsOrder.hidePoorFits(items) : items
-        return sortOrder.isEmpty ? JobsOrder.sort(keptItems) : keptItems.sorted(using: sortOrder)
+    func getMatchingItems(_ filter: JobsFilter) -> [JobListItem] {
+        filter.getMatchingItems(items, previousVisit: previousVisit)
+    }
+
+    /// The rows shown: the jobs the filter keeps, in the chosen order, or else
+    /// best fit first, then newest.
+    func getShownItems(filteredBy filter: JobsFilter, sortedBy sortOrder: [JobsSortComparator]) -> [JobListItem] {
+        let matchingItems = getMatchingItems(filter)
+        return sortOrder.isEmpty ? JobsOrder.sort(matchingItems) : matchingItems.sorted(using: sortOrder)
     }
     private(set) var total = 0
     /// The facts read from postings, which the table can show as columns.
@@ -88,10 +91,13 @@ struct JobsPage: View {
     @Environment(CompanyJobFinder.self) private var jobFinder
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
+    @State private var isShowingFilters = false
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
     /// The column the table sorts by, kept across launches; none keeps best fit first.
     @AppStorage("jobsSortOrder") private var savedSortOrder = Data()
+    /// The filters chosen in the popover, kept across launches.
+    @AppStorage("jobsFilter") private var savedFilter = Data()
 
     private let initialJobID: UUID?
     private let opensSession: Bool
@@ -133,10 +139,12 @@ struct JobsPage: View {
         .navigationSubtitle(describeCounts())
     }
 
+    /// How many jobs show out of all, and how many of those are good fits.
     private func describeCounts() -> String {
-        let goodCount = model.items.filter { $0.fit.level == .good }.count
-        let jobCount = model.total == model.items.count ? "\(model.total) jobs" : "\(model.items.count) of \(model.total) jobs"
-        return "\(jobCount) · \(goodCount) good fits"
+        let shownItems = model.getMatchingItems(filter.wrappedValue)
+        let goodCount = shownItems.count { $0.fit.level == .good }
+        let jobCount = model.total == shownItems.count ? "\(model.total) jobs" : "\(shownItems.count) of \(model.total) jobs"
+        return "\(jobCount) · " + (goodCount == 1 ? "1 good fit" : "\(goodCount) good fits")
     }
 
     private func table(client: HubClient) -> some View {
@@ -193,7 +201,7 @@ struct JobsPage: View {
                 .defaultVisibility(.hidden)
             }
         } rows: {
-            ForEach(model.getShownItems(sortedBy: sortOrder.wrappedValue)) { item in TableRow(item) }
+            ForEach(model.getShownItems(filteredBy: filter.wrappedValue, sortedBy: sortOrder.wrappedValue)) { item in TableRow(item) }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -203,8 +211,16 @@ struct JobsPage: View {
             open(ids)
         }
         .toolbar {
-            Toggle("Hide poor fits", systemImage: "line.3.horizontal.decrease.circle", isOn: $model.hidesPoorFits)
-                .help("Hide the jobs judged a poor fit; good and unclear ones stay")
+            Button("Filters", systemImage: filter.wrappedValue.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") {
+                isShowingFilters.toggle()
+            }
+            .help("Choose which jobs show")
+            .popover(isPresented: $isShowingFilters, arrowEdge: .bottom) {
+                JobsFilterPopover(
+                    filter: filter, choices: JobsFilterChoices(items: model.items),
+                    newCount: model.items.count { $0.isNew(since: model.previousVisit) }
+                )
+            }
             Picker("Status", selection: $model.status) {
                 ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
             }
@@ -222,6 +238,12 @@ struct JobsPage: View {
                 ContentUnavailableView("Could not load jobs", systemImage: "exclamationmark.triangle", description: Text(loadError))
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("No jobs", systemImage: "briefcase", description: Text("Jobs from watched companies' boards appear here after the next poll."))
+            } else if model.getMatchingItems(filter.wrappedValue).isEmpty && !model.isLoading {
+                ContentUnavailableView {
+                    Label("No jobs match the filters", systemImage: "line.3.horizontal.decrease.circle")
+                } actions: {
+                    Button("Clear filters") { filter.wrappedValue = JobsFilter() }
+                }
             }
         }
         .overlay(alignment: .bottom) {
@@ -237,6 +259,13 @@ struct JobsPage: View {
                     }
             }
         }
+    }
+
+    private var filter: Binding<JobsFilter> {
+        Binding(
+            get: { (try? JSONDecoder().decode(JobsFilter.self, from: savedFilter)) ?? JobsFilter() },
+            set: { savedFilter = (try? JSONEncoder().encode($0)) ?? Data() }
+        )
     }
 
     private var sortOrder: Binding<[JobsSortComparator]> {

@@ -31,7 +31,9 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
 /// board's own summary when it gives one, such as "$230K • Offers Equity".
 extension Job {
     /// Where the job came from, as people name it.
-    public var sourceName: String {
+    public var sourceName: String { Self.getSourceName(source) }
+
+    public static func getSourceName(_ source: String) -> String {
         switch source {
         case "job_board": "Company board"
         case "careers_page": "Careers page"
