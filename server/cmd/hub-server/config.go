@@ -37,6 +37,9 @@ type config struct {
 	// announces mailbox changes through; empty leaves listening off.
 	gmailTopic        string
 	gmailSubscription string
+	// agentPromptsDir holds the prompts a fresh database starts with, kept
+	// out of the repo; empty leaves seeding off.
+	agentPromptsDir string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -88,6 +91,7 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	if (parsed.gmailTopic == "") != (parsed.gmailSubscription == "") {
 		return config{}, errors.New("set both HUB_GMAIL_PUBSUB_TOPIC and HUB_GMAIL_PUBSUB_SUBSCRIPTION, or neither")
 	}
+	parsed.agentPromptsDir = lookup("HUB_AGENT_PROMPTS_DIR")
 	parsed.jobFactsModelURL = lookup("HUB_JOB_FACTS_MODEL_URL")
 	parsed.jobFactsModel = lookup("HUB_JOB_FACTS_MODEL")
 	if parsed.jobFactsModel == "" {

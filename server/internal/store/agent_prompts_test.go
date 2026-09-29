@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -139,5 +141,36 @@ func TestTheSessionPromptsAreSeededAndEditable(t *testing.T) {
 		if saved, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: kind, Body: "Be brief. " + placeholder}); err != nil || saved.Version != 2 {
 			t.Fatalf("save %s = %+v, %v", kind, saved, err)
 		}
+	}
+}
+
+func TestASeedGivesOnlyAKindWithoutAPromptItsFirstVersion(t *testing.T) {
+	database := testdatabase.New(t)
+	hub := store.New(database)
+	ctx := context.Background()
+	if _, err := database.Exec(ctx, "DELETE FROM agent_prompts WHERE kind IN ('profile_audit', 'mail_triage')"); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	stored, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	if err != nil {
+		t.Fatalf("job facts: %v", err)
+	}
+
+	seeded, err := hub.SeedAgentPrompts(ctx, fstest.MapFS{
+		"profile_audit.md":        {Data: []byte("Audit it.")},
+		"mail_triage.md":          {Data: []byte("Sort it.")},
+		"mail_triage.schema.json": {Data: []byte(`{"type":"object","properties":{"class":{"type":"string"}}}`)},
+		"job_facts.md":            {Data: []byte("Read it again.")},
+	})
+
+	if err != nil || !slices.Equal(seeded, []string{store.AgentPromptKindMailTriage, store.AgentPromptKindProfileAudit}) {
+		t.Fatalf("seeded = %v, %v", seeded, err)
+	}
+	mail, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindMailTriage)
+	if err != nil || mail.Version != 1 || mail.Body != "Sort it." || !strings.Contains(string(mail.ResultSchema), `"class"`) {
+		t.Fatalf("mail triage = %+v, %v", mail, err)
+	}
+	if facts, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts); err != nil || facts.ID != stored.ID {
+		t.Fatalf("job facts = %+v, %v; want the stored prompt kept", facts, err)
 	}
 }

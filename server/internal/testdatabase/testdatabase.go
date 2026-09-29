@@ -4,6 +4,8 @@ package testdatabase
 
 import (
 	"context"
+	"embed"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -14,6 +16,12 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
+
+// agentPrompts are made-up prompts of every kind: the real ones live only in
+// the owner's database.
+//
+//go:embed agentprompts
+var agentPrompts embed.FS
 
 // New creates the database through HUB_TEST_DATABASE_URL, which points at the
 // compose Postgres's maintenance database.
@@ -54,6 +62,13 @@ func New(t *testing.T) *pgxpool.Pool {
 
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate %s: %v", name, err)
+	}
+	seed, err := fs.Sub(agentPrompts, "agentprompts")
+	if err != nil {
+		t.Fatalf("read the test prompts: %v", err)
+	}
+	if _, err := store.New(pool).SeedAgentPrompts(ctx, seed); err != nil {
+		t.Fatalf("seed the test prompts in %s: %v", name, err)
 	}
 	return pool
 }

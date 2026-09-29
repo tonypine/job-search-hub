@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "class",
+    "company",
+    "role",
+    "is_agency",
+    "reason"
+  ],
+  "properties": {
+    "class": {
+      "enum": [
+        "recruiter_outreach",
+        "known_person",
+        "sales_pitch",
+        "other"
+      ],
+      "type": "string",
+      "description": "The class."
+    },
+    "company": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "The company hiring."
+    },
+    "role": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "The role."
+    },
+    "is_agency": {
+      "type": "boolean",
+      "description": "Whether they recruit for clients."
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Why."
+    }
+  }
+}

@@ -135,7 +135,7 @@ func TestTheRecruitersListCountsTheOpeningsAtTheirCompany(t *testing.T) {
 		t.Fatalf("messages: %d %s", status, body)
 	}
 	status, body = send(t, http.MethodGet, service.url+"/v1/recruiters/"+awaiting[0].ID.String()+"/reply-prompt", ownerToken, "")
-	if status != http.StatusOK || !strings.Contains(string(body), "A role at Globex") || !strings.Contains(string(body), "Open roles at their company") {
+	if status != http.StatusOK || !strings.Contains(string(body), "A role at Globex") || !strings.Contains(string(body), "## Open roles") {
 		t.Fatalf("reply prompt: %d %s; want the conversation and the openings section in it", status, body)
 	}
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/recruiters/"+uuid.NewString()+"/reply-prompt", ownerToken, ""); status != http.StatusNotFound {

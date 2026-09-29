@@ -1,0 +1,96 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "technologies",
+    "seniority",
+    "years_of_experience",
+    "location_restriction",
+    "timezone_requirement",
+    "visa_sponsorship",
+    "contract_type",
+    "pay_in_text",
+    "languages"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "title": "Summary",
+      "maxLength": 240,
+      "description": "The role in one sentence."
+    },
+    "technologies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 50
+      },
+      "title": "Technologies",
+      "maxItems": 25,
+      "description": "The technologies it names."
+    },
+    "seniority": {
+      "type": "string",
+      "title": "Seniority",
+      "maxLength": 60,
+      "description": "The level it states."
+    },
+    "years_of_experience": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Years of experience",
+      "description": "The years it asks for."
+    },
+    "location_restriction": {
+      "type": "string",
+      "title": "Where they hire",
+      "maxLength": 300,
+      "description": "Where it hires."
+    },
+    "timezone_requirement": {
+      "type": "string",
+      "title": "Timezone",
+      "maxLength": 200,
+      "description": "The hours it asks for."
+    },
+    "visa_sponsorship": {
+      "enum": [
+        "yes",
+        "no",
+        "not stated"
+      ],
+      "type": "string",
+      "title": "Visa sponsorship",
+      "description": "Whether it sponsors."
+    },
+    "contract_type": {
+      "type": "string",
+      "title": "Contract",
+      "maxLength": 120,
+      "description": "The contract it offers."
+    },
+    "pay_in_text": {
+      "type": "string",
+      "title": "Pay in the text",
+      "maxLength": 200,
+      "description": "The pay it states."
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      },
+      "title": "Languages",
+      "maxItems": 8,
+      "description": "The languages it asks for."
+    }
+  }
+}

@@ -76,14 +76,17 @@ func DetectLanguage(text string) string {
 }
 
 // FormatSamples writes the samples for a prompt, each with its language and
-// month.
+// month; how to use them is the prompt's to say.
 func FormatSamples(samples []Sample) string {
 	if len(samples) == 0 {
-		return "No messages of mine are in the hub yet; write plainly and briefly."
+		return "No messages of mine are in the hub yet."
 	}
 	var text strings.Builder
-	for _, sample := range samples {
-		fmt.Fprintf(&text, "\n[%s, %s]\n%s\n", sample.Language, sample.SentAt.Format("Jan 2006"), strings.TrimSpace(sample.Content))
+	for index, sample := range samples {
+		if index > 0 {
+			text.WriteString("\n")
+		}
+		fmt.Fprintf(&text, "[%s, %s]\n%s\n", sample.Language, sample.SentAt.Format("Jan 2006"), strings.TrimSpace(sample.Content))
 	}
 	return text.String()
 }

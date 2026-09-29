@@ -35,7 +35,7 @@ func TestTheActiveVersionOfAPromptIsServed(t *testing.T) {
 
 	status, body := send(t, http.MethodGet, service.url+"/v1/agent-prompts/outreach_draft", ownerToken, "")
 	var prompt store.AgentPrompt
-	if err := json.Unmarshal(body, &prompt); status != http.StatusOK || err != nil || prompt.Version != 1 || !strings.Contains(prompt.Body, "Draft only") {
+	if err := json.Unmarshal(body, &prompt); status != http.StatusOK || err != nil || prompt.Version != 1 || !strings.Contains(prompt.Body, "Draft a first message") {
 		t.Fatalf("outreach prompt: %d %s", status, body)
 	}
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/agent-prompts/unknown", ownerToken, ""); status != http.StatusNotFound {

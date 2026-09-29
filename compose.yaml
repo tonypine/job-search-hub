@@ -45,6 +45,9 @@ services:
       # Where Gmail announces mailbox changes; both empty leaves it off.
       HUB_GMAIL_PUBSUB_TOPIC: ${HUB_GMAIL_PUBSUB_TOPIC:-}
       HUB_GMAIL_PUBSUB_SUBSCRIPTION: ${HUB_GMAIL_PUBSUB_SUBSCRIPTION:-}
+      # The agents' prompts live in the database. A fresh one starts from the
+      # private seed in the folder mounted below: <kind>.md, <kind>.schema.json.
+      HUB_AGENT_PROMPTS_DIR: ${HUB_AGENT_PROMPTS_DIR-/config/agent-prompts}
     volumes:
       # Local secrets that stay out of the repo, read-only.
       - ${HUB_CONFIG_DIR:-${HOME}/.config/job-search-hub}:/config:ro

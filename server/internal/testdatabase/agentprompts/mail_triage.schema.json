@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "class",
+    "reason"
+  ],
+  "properties": {
+    "class": {
+      "enum": [
+        "human_reply",
+        "application_confirmation",
+        "rejection",
+        "interview_invite",
+        "recruiter_outreach",
+        "job_alert",
+        "noise"
+      ],
+      "type": "string",
+      "description": "The class."
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Why."
+    }
+  }
+}

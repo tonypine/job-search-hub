@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,6 +124,40 @@ func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgent
 		})
 	})
 	return prompt, err
+}
+
+// SeedAgentPrompts saves, as the first version of each kind that has none,
+// the prompt in <kind>.md, with <kind>.schema.json as its result schema when
+// there is one. The prompts live in the database; the seed is kept out of the
+// repo. It returns the kinds it saved.
+func (s *Store) SeedAgentPrompts(ctx context.Context, seed fs.FS) ([]string, error) {
+	var seeded []string
+	for _, kind := range slices.Sorted(maps.Keys(agentPromptKinds)) {
+		body, err := fs.ReadFile(seed, kind+".md")
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return seeded, err
+		}
+		var schema json.RawMessage
+		if schema, err = fs.ReadFile(seed, kind+".schema.json"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return seeded, err
+		}
+		if _, err := s.GetLatestAgentPrompt(ctx, kind); !errors.Is(err, ErrAgentPromptNotFound) {
+			if err != nil {
+				return seeded, err
+			}
+			continue
+		}
+		if _, err := s.SaveAgentPrompt(ctx, Actor{Kind: ActorSystem}, NewAgentPrompt{
+			Kind: kind, Body: string(body), ResultSchema: schema, Note: "Seeded from " + kind + ".md",
+		}); err != nil {
+			return seeded, fmt.Errorf("seed the %s prompt: %w", kind, err)
+		}
+		seeded = append(seeded, kind)
+	}
+	return seeded, nil
 }
 
 // checkResultSchema refuses a schema that is not a JSON object, or that uses

@@ -79,6 +79,9 @@ func run() error {
 	}
 
 	hub := store.New(database)
+	if err := seedAgentPrompts(ctx, hub, settings.agentPromptsDir); err != nil {
+		return err
+	}
 	verifier := tokens.NewVerifier(settings.ownerToken, hub)
 	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
@@ -192,4 +195,24 @@ func makeGoogleClient(settings config, hub *store.Store) *google.Client {
 	}
 	slog.Info("Google sign-in on", "redirect", settings.publicURL+"/v1/google/callback")
 	return client
+}
+
+// seedAgentPrompts gives each prompt kind that has no version yet its first
+// one, from the private seed folder.
+func seedAgentPrompts(ctx context.Context, hub *store.Store, folder string) error {
+	if folder == "" {
+		return nil
+	}
+	if _, err := os.Stat(folder); err != nil {
+		slog.Warn("no agent prompt seed folder; kinds without a prompt stay without one", "folder", folder, "error", err)
+		return nil
+	}
+	seeded, err := hub.SeedAgentPrompts(ctx, os.DirFS(folder))
+	if err != nil {
+		return fmt.Errorf("seed the agent prompts from %s: %w", folder, err)
+	}
+	if len(seeded) > 0 {
+		slog.Info("seeded agent prompts", "kinds", seeded, "folder", folder)
+	}
+	return nil
 }
