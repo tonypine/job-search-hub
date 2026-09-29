@@ -37,6 +37,30 @@ public enum CompanyResearchLaunch {
     }
 }
 
+/// How the app finds a company's jobs: `hub company find-jobs`, which ends by
+/// saying how many open jobs the company has.
+public enum JobFinderLaunch {
+    public static func makeArguments(companyID: UUID) -> [String] {
+        ["company", "find-jobs", companyID.uuidString.lowercased()]
+    }
+
+    /// What a finished run reports: its open jobs, from the line
+    /// "Open jobs at the company now: <n>", and the board it set, from
+    /// "Job board: <provider>/<token> …".
+    public static func parseOutcome(_ output: String) -> (openJobs: Int?, jobBoard: String?) {
+        var openJobs: Int?
+        var jobBoard: String?
+        for line in output.components(separatedBy: "\n") {
+            if line.hasPrefix("Open jobs at the company now: ") {
+                openJobs = Int(line.dropFirst("Open jobs at the company now: ".count).trimmingCharacters(in: .whitespaces))
+            } else if line.hasPrefix("Job board: ") {
+                jobBoard = String(line.dropFirst("Job board: ".count)).components(separatedBy: " (").first
+            }
+        }
+        return (openJobs, jobBoard)
+    }
+}
+
 /// How the app drafts a reply to a recruiter: `hub recruiter reply`, which
 /// prints the draft.
 public enum RecruiterReplyLaunch {

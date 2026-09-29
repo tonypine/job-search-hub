@@ -25,3 +25,14 @@ import Testing
     #expect(RecruiterReplyLaunch.makeArguments(conversationID: id) == ["recruiter", "reply", "aaaaaaaa-0000-0000-0000-000000000001"])
 }
 
+
+@Test func theJobFinderRunsOnTheCompanyAndReportsItsOpenJobs() throws {
+    let companyID = try #require(UUID(uuidString: "9CE11299-A89A-4506-96F9-E27BF4B8D0AF"))
+    #expect(JobFinderLaunch.makeArguments(companyID: companyID) == ["company", "find-jobs", "9ce11299-a89a-4506-96f9-e27bf4b8d0af"])
+
+    let output = "  · WebFetch {…}\n\nSummary.\nJob board: workable/acme (verified: true)\nRoles recorded from the careers page: 0\nOpen jobs at the company now: 12\nCompany id: 9ce11299-a89a-4506-96f9-e27bf4b8d0af\n"
+    let outcome = JobFinderLaunch.parseOutcome(output)
+    #expect(outcome.openJobs == 12)
+    #expect(outcome.jobBoard == "workable/acme")
+    #expect(JobFinderLaunch.parseOutcome("Summary only.").openJobs == nil)
+}

@@ -23,6 +23,13 @@ final class CompanyResearch {
     private(set) var revision = 0
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var unfinishedLine = ""
+    /// Finds a researched company's jobs once the research ends.
+    @ObservationIgnored private let jobFinder: CompanyJobFinder
+    @ObservationIgnored private var client: HubClient?
+
+    init(jobFinder: CompanyJobFinder) {
+        self.jobFinder = jobFinder
+    }
 
     var isRunning: Bool { state == .running }
 
@@ -30,6 +37,7 @@ final class CompanyResearch {
         guard !isRunning else { return }
         self.company = company.trimmingCharacters(in: .whitespacesAndNewlines)
         self.foundVia = foundVia
+        self.client = client
         lines = []
         unfinishedLine = ""
         guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
@@ -92,7 +100,11 @@ final class CompanyResearch {
         process = nil
         revision += 1
         if status == 0 {
-            state = .succeeded(companyID: lines.lazy.compactMap(CompanyResearchLaunch.parseCompanyID).last)
+            let companyID = lines.lazy.compactMap(CompanyResearchLaunch.parseCompanyID).last
+            state = .succeeded(companyID: companyID)
+            if let companyID, let client {
+                jobFinder.start(companyID: companyID, client: client)
+            }
         } else {
             state = .failed(lines.last { !$0.isEmpty } ?? "The research stopped (exit status \(status)).")
         }
@@ -209,7 +221,14 @@ struct AddCompanySheet: View {
             }
         case let .succeeded(companyID):
             let name = companyID.flatMap(getCompanyName) ?? research.company
-            Label("Added \(name).", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Added \(name).", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                if companyID != nil {
+                    Text("Its jobs are being found in the background; the company's panel shows when they're in.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
         case let .failed(reason):
             Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         case .idle:

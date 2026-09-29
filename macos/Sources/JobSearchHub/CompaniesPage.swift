@@ -42,6 +42,7 @@ struct CompaniesPage: View {
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(CompanyResearch.self) private var research
+    @Environment(CompanyJobFinder.self) private var jobFinder
     @State private var isAddingCompany = false
     @State private var isShowingSuggestions = false
     @State private var model = CompaniesModel()
@@ -65,7 +66,7 @@ struct CompaniesPage: View {
                     companyPanel(client: client).frame(width: 460)
                 }
                 .task { await model.load(with: client) }
-                .onChange(of: [events.revision, unseen.revision, research.revision]) { Task { await model.load(with: client) } }
+                .onChange(of: [events.revision, unseen.revision, research.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
                 .sheet(isPresented: $isShowingSuggestions) {
                     CompanySuggestionsSheet(client: client) { suggestion in
                         research.start(company: suggestion.organization, foundVia: "Followed on LinkedIn", client: client)
@@ -171,8 +172,15 @@ struct DossierPane: View {
     let onChanged: () -> Void
     @State private var isAddingWarmPath = false
     @State private var errorMessage: String?
+    @Environment(CompanyJobFinder.self) private var jobFinder
 
     var body: some View {
+        content
+            .onChange(of: jobFinder.revision) { onChanged() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if let dossier {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -194,6 +202,7 @@ struct DossierPane: View {
                         ForEach(dossier.jobBoards) { board in
                             linkOrText(board.summaryLine, url: board.boardURL)
                         }
+                        jobFinderRow(dossier.company)
                     }
 
                     if let connections = dossier.connections, !connections.isEmpty {
@@ -229,6 +238,32 @@ struct DossierPane: View {
         } else {
             ContentUnavailableView("No company selected", systemImage: "building.2")
         }
+    }
+
+    /// Starts the job finder on the company, and says how its last run went.
+    @ViewBuilder
+    private func jobFinderRow(_ company: Company) -> some View {
+        HStack(spacing: 8) {
+            Button("Find jobs", systemImage: "magnifyingglass") { jobFinder.start(companyID: company.id, client: client) }
+                .disabled(jobFinder.isRunning(company.id))
+                .help("An agent finds the company's open roles: it sets the job board when the hub reads it, or records the roles off the careers page")
+            switch jobFinder.states[company.id] {
+            case .running:
+                ProgressView().controlSize(.small)
+                Text("Finding jobs…").foregroundStyle(.secondary)
+            case let .finished(openJobs, jobBoard):
+                Text(describeFoundJobs(openJobs: openJobs, jobBoard: jobBoard)).foregroundStyle(.secondary)
+            case let .failed(reason):
+                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(2)
+            case nil:
+                EmptyView()
+            }
+        }
+    }
+
+    private func describeFoundJobs(openJobs: Int?, jobBoard: String?) -> String {
+        let count = openJobs.map { $0 == 1 ? "1 open job" : "\($0) open jobs" } ?? "Done"
+        return jobBoard.map { "\(count), read from \($0)" } ?? count
     }
 
     /// People who don't work here but can open doors, and a way to add one.

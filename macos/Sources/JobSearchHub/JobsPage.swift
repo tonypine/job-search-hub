@@ -86,6 +86,7 @@ struct JobsPage: View {
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
+    @Environment(CompanyJobFinder.self) private var jobFinder
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
     /// Which columns show, in what order and width, kept across launches.
@@ -110,7 +111,7 @@ struct JobsPage: View {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
                     }
-                    .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
                         details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
                     }

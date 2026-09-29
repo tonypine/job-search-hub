@@ -8,11 +8,15 @@ struct JobSearchHubApp: App {
     @State private var connection: HubConnection
     @State private var events = HubEventStream()
     @State private var unseen = UnseenUpdates()
-    @State private var research = CompanyResearch()
+    @State private var jobFinder: CompanyJobFinder
+    @State private var research: CompanyResearch
 
     init() {
         Self.importOwnerTokenIfAsked()
         _connection = State(initialValue: HubConnection())
+        let jobFinder = CompanyJobFinder()
+        _jobFinder = State(initialValue: jobFinder)
+        _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
     }
 
     var body: some Scene {
@@ -25,6 +29,7 @@ struct JobSearchHubApp: App {
                 .environment(events)
                 .environment(unseen)
                 .environment(research)
+                .environment(jobFinder)
                 .frame(minWidth: 900, minHeight: 600)
                 .task(id: connection.hubURLText) {
                     if let client = connection.makeClient() {
