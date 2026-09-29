@@ -37,7 +37,7 @@ type setJobBoardInput struct {
 func addJobBoardTools(server *mcp.Server, hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) {
 	addTool(server, &mcp.Tool{
 		Name: "set_job_board",
-		Description: "Store the job board where a company lists its open roles. Greenhouse, Lever and Ashby boards are " +
+		Description: "Store the job board where a company lists its open roles. Greenhouse, Lever, Ashby and Workable boards are " +
 			"checked against the provider's public API first, and a board the provider does not know is rejected; " +
 			"a verified board's jobs are read at once. Boards on other providers are stored unverified.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input setJobBoardInput) (*mcp.CallToolResult, store.JobBoard, error) {

@@ -31,6 +31,8 @@ func (verifier *Verifier) FetchPostings(ctx context.Context, provider, boardToke
 		apiURL = verifier.LeverAPIBase + "/v0/postings/" + escapedToken + "?mode=json"
 	case Ashby:
 		apiURL = verifier.AshbyAPIBase + "/posting-api/job-board/" + escapedToken + "?includeCompensation=true"
+	case Workable:
+		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken + "?details=true"
 	default:
 		return nil, ErrUnsupportedProvider
 	}
@@ -65,6 +67,14 @@ func parsePostings(provider string, body []byte) ([]store.JobPosting, error) {
 			return nil, err
 		}
 		return mapEach(postings, parseLeverPosting)
+	case Workable:
+		var account struct {
+			Jobs []json.RawMessage `json:"jobs"`
+		}
+		if err := json.Unmarshal(body, &account); err != nil {
+			return nil, err
+		}
+		return mapEach(account.Jobs, parseWorkablePosting)
 	default:
 		var board struct {
 			Jobs []json.RawMessage `json:"jobs"`
@@ -360,4 +370,57 @@ func convertHTMLToText(markup string) string {
 		lines[index] = strings.TrimSpace(line)
 	}
 	return strings.TrimSpace(blankLineRuns.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
+}
+
+// parseWorkablePosting reads a job from Workable's widget API, which lists
+// every published job with its locations and description.
+func parseWorkablePosting(raw json.RawMessage) (store.JobPosting, bool, error) {
+	var job struct {
+		Shortcode      string `json:"shortcode"`
+		Title          string `json:"title"`
+		URL            string `json:"url"`
+		Description    string `json:"description"`
+		EmploymentType string `json:"employment_type"`
+		Telecommuting  any    `json:"telecommuting"`
+		Department     string `json:"department"`
+		PublishedOn    string `json:"published_on"`
+		Locations      []struct {
+			City    string `json:"city"`
+			Region  string `json:"region"`
+			Country string `json:"country"`
+		} `json:"locations"`
+	}
+	if err := json.Unmarshal(raw, &job); err != nil {
+		return store.JobPosting{}, false, err
+	}
+	var places []string
+	for _, location := range job.Locations {
+		var parts []string
+		for _, part := range []string{location.City, location.Region, location.Country} {
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		if len(parts) > 0 {
+			places = append(places, strings.Join(parts, ", "))
+		}
+	}
+	posting := store.JobPosting{
+		ExternalID: job.Shortcode, Title: job.Title, URL: job.URL,
+		Description: convertHTMLToText(html.UnescapeString(job.Description)),
+	}
+	if len(places) > 0 {
+		posting.Location = places[0]
+		posting.OtherLocations = places[1:]
+	}
+	// Workable sends telecommuting as a boolean or as the string "True".
+	if remote := fmt.Sprint(job.Telecommuting); strings.EqualFold(remote, "true") {
+		posting.WorkplaceType = "Remote"
+	}
+	posting.EmploymentType = job.EmploymentType
+	posting.Department = job.Department
+	if published, err := time.Parse("2006-01-02", job.PublishedOn); err == nil {
+		posting.PublishedAt = &published
+	}
+	return posting, job.Shortcode != "" && job.Title != "", nil
 }

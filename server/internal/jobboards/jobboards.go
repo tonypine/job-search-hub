@@ -21,6 +21,7 @@ const (
 	Greenhouse = "greenhouse"
 	Lever      = "lever"
 	Ashby      = "ashby"
+	Workable   = "workable"
 )
 
 const (
@@ -44,6 +45,7 @@ type Verifier struct {
 	LeverAPIBase      string
 	AshbyAPIBase      string
 	AshbyBoardBase    string
+	WorkableAPIBase   string
 	HimalayasAPIBase  string
 }
 
@@ -54,6 +56,7 @@ func NewVerifier() *Verifier {
 		LeverAPIBase:      "https://api.lever.co",
 		AshbyAPIBase:      "https://api.ashbyhq.com",
 		AshbyBoardBase:    "https://jobs.ashbyhq.com",
+		WorkableAPIBase:   "https://apply.workable.com",
 		HimalayasAPIBase:  "https://himalayas.app",
 	}
 }
@@ -73,6 +76,9 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 	case Ashby:
 		apiURL = verifier.AshbyAPIBase + "/posting-api/job-board/" + escapedToken
 		boardURL = "https://jobs.ashbyhq.com/" + escapedToken
+	case Workable:
+		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken
+		boardURL = "https://apply.workable.com/" + escapedToken + "/"
 	default:
 		return Verification{}, ErrUnsupportedProvider
 	}
