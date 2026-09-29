@@ -43,6 +43,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSynce
 	addArtifactTools(server, hub)
 	addApplicationAnswerTools(server, hub)
 	addCareersPageTools(server, hub)
+	addProfileEntryTools(server, hub)
 	return server
 }
 
@@ -50,7 +51,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSynce
 // list them, and they refuse an agent that calls them anyway.
 var ownerOnlyTools = []string{
 	"add_to_watch_list", "remove_from_watch_list", "update_agent_prompt", "update_job_criteria", "update_owner_profile",
-	"save_application_answer",
+	"save_application_answer", "confirm_profile_entries", "delete_profile_entry",
 }
 
 // NewAgentServer is NewServer without the owner-only tools, for agent runs.

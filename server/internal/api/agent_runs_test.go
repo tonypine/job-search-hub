@@ -59,6 +59,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterArtifactRoutes(routes, hub, requireOwner)
 	api.RegisterAgentPromptRoutes(routes, hub, requireOwner)
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
+	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
 	api.RegisterDeviceRoutes(routes, hub, requireOwner)
 	server := httptest.NewServer(routes)
