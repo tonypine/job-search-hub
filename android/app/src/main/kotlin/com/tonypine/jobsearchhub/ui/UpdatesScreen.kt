@@ -28,7 +28,7 @@ import com.tonypine.jobsearchhub.core.HubUpdate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, onOpenJob: (String) -> Unit) {
+fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, onOpenJob: (String) -> Unit, onOpenCompany: (String) -> Unit) {
     val context = LocalContext.current
     Column {
         TopAppBar(
@@ -45,6 +45,7 @@ fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, 
                     UpdateRow(update) {
                         when {
                             update.jobId != null -> onOpenJob(update.jobId!!)
+                            update.companyId != null -> onOpenCompany(update.companyId!!)
                             update.sourceUrl != null -> context.startActivity(Intent(Intent.ACTION_VIEW, update.sourceUrl!!.toUri()))
                         }
                     }

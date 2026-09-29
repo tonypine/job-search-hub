@@ -3,12 +3,14 @@ package com.tonypine.jobsearchhub
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.HubUpdate
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.JobListItem
 import com.tonypine.jobsearchhub.core.JobsOrder
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PairingLink
+import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +18,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** A company as the phone briefs it before an interview. */
+data class CompanyBrief(
+    val dossier: CompanyDossier,
+    val openJobs: List<JobListItem>,
+    val cards: List<Pair<PipelineCard, String>>,
+)
 
 data class HubState(
     val pairing: Pairing? = null,
@@ -74,6 +83,19 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: HubException) {
                 mutableState.update { it.copy(isLoading = false, error = error.message) }
             }
+        }
+    }
+
+    /** Everything a company's brief shows, read together. */
+    suspend fun loadCompanyBrief(id: String): Result<CompanyBrief> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            val dossier = client.getCompany(id)
+            val jobs = client.getCompanyJobs(id).jobs
+            val cards = client.getPipeline().findCards(id)
+            Result.success(CompanyBrief(dossier, jobs, cards))
+        } catch (error: HubException) {
+            Result.failure(error)
         }
     }
 

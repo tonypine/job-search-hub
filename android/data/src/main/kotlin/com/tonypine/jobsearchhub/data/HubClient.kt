@@ -1,8 +1,10 @@
 package com.tonypine.jobsearchhub.data
 
+import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.JobsResponse
 import com.tonypine.jobsearchhub.core.Pairing
+import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.UpdatesResponse
 import com.tonypine.jobsearchhub.core.hubJson
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +27,12 @@ class HubClient(
     suspend fun getJobs(): JobsResponse = get("/v1/jobs?status=open&limit=500")
 
     suspend fun getJob(id: String): JobDetails = get("/v1/jobs/$id")
+
+    suspend fun getCompany(id: String): CompanyDossier = get("/v1/companies/$id")
+
+    suspend fun getCompanyJobs(id: String): JobsResponse = get("/v1/jobs?company_id=$id&status=open&limit=200")
+
+    suspend fun getPipeline(): PipelineBoard = get("/v1/pipeline")
 
     private suspend inline fun <reified T> get(path: String): T = withContext(Dispatchers.IO) {
         val request = Request.Builder()

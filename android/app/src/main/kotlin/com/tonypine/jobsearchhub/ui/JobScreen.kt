@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -43,7 +44,7 @@ import kotlinx.serialization.json.contentOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit) {
+fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCompany: (String) -> Unit) {
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(id) {
@@ -55,7 +56,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit) {
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
         )
         when {
-            details != null -> JobDetailsView(details!!)
+            details != null -> JobDetailsView(details!!, onOpenCompany)
             error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
             else -> CircularProgressIndicator(Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
@@ -63,12 +64,17 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun JobDetailsView(details: JobDetails) {
+private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit) {
     val context = LocalContext.current
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(details.job.title, style = MaterialTheme.typography.titleLarge)
         Text(listOfNotNull(details.companyName, details.job.location, details.job.workplaceType).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, details.job.url.toUri())) }) { Text("Open posting") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, details.job.url.toUri())) }) { Text("Open posting") }
+            details.job.companyId?.let { companyId ->
+                OutlinedButton(onClick = { onOpenCompany(companyId) }) { Text("Company brief") }
+            }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Fit  ", fontWeight = FontWeight.SemiBold)

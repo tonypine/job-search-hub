@@ -35,3 +35,18 @@ class CoreTest {
         assertEquals(listOf("new-good", "old-good", "unclear"), JobsOrder.pick(items, includeUnclear = true).map { it.job.id })
     }
 }
+
+class CompanyBriefTest {
+    @Test
+    fun aCompanysCardsComeWithTheirPhase() {
+        val board = hubJson.decodeFromString<PipelineBoard>(
+            """{"phases":[{"id":"p1","name":"Saved","position":1,"is_closed":false},{"id":"p2","name":"Interviewing","position":4}],
+            "cards":[{"application":{"company_id":"c1","phase_id":"p2","notes":"Panel on Friday"},"job_title":"Engineer","company_name":"Acme"},
+            {"application":{"company_id":"c2","phase_id":"p1"},"company_name":"Other"}]}""",
+        )
+        val cards = board.findCards("c1")
+        assertEquals(1, cards.size)
+        assertEquals("Interviewing", cards.single().second)
+        assertEquals("Panel on Friday", cards.single().first.application.notes)
+    }
+}

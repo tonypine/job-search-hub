@@ -24,6 +24,7 @@ import com.tonypine.jobsearchhub.HubViewModel
 private const val UPDATES = "updates"
 private const val JOBS = "jobs"
 private const val JOB = "job/{id}"
+private const val COMPANY = "company/{id}"
 
 /** Pairing first; then Updates and Jobs, and a job's details. */
 @Composable
@@ -38,7 +39,7 @@ fun HubNavigation(viewModel: HubViewModel) {
     val route = entry?.destination?.route
     Scaffold(
         bottomBar = {
-            if (route != JOB) {
+            if (route != JOB && route != COMPANY) {
                 NavigationBar {
                     NavigationBarItem(
                         selected = route == UPDATES, onClick = { navigation.navigate(UPDATES) { launchSingleTop = true } },
@@ -54,13 +55,25 @@ fun HubNavigation(viewModel: HubViewModel) {
     ) { padding ->
         NavHost(navigation, startDestination = UPDATES, modifier = Modifier.padding(padding)) {
             composable(UPDATES) {
-                UpdatesScreen(state, onRefresh = viewModel::refresh, onUnpair = viewModel::unpair, onOpenJob = { navigation.navigate("job/$it") })
+                UpdatesScreen(
+                    state, onRefresh = viewModel::refresh, onUnpair = viewModel::unpair,
+                    onOpenJob = { navigation.navigate("job/$it") }, onOpenCompany = { navigation.navigate("company/$it") },
+                )
             }
             composable(JOBS) {
                 JobsScreen(state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear, onOpenJob = { navigation.navigate("job/$it") })
             }
             composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
-                JobScreen(backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() })
+                JobScreen(
+                    backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
+                    onOpenCompany = { navigation.navigate("company/$it") },
+                )
+            }
+            composable(COMPANY, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
+                CompanyScreen(
+                    backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
+                    onOpenJob = { navigation.navigate("job/$it") },
+                )
             }
         }
     }
