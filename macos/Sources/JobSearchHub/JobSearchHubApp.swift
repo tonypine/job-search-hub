@@ -10,6 +10,7 @@ struct JobSearchHubApp: App {
     @State private var unseen = UnseenUpdates()
     @State private var jobFinder: CompanyJobFinder
     @State private var research: CompanyResearch
+    @State private var taskRunner: RemoteTaskRunner
 
     init() {
         Self.importOwnerTokenIfAsked()
@@ -17,6 +18,7 @@ struct JobSearchHubApp: App {
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
+        _taskRunner = State(initialValue: RemoteTaskRunner(jobFinder: jobFinder))
     }
 
     var body: some Scene {
@@ -34,6 +36,21 @@ struct JobSearchHubApp: App {
                 .task(id: connection.hubURLText) {
                     if let client = connection.makeClient() {
                         await events.run(with: client)
+                    }
+                }
+                // Work the phone asked for: checked on each update the hub
+                // announces, which includes a new request, and every minute.
+                .task(id: events.revision) {
+                    if let client = connection.makeClient() {
+                        await taskRunner.check(with: client)
+                    }
+                }
+                .task {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(60))
+                        if let client = connection.makeClient() {
+                            await taskRunner.check(with: client)
+                        }
                     }
                 }
         }

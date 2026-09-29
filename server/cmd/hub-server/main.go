@@ -108,6 +108,7 @@ func run() error {
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
+	api.RegisterTaskRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()

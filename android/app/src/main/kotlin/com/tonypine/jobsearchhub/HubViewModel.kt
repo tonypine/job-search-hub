@@ -11,6 +11,7 @@ import com.tonypine.jobsearchhub.core.JobsOrder
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PairingLink
 import com.tonypine.jobsearchhub.core.PipelineCard
+import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,6 +95,18 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             val jobs = client.getCompanyJobs(id).jobs
             val cards = client.getPipeline().findCards(id)
             Result.success(CompanyBrief(dossier, jobs, cards))
+        } catch (error: HubException) {
+            Result.failure(error)
+        }
+    }
+
+    /** Asks the Mac for work; its progress and result arrive as updates. */
+    suspend fun askTheMac(request: QueueTaskRequest): Result<Unit> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            client.queueTask(request)
+            refresh()
+            Result.success(Unit)
         } catch (error: HubException) {
             Result.failure(error)
         }

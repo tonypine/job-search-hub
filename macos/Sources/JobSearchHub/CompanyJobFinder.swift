@@ -22,29 +22,40 @@ final class CompanyJobFinder {
     }
 
     func start(companyID: UUID, client: HubClient) {
-        guard !isRunning(companyID) else { return }
+        Task { _ = await run(companyID: companyID, client: client) }
+    }
+
+    /// Runs the job finder on the company to its end and returns how it went;
+    /// a run already going on the company is waited for, not repeated.
+    func run(companyID: UUID, client: HubClient) async -> State {
+        if isRunning(companyID) {
+            while isRunning(companyID) {
+                try? await Task.sleep(for: .seconds(2))
+            }
+            return states[companyID] ?? .failed("The run ended without a result.")
+        }
         guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
-            states[companyID] = .failed("The app has no bundled hub command. Build it with Scripts/make-app.sh.")
-            return
+            return finish(companyID, .failed("The app has no bundled hub command. Build it with Scripts/make-app.sh."))
         }
         guard let claude = ClaudeLaunch.findClaudeExecutable() else {
-            states[companyID] = .failed("Claude Code is not installed where its installers put it (~/.local/bin/claude, Homebrew).")
-            return
+            return finish(companyID, .failed("Claude Code is not installed where its installers put it (~/.local/bin/claude, Homebrew)."))
         }
         states[companyID] = .running
         let environment = BundledHubCommand.makeEnvironment(
             from: ProcessInfo.processInfo.environment, hubURL: client.baseURL, ownerToken: client.token, claude: claude
         )
-        Task {
-            let finished = await BundledHubCommandRunner.run(command, arguments: JobFinderLaunch.makeArguments(companyID: companyID), environment: environment)
-            if finished.status == 0 {
-                let outcome = JobFinderLaunch.parseOutcome(finished.output)
-                states[companyID] = .finished(openJobs: outcome.openJobs, jobBoard: outcome.jobBoard)
-            } else {
-                let reason = finished.output.components(separatedBy: "\n").last { !$0.isEmpty }
-                states[companyID] = .failed(reason ?? "The job finder stopped (exit status \(finished.status)).")
-            }
-            revision += 1
+        let finished = await BundledHubCommandRunner.run(command, arguments: JobFinderLaunch.makeArguments(companyID: companyID), environment: environment)
+        if finished.status == 0 {
+            let outcome = JobFinderLaunch.parseOutcome(finished.output)
+            return finish(companyID, .finished(openJobs: outcome.openJobs, jobBoard: outcome.jobBoard))
         }
+        let reason = finished.output.components(separatedBy: "\n").last { !$0.isEmpty }
+        return finish(companyID, .failed(reason ?? "The job finder stopped (exit status \(finished.status))."))
+    }
+
+    private func finish(_ companyID: UUID, _ state: State) -> State {
+        states[companyID] = state
+        revision += 1
+        return state
     }
 }

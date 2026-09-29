@@ -5,12 +5,16 @@ import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.JobsResponse
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
+import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.core.TaskRequest
 import com.tonypine.jobsearchhub.core.UpdatesResponse
 import com.tonypine.jobsearchhub.core.hubJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -34,11 +38,21 @@ class HubClient(
 
     suspend fun getPipeline(): PipelineBoard = get("/v1/pipeline")
 
-    private suspend inline fun <reified T> get(path: String): T = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
+    /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
+    suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
+
+    private suspend inline fun <reified T> get(path: String): T = call(path, null)
+
+    private suspend inline fun <reified T> send(path: String, json: String): T = call(path, json)
+
+    private suspend inline fun <reified T> call(path: String, json: String?): T = withContext(Dispatchers.IO) {
+        val builder = Request.Builder()
             .url(pairing.hubUrl + path)
             .header("Authorization", "Bearer ${pairing.token}")
-            .build()
+        if (json != null) {
+            builder.post(json.toRequestBody("application/json".toMediaType()))
+        }
+        val request = builder.build()
         val body = try {
             http.newCall(request).execute().use { response ->
                 when {

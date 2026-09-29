@@ -51,6 +51,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterLinkedInProfileRoutes(routes, hub, stubRates{}, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
+	api.RegisterTaskRoutes(routes, hub, hubevents.NewRecorder(hub, broadcaster), requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, stubRates{}, requireOwner)
 	api.RegisterGoogleRoutes(routes, hub, nil, requireOwner)

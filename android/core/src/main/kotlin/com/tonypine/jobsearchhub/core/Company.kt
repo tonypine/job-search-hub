@@ -44,3 +44,10 @@ data class PipelineBoard(val phases: List<PipelinePhase>, val cards: List<Pipeli
         cards.filter { it.application.companyId == companyId }
             .map { card -> card to (phases.firstOrNull { it.id == card.application.phaseId }?.name ?: "") }
 }
+
+/** Work asked of the Mac, which is the only place agents run. */
+@Serializable
+data class TaskRequest(val id: String, val kind: String, val status: String, val companyId: String? = null, val input: String? = null)
+
+@Serializable
+data class QueueTaskRequest(val kind: String, val companyId: String? = null, val company: String? = null)

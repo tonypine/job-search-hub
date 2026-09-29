@@ -20,6 +20,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.tonypine.jobsearchhub.HubViewModel
+import com.tonypine.jobsearchhub.core.QueueTaskRequest
 
 private const val UPDATES = "updates"
 private const val JOBS = "jobs"
@@ -61,7 +62,14 @@ fun HubNavigation(viewModel: HubViewModel) {
                 )
             }
             composable(JOBS) {
-                JobsScreen(state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear, onOpenJob = { navigation.navigate("job/$it") })
+                JobsScreen(
+                    state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear,
+                    onOpenJob = { navigation.navigate("job/$it") },
+                    onResearch = { company ->
+                        viewModel.askTheMac(QueueTaskRequest(kind = "research_company", company = company))
+                            .fold({ "Sent to the Mac. The result comes as an update." }, { it.message })
+                    },
+                )
             }
             composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
                 JobScreen(
