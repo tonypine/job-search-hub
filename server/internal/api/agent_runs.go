@@ -10,6 +10,7 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/agents/companytriage"
 	"github.com/tonypine/job-search-hub/server/agents/jobfinder"
+	"github.com/tonypine/job-search-hub/server/agents/profileseed"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -18,12 +19,17 @@ import (
 const agentRunTokenLifetime = 30 * time.Minute
 
 // agentRunResultSchemas are the kinds of run the owner can start, by the
-// shape of the result each must answer with. A run's input is the company:
-// a name, a domain or a URL.
+// shape of the result each must answer with. A company run's input is the
+// company: a name, a domain or a URL; a profile seed takes none.
 var agentRunResultSchemas = map[string]string{
 	store.AgentRunKindCompanyTriage: companytriage.ResultSchema,
 	store.AgentRunKindJobFinder:     jobfinder.ResultSchema,
+	store.AgentRunKindProfileSeed:   profileseed.ResultSchema,
 }
+
+// profileSeedInput stands for a profile seed's input, which is the owner's
+// whole profile rather than a company.
+const profileSeedInput = "owner profile"
 
 type startAgentRunRequest struct {
 	Kind  string `json:"kind"`
@@ -65,12 +71,20 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			return
 		}
 		resultSchema, knownKind := agentRunResultSchemas[request.Kind]
-		if !knownKind || request.Input == "" {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" or "job_finder", and a non-empty input`})
+		isProfileSeed := request.Kind == store.AgentRunKindProfileSeed
+		if !knownKind || (request.Input == "" && !isProfileSeed) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" or "job_finder" with a company as input, or kind "profile_seed"`})
 			return
 		}
 
-		rendered, err := prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
+		var rendered prompts.Rendered
+		var err error
+		if isProfileSeed {
+			request.Input = profileSeedInput
+			rendered, err = prompts.RenderProfileSeedPrompt(r.Context(), hub)
+		} else {
+			rendered, err = prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
+		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the prompt: " + err.Error()})
 			return

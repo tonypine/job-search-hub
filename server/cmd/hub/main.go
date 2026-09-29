@@ -26,6 +26,8 @@ const usage = `usage:
       [--model <model>]             draft a message back to a recruiter who wrote before
   hub profile audit [--model <model>]
                                     audit the LinkedIn profile for recruiters searching
+  hub profile seed [--model <model>] [--effort <level>]
+                                    build the knowledge base from your CV and LinkedIn
   hub attach <path> --kind resume|company_document|saved_page|other [--company <domain>]
                                     attach a file the agents read as context
   hub artifacts [--company <domain>]
@@ -98,6 +100,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = auditProfile(ctx, config, *model, stdout)
+	case len(args) >= 2 && args[0] == "profile" && args[1] == "seed":
+		flags := flag.NewFlagSet("profile seed", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		var options triageOptions
+		flags.StringVar(&options.model, "model", "", "the Claude model for the session")
+		flags.StringVar(&options.effort, "effort", "", "the effort level for the session")
+		if flags.Parse(args[2:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = seedProfile(ctx, config, options, stdout)
 	case len(args) >= 2 && args[0] == "attach":
 		flags := flag.NewFlagSet("attach", flag.ContinueOnError)
 		flags.SetOutput(stderr)

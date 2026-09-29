@@ -17,6 +17,8 @@ var Kinds = []KindInfo{
 		[]string{"{{company}}", "{{owner_profile}}", "{{company_dossier}}"}},
 	{store.AgentRunKindJobFinder, "Find jobs", "Finds a company's open roles: sets its job board when the hub reads it, or records the roles off its careers page.",
 		[]string{"{{company}}", "{{company_dossier}}", "{{job_criteria}}"}},
+	{store.AgentRunKindProfileSeed, "Build the knowledge base", "Turns the CV, the LinkedIn export and the answers library into knowledge-base entries for you to confirm.",
+		[]string{"{{owner_profile}}", "{{linkedin_profile}}", "{{application_answers}}"}},
 	{store.AgentPromptKindCompanySession, "Company session", "Starts a Claude session opened from a company.",
 		[]string{"{{owner_profile}}", "{{owner_voice}}", "{{application_answers}}", "{{company_dossier}}"}},
 	{store.AgentPromptKindJobSession, "Job session", "Starts a Claude session opened from a job.",

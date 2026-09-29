@@ -22,6 +22,10 @@ const AgentRunKindCompanyTriage = "company_triage"
 // prompt's kind.
 const AgentRunKindJobFinder = "job_finder"
 
+// AgentRunKindProfileSeed builds the owner's knowledge base from the CV, the
+// LinkedIn export and the answers library; it is also its prompt's kind.
+const AgentRunKindProfileSeed = "profile_seed"
+
 const (
 	AgentRunRunning   = "running"
 	AgentRunSucceeded = "succeeded"

@@ -377,6 +377,43 @@ func describeLinkedInProfile(profile store.LinkedInProfile) string {
 	return text.String()
 }
 
+// RenderProfileSeedPrompt fills the active profile_seed prompt with everything
+// the hub holds about the owner's experience: the profile and attached files
+// (the CV among them), the whole LinkedIn profile with the skills others
+// endorsed, and the answers library.
+func RenderProfileSeedPrompt(ctx context.Context, hub *store.Store) (Rendered, error) {
+	prompt, err := hub.GetLatestAgentPrompt(ctx, store.AgentRunKindProfileSeed)
+	if err != nil {
+		return Rendered{}, err
+	}
+	profileText, err := getOwnerProfileText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
+	linkedIn, err := hub.GetLinkedInProfile(ctx)
+	if err != nil {
+		return Rendered{}, err
+	}
+	endorsedSkills, err := hub.ListEndorsedSkills(ctx)
+	if err != nil {
+		return Rendered{}, err
+	}
+	linkedInText, err := formatAsData(map[string]any{"profile": linkedIn, "endorsed_skills": endorsedSkills})
+	if err != nil {
+		return Rendered{}, err
+	}
+	answersText, err := getApplicationAnswersText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
+	filled := strings.NewReplacer(
+		"{{owner_profile}}", profileText,
+		"{{linkedin_profile}}", linkedInText,
+		"{{application_answers}}", answersText,
+	).Replace(prompt.Body)
+	return Rendered{Body: filled, Version: prompt.Version}, nil
+}
+
 // RenderProfileAudit fills the active profile_audit prompt with the owner's
 // profile, the job criteria, what fitting postings ask for, and what
 // recruiters approached the owner for.

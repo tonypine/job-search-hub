@@ -18,6 +18,7 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
+	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -41,9 +42,9 @@ func startHub(t *testing.T) hubUnderTest {
 	hub := store.New(pool)
 	verifier := tokens.NewVerifier(testOwnerToken, hub)
 	routes := http.NewServeMux()
-	api.RegisterAgentRunRoutes(routes, hub, auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
-		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
-	}))
+	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true})
+	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, hubevents.NewBroadcaster()), requireOwner)
 	boards := jobboards.NewVerifier()
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards)), mcptools.NewAgentServer(hub, boards, boardpoller.New(hub, boards)), verifier))
 	server := httptest.NewServer(routes)

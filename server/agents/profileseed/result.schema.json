@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "entries_added": { "type": "integer", "minimum": 0, "description": "Entries added with save_profile_entry." },
+    "entries_updated": { "type": "integer", "minimum": 0, "description": "Existing entries replaced with save_profile_entry." },
+    "conflicts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Places where the sources disagree, or where one looks out of date, for the owner to settle; one sentence each."
+    },
+    "summary": { "type": "string", "description": "What the knowledge base holds now, in two or three sentences." }
+  },
+  "required": ["entries_added", "entries_updated", "conflicts", "summary"],
+  "additionalProperties": false
+}

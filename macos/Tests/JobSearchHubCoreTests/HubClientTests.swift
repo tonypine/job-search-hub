@@ -90,3 +90,15 @@ struct HubClientTests {
     #expect(parsed.token == "hubdev_abc+/=")
     #expect(PairingLink.parse("https://example.com/?token=x") == nil)
 }
+
+@Test func knowledgeBaseEntriesDecode() throws {
+    let json = #"{"entries":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","kind":"case","role_id":"0aa55565-58d2-4247-ba01-cba65060a316","title":"Checkout on one page","body":"Rebuilt it","organization":"","start_month":"2022-05","end_month":"","skills":["React"],"outcome":"Faster","source":"interview","source_detail":"","updated_at":"2026-09-29T12:00:00Z"}]}"#
+    let response = try HubJSON.makeDecoder().decode(ProfileEntriesResponse.self, from: Data(json.utf8))
+    #expect(response.entries.first?.roleID != nil && response.entries.first?.isConfirmed == false && response.entries.first?.startMonth == "2022-05")
+}
+
+@Test func aSeedRunReportsWhatItAdded() {
+    let output = "Building the knowledge base…\n\nTwo roles.\n  to settle: dates differ\nEntries added: 12, updated: 3\n"
+    #expect(ProfileSeedLaunch.parseOutcome(output)?.added == 12 && ProfileSeedLaunch.parseOutcome(output)?.updated == 3)
+    #expect(ProfileSeedLaunch.parseOutcome("the run failed") == nil)
+}

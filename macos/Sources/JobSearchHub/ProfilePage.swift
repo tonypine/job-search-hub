@@ -37,6 +37,7 @@ struct ProfilePage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         ProfileDocument(markdown: profile.body)
+                        KnowledgeBaseSection(client: client)
                         if let linkedIn, !linkedIn.profile.isEmpty {
                             LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
                         }

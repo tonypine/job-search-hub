@@ -151,3 +151,28 @@ func (s *Store) ListRecommendationsReceived(ctx context.Context) ([]Recommendati
 		return recommendation, err
 	})
 }
+
+// EndorsedSkill is a skill others endorsed the owner for on LinkedIn, and by
+// how many people.
+type EndorsedSkill struct {
+	Skill string `json:"skill"`
+	Count int    `json:"count"`
+}
+
+// ListEndorsedSkills returns the skills the owner was endorsed for, the most
+// endorsed first. LinkedIn marks each endorsement accepted or rejected; a
+// rejected one doesn't count.
+func (s *Store) ListEndorsedSkills(ctx context.Context) ([]EndorsedSkill, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT skill, count(*) FROM linkedin_endorsements
+		WHERE direction = 'received' AND status <> 'rejected' AND btrim(skill) <> ''
+		GROUP BY skill ORDER BY count(*) DESC, skill`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (EndorsedSkill, error) {
+		var skill EndorsedSkill
+		err := row.Scan(&skill.Skill, &skill.Count)
+		return skill, err
+	})
+}

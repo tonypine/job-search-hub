@@ -45,7 +45,7 @@ const (
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
-	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true,
+	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON
