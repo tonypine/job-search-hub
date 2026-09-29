@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // artifactUploadOverhead is room for the form around the file itself.
@@ -59,12 +60,20 @@ func RegisterArtifactRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 		if contentType == "" || contentType == "application/octet-stream" {
 			contentType = http.DetectContentType(content)
 		}
+		text, textError := readArtifactText(contentType, header.Filename, content)
 		artifact, created, err := hub.SaveArtifact(r.Context(), store.Actor{Kind: store.ActorOwner}, store.NewArtifact{
 			CompanyID: companyID, Kind: r.FormValue("kind"), Name: header.Filename, ContentType: contentType, Content: content,
+			Text: text, TextError: textError,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
+		}
+		if !created && !artifact.HasReadText() {
+			if artifact, err = hub.SaveArtifactText(r.Context(), artifact.ID, text, textError); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+				return
+			}
 		}
 		status = http.StatusOK
 		if created {
@@ -128,4 +137,14 @@ func findArtifactCompany(r *http.Request, hub *store.Store, rawID, domain string
 	default:
 		return nil, http.StatusOK, nil
 	}
+}
+
+// readArtifactText reads a file's text once, at upload: the text, or why
+// none could be read.
+func readArtifactText(contentType, name string, content []byte) (string, string) {
+	text, err := textextract.Extract(contentType, name, content)
+	if err != nil {
+		return "", err.Error()
+	}
+	return text, ""
 }

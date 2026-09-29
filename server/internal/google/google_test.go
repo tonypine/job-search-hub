@@ -177,9 +177,6 @@ func TestGmailIsSearchedAndReadAsText(t *testing.T) {
 	if err != nil || message.Text != "Hi Tony," || message.Subject != "Thank you for applying" {
 		t.Fatalf("message = %+v, %v", message, err)
 	}
-	if text := convertHTMLToText("<p>Hi <b>Tony</b>,</p><style>x{}</style><div>Next steps</div>"); text != "Hi Tony,\nNext steps" {
-		t.Fatalf("html text = %q", text)
-	}
 }
 
 func TestTheMailboxIsWatchedAndItsAddedMessagesListed(t *testing.T) {

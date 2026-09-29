@@ -46,7 +46,8 @@ func TestTheOwnerUploadsListsAndDeletesFilesOnce(t *testing.T) {
 		Created  bool           `json:"created"`
 	}
 	if err := json.Unmarshal(body, &uploaded); status != http.StatusCreated || err != nil || !uploaded.Created ||
-		uploaded.Artifact.Name != "resume.txt" || uploaded.Artifact.Size != len(resume) || uploaded.Artifact.CompanyID != nil {
+		uploaded.Artifact.Name != "resume.txt" || uploaded.Artifact.Size != len(resume) || uploaded.Artifact.CompanyID != nil ||
+		uploaded.Artifact.TextLength != len("Sam Example\nSenior engineer.") {
 		t.Fatalf("upload: %d %s", status, body)
 	}
 	if status, body := uploadArtifact(t, service.url, ownerToken, map[string]string{"kind": "other"}, "copy.txt", resume); status != http.StatusOK ||
@@ -90,6 +91,10 @@ func TestFilesAreRefusedToAgentsAndOverTheSizeLimit(t *testing.T) {
 	if status, body := uploadArtifact(t, service.url, ownerToken, map[string]string{"kind": "other"}, "big.bin", make([]byte, store.MaximumArtifactSize+1)); status != http.StatusRequestEntityTooLarge ||
 		!bytes.Contains(body, []byte("10 MB")) {
 		t.Errorf("an oversized file: %d %s", status, body)
+	}
+	if status, body := uploadArtifact(t, service.url, ownerToken, map[string]string{"kind": "other"}, "photo.png", []byte("\x89PNG\r\n\x1a\n")); status != http.StatusCreated ||
+		!bytes.Contains(body, []byte(`"text_error":"can't read text from a image/png file"`)) {
+		t.Errorf("a file without text: %d %s", status, body)
 	}
 	if status, _ := uploadArtifact(t, service.url, ownerToken, map[string]string{"kind": "poster"}, "a.txt", []byte("text")); status != http.StatusBadRequest {
 		t.Errorf("an unknown kind: %d, want 400", status)

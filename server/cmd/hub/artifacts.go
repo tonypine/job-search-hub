@@ -70,9 +70,10 @@ func listFiles(ctx context.Context, config cliConfig, companyDomain string, out 
 		return nil
 	}
 	table := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(table, "ID\tKIND\tNAME\tSIZE\tADDED")
+	fmt.Fprintln(table, "ID\tKIND\tNAME\tSIZE\tADDED\tTEXT")
 	for _, artifact := range listed.Artifacts {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", artifact.ID, artifact.Kind, artifact.Name, formatSize(artifact.Size), artifact.CreatedAt.Format("2006-01-02"))
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", artifact.ID, artifact.Kind, artifact.Name, formatSize(artifact.Size),
+			artifact.CreatedAt.Format("2006-01-02"), describeText(artifact))
 	}
 	return table.Flush()
 }
@@ -98,5 +99,17 @@ func formatSize(bytes int) string {
 		return fmt.Sprintf("%.0f KB", float64(bytes)/(1<<10))
 	default:
 		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+// describeText says how much text was read from a file, or why none was.
+func describeText(artifact store.Artifact) string {
+	switch {
+	case artifact.TextLength > 0:
+		return fmt.Sprintf("%d characters", artifact.TextLength)
+	case artifact.TextError != "":
+		return artifact.TextError
+	default:
+		return "not read; attach it again to read it"
 	}
 }

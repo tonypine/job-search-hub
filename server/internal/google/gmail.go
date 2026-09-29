@@ -7,10 +7,11 @@ import (
 	"html"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // maximumSearchResults bounds one search; each result costs a request.
@@ -134,7 +135,7 @@ func (client *Client) GetMessage(ctx context.Context, id string) (Message, error
 	markup := findPartText(message.Payload, "text/html")
 	text := findPartText(message.Payload, "text/plain")
 	if text == "" {
-		text = convertHTMLToText(markup)
+		text = textextract.ConvertHTMLToText(markup)
 	}
 	return Message{MessageSummary: summarize(message), Text: strings.TrimSpace(text), HTML: markup}, nil
 }
@@ -182,20 +183,6 @@ func padBase64(data string) string {
 		return data + strings.Repeat("=", 4-remainder)
 	}
 	return data
-}
-
-var (
-	lineBreakTags = regexp.MustCompile(`(?i)<br\s*/?>|</(p|div|li|tr|h[1-6])>`)
-	hiddenBlocks  = regexp.MustCompile(`(?is)<(style|script|head)[^>]*>.*?</(style|script|head)>`)
-	anyMarkup     = regexp.MustCompile(`<[^>]*>`)
-	blankRuns     = regexp.MustCompile(`\n\s*\n\s*\n+`)
-)
-
-func convertHTMLToText(markup string) string {
-	text := hiddenBlocks.ReplaceAllString(markup, "")
-	text = lineBreakTags.ReplaceAllString(text, "\n")
-	text = html.UnescapeString(anyMarkup.ReplaceAllString(text, ""))
-	return strings.TrimSpace(blankRuns.ReplaceAllString(text, "\n\n"))
 }
 
 // ListMessageIDs returns the IDs of every message matching a Gmail query,
