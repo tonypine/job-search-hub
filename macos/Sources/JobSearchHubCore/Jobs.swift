@@ -136,13 +136,40 @@ public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum JobsQuery {
-    /// The query of the jobs list: its status, a page size and the search text when there is one.
-    public static func makeItems(search: String, status: JobStatusFilter, limit: Int) -> [URLQueryItem] {
+    /// The most jobs the hub returns in one page.
+    public static let pageSize = 500
+
+    /// The query of the jobs list: its status, a page size, where the page
+    /// starts, and the search text when there is one.
+    public static func makeItems(search: String, status: JobStatusFilter, limit: Int, offset: Int = 0) -> [URLQueryItem] {
         var items = [URLQueryItem(name: "status", value: status.rawValue), URLQueryItem(name: "limit", value: String(limit))]
+        if offset > 0 {
+            items.append(URLQueryItem(name: "offset", value: String(offset)))
+        }
         let trimmed = search.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             items.append(URLQueryItem(name: "query", value: trimmed))
         }
         return items
+    }
+}
+
+public extension HubClient {
+    /// Every job for the status and search, read a page at a time.
+    func getAllJobs(search: String, status: JobStatusFilter) async throws -> JobsResponse {
+        var response = try await get(
+            "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: JobsQuery.pageSize), as: JobsResponse.self
+        )
+        while response.jobs.count < response.total {
+            let page = try await get(
+                "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: JobsQuery.pageSize, offset: response.jobs.count),
+                as: JobsResponse.self
+            )
+            if page.jobs.isEmpty {
+                break
+            }
+            response.jobs += page.jobs
+        }
+        return response
     }
 }

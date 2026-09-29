@@ -58,7 +58,10 @@ final class StubHub: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        let answer = recording.answers[request.url?.path() ?? ""] ?? Answer(status: 404, body: #"{"error":"not found"}"#)
+        // An answer keyed by path and query wins over one keyed by the path alone.
+        let path = request.url?.path() ?? ""
+        let pathAndQuery = request.url?.query().map { path + "?" + $0 }
+        let answer = pathAndQuery.flatMap { recording.answers[$0] } ?? recording.answers[path] ?? Answer(status: 404, body: #"{"error":"not found"}"#)
         let response = HTTPURLResponse(url: request.url!, statusCode: answer.status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(answer.body.utf8))

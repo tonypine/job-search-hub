@@ -36,6 +36,27 @@ private let jobsJSON = #"""
     #expect(withoutSearch.contains(URLQueryItem(name: "status", value: "all")))
 }
 
+private func makeJobsPageJSON(titles: [String], total: Int) -> String {
+    let jobs = titles.map { title in
+        #"{"job":{"id":"\#(UUID().uuidString)","source":"manual","title":"\#(title)","url":"https://acme.com/\#(title)","#
+            + #""first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z"},"fit":{"level":"good","checks":[]},"unseen_updates":0}"#
+    }
+    return #"{"jobs":[\#(jobs.joined(separator: ","))],"total":\#(total)}"#
+}
+
+@Test func everyJobIsReadAPageAtATime() async throws {
+    let (session, _) = StubHub.makeSession(answers: [
+        "/v1/jobs?status=open&limit=500": StubHub.Answer(status: 200, body: makeJobsPageJSON(titles: ["a", "b"], total: 3)),
+        "/v1/jobs?status=open&limit=500&offset=2": StubHub.Answer(status: 200, body: makeJobsPageJSON(titles: ["c"], total: 3)),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    let response = try await client.getAllJobs(search: "", status: .open)
+
+    #expect(response.jobs.map(\.job.title) == ["a", "b", "c"])
+    #expect(response.total == 3)
+}
+
 @Test func queryItemsLandInTheURLNotThePath() {
     let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t")
     let request = client.makeRequest(method: "GET", path: "v1/jobs", query: [URLQueryItem(name: "query", value: "front end")], body: nil)

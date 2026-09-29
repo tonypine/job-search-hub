@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 @Observable
 final class JobsModel {
-    static let pageSize = 500
     private static let lastVisitPreferenceKey = "jobsLastVisitedAt"
 
     private(set) var items: [JobListItem] = []
@@ -38,9 +37,7 @@ final class JobsModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            let response = try await client.get(
-                "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: Self.pageSize), as: JobsResponse.self
-            )
+            let response = try await client.getAllJobs(search: search, status: status)
             items = response.jobs
             total = response.total
             factColumns = response.factColumns ?? []
