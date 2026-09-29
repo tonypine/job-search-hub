@@ -344,10 +344,12 @@ type JobFilter struct {
 // JobListItem is one row of the jobs list: a job, its company's name, and
 // the facts read from it, which the fit is judged from.
 type JobListItem struct {
-	Job           Job             `json:"job"`
-	CompanyName   *string         `json:"company_name,omitempty"`
-	UnseenUpdates int             `json:"unseen_updates"`
-	Facts         json.RawMessage `json:"-"`
+	Job           Job     `json:"job"`
+	CompanyName   *string `json:"company_name,omitempty"`
+	UnseenUpdates int     `json:"unseen_updates"`
+	// Facts are the facts read from the job's text, by key; absent until
+	// read.
+	Facts json.RawMessage `json:"facts,omitempty"`
 }
 
 // ListJobs returns one page of jobs, newest first, with the total that match.

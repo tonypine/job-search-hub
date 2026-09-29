@@ -154,3 +154,46 @@ func labelJobFacts(rawFacts, schema json.RawMessage) ([]JobFactEntry, error) {
 	}
 	return entries, nil
 }
+
+// JobFactColumn is one fact the current job_facts prompt reads, as a column
+// of the jobs list: its key and the schema's title for it.
+type JobFactColumn struct {
+	Key   string `json:"key"`
+	Title string `json:"title"`
+}
+
+// ListJobFactColumns returns the facts the current job_facts prompt reads, in
+// the schema's order: its required list, then its other properties.
+func (s *Store) ListJobFactColumns(ctx context.Context) ([]JobFactColumn, error) {
+	prompt, err := s.GetLatestAgentPrompt(ctx, AgentPromptKindJobFacts)
+	if errors.Is(err, ErrAgentPromptNotFound) || (err == nil && len(prompt.ResultSchema) == 0) {
+		return []JobFactColumn{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var schema struct {
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Title string `json:"title"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(prompt.ResultSchema, &schema); err != nil {
+		return nil, err
+	}
+	columns := []JobFactColumn{}
+	seen := map[string]bool{}
+	for _, key := range append(slices.Clone(schema.Required), slices.Sorted(maps.Keys(schema.Properties))...) {
+		property, known := schema.Properties[key]
+		if !known || seen[key] {
+			continue
+		}
+		seen[key] = true
+		title := property.Title
+		if title == "" {
+			title = key
+		}
+		columns = append(columns, JobFactColumn{Key: key, Title: title})
+	}
+	return columns, nil
+}

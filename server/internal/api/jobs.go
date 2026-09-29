@@ -58,6 +58,8 @@ func readFitInputs(ctx context.Context, hub *store.Store, rateSource exchangeRat
 type jobsResponse struct {
 	Jobs  []judgedJobListItem `json:"jobs"`
 	Total int                 `json:"total"`
+	// FactColumns are the facts the jobs' facts hold, as list columns.
+	FactColumns []store.JobFactColumn `json:"fact_columns"`
 }
 
 // judgedJobListItem is a row of the jobs list with its fit.
@@ -113,7 +115,12 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 		for _, item := range jobs {
 			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: jobfit.Judge(item.Job, item.Facts, criteria, rates)})
 		}
-		writeJSON(w, http.StatusOK, jobsResponse{Jobs: judged, Total: total})
+		factColumns, err := hub.ListJobFactColumns(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, jobsResponse{Jobs: judged, Total: total, FactColumns: factColumns})
 	})))
 
 	routes.Handle("GET /v1/jobs/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

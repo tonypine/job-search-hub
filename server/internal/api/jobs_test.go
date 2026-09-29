@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,19 +214,31 @@ func TestTheJobsListAndDetailsCarryTheFit(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Senior Go Engineer", URL: "https://acme.com/jobs/9", Location: "Americas"})
+	factsPrompt, _ := service.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{
+		JobID: job.ID, PromptID: factsPrompt.ID, Model: "test-model", TextHash: []byte{1}, Facts: json.RawMessage(`{"years_of_experience":6}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	status, body := send(t, http.MethodGet, service.url+"/v1/jobs", ownerToken, "")
 	var list struct {
 		Jobs []struct {
-			Job store.Job  `json:"job"`
-			Fit jobfit.Fit `json:"fit"`
+			Job   store.Job       `json:"job"`
+			Fit   jobfit.Fit      `json:"fit"`
+			Facts json.RawMessage `json:"facts"`
 		} `json:"jobs"`
+		FactColumns []store.JobFactColumn `json:"fact_columns"`
 	}
 	if err := json.Unmarshal(body, &list); status != http.StatusOK || err != nil || len(list.Jobs) != 1 {
 		t.Fatalf("list: %d %s", status, body)
 	}
 	if fit := list.Jobs[0].Fit; fit.Level != jobfit.LevelGood || len(fit.Checks) != 4 {
 		t.Fatalf("list fit = %+v", fit)
+	}
+	if !strings.Contains(string(list.Jobs[0].Facts), `"years_of_experience":6`) || len(list.FactColumns) == 0 ||
+		list.FactColumns[0] != (store.JobFactColumn{Key: "summary", Title: "Summary"}) {
+		t.Fatalf("list facts = %s, columns = %+v", list.Jobs[0].Facts, list.FactColumns)
 	}
 
 	status, body = send(t, http.MethodGet, service.url+"/v1/jobs/"+job.ID.String(), ownerToken, "")

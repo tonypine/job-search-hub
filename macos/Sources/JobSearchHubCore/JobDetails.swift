@@ -55,7 +55,7 @@ public enum JobFactDisplay: Equatable, Sendable {
 }
 
 /// Any JSON value, for facts whose shape the prompt decides.
-public enum JSONValue: Decodable, Equatable, Sendable {
+public enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -77,6 +77,18 @@ public enum JSONValue: Decodable, Equatable, Sendable {
             self = .array(array)
         } else {
             self = .object(try container.decode([String: JSONValue].self))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .string(text): try container.encode(text)
+        case let .number(number): try container.encode(number)
+        case let .bool(bool): try container.encode(bool)
+        case .null: try container.encodeNil()
+        case let .array(items): try container.encode(items)
+        case let .object(members): try container.encode(members)
         }
     }
 

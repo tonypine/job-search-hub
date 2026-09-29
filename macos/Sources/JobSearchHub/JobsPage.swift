@@ -24,6 +24,8 @@ final class JobsModel {
         JobsOrder.sort(hidesPoorFits ? JobsOrder.hidePoorFits(items) : items)
     }
     private(set) var total = 0
+    /// The facts read from postings, which the table can show as columns.
+    private(set) var factColumns: [JobFactColumn] = []
     private(set) var isLoading = false
     private(set) var loadError: String?
     private(set) var isAddingToPipeline = false
@@ -41,6 +43,7 @@ final class JobsModel {
             )
             items = response.jobs
             total = response.total
+            factColumns = response.factColumns ?? []
             loadError = nil
         } catch {
             loadError = String(describing: error)
@@ -85,6 +88,8 @@ struct JobsPage: View {
     @Environment(DetailsInspector.self) private var details
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
+    /// Which columns show, in what order and width, kept across launches.
+    @AppStorage("jobsTableColumns") private var savedColumns = Data()
 
     private let initialJobID: UUID?
     private let opensSession: Bool
@@ -133,9 +138,10 @@ struct JobsPage: View {
     }
 
     private func table(client: HubClient) -> some View {
-        Table(model.shownItems, selection: $model.selectedID) {
+        Table(of: JobListItem.self, selection: $model.selectedID, columnCustomization: columnCustomization) {
             TableColumn("Fit") { item in FitLabel(level: item.fit.level) }
                 .width(70)
+                .customizationID("fit")
             TableColumn("Title") { item in
                 HStack(spacing: 6) {
                     UnseenDot(count: item.unseenUpdates)
@@ -146,12 +152,44 @@ struct JobsPage: View {
                     }
                 }
             }
+            .width(min: 160, ideal: 280)
+            .customizationID("title")
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Company") { item in Text(item.companyName ?? "–") }
                 .width(min: 100, ideal: 140)
+                .customizationID("company")
             TableColumn("Location") { item in Text(item.job.location ?? "").help(item.job.location ?? "") }
                 .width(min: 120, ideal: 200)
+                .customizationID("location")
             TableColumn("First seen") { item in Text(item.job.firstSeenAt.formatted(date: .abbreviated, time: .omitted)) }
                 .width(100)
+                .customizationID("firstSeen")
+            TableColumnForEach(JobsColumns.boardFacts) { column in
+                TableColumn(column.title) { item in
+                    let text = column.getText(item).flatMap { $0.isEmpty ? nil : $0 } ?? "–"
+                    Text(text).help(text)
+                }
+                .width(min: 70, ideal: 130)
+                .customizationID(column.id)
+                .defaultVisibility(.hidden)
+            }
+            TableColumnForEach(JobsColumns.fitChecks) { check in
+                TableColumn(check.title) { item in FitCheckCell(check: item.getFitCheck(check.name)) }
+                    .width(min: 80, ideal: 160)
+                    .customizationID(check.id)
+                    .defaultVisibility(.hidden)
+            }
+            TableColumnForEach(model.factColumns) { column in
+                TableColumn(column.title) { item in
+                    let text = item.getFactText(column.key) ?? "–"
+                    Text(text).help(text)
+                }
+                .width(min: 80, ideal: 160)
+                .customizationID(JobsColumns.getFactColumnID(column.key))
+                .defaultVisibility(.hidden)
+            }
+        } rows: {
+            ForEach(model.shownItems) { item in TableRow(item) }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -168,6 +206,7 @@ struct JobsPage: View {
             }
             .pickerStyle(.menu)
             .fixedSize()
+            ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
             Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                 .disabled(model.isLoading)
@@ -194,6 +233,13 @@ struct JobsPage: View {
                     }
             }
         }
+    }
+
+    private var columnCustomization: Binding<TableColumnCustomization<JobListItem>> {
+        Binding(
+            get: { (try? JSONDecoder().decode(TableColumnCustomization<JobListItem>.self, from: savedColumns)) ?? TableColumnCustomization() },
+            set: { savedColumns = (try? JSONEncoder().encode($0)) ?? Data() }
+        )
     }
 
     private func open(_ ids: Set<UUID>) {

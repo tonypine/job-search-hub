@@ -61,8 +61,26 @@ public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
     public var fit: JobFit
     /// Updates about the job the owner hasn't seen yet.
     public var unseenUpdates: Int
+    /// The facts read from the job's text, by key; nil until read.
+    public var facts: [String: JSONValue]?
 
     public var id: UUID { job.id }
+
+    /// A fact as a list cell shows it: its text, a list joined by commas, or
+    /// nil when the posting doesn't say or it hasn't been read.
+    public func getFactText(_ key: String) -> String? {
+        guard let value = facts?[key] else { return nil }
+        switch JobFactEntry(key: key, title: key, value: value).display {
+        case let .text(text): return text
+        case let .list(items): return items.joined(separator: ", ")
+        case .notStated: return nil
+        }
+    }
+
+    /// The fit check of that name, when the fit has one.
+    public func getFitCheck(_ name: String) -> FitCheck? {
+        fit.checks.first { $0.name == name }
+    }
 
     /// Whether the job was first seen after `lastVisit`; with no earlier
     /// visit, nothing is new.
@@ -75,6 +93,24 @@ public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
 public struct JobsResponse: Codable, Equatable, Sendable {
     public var jobs: [JobListItem]
     public var total: Int
+    /// The facts the jobs' facts hold, in the order to show them as columns.
+    public var factColumns: [JobFactColumn]?
+}
+
+/// One fact read from job postings, as a column of the jobs list.
+public struct JobFactColumn: Codable, Equatable, Identifiable, Sendable {
+    public var key: String
+    public var title: String
+
+    public var id: String { key }
+}
+
+extension Pay {
+    /// The pay as one line: the board's summary, or its ranges.
+    public var summaryLine: String {
+        if let summary, !summary.isEmpty { return summary }
+        return ranges.map { $0.format() }.joined(separator: " · ")
+    }
 }
 
 public struct AddJobRequest: Codable, Equatable, Sendable {
