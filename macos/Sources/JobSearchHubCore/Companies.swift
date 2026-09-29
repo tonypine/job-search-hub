@@ -92,6 +92,39 @@ public struct CompanyDossier: Codable, Equatable, Sendable {
     public var people: [Person]
     /// The owner's connections who work here.
     public var connections: [Connection]?
+    /// People the owner knows who don't work here but can open doors.
+    public var warmPaths: [WarmPath]?
+}
+
+/// Someone the owner knows who can open doors at a company without working
+/// there, and how.
+public struct WarmPath: Codable, Equatable, Identifiable, Sendable {
+    public var contactID: UUID
+    public var name: String
+    public var howKnown: String?
+    public var preferredChannel: String?
+    public var note: String?
+
+    public var id: UUID { contactID }
+
+    enum CodingKeys: String, CodingKey {
+        case name, howKnown, preferredChannel, note
+        case contactID = "contactId"
+    }
+}
+
+public struct AddWarmPathRequest: Encodable, Sendable {
+    public var name: String
+    public var howKnown: String
+    public var preferredChannel: String
+    public var note: String
+
+    public init(name: String, howKnown: String, preferredChannel: String, note: String) {
+        self.name = name
+        self.howKnown = howKnown
+        self.preferredChannel = preferredChannel
+        self.note = note
+    }
 }
 
 public struct CompaniesResponse: Codable, Equatable, Sendable {

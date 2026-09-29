@@ -122,7 +122,7 @@ struct CompaniesPage: View {
             if side == .session, let companyID = model.selectedID {
                 ClaudeSessionPane(subject: .company(companyID), client: client, startsOnAppear: opensSession)
             } else {
-                DossierPane(dossier: model.dossier)
+                DossierPane(dossier: model.dossier, client: client) { Task { await model.loadDossier(with: client) } }
             }
         }
     }
@@ -166,6 +166,11 @@ struct CompaniesPage: View {
 
 struct DossierPane: View {
     let dossier: CompanyDossier?
+    let client: HubClient
+    /// Reads the dossier again after a change made from it.
+    let onChanged: () -> Void
+    @State private var isAddingWarmPath = false
+    @State private var errorMessage: String?
 
     var body: some View {
         if let dossier {
@@ -197,6 +202,8 @@ struct DossierPane: View {
                         }
                     }
 
+                    warmPathsSection(dossier)
+
                     section("People") {
                         if dossier.people.isEmpty {
                             Text("None stored").foregroundStyle(.secondary)
@@ -221,6 +228,53 @@ struct DossierPane: View {
             }
         } else {
             ContentUnavailableView("No company selected", systemImage: "building.2")
+        }
+    }
+
+    /// People who don't work here but can open doors, and a way to add one.
+    private func warmPathsSection(_ dossier: CompanyDossier) -> some View {
+        section("Can introduce you") {
+            ForEach(dossier.warmPaths ?? []) { path in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(path.name).bold()
+                    Text([path.note, path.howKnown, path.preferredChannel.map { "prefers \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                        .foregroundStyle(.secondary)
+                }
+                .contextMenu {
+                    Button("Remove from \(dossier.company.name)", role: .destructive) { remove(path, from: dossier.company) }
+                }
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Button("Add someone who can introduce you", systemImage: "person.badge.plus") { isAddingWarmPath = true }
+                .buttonStyle(.link)
+        }
+        .sheet(isPresented: $isAddingWarmPath) {
+            WarmPathSheet(companyName: dossier.company.name) { request in
+                do {
+                    _ = try await client.send("POST", "v1/companies/\(dossier.company.id)/warm-paths", body: request, as: WarmPath.self)
+                    errorMessage = nil
+                    onChanged()
+                    return true
+                } catch {
+                    errorMessage = "Could not add them: \(error)"
+                    return false
+                }
+            }
+        }
+    }
+
+    private func remove(_ path: WarmPath, from company: Company) {
+        Task {
+            do {
+                try await client.delete("v1/companies/\(company.id)/warm-paths/\(path.contactID)")
+                errorMessage = nil
+                onChanged()
+            } catch {
+                errorMessage = "Could not remove them: \(error)"
+            }
         }
     }
 
@@ -256,5 +310,43 @@ struct DossierPane: View {
         } else {
             Text(title)
         }
+    }
+}
+
+/// Adds someone the owner knows as a warm path to one company.
+struct WarmPathSheet: View {
+    let companyName: String
+    let onAdd: (AddWarmPathRequest) async -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var howKnown = ""
+    @State private var preferredChannel = ""
+    @State private var note = ""
+    @State private var isAdding = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Someone who can introduce you at \(companyName)").font(.title3.weight(.semibold))
+            TextField("Name", text: $name, prompt: Text("As you call them; the same name links them to other companies"))
+            TextField("How you know them", text: $howKnown, prompt: Text("e.g. a former colleague"))
+            TextField("Where to reach them", text: $preferredChannel, prompt: Text("e.g. LinkedIn, WhatsApp"))
+            TextField("How they can help here", text: $note, prompt: Text("e.g. interviewed there, knows the CTO"))
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add") {
+                    isAdding = true
+                    Task {
+                        let added = await onAdd(AddWarmPathRequest(name: name, howKnown: howKnown, preferredChannel: preferredChannel, note: note))
+                        isAdding = false
+                        if added { dismiss() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isAdding)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
     }
 }

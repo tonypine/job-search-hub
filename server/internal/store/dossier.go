@@ -16,6 +16,9 @@ type CompanyDossier struct {
 	// Connections are the owner's LinkedIn connections who work here: warm
 	// paths, to try before anyone the owner doesn't know.
 	Connections []Connection `json:"connections" jsonschema:"the owner's LinkedIn connections who work here: warm paths to try before anyone the owner doesn't know"`
+	// WarmPaths are people the owner knows who don't work here but can open
+	// doors, such as someone who interviewed here.
+	WarmPaths []WarmPath `json:"warm_paths" jsonschema:"people the owner knows who don't work here but can open doors, e.g. someone who interviewed here: ask them for an introduction or insight, through their preferred channel"`
 }
 
 func (s *Store) GetCompanyDossier(ctx context.Context, companyID uuid.UUID) (CompanyDossier, error) {
@@ -39,5 +42,9 @@ func (s *Store) GetCompanyDossier(ctx context.Context, companyID uuid.UUID) (Com
 	if err != nil {
 		return CompanyDossier{}, err
 	}
-	return CompanyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards, People: people, Connections: connections}, nil
+	warmPaths, err := s.ListCompanyWarmPaths(ctx, companyID)
+	if err != nil {
+		return CompanyDossier{}, err
+	}
+	return CompanyDossier{Company: company, WatchedSince: watchedSince, JobBoards: jobBoards, People: people, Connections: connections, WarmPaths: warmPaths}, nil
 }
