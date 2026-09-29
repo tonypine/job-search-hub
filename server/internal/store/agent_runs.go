@@ -119,3 +119,12 @@ func (s *Store) GetRunningAgentRunByTokenHash(ctx context.Context, tokenHash []b
 		SELECT `+agentRunColumns+` FROM agent_runs
 		WHERE token_hash = $1 AND status = 'running' AND token_expires_at > now()`, tokenHash))
 }
+
+// ListAgentRuns returns up to limit agent runs, the latest started first.
+func (s *Store) ListAgentRuns(ctx context.Context, limit int) ([]AgentRun, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+agentRunColumns+` FROM agent_runs ORDER BY started_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AgentRun, error) { return scanAgentRun(row) })
+}

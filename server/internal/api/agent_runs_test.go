@@ -211,3 +211,19 @@ func TestStartingARunReturnsTheRenderedPromptAndItsSchema(t *testing.T) {
 		t.Fatalf("result_schema = %s", started.ResultSchema)
 	}
 }
+
+func TestAgentRunsAreListedLatestFirst(t *testing.T) {
+	service := startAPI(t)
+	for _, company := range []string{"first.example", "second.example"} {
+		if status, answer := send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, `{"kind":"company_triage","input":"`+company+`"}`); status != http.StatusCreated {
+			t.Fatalf("start: %d %s", status, answer)
+		}
+	}
+	status, answer := send(t, http.MethodGet, service.url+"/v1/agent-runs?limit=10", ownerToken, "")
+	var listed struct {
+		Runs []store.AgentRun `json:"runs"`
+	}
+	if json.Unmarshal(answer, &listed); status != http.StatusOK || len(listed.Runs) != 2 || listed.Runs[0].Input != "second.example" {
+		t.Fatalf("agent runs: %d %s", status, answer)
+	}
+}

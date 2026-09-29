@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,7 +17,15 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
-const agentRunTokenLifetime = 30 * time.Minute
+const (
+	agentRunTokenLifetime   = 30 * time.Minute
+	defaultAgentRunPageSize = 100
+	maximumAgentRunPageSize = 500
+)
+
+type agentRunsResponse struct {
+	Runs []store.AgentRun `json:"runs"`
+}
 
 // agentRunResultSchemas are the kinds of run the owner can start, by the
 // shape of the result each must answer with. A company run's input is the
@@ -131,6 +140,19 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 		default:
 			writeJSON(w, http.StatusOK, agentRunResponse{AgentRun: run})
 		}
+	})))
+
+	routes.Handle("GET /v1/agent-runs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 || limit > maximumAgentRunPageSize {
+			limit = defaultAgentRunPageSize
+		}
+		runs, err := hub.ListAgentRuns(r.Context(), limit)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, agentRunsResponse{Runs: runs})
 	})))
 
 	routes.Handle("GET /v1/agent-runs/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

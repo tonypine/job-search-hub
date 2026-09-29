@@ -144,6 +144,7 @@ struct ContentView: View {
                 RecruitersPage(onOpenCompany: { open(.company($0), opensSession: false) })
             case .profile: ProfilePage()
             case .prompts: PromptsPage()
+            case .runs: RunsPage()
             case .jobs:
                 JobsPage(
                     initialJobID: focusedJobID ?? initialJobID,
