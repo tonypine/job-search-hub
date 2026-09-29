@@ -82,6 +82,7 @@ struct JobsPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(DetailsInspector.self) private var details
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
 
@@ -105,11 +106,11 @@ struct JobsPage: View {
                         await model.load(with: client)
                     }
                     .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
-                    .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
-                        if let selectedID = model.selectedID {
-                            JobPanel(jobID: selectedID, client: client, opensSession: opensSession && selectedID == initialJobID)
-                                .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
-                        }
+                    .onChange(of: model.selectedID, initial: true) {
+                        details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
+                    }
+                    .onChange(of: details.getSubject(on: .jobs)) {
+                        if details.getSubject(on: .jobs) == nil { model.selectedID = nil }
                     }
                     .sheet(isPresented: $isAddingByURL) {
                         AddJobSheet(client: client) { added in
@@ -159,17 +160,19 @@ struct JobsPage: View {
         } primaryAction: { ids in
             open(ids)
         }
-        .searchable(text: $model.search, prompt: "Title, location or company")
         .toolbar {
             Toggle("Hide poor fits", systemImage: "line.3.horizontal.decrease.circle", isOn: $model.hidesPoorFits)
                 .help("Hide the jobs judged a poor fit; good and unclear ones stay")
             Picker("Status", selection: $model.status) {
                 ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
+            .fixedSize()
             Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                 .disabled(model.isLoading)
+            ToolbarSearchField(text: $model.search, prompt: "Title, location or company")
+                .frame(width: 180)
         }
         .overlay {
             if let loadError = model.loadError {

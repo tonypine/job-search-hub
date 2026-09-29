@@ -72,6 +72,7 @@ struct PipelinePage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(DetailsInspector.self) private var details
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
@@ -96,9 +97,9 @@ struct PipelinePage: View {
                         }
                     }
                     .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
-                    .inspector(isPresented: Binding(get: { selectedCardID != nil }, set: { if !$0 { selectedCardID = nil } })) {
-                        selectedCardDetail(client: client)
-                            .inspectorColumnWidth(min: 360, ideal: 460, max: 720)
+                    .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
+                    .onChange(of: details.getSubject(on: .pipeline)) {
+                        if details.getSubject(on: .pipeline) == nil { selectedCardID = nil }
                     }
             } else {
                 ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
@@ -172,18 +173,14 @@ struct PipelinePage: View {
     /// A card's job panel. A card for a company alone has no panel, so
     /// selecting it is what marks the company's updates seen.
     @ViewBuilder
-    private func selectedCardDetail(client: HubClient) -> some View {
-        let application = model.board.cards.first(where: { $0.id == selectedCardID })?.application
-        if let jobID = application?.jobID {
-            JobPanel(jobID: jobID, client: client)
-        } else {
-            ContentUnavailableView("No job on this card", systemImage: "building.2", description: Text("This application is to a company, not a posting."))
-                .task(id: application?.id) {
-                    if let companyID = application?.companyID {
-                        await unseen.markSeen(UpdateSelection(companyID: companyID), with: client)
-                    }
-                }
+    /// The selected card's details: its job's, or its company's for a card
+    /// without one.
+    private var selectedCardSubject: DetailsInspector.Subject? {
+        guard let application = model.board.cards.first(where: { $0.id == selectedCardID })?.application else { return nil }
+        if let jobID = application.jobID {
+            return .job(jobID, opensSession: false)
         }
+        return .companyApplication(companyID: application.companyID)
     }
 
     /// Shares the width among the columns so every phase shows at once, down

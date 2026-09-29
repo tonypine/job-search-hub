@@ -81,6 +81,7 @@ struct ContentView: View {
     @Environment(UnseenUpdates.self) private var unseen
     @State private var selectedPage: Page?
     @State private var focus: SubjectFocus?
+    @State private var details = DetailsInspector()
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -127,11 +128,23 @@ struct ContentView: View {
             case nil: EmptyView()
             }
         }
+        .inspector(isPresented: Binding(get: { shownDetails != nil }, set: { if !$0 { details.hide() } })) {
+            if let shownDetails, let client = connection.makeClient() {
+                DetailsInspectorContent(subject: shownDetails, client: client)
+                    .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
+                    .toolbar { HideDetailsButton { details.hide() } }
+            }
+        }
+        .environment(details)
         .task(id: events.revision) {
             if let client = connection.makeClient() {
                 await unseen.refresh(with: client)
             }
         }
+    }
+
+    private var shownDetails: DetailsInspector.Subject? {
+        selectedPage.flatMap { details.getSubject(on: $0) }
     }
 
     private var focusedJobID: UUID? {
