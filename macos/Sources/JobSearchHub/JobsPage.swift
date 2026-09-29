@@ -221,11 +221,18 @@ struct JobsPage: View {
                     newCount: model.items.count { $0.isNew(since: model.previousVisit) }
                 )
             }
-            Picker("Status", selection: $model.status) {
-                ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
+            // The toolbar shows only icons unless told otherwise, which left the status blank.
+            Menu {
+                Picker("Status", selection: $model.status) {
+                    ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label(model.status.title, systemImage: "tray.full")
             }
-            .pickerStyle(.menu)
+            .labelStyle(.titleAndIcon)
             .fixedSize()
+            .help("Show open, closed or all jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
             Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
