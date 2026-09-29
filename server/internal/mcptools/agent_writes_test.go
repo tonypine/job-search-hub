@@ -38,7 +38,7 @@ func TestAgentsCannotChangeTheWatchList(t *testing.T) {
 	companyID := map[string]any{"company_id": created.Company.ID}
 
 	for _, tool := range []string{"add_to_watch_list", "remove_from_watch_list"} {
-		if text := callFailingTool(t, agent, tool, companyID); !strings.Contains(text, "only the owner") {
+		if text := callRefusedTool(t, agent, tool, companyID); !strings.Contains(text, "unknown tool") {
 			t.Errorf("%s error = %q", tool, text)
 		}
 	}

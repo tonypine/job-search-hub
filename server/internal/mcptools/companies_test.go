@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -122,5 +123,30 @@ func TestGetCompanyExplainsWhatIsMissing(t *testing.T) {
 	}
 	if text := callFailingTool(t, session, "get_company", map[string]any{"domain": "unknown.com"}); !strings.Contains(text, "not found") {
 		t.Fatalf("error = %q", text)
+	}
+}
+
+func TestAnAgentsSessionListsNoOwnerTool(t *testing.T) {
+	hub := startHub(t)
+	_, token := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	agent := connect(t, hub, token)
+
+	listed, err := agent.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, tool := range listed.Tools {
+		names[tool.Name] = true
+	}
+	for _, ownerTool := range []string{"add_to_watch_list", "remove_from_watch_list", "update_agent_prompt", "update_job_criteria", "update_owner_profile", "save_application_answer"} {
+		if names[ownerTool] {
+			t.Errorf("an agent's session lists %s", ownerTool)
+		}
+	}
+	for _, agentTool := range []string{"create_company", "get_company", "add_person", "set_job_board", "list_application_answers", "get_artifact_text"} {
+		if !names[agentTool] {
+			t.Errorf("an agent's session lacks %s", agentTool)
+		}
 	}
 }

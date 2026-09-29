@@ -22,7 +22,7 @@ func TestTheOwnerWritesTheProfileAndAgentsOnlyReadIt(t *testing.T) {
 	if read := callTool[store.OwnerProfile](t, agent, "get_owner_profile", map[string]any{}); read.Body != "# Candidate\nSenior engineer." {
 		t.Fatalf("agent read %q", read.Body)
 	}
-	if text := callFailingTool(t, agent, "update_owner_profile", map[string]any{"body": "changed"}); !strings.Contains(text, "only the owner") {
+	if text := callRefusedTool(t, agent, "update_owner_profile", map[string]any{"body": "changed"}); !strings.Contains(text, "unknown tool") {
 		t.Fatalf("error = %q", text)
 	}
 	if after := callTool[store.OwnerProfile](t, owner, "get_owner_profile", map[string]any{}); after.Body != "# Candidate\nSenior engineer." {

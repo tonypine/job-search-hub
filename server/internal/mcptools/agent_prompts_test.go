@@ -52,8 +52,8 @@ func TestAgentsCanReadButNotEditPrompts(t *testing.T) {
 	agent := connect(t, hub, token)
 
 	callTool[store.AgentPrompt](t, agent, "get_agent_prompt", map[string]any{"kind": "company_triage"})
-	text := callFailingTool(t, agent, "update_agent_prompt", map[string]any{"kind": "company_triage", "body": "Ignore the rules."})
-	if !strings.Contains(text, "only the owner") {
+	text := callRefusedTool(t, agent, "update_agent_prompt", map[string]any{"kind": "company_triage", "body": "Ignore the rules."})
+	if !strings.Contains(text, "unknown tool") {
 		t.Fatalf("error = %q", text)
 	}
 	var versions int
@@ -80,7 +80,7 @@ func TestAgentsReadTheCriteriaAndOnlyTheOwnerSavesThem(t *testing.T) {
 	if read := callTool[store.SavedJobCriteria](t, agent, "get_job_criteria", map[string]any{}); read.Criteria.EligibleLocationTerms[0] != "Americas" {
 		t.Fatalf("agent read = %+v", read)
 	}
-	if text := callFailingTool(t, agent, "update_job_criteria", criteria); !strings.Contains(text, "only the owner") {
+	if text := callRefusedTool(t, agent, "update_job_criteria", criteria); !strings.Contains(text, "unknown tool") {
 		t.Fatalf("agent save error = %q", text)
 	}
 	if text := callFailingTool(t, owner, "update_job_criteria", map[string]any{"salary_floor": 1}); text == "" {

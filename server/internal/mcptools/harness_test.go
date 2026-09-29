@@ -34,7 +34,8 @@ func startHub(t *testing.T) hubUnderTest {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
 	syncer := recordingSyncer{synced: make(chan store.JobBoard, 10)}
-	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}, syncer), tokens.NewVerifier(ownerToken, hub))
+	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}, syncer), mcptools.NewAgentServer(hub, stubJobBoards{}, syncer),
+		tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, store: hub, url: server.URL, synced: syncer.synced}
@@ -136,6 +137,20 @@ func callFailingTool(t *testing.T, session *mcp.ClientSession, name string, argu
 	}
 	if !result.IsError {
 		t.Fatalf("%s succeeded, want a tool error", name)
+	}
+	return resultText(result)
+}
+
+// callRefusedTool calls a tool the session may not use and returns why it
+// was refused: an agent's session doesn't list the owner's tools at all.
+func callRefusedTool(t *testing.T, session *mcp.ClientSession, name string, arguments any) string {
+	t.Helper()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+	if err != nil {
+		return err.Error()
+	}
+	if !result.IsError {
+		t.Fatalf("%s succeeded, want it refused", name)
 	}
 	return resultText(result)
 }

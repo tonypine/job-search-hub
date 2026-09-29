@@ -45,10 +45,30 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSynce
 	return server
 }
 
-// NewHandler serves the MCP server over streamable HTTP to callers holding a
-// token the verifier accepts.
-func NewHandler(server *mcp.Server, verifier auth.TokenVerifier) http.Handler {
-	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+// ownerOnlyTools are the owner's own decisions; an agent's server doesn't
+// list them, and they refuse an agent that calls them anyway.
+var ownerOnlyTools = []string{
+	"add_to_watch_list", "remove_from_watch_list", "update_agent_prompt", "update_job_criteria", "update_owner_profile",
+	"save_application_answer",
+}
+
+// NewAgentServer is NewServer without the owner-only tools, for agent runs.
+func NewAgentServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) *mcp.Server {
+	server := NewServer(hub, verifier, syncer)
+	server.RemoveTools(ownerOnlyTools...)
+	return server
+}
+
+// NewHandler serves the MCP servers over streamable HTTP to callers holding a
+// token the verifier accepts: the owner gets ownerServer, and an agent run
+// agentServer.
+func NewHandler(ownerServer, agentServer *mcp.Server, verifier auth.TokenVerifier) http.Handler {
+	streamable := mcp.NewStreamableHTTPHandler(func(request *http.Request) *mcp.Server {
+		if actor, err := tokens.GetActor(request.Context()); err == nil && actor.Kind == store.ActorOwner {
+			return ownerServer
+		}
+		return agentServer
+	}, nil)
 	requireToken := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	return requireToken(streamable)
 }

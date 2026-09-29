@@ -45,7 +45,7 @@ func startHub(t *testing.T) hubUnderTest {
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	}))
 	boards := jobboards.NewVerifier()
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards)), verifier))
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards)), mcptools.NewAgentServer(hub, boards, boardpoller.New(hub, boards)), verifier))
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, store: hub, config: cliConfig{HubURL: server.URL, OwnerToken: testOwnerToken}}
