@@ -27,14 +27,16 @@ func TestJobsAwaitFactsUntilReadAndAgainWhenThePromptOrTheirTextChanges(t *testi
 	hub := store.New(testdatabase.New(t))
 	ctx := context.Background()
 	board := createBoard(t, hub)
-	postings := []store.JobPosting{posting("1", "Engineer"), posting("2", "Designer")}
+	postings := []store.JobPosting{posting("1", "Engineer"), posting("2", "Designer"), posting("3", "Untitled role")}
+	postings[0].Description = "Build the API."
+	postings[1].Description = "Design the app."
 	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, postings, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
 
 	if titles := awaitingTitles(t, hub, prompt); len(titles) != 2 {
-		t.Fatalf("awaiting = %v, want both jobs", titles)
+		t.Fatalf("awaiting = %v, want the two jobs with a description", titles)
 	}
 	jobs, _ := hub.ListJobsAwaitingFacts(ctx, prompt.ID, 100)
 	for _, job := range jobs {

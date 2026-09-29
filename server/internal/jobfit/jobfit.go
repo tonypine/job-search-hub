@@ -198,6 +198,8 @@ func checkStack(job store.Job, facts readFacts, criteria store.JobCriteria) Chec
 		return Check{Name: name, Verdict: VerdictYes, Reason: strings.Join(matched, ", ")}
 	case len(facts.Technologies) > 0:
 		return Check{Name: name, Verdict: VerdictNo, Reason: "asks for " + strings.Join(firstOf(facts.Technologies, 4), ", ")}
+	case strings.TrimSpace(job.Description) == "":
+		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the listing has no text to read"}
 	default:
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "no technologies read yet"}
 	}

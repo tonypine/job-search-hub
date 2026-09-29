@@ -90,6 +90,14 @@ func TestStackAndLevel(t *testing.T) {
 	}
 }
 
+func TestAListingWithoutTextSaysSoInsteadOfWaitingForFacts(t *testing.T) {
+	waiting := findCheck(t, jobfit.Judge(store.Job{Title: "Engineer", Description: "Build things."}, nil, criteria, rates), "Stack")
+	textless := findCheck(t, jobfit.Judge(store.Job{Title: "Engineer"}, nil, criteria, rates), "Stack")
+	if waiting.Reason != "no technologies read yet" || textless.Reason != "the listing has no text to read" {
+		t.Errorf("with text: %q; without: %q", waiting.Reason, textless.Reason)
+	}
+}
+
 var rates = jobfit.ExchangeRates{Base: "BRL", PerBase: map[string]float64{"USD": 0.2, "CAD": 0.27}}
 
 var takeHome = store.TakeHome{

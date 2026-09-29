@@ -30,14 +30,15 @@ type JobAwaitingFacts struct {
 // facts cover.
 const jobTextHash = `sha256(convert_to(jobs.title || E'\n' || jobs.location || E'\n' || jobs.description, 'UTF8'))`
 
-// ListJobsAwaitingFacts returns up to limit open jobs, newest first, that have
-// no facts, facts from another prompt version, or facts read from text that
-// has since changed.
+// ListJobsAwaitingFacts returns up to limit open jobs with a description,
+// newest first, that have no facts, facts from another prompt version, or
+// facts read from text that has since changed. A job without a description,
+// such as one read from an alert email, has nothing to read facts from.
 func (s *Store) ListJobsAwaitingFacts(ctx context.Context, promptID uuid.UUID, limit int) ([]JobAwaitingFacts, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixedJobColumns+`, `+jobTextHash+`
 		FROM jobs LEFT JOIN job_facts ON job_facts.job_id = jobs.id
-		WHERE jobs.closed_at IS NULL
+		WHERE jobs.closed_at IS NULL AND btrim(jobs.description) <> ''
 		  AND (job_facts.job_id IS NULL OR job_facts.prompt_id <> $1 OR job_facts.text_hash <> `+jobTextHash+`)
 		ORDER BY jobs.first_seen_at DESC
 		LIMIT $2`, promptID, limit)
