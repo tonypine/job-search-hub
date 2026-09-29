@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "company_id": { "type": "string", "description": "The hub id of the company whose jobs were looked for." },
+    "careers_url": {
+      "type": ["string", "null"],
+      "description": "The page that lists the company's open roles; null when none was found."
+    },
+    "job_board": {
+      "type": ["object", "null"],
+      "description": "The board set with set_job_board when the roles sit on one the hub reads; null otherwise.",
+      "properties": {
+        "provider": { "type": "string" },
+        "board_token": { "type": "string" },
+        "verified": { "type": "boolean" }
+      },
+      "required": ["provider", "board_token", "verified"],
+      "additionalProperties": false
+    },
+    "jobs_recorded": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many roles were recorded with record_company_jobs; 0 when a board serves them."
+    },
+    "unresolved": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string" }
+  },
+  "required": ["company_id", "careers_url", "job_board", "jobs_recorded", "unresolved", "summary"],
+  "additionalProperties": false
+}

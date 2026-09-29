@@ -18,6 +18,10 @@ var (
 
 const AgentRunKindCompanyTriage = "company_triage"
 
+// AgentRunKindJobFinder finds a company's open roles; it is also its
+// prompt's kind.
+const AgentRunKindJobFinder = "job_finder"
+
 const (
 	AgentRunRunning   = "running"
 	AgentRunSucceeded = "succeeded"

@@ -41,6 +41,10 @@ func RenderCompanyPrompt(ctx context.Context, hub *store.Store, kind, company st
 	if err != nil {
 		return Rendered{}, err
 	}
+	criteriaText, err := getJobCriteriaText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
 
 	// One pass: a placeholder that appears inside the profile or the dossier
 	// stays literal text rather than being filled in turn.
@@ -48,6 +52,7 @@ func RenderCompanyPrompt(ctx context.Context, hub *store.Store, kind, company st
 		"{{company}}", company,
 		"{{owner_profile}}", profileText,
 		"{{company_dossier}}", dossierText,
+		"{{job_criteria}}", criteriaText,
 	).Replace(prompt.Body)
 	return Rendered{Body: filled, Version: prompt.Version}, nil
 }
@@ -154,6 +159,16 @@ func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) 
 	return written.String(), nil
 }
 
+// getJobCriteriaText is the roles the owner is after and the terms job
+// feeds are searched by, as data.
+func getJobCriteriaText(ctx context.Context, hub *store.Store) (string, error) {
+	saved, err := hub.GetJobCriteria(ctx)
+	if err != nil {
+		return "", err
+	}
+	return formatAsData(map[string][]string{"roles": saved.Criteria.Roles, "search_terms": saved.Criteria.SearchTerms})
+}
+
 // getApplicationAnswersText is the owner's saved answers to application form
 // questions, as data; a question without an answer says it is still open.
 func getApplicationAnswersText(ctx context.Context, hub *store.Store) (string, error) {
@@ -253,9 +268,16 @@ func getFilesText(ctx context.Context, hub *store.Store, companyID *uuid.UUID) (
 	return text.String(), nil
 }
 
-// findStoredCompany matches the input by domain when it is a domain or URL,
-// and otherwise by a unique exact name.
+// findStoredCompany matches the input by id when it is one, by domain when
+// it is a domain or URL, and otherwise by a unique exact name.
 func findStoredCompany(ctx context.Context, hub *store.Store, input string) (store.Company, bool, error) {
+	if id, err := uuid.Parse(strings.TrimSpace(input)); err == nil {
+		company, err := hub.GetCompany(ctx, id)
+		if errors.Is(err, store.ErrCompanyNotFound) {
+			return store.Company{}, false, nil
+		}
+		return company, err == nil, err
+	}
 	if _, err := store.NormalizeDomain(input); err == nil {
 		company, err := hub.GetCompanyByDomain(ctx, input)
 		if errors.Is(err, store.ErrCompanyNotFound) {

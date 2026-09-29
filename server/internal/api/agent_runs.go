@@ -9,12 +9,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/agents/companytriage"
+	"github.com/tonypine/job-search-hub/server/agents/jobfinder"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
 const agentRunTokenLifetime = 30 * time.Minute
+
+// agentRunResultSchemas are the kinds of run the owner can start, by the
+// shape of the result each must answer with. A run's input is the company:
+// a name, a domain or a URL.
+var agentRunResultSchemas = map[string]string{
+	store.AgentRunKindCompanyTriage: companytriage.ResultSchema,
+	store.AgentRunKindJobFinder:     jobfinder.ResultSchema,
+}
 
 type startAgentRunRequest struct {
 	Kind  string `json:"kind"`
@@ -55,8 +64,9 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
 			return
 		}
-		if request.Kind != store.AgentRunKindCompanyTriage || request.Input == "" {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" and a non-empty input`})
+		resultSchema, knownKind := agentRunResultSchemas[request.Kind]
+		if !knownKind || request.Input == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" or "job_finder", and a non-empty input`})
 			return
 		}
 
@@ -72,7 +82,7 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			return
 		}
 		writeJSON(w, http.StatusCreated, startAgentRunResponse{
-			AgentRun: run, Token: token, Prompt: rendered.Body, ResultSchema: json.RawMessage(companytriage.ResultSchema),
+			AgentRun: run, Token: token, Prompt: rendered.Body, ResultSchema: json.RawMessage(resultSchema),
 		})
 	})))
 

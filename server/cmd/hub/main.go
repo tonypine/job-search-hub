@@ -19,6 +19,9 @@ const usage = `usage:
   hub company show <domain>         print a company's dossier
   hub company add <name-or-url>     research a company with an agent and watch it
       [--found-via <note>] [--model <model>] [--effort <level>]
+  hub company find-jobs <domain-or-id>
+                                    find a company's open roles with an agent
+      [--model <model>] [--effort <level>]
   hub recruiter reply <conversation-id>
       [--model <model>]             draft a message back to a recruiter who wrote before
   hub profile audit [--model <model>]
@@ -66,6 +69,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = addCompany(ctx, config, args[2], options, stdout)
+	case len(args) >= 3 && args[0] == "company" && args[1] == "find-jobs":
+		flags := flag.NewFlagSet("company find-jobs", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		var options triageOptions
+		flags.StringVar(&options.model, "model", "", "the Claude model for the session")
+		flags.StringVar(&options.effort, "effort", "", "the effort level for the session")
+		if flags.Parse(args[3:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = findCompanyJobs(ctx, config, args[2], options, stdout)
 	case len(args) >= 3 && args[0] == "recruiter" && args[1] == "reply":
 		flags := flag.NewFlagSet("recruiter reply", flag.ContinueOnError)
 		flags.SetOutput(stderr)

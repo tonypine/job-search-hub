@@ -15,6 +15,8 @@ type KindInfo struct {
 var Kinds = []KindInfo{
 	{store.AgentRunKindCompanyTriage, "Company research", "Researches a company being added: its dossier, job board and people.",
 		[]string{"{{company}}", "{{owner_profile}}", "{{company_dossier}}"}},
+	{store.AgentRunKindJobFinder, "Find jobs", "Finds a company's open roles: sets its job board when the hub reads it, or records the roles off its careers page.",
+		[]string{"{{company}}", "{{company_dossier}}", "{{job_criteria}}"}},
 	{store.AgentPromptKindCompanySession, "Company session", "Starts a Claude session opened from a company.",
 		[]string{"{{owner_profile}}", "{{owner_voice}}", "{{application_answers}}", "{{company_dossier}}"}},
 	{store.AgentPromptKindJobSession, "Job session", "Starts a Claude session opened from a job.",
