@@ -10,6 +10,7 @@ enum JobsColumns {
         let title: String
 
         var id: String { "fit." + name }
+        var sortComparator: JobsSortComparator { JobsSortComparator(.fitCheck(name)) }
     }
 
     /// The fit checks, titled as columns; Pay's reason is the take-home.
@@ -25,34 +26,24 @@ enum JobsColumns {
     struct BoardFactColumn: Identifiable, Sendable {
         let id: String
         let title: String
+        let sortComparator: JobsSortComparator
         let getText: @Sendable (JobListItem) -> String?
     }
 
     /// The facts the job's board or feed gave, and where it came from.
     static let boardFacts = [
-        BoardFactColumn(id: "pay", title: "Pay") { $0.job.pay?.summaryLine },
-        BoardFactColumn(id: "workplace", title: "Workplace") { $0.job.workplaceType },
-        BoardFactColumn(id: "employment", title: "Employment") { $0.job.employmentType },
-        BoardFactColumn(id: "department", title: "Department") { $0.job.department },
-        BoardFactColumn(id: "published", title: "Published") { $0.job.publishedAt?.formatted(date: .abbreviated, time: .omitted) },
-        BoardFactColumn(id: "source", title: "Source") { describeSource($0.job.source) },
+        BoardFactColumn(id: "pay", title: "Pay", sortComparator: JobsSortComparator(.pay)) { $0.job.pay?.summaryLine },
+        BoardFactColumn(id: "workplace", title: "Workplace", sortComparator: JobsSortComparator(.workplace)) { $0.job.workplaceType },
+        BoardFactColumn(id: "employment", title: "Employment", sortComparator: JobsSortComparator(.employment)) { $0.job.employmentType },
+        BoardFactColumn(id: "department", title: "Department", sortComparator: JobsSortComparator(.department)) { $0.job.department },
+        BoardFactColumn(id: "published", title: "Published", sortComparator: JobsSortComparator(.published)) {
+            $0.job.publishedAt?.formatted(date: .abbreviated, time: .omitted)
+        },
+        BoardFactColumn(id: "source", title: "Source", sortComparator: JobsSortComparator(.source)) { $0.job.sourceName },
     ]
 
     static func getFactColumnID(_ key: String) -> String {
         "fact." + key
-    }
-
-    /// Where a job came from, as people name it.
-    static func describeSource(_ source: String) -> String {
-        switch source {
-        case "job_board": "Company board"
-        case "himalayas": "Himalayas"
-        case "indeed": "Indeed alert"
-        case "linkedin": "LinkedIn alert"
-        case "glassdoor": "Glassdoor alert"
-        case "manual": "Added by hand"
-        default: source
-        }
     }
 }
 

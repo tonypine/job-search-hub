@@ -13,7 +13,7 @@ public enum FitLevel: String, Codable, Comparable, Sendable {
     public var title: String { rawValue.capitalized }
 
     /// Good sorts first, poor last.
-    private var rank: Int {
+    var rank: Int {
         switch self {
         case .good: 0
         case .unclear: 1

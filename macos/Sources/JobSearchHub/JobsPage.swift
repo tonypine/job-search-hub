@@ -18,9 +18,11 @@ final class JobsModel {
         UserDefaults.standard.set(Date.now, forKey: Self.lastVisitPreferenceKey)
     }
 
-    /// The rows shown: best fit first, then newest, without poor fits when hidden.
-    var shownItems: [JobListItem] {
-        JobsOrder.sort(hidesPoorFits ? JobsOrder.hidePoorFits(items) : items)
+    /// The rows shown, without poor fits when hidden: in the chosen order, or
+    /// else best fit first, then newest.
+    func getShownItems(sortedBy sortOrder: [JobsSortComparator]) -> [JobListItem] {
+        let keptItems = hidesPoorFits ? JobsOrder.hidePoorFits(items) : items
+        return sortOrder.isEmpty ? JobsOrder.sort(keptItems) : keptItems.sorted(using: sortOrder)
     }
     private(set) var total = 0
     /// The facts read from postings, which the table can show as columns.
@@ -88,6 +90,8 @@ struct JobsPage: View {
     @State private var isAddingByURL = false
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
+    /// The column the table sorts by, kept across launches; none keeps best fit first.
+    @AppStorage("jobsSortOrder") private var savedSortOrder = Data()
 
     private let initialJobID: UUID?
     private let opensSession: Bool
@@ -136,11 +140,11 @@ struct JobsPage: View {
     }
 
     private func table(client: HubClient) -> some View {
-        Table(of: JobListItem.self, selection: $model.selectedID, columnCustomization: columnCustomization) {
-            TableColumn("Fit") { item in FitLabel(level: item.fit.level) }
+        Table(of: JobListItem.self, selection: $model.selectedID, sortOrder: sortOrder, columnCustomization: columnCustomization) {
+            TableColumn("Fit", sortUsing: JobsSortComparator(.fit)) { item in FitLabel(level: item.fit.level) }
                 .width(70)
                 .customizationID("fit")
-            TableColumn("Title") { item in
+            TableColumn("Title", sortUsing: JobsSortComparator(.title)) { item in
                 HStack(spacing: 6) {
                     UnseenDot(count: item.unseenUpdates)
                     Text(item.job.title).help(item.job.title)
@@ -153,17 +157,19 @@ struct JobsPage: View {
             .width(min: 160, ideal: 280)
             .customizationID("title")
             .disabledCustomizationBehavior(.visibility)
-            TableColumn("Company") { item in Text(item.companyName ?? "–") }
+            TableColumn("Company", sortUsing: JobsSortComparator(.company)) { item in Text(item.companyName ?? "–") }
                 .width(min: 100, ideal: 140)
                 .customizationID("company")
-            TableColumn("Location") { item in Text(item.job.location ?? "").help(item.job.location ?? "") }
+            TableColumn("Location", sortUsing: JobsSortComparator(.location)) { item in Text(item.job.location ?? "").help(item.job.location ?? "") }
                 .width(min: 120, ideal: 200)
                 .customizationID("location")
-            TableColumn("First seen") { item in Text(item.job.firstSeenAt.formatted(date: .abbreviated, time: .omitted)) }
+            TableColumn("First seen", sortUsing: JobsSortComparator(.firstSeen)) { item in
+                Text(item.job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
+            }
                 .width(100)
                 .customizationID("firstSeen")
             TableColumnForEach(JobsColumns.boardFacts) { column in
-                TableColumn(column.title) { item in
+                TableColumn(column.title, sortUsing: column.sortComparator) { item in
                     let text = column.getText(item).flatMap { $0.isEmpty ? nil : $0 } ?? "–"
                     Text(text).help(text)
                 }
@@ -172,13 +178,13 @@ struct JobsPage: View {
                 .defaultVisibility(.hidden)
             }
             TableColumnForEach(JobsColumns.fitChecks) { check in
-                TableColumn(check.title) { item in FitCheckCell(check: item.getFitCheck(check.name)) }
+                TableColumn(check.title, sortUsing: check.sortComparator) { item in FitCheckCell(check: item.getFitCheck(check.name)) }
                     .width(min: 80, ideal: 160)
                     .customizationID(check.id)
                     .defaultVisibility(.hidden)
             }
             TableColumnForEach(model.factColumns) { column in
-                TableColumn(column.title) { item in
+                TableColumn(column.title, sortUsing: JobsSortComparator(.fact(column.key))) { item in
                     let text = item.getFactText(column.key) ?? "–"
                     Text(text).help(text)
                 }
@@ -187,7 +193,7 @@ struct JobsPage: View {
                 .defaultVisibility(.hidden)
             }
         } rows: {
-            ForEach(model.shownItems) { item in TableRow(item) }
+            ForEach(model.getShownItems(sortedBy: sortOrder.wrappedValue)) { item in TableRow(item) }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -231,6 +237,13 @@ struct JobsPage: View {
                     }
             }
         }
+    }
+
+    private var sortOrder: Binding<[JobsSortComparator]> {
+        Binding(
+            get: { (try? JSONDecoder().decode([JobsSortComparator].self, from: savedSortOrder)) ?? [] },
+            set: { savedSortOrder = (try? JSONEncoder().encode($0)) ?? Data() }
+        )
     }
 
     private var columnCustomization: Binding<TableColumnCustomization<JobListItem>> {

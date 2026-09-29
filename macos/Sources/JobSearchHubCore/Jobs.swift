@@ -29,6 +29,22 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
 
 /// The pay a posting publishes: one range per region or tier, and the
 /// board's own summary when it gives one, such as "$230K • Offers Equity".
+extension Job {
+    /// Where the job came from, as people name it.
+    public var sourceName: String {
+        switch source {
+        case "job_board": "Company board"
+        case "careers_page": "Careers page"
+        case "himalayas": "Himalayas"
+        case "indeed": "Indeed alert"
+        case "linkedin": "LinkedIn alert"
+        case "glassdoor": "Glassdoor alert"
+        case "manual": "Added by hand"
+        default: source
+        }
+    }
+}
+
 public struct Pay: Codable, Equatable, Sendable {
     public var ranges: [PayRange]
     public var summary: String?
