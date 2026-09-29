@@ -83,6 +83,11 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 		if dossierText, err = formatAsData(dossier); err != nil {
 			return Rendered{}, err
 		}
+		filesText, err := getFilesText(ctx, hub, companyID)
+		if err != nil {
+			return Rendered{}, err
+		}
+		dossierText += filesText
 	}
 	jobText := ""
 	if jobDetails != nil {
@@ -119,6 +124,11 @@ func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) 
 		return "", err
 	}
 	text += describeLinkedInProfile(linkedIn)
+	filesText, err := getFilesText(ctx, hub, nil)
+	if err != nil {
+		return "", err
+	}
+	text += filesText
 	recommendations, err := hub.ListRecommendationsReceived(ctx)
 	if err != nil || len(recommendations) == 0 {
 		return text, err
@@ -171,7 +181,49 @@ func getDossierText(ctx context.Context, hub *store.Store, input string) (string
 	if err != nil {
 		return "", err
 	}
-	return formatAsData(dossier)
+	dossierText, err := formatAsData(dossier)
+	if err != nil {
+		return "", err
+	}
+	filesText, err := getFilesText(ctx, hub, &company.ID)
+	return dossierText + filesText, err
+}
+
+// Caps on the attached files' text in a prompt, in characters.
+const (
+	maximumFileTextLength  = 12000
+	maximumFilesTextLength = 30000
+)
+
+// getFilesText is the text of the files the owner attached about a company,
+// or about themselves when companyID is nil, each fenced as data and
+// labelled with its name and kind. Each file's text is capped, and so is
+// their total; the prompt says where a file was cut or left out.
+func getFilesText(ctx context.Context, hub *store.Store, companyID *uuid.UUID) (string, error) {
+	files, err := hub.ListArtifactTexts(ctx, companyID)
+	if err != nil || len(files) == 0 {
+		return "", err
+	}
+	var text strings.Builder
+	text.WriteString("\n\nFiles I attached. " + dataPreamble + "\n")
+	remaining := maximumFilesTextLength
+	for index, file := range files {
+		if remaining <= 0 {
+			fmt.Fprintf(&text, "\n(%d more files left out: the attached files' text is capped.)\n", len(files)-index)
+			break
+		}
+		// A fence inside the text would end the file's fence early.
+		content := []rune(strings.ReplaceAll(file.Text, "```", "'''"))
+		limit := min(maximumFileTextLength, remaining)
+		note := ""
+		if len(content) > limit {
+			note = fmt.Sprintf("\n(Cut here: %d more characters of this file are left out.)", len(content)-limit)
+			content = content[:limit]
+		}
+		remaining -= len(content)
+		fmt.Fprintf(&text, "\n### %s (%s)\n\n```text\n%s\n```%s\n", file.Name, strings.ReplaceAll(file.Kind, "_", " "), string(content), note)
+	}
+	return text.String(), nil
 }
 
 // findStoredCompany matches the input by domain when it is a domain or URL,

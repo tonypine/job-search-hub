@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -125,5 +127,35 @@ func TestDraftsReadTheOwnersRepliesToRecruitersButNotTheirPrivateChats(t *testin
 	}
 	if strings.Contains(rendered.Body, "estou na procura") || strings.Contains(rendered.Body, "{{") {
 		t.Errorf("the session carries a private chat, or a placeholder is left:\n%s", rendered.Body)
+	}
+}
+
+func TestARunReadsTheOwnersFilesAndItsCompanysButNoOtherCompanys(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	globex, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
+	attach := func(companyID *uuid.UUID, kind, name, text string) {
+		t.Helper()
+		if _, _, err := hub.SaveArtifact(ctx, owner, store.NewArtifact{CompanyID: companyID, Kind: kind, Name: name, Content: []byte(name + text), Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	attach(nil, store.ArtifactResume, "resume.pdf", "Sam Example: ten years of React.")
+	attach(&acme.ID, store.ArtifactSavedPage, "acme-team.html", "Acme's platform team page.")
+	attach(&globex.ID, store.ArtifactCompanyDocument, "globex-memo.txt", "Globex's hiring memo.")
+	attach(&acme.ID, store.ArtifactOther, "acme-long.txt", strings.Repeat("x", 12500))
+
+	rendered, err := prompts.RenderCompanyPrompt(ctx, hub, store.AgentRunKindCompanyTriage, "acme.com")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"### resume.pdf (resume)", "ten years of React", "### acme-team.html (saved page)", "Acme's platform team page.", "Cut here: 500 more characters"} {
+		if !strings.Contains(rendered.Body, want) {
+			t.Errorf("the prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(rendered.Body, "Globex's hiring memo.") {
+		t.Error("the prompt carries another company's file")
 	}
 }
