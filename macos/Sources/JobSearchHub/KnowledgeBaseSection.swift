@@ -70,9 +70,11 @@ final class KnowledgeBaseModel {
 struct KnowledgeBaseSection: View {
     let client: HubClient
     @Environment(ProfileSeed.self) private var seed
+    @Environment(DetailsInspector.self) private var details
     @State private var model = KnowledgeBaseModel()
     @State private var editing: EditedEntry?
     @State private var deleting: ProfileEntry?
+    private let host = ClaudeSessionHost.shared
 
     struct EditedEntry: Identifiable {
         let id = UUID()
@@ -99,6 +101,8 @@ struct KnowledgeBaseSection: View {
             }
         }
         .task(id: seed.revision) { await model.load(with: client) }
+        // The interview saves entries turn by turn; show them as it goes.
+        .onChange(of: host.activities) { Task { await model.load(with: client) } }
         .sheet(item: $editing) { edited in
             ProfileEntrySheet(entryID: edited.entryID, input: edited.input, roles: model.roles) { input in
                 await model.save(input, id: edited.entryID, confirming: edited.entryID == nil, with: client)
@@ -121,6 +125,8 @@ struct KnowledgeBaseSection: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button("Enhance profile", systemImage: "bubble.left.and.text.bubble.right") { details.show(.profileInterview, from: .profile) }
+                .help("An interview, in a Claude session beside this page, that turns what you remember into entries; stop anytime")
             Button("Add entry", systemImage: "plus") { editing = EditedEntry(input: ProfileEntryInput(kind: "case", title: "")) }
             Button(model.entries.isEmpty ? "Build from CV and LinkedIn" : "Rebuild from CV and LinkedIn", systemImage: "square.stack.3d.up") {
                 seed.start(with: client)

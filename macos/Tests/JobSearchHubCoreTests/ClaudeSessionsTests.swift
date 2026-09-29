@@ -93,3 +93,12 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     #expect(environment["PATH"] == SessionEnvironment.basePath)
     #expect(environment[ClaudeHooks.stateFileVariable] == "/tmp/s.state" && environment["TERM"] == "xterm-256color")
 }
+
+@Test func aProfileInterviewSessionIsItsOwnSubject() throws {
+    let json = #"{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","about_profile":true,"claude_session_id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Enhance profile","created_at":"2026-09-29T12:00:00Z"}"#
+    let session = try HubJSON.makeDecoder().decode(ClaudeSession.self, from: Data(json.utf8))
+    #expect(session.subject == .profile)
+    #expect(ClaudeSessionSubject.profile.queryItems == [URLQueryItem(name: "about_profile", value: "true")])
+    let request = try #require(try JSONSerialization.jsonObject(with: HubJSON.makeEncoder().encode(CreateClaudeSessionRequest(.profile))) as? [String: Any])
+    #expect(request["about_profile"] as? Bool == true)
+}

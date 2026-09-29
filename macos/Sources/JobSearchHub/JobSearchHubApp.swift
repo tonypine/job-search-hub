@@ -182,12 +182,16 @@ struct ContentView: View {
         return nil
     }
 
-    /// Shows a job or company, on its Session side when asked.
+    /// Shows a job or company, on its Session side when asked, or the
+    /// profile interview beside the Profile page.
     private func open(_ subject: ClaudeSessionSubject, opensSession: Bool) {
         focus = SubjectFocus(subject: subject, opensSession: opensSession)
         switch subject {
         case .job: selectedPage = .jobs
         case .company: selectedPage = .companies
+        case .profile:
+            selectedPage = .profile
+            details.show(.profileInterview, from: .profile)
         }
     }
 }

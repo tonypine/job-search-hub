@@ -6,6 +6,9 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var companyID: UUID?
     public var jobID: UUID?
+    /// The interview that deepens the owner's knowledge base; absent on the
+    /// others.
+    public var aboutProfile: Bool?
     public var claudeSessionID: UUID
     public var name: String
     public var createdAt: Date
@@ -18,7 +21,7 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, createdAt, lastStartedAt, lastStoppedAt
+        case id, name, createdAt, lastStartedAt, lastStoppedAt, aboutProfile
         case companyID = "companyId"
         case jobID = "jobId"
         case claudeSessionID = "claudeSessionId"
@@ -39,12 +42,15 @@ public struct ClaudeSessionContext: Decodable, Sendable {
 public enum ClaudeSessionSubject: Equatable, Hashable, Sendable {
     case company(UUID)
     case job(UUID)
+    /// The interview that deepens the owner's knowledge base.
+    case profile
 
     /// The hub's filter for this subject's sessions.
     public var queryItems: [URLQueryItem] {
         switch self {
         case let .company(id): [URLQueryItem(name: "company_id", value: id.uuidString)]
         case let .job(id): [URLQueryItem(name: "job_id", value: id.uuidString)]
+        case .profile: [URLQueryItem(name: "about_profile", value: "true")]
         }
     }
 }
@@ -52,15 +58,18 @@ public enum ClaudeSessionSubject: Equatable, Hashable, Sendable {
 public struct CreateClaudeSessionRequest: Encodable, Sendable {
     public var companyID: UUID?
     public var jobID: UUID?
+    public var aboutProfile = false
 
     public init(_ subject: ClaudeSessionSubject) {
         switch subject {
         case let .company(id): companyID = id
         case let .job(id): jobID = id
+        case .profile: aboutProfile = true
         }
     }
 
     enum CodingKeys: String, CodingKey {
+        case aboutProfile
         case companyID = "companyId"
         case jobID = "jobId"
     }
@@ -147,7 +156,7 @@ extension ClaudeSession {
     public var subject: ClaudeSessionSubject? {
         if let jobID { return .job(jobID) }
         if let companyID { return .company(companyID) }
-        return nil
+        return aboutProfile == true ? .profile : nil
     }
 }
 

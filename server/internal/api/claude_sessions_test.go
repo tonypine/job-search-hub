@@ -107,3 +107,37 @@ func TestASessionStartsKnowingTheCandidateAndItsSubject(t *testing.T) {
 		t.Errorf("company context = %s", companyContext)
 	}
 }
+
+func TestAProfileInterviewStartsKnowingTheKnowledgeBase(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := service.hub.SaveProfileEntry(ctx, owner, nil, store.ProfileEntryInput{
+		Kind: store.ProfileEntryRole, Title: "Front-End Engineer", Organization: "Acme", Source: store.ProfileSourceCV,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	company, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	createSession(t, service, `{"company_id":"`+company.ID.String()+`"}`)
+
+	interview := createSession(t, service, `{"about_profile":true}`)
+	if interview.Name != "Enhance profile" || !interview.AboutProfile {
+		t.Fatalf("interview = %+v", interview)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/claude-sessions", ownerToken, `{"company_id":"`+company.ID.String()+`","about_profile":true}`); status != http.StatusBadRequest {
+		t.Errorf("a session about a company and the profile: %d, want 400", status)
+	}
+
+	status, answer := send(t, http.MethodGet, service.url+"/v1/claude-sessions?about_profile=true", ownerToken, "")
+	var listed struct {
+		Sessions []store.ClaudeSession `json:"sessions"`
+	}
+	if json.Unmarshal(answer, &listed); status != http.StatusOK || len(listed.Sessions) != 1 || listed.Sessions[0].ID != interview.ID {
+		t.Fatalf("profile sessions: %d %s", status, answer)
+	}
+
+	status, answer = send(t, http.MethodGet, service.url+"/v1/claude-sessions/"+interview.ID.String()+"/context", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(answer), "Front-End Engineer") || !strings.Contains(string(answer), "deepen their knowledge base") {
+		t.Fatalf("context: %d %s", status, answer)
+	}
+}

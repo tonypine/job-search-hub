@@ -13,8 +13,9 @@ import (
 const defaultClaudeSessionListSize = 50
 
 type createClaudeSessionRequest struct {
-	CompanyID *uuid.UUID `json:"company_id"`
-	JobID     *uuid.UUID `json:"job_id"`
+	CompanyID    *uuid.UUID `json:"company_id"`
+	JobID        *uuid.UUID `json:"job_id"`
+	AboutProfile bool       `json:"about_profile"`
 }
 
 type claudeSessionsResponse struct {
@@ -39,7 +40,9 @@ func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, rateSo
 		if !decodeBodyOrWriteBadRequest(w, r, &request) {
 			return
 		}
-		session, err := hub.CreateClaudeSession(r.Context(), owner, store.ClaudeSessionSubject{CompanyID: request.CompanyID, JobID: request.JobID})
+		session, err := hub.CreateClaudeSession(r.Context(), owner, store.ClaudeSessionSubject{
+			CompanyID: request.CompanyID, JobID: request.JobID, AboutProfile: request.AboutProfile,
+		})
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -59,6 +62,7 @@ func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, rateSo
 				*into = &id
 			}
 		}
+		subject.AboutProfile = r.URL.Query().Get("about_profile") == "true"
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > defaultClaudeSessionListSize {
 			limit = defaultClaudeSessionListSize
@@ -95,7 +99,9 @@ func RegisterClaudeSessionRoutes(routes *http.ServeMux, hub *store.Store, rateSo
 			return
 		}
 		var rendered prompts.Rendered
-		if session.CompanyID != nil {
+		if session.AboutProfile {
+			rendered, err = prompts.RenderProfileInterviewContext(r.Context(), hub)
+		} else if session.CompanyID != nil {
 			rendered, err = prompts.RenderCompanySessionContext(r.Context(), hub, *session.CompanyID)
 		} else {
 			var details judgedJobDetails

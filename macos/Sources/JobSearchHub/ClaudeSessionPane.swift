@@ -69,6 +69,9 @@ struct ClaudeSessionPane: View {
     let client: HubClient
     /// Resumes the last session, or starts one, as soon as the pane shows.
     var startsOnAppear = false
+    /// Typed into a session the pane starts or resumes, for a session whose
+    /// prompt has it speak first, like the profile interview.
+    var openingMessage: String?
     @State private var model = ClaudeSessionPaneModel()
     private let host = ClaudeSessionHost.shared
 
@@ -81,8 +84,10 @@ struct ClaudeSessionPane: View {
                         Text(running.name).lineLimit(1)
                         Text(SessionLamp.describe(host.activities[running.id])).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
-                            .help("Ask this session to find who to write to and draft a first message")
+                        if subject != .profile {
+                            Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
+                                .help("Ask this session to find who to write to and draft a first message")
+                        }
                         Button("Stop", systemImage: "stop.fill") { host.stop(running.id) }
                     }
                     .padding(8)
@@ -99,9 +104,9 @@ struct ClaudeSessionPane: View {
             await model.load(subject, with: client)
             if startsOnAppear, !model.sessions.contains(where: { host.isRunning($0.id) }) {
                 if let latest = model.sessions.first {
-                    await model.resume(latest, with: client, host: host)
+                    await model.resume(latest, with: client, host: host, firstMessage: openingMessage)
                 } else {
-                    await model.startNew(subject, with: client, host: host)
+                    await model.startNew(subject, with: client, host: host, firstMessage: openingMessage)
                 }
             }
         }
@@ -116,18 +121,20 @@ struct ClaudeSessionPane: View {
             if let latest = model.sessions.first {
                 Text(latest.name).font(.headline)
                 Text("Last active \(latest.lastActiveAt.formatted(.relative(presentation: .named)))").foregroundStyle(.secondary)
-                Button("Resume session", systemImage: "play.fill") { Task { await model.resume(latest, with: client, host: host) } }
+                Button("Resume session", systemImage: "play.fill") { Task { await model.resume(latest, with: client, host: host, firstMessage: openingMessage) } }
                     .keyboardShortcut(.defaultAction)
-                Button("Start a new session") { Task { await model.startNew(subject, with: client, host: host) } }
+                Button("Start a new session") { Task { await model.startNew(subject, with: client, host: host, firstMessage: openingMessage) } }
             } else {
                 Text("No session yet").font(.headline)
                 Text("A Claude session here starts knowing your profile and everything the hub has on this.")
                     .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Start session", systemImage: "play.fill") { Task { await model.startNew(subject, with: client, host: host) } }
+                Button("Start session", systemImage: "play.fill") { Task { await model.startNew(subject, with: client, host: host, firstMessage: openingMessage) } }
                     .keyboardShortcut(.defaultAction)
             }
-            Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
-                .help("Find who to write to and draft a first message; you send it yourself")
+            if subject != .profile {
+                Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
+                    .help("Find who to write to and draft a first message; you send it yourself")
+            }
             if model.isStarting {
                 ProgressView().controlSize(.small)
             }

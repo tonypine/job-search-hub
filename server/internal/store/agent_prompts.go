@@ -40,12 +40,15 @@ const (
 	// AgentPromptKindProfileAudit audits the owner's LinkedIn profile for the
 	// recruiters who search for the roles they want.
 	AgentPromptKindProfileAudit = "profile_audit"
+	// AgentPromptKindProfileInterview starts the Claude session that
+	// interviews the owner to deepen their knowledge base.
+	AgentPromptKindProfileInterview = "profile_interview"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
-	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true,
+	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

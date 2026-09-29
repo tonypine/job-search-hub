@@ -19,6 +19,8 @@ var Kinds = []KindInfo{
 		[]string{"{{company}}", "{{company_dossier}}", "{{job_criteria}}"}},
 	{store.AgentRunKindProfileSeed, "Build the knowledge base", "Turns the CV, the LinkedIn export and the answers library into knowledge-base entries for you to confirm.",
 		[]string{"{{owner_profile}}", "{{linkedin_profile}}", "{{application_answers}}"}},
+	{store.AgentPromptKindProfileInterview, "Profile interview", "Starts the Claude session that interviews you to deepen the knowledge base.",
+		[]string{"{{owner_profile}}", "{{profile_entries}}"}},
 	{store.AgentPromptKindCompanySession, "Company session", "Starts a Claude session opened from a company.",
 		[]string{"{{owner_profile}}", "{{owner_voice}}", "{{application_answers}}", "{{company_dossier}}"}},
 	{store.AgentPromptKindJobSession, "Job session", "Starts a Claude session opened from a job.",

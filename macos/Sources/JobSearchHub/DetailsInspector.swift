@@ -12,6 +12,8 @@ final class DetailsInspector {
         case job(UUID, opensSession: Bool)
         /// A pipeline card for a company rather than a posting.
         case companyApplication(companyID: UUID?)
+        /// The interview that deepens the owner's knowledge base.
+        case profileInterview
     }
 
     /// The page whose selection is shown, so a page left behind never shows
@@ -42,6 +44,8 @@ struct DetailsInspectorContent: View {
         switch subject {
         case let .job(jobID, opensSession):
             JobPanel(jobID: jobID, client: client, opensSession: opensSession)
+        case .profileInterview:
+            ClaudeSessionPane(subject: .profile, client: client, startsOnAppear: true, openingMessage: "Let's work on my knowledge base.")
         case let .companyApplication(companyID):
             ContentUnavailableView("No job on this card", systemImage: "building.2", description: Text("This application is to a company, not a posting."))
                 .task(id: companyID) {

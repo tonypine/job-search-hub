@@ -414,6 +414,30 @@ func RenderProfileSeedPrompt(ctx context.Context, hub *store.Store) (Rendered, e
 	return Rendered{Body: filled, Version: prompt.Version}, nil
 }
 
+// RenderProfileInterviewContext fills the active profile_interview prompt
+// with the owner's profile and every knowledge-base entry, confirmed or not,
+// so an interview picks up where the last one stopped.
+func RenderProfileInterviewContext(ctx context.Context, hub *store.Store) (Rendered, error) {
+	prompt, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindProfileInterview)
+	if err != nil {
+		return Rendered{}, err
+	}
+	profileText, err := getOwnerProfileText(ctx, hub)
+	if err != nil {
+		return Rendered{}, err
+	}
+	entries, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{})
+	if err != nil {
+		return Rendered{}, err
+	}
+	entriesText, err := formatAsData(entries)
+	if err != nil {
+		return Rendered{}, err
+	}
+	filled := strings.NewReplacer("{{owner_profile}}", profileText, "{{profile_entries}}", entriesText).Replace(prompt.Body)
+	return Rendered{Body: filled, Version: prompt.Version}, nil
+}
+
 // RenderProfileAudit fills the active profile_audit prompt with the owner's
 // profile, the job criteria, what fitting postings ask for, and what
 // recruiters approached the owner for.
