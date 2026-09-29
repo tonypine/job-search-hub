@@ -48,6 +48,9 @@ services:
       # The agents' prompts live in the database. A fresh one starts from the
       # private seed in the folder mounted below: <kind>.md, <kind>.schema.json.
       HUB_AGENT_PROMPTS_DIR: ${HUB_AGENT_PROMPTS_DIR-/config/agent-prompts}
+      # The Firebase service account key the hub pushes updates to phones with.
+      # No file there leaves pushes off.
+      HUB_FIREBASE_SERVICE_ACCOUNT_FILE: ${HUB_FIREBASE_SERVICE_ACCOUNT_FILE-/config/firebase-service-account.json}
     volumes:
       # Local secrets that stay out of the repo, read-only.
       - ${HUB_CONFIG_DIR:-${HOME}/.config/job-search-hub}:/config:ro

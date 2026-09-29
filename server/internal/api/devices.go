@@ -19,6 +19,11 @@ type pairDeviceRequest struct {
 	Name string `json:"name"`
 }
 
+// setPushTokenRequest carries the token FCM gave the phone's app.
+type setPushTokenRequest struct {
+	Token string `json:"token"`
+}
+
 // pairDeviceResponse carries the device's token, shown this once.
 type pairDeviceResponse struct {
 	Device store.Device `json:"device"`
@@ -27,7 +32,7 @@ type pairDeviceResponse struct {
 
 // RegisterDeviceRoutes adds the routes for the phones paired with the hub.
 // Pairing takes the owner's own token, from the Mac; a phone can list the
-// paired devices and revoke one, itself included.
+// paired devices, revoke one, itself included, and register for pushes.
 func RegisterDeviceRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	routes.Handle("GET /v1/devices", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +61,28 @@ func RegisterDeviceRoutes(routes *http.ServeMux, hub *store.Store, requireOwner 
 			return
 		}
 		writeJSON(w, http.StatusCreated, pairDeviceResponse{Device: device, Token: token})
+	})))
+
+	routes.Handle("PUT /v1/devices/me/push-token", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deviceID, isDevice := tokens.GetDeviceID(r.Context())
+		if !isDevice {
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "only a paired phone registers for pushes"})
+			return
+		}
+		var request setPushTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
+			return
+		}
+		err := hub.SetDevicePushToken(r.Context(), deviceID, request.Token)
+		switch {
+		case errors.Is(err, store.ErrDeviceNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case err != nil:
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
 	})))
 
 	routes.Handle("DELETE /v1/devices/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -31,6 +31,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
+	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
@@ -110,6 +111,9 @@ func run() error {
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterTaskRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
+	if sender := makePushSender(ctx, settings); sender != nil {
+		go push.NewNotifier(hub, sender, broadcaster).Run(ctx)
+	}
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	boards.SearchTerms = func(ctx context.Context) []string {
@@ -214,6 +218,30 @@ func makeGoogleClient(settings config, hub *store.Store) *google.Client {
 	}
 	slog.Info("Google sign-in on", "redirect", settings.publicURL+"/v1/google/callback")
 	return client
+}
+
+// makePushSender reads the Firebase service account, or returns nil, leaving
+// pushes off, when there is none or it can't be read.
+func makePushSender(ctx context.Context, settings config) *push.Sender {
+	if settings.firebaseServiceAccountFile == "" {
+		return nil
+	}
+	serviceAccount, err := os.ReadFile(settings.firebaseServiceAccountFile)
+	if errors.Is(err, os.ErrNotExist) {
+		slog.Info("pushes stay off: no Firebase service account", "file", settings.firebaseServiceAccountFile)
+		return nil
+	}
+	if err != nil {
+		slog.Warn("pushes stay off: the Firebase service account can't be read", "file", settings.firebaseServiceAccountFile, "error", err)
+		return nil
+	}
+	sender, err := push.NewSender(ctx, serviceAccount)
+	if err != nil {
+		slog.Warn("pushes stay off", "error", err)
+		return nil
+	}
+	slog.Info("pushes on", "project", sender.ProjectID())
+	return sender
 }
 
 // seedAgentPrompts gives each prompt kind that has no version yet its first

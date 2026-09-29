@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -31,6 +32,16 @@ func TestAPairedPhoneActsAsTheOwnerUntilItIsRevoked(t *testing.T) {
 	status, body = send(t, http.MethodGet, service.url+"/v1/devices", paired.Token, "")
 	if status != http.StatusOK || strings.Contains(string(body), paired.Token) || !strings.Contains(string(body), `"last_seen_at"`) {
 		t.Fatalf("list: %d %s; want the device seen and its token never shown again", status, body)
+	}
+
+	if status, _ := send(t, http.MethodPut, service.url+"/v1/devices/me/push-token", paired.Token, `{"token":"fcm-token"}`); status != http.StatusNoContent {
+		t.Errorf("the phone registering for pushes: %d, want 204", status)
+	}
+	if tokens, err := service.hub.ListDevicePushTokens(context.Background()); err != nil || len(tokens) != 1 || tokens[0] != "fcm-token" {
+		t.Errorf("push tokens = %q, %v", tokens, err)
+	}
+	if status, _ := send(t, http.MethodPut, service.url+"/v1/devices/me/push-token", ownerToken, `{"token":"fcm-token"}`); status != http.StatusForbidden {
+		t.Errorf("the Mac registering for pushes: %d, want 403", status)
 	}
 
 	if status, _ := send(t, http.MethodDelete, service.url+"/v1/devices/"+paired.Device.ID, ownerToken, ""); status != http.StatusOK {

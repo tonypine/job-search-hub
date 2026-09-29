@@ -27,6 +27,20 @@ class HubClientTest {
     }
 
     @Test
+    fun thePhoneRegistersItsPushToken() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(204).build())
+            server.start()
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).setPushToken("fcm-token")
+
+            val request = server.takeRequest()
+            assertEquals("PUT", request.method)
+            assertEquals("/v1/devices/me/push-token", request.target)
+            assertEquals("""{"token":"fcm-token"}""", request.body?.utf8())
+        }
+    }
+
+    @Test
     fun aRefusedTokenSaysToPairAgain() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(401).build())

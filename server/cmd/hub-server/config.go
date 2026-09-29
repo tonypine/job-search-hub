@@ -40,6 +40,9 @@ type config struct {
 	// agentPromptsDir holds the prompts a fresh database starts with, kept
 	// out of the repo; empty leaves seeding off.
 	agentPromptsDir string
+	// firebaseServiceAccountFile is the key the hub pushes to phones with;
+	// empty, or no file there, leaves pushes off.
+	firebaseServiceAccountFile string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -92,6 +95,7 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		return config{}, errors.New("set both HUB_GMAIL_PUBSUB_TOPIC and HUB_GMAIL_PUBSUB_SUBSCRIPTION, or neither")
 	}
 	parsed.agentPromptsDir = lookup("HUB_AGENT_PROMPTS_DIR")
+	parsed.firebaseServiceAccountFile = lookup("HUB_FIREBASE_SERVICE_ACCOUNT_FILE")
 	parsed.jobFactsModelURL = lookup("HUB_JOB_FACTS_MODEL_URL")
 	parsed.jobFactsModel = lookup("HUB_JOB_FACTS_MODEL")
 	if parsed.jobFactsModel == "" {

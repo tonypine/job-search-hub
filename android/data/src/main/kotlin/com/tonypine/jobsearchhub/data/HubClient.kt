@@ -6,6 +6,7 @@ import com.tonypine.jobsearchhub.core.JobsResponse
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.core.SetPushTokenRequest
 import com.tonypine.jobsearchhub.core.TaskRequest
 import com.tonypine.jobsearchhub.core.UpdatesResponse
 import com.tonypine.jobsearchhub.core.hubJson
@@ -41,19 +42,22 @@ class HubClient(
     /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
     suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
 
-    private suspend inline fun <reified T> get(path: String): T = call(path, null)
+    /** Registers the token FCM gave this app, so the hub pushes its updates here. */
+    suspend fun setPushToken(token: String) {
+        fetch("PUT", "/v1/devices/me/push-token", hubJson.encodeToString(SetPushTokenRequest(token)))
+    }
 
-    private suspend inline fun <reified T> send(path: String, json: String): T = call(path, json)
+    private suspend inline fun <reified T> get(path: String): T = hubJson.decodeFromString(fetch("GET", path, null))
 
-    private suspend inline fun <reified T> call(path: String, json: String?): T = withContext(Dispatchers.IO) {
-        val builder = Request.Builder()
+    private suspend inline fun <reified T> send(path: String, json: String): T = hubJson.decodeFromString(fetch("POST", path, json))
+
+    private suspend fun fetch(method: String, path: String, json: String?): String = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
             .url(pairing.hubUrl + path)
             .header("Authorization", "Bearer ${pairing.token}")
-        if (json != null) {
-            builder.post(json.toRequestBody("application/json".toMediaType()))
-        }
-        val request = builder.build()
-        val body = try {
+            .method(method, json?.toRequestBody("application/json".toMediaType()))
+            .build()
+        try {
             http.newCall(request).execute().use { response ->
                 when {
                     response.code == 401 || response.code == 403 ->
@@ -67,6 +71,5 @@ class HubClient(
         } catch (error: IOException) {
             throw HubException("Can't reach the hub at ${pairing.hubUrl}: ${error.message}")
         }
-        hubJson.decodeFromString<T>(body)
     }
 }

@@ -93,3 +93,39 @@ func (s *Store) RevokeDevice(ctx context.Context, actor Actor, id uuid.UUID) (De
 	})
 	return device, err
 }
+
+// SetDevicePushToken records the token FCM gave the device's app. A token
+// moves to the newest device that registers it, as when a phone is paired
+// again.
+func (s *Store) SetDevicePushToken(ctx context.Context, deviceID uuid.UUID, pushToken string) error {
+	pushToken = strings.TrimSpace(pushToken)
+	if pushToken == "" {
+		return errors.New("the push token is empty")
+	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE devices SET push_token = NULL WHERE push_token = $1 AND id <> $2`, pushToken, deviceID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE devices SET push_token = $2 WHERE id = $1 AND revoked_at IS NULL`, deviceID, pushToken)
+		if err == nil && tag.RowsAffected() == 0 {
+			return ErrDeviceNotFound
+		}
+		return err
+	})
+}
+
+// ListDevicePushTokens returns the push tokens of the paired, unrevoked
+// devices.
+func (s *Store) ListDevicePushTokens(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT push_token FROM devices WHERE push_token IS NOT NULL AND revoked_at IS NULL ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// ForgetDevicePushToken drops a token FCM no longer delivers to.
+func (s *Store) ForgetDevicePushToken(ctx context.Context, pushToken string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE devices SET push_token = NULL WHERE push_token = $1`, pushToken)
+	return err
+}

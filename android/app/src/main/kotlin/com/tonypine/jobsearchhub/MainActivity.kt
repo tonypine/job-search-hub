@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.tonypine.jobsearchhub.push.UpdateNotifications
 import com.tonypine.jobsearchhub.ui.HubTheme
 import com.tonypine.jobsearchhub.ui.HubNavigation
 
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pairFrom(intent)
+        openNotificationFrom(intent)
         setContent {
             HubTheme {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -30,6 +32,14 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         pairFrom(intent)
+        openNotificationFrom(intent)
+    }
+
+    private fun openNotificationFrom(intent: Intent?) {
+        intent ?: return
+        viewModel.openNotification(
+            NotificationTarget(intent.getStringExtra(UpdateNotifications.JOB_ID), intent.getStringExtra(UpdateNotifications.COMPANY_ID)),
+        )
     }
 
     /** A pairing link opened on the phone pairs it, like the QR code. */

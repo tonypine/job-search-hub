@@ -1,5 +1,10 @@
 package com.tonypine.jobsearchhub.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -10,8 +15,11 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,6 +29,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.push.UpdateNotifications
 
 private const val UPDATES = "updates"
 private const val JOBS = "jobs"
@@ -35,6 +44,7 @@ fun HubNavigation(viewModel: HubViewModel) {
         PairScreen(error = state.error, onPair = viewModel::pair)
         return
     }
+    AskToNotify()
     val navigation = rememberNavController()
     val entry by navigation.currentBackStackEntryAsState()
     val route = entry?.destination?.route
@@ -83,6 +93,27 @@ fun HubNavigation(viewModel: HubViewModel) {
                     onOpenJob = { navigation.navigate("job/$it") },
                 )
             }
+        }
+        val notificationTarget by viewModel.notificationTarget.collectAsStateWithLifecycle()
+        LaunchedEffect(notificationTarget) {
+            val target = notificationTarget ?: return@LaunchedEffect
+            target.jobId?.let { navigation.navigate("job/$it") } ?: target.companyId?.let { navigation.navigate("company/$it") }
+            viewModel.clearNotificationTarget()
+        }
+    }
+}
+
+/** Asks for the notification permission Android 13 and later want, when this build can get pushes. */
+@Composable
+private fun AskToNotify() {
+    val context = LocalContext.current
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !UpdateNotifications.isAvailable(context)) {
+        return
+    }
+    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            request.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

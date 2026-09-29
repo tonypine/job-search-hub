@@ -1,6 +1,7 @@
 package com.tonypine.jobsearchhub
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tonypine.jobsearchhub.core.CompanyDossier
@@ -14,11 +15,13 @@ import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
+import com.tonypine.jobsearchhub.push.UpdateNotifications
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 /** A company as the phone briefs it before an interview. */
 data class CompanyBrief(
@@ -40,16 +43,54 @@ data class HubState(
     val shownJobs: List<JobListItem> get() = JobsOrder.pick(jobs, includesUnclear)
 }
 
+/** What a tapped notification opens: its job, or else its company. */
+data class NotificationTarget(val jobId: String?, val companyId: String?)
+
 /** The phone's view of the hub: its pairing, the updates and the jobs. */
 class HubViewModel(application: Application) : AndroidViewModel(application) {
-    private val store = (application as HubApp).pairingStore
+    private val app = application as HubApp
+    private val store = app.pairingStore
     private val mutableState = MutableStateFlow(HubState(pairing = store.load()))
     val state: StateFlow<HubState> = mutableState.asStateFlow()
+    private val mutableNotificationTarget = MutableStateFlow<NotificationTarget?>(null)
+    val notificationTarget: StateFlow<NotificationTarget?> = mutableNotificationTarget.asStateFlow()
 
     private val client: HubClient? get() = state.value.pairing?.let { HubClient(it) }
 
     init {
         refresh()
+        registerForPushes()
+        viewModelScope.launch { app.pushes.collect { refresh() } }
+    }
+
+    /** Sends the hub this app's FCM token. Done at each start, so a token rotated while the phone was unpaired or offline still arrives. */
+    private fun registerForPushes() {
+        val client = client ?: return
+        if (!UpdateNotifications.isAvailable(app)) {
+            return
+        }
+        viewModelScope.launch {
+            try {
+                client.setPushToken(UpdateNotifications.getPushToken())
+            } catch (error: HubException) {
+                Log.w("HubViewModel", "Couldn't register for pushes: ${error.message}")
+            } catch (error: IOException) {
+                Log.w("HubViewModel", "FCM gave no token: ${error.message}")
+            }
+        }
+    }
+
+    /** Opens what a tapped notification is about, with the lists read again. */
+    fun openNotification(target: NotificationTarget) {
+        if (target.jobId == null && target.companyId == null) {
+            return
+        }
+        mutableNotificationTarget.value = target
+        refresh()
+    }
+
+    fun clearNotificationTarget() {
+        mutableNotificationTarget.value = null
     }
 
     /** Pairs from a scanned or pasted link; says why a link isn't one. */
@@ -61,6 +102,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         store.save(pairing)
         mutableState.update { HubState(pairing = pairing) }
         refresh()
+        registerForPushes()
         return true
     }
 

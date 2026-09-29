@@ -28,3 +28,10 @@ On the Mac, open Settings › Phones › Pair a phone. Give the phone a name and
 
 - **Phone:** the hub's Tailscale address, `https://<mac>.<tailnet>.ts.net` (see `tailscale serve`).
 - **Emulator:** `http://10.0.2.2:8090`, the Mac's own `localhost`. It's the only address the app allows without HTTPS.
+
+## Pushes
+
+The hub pushes each update to the paired phones through Firebase Cloud Messaging; tapping one opens its job or company. Both halves of the setup stay out of the repo:
+
+- **App:** the Firebase project's `google-services.json` goes in `app/`, which git ignores. A build without it runs normally, with pushes off.
+- **Hub:** a service account key from the same project goes in `~/.config/job-search-hub/firebase-service-account.json` (Firebase console › Project settings › Service accounts). Without it the hub logs "pushes stay off" and carries on.

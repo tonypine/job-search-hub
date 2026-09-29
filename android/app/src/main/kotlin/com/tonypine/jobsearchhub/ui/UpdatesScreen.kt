@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -18,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -30,13 +32,18 @@ import com.tonypine.jobsearchhub.core.HubUpdate
 @Composable
 fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, onOpenJob: (String) -> Unit, onOpenCompany: (String) -> Unit) {
     val context = LocalContext.current
+    val listState = rememberLazyListState()
+    // A keyed list keeps its first row in place, which would leave newer updates just above the top.
+    LaunchedEffect(state.updates.firstOrNull()?.id) {
+        listState.scrollToItem(0)
+    }
     Column {
         TopAppBar(
             title = { Text("Updates") },
             actions = { IconButton(onClick = onUnpair) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Unpair") } },
         )
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 state.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
                 if (state.updates.isEmpty() && !state.isLoading && state.error == null) {
                     item { Text("No updates yet.", modifier = Modifier.padding(16.dp)) }

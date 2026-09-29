@@ -51,3 +51,6 @@ data class TaskRequest(val id: String, val kind: String, val status: String, val
 
 @Serializable
 data class QueueTaskRequest(val kind: String, val companyId: String? = null, val company: String? = null)
+
+@Serializable
+data class SetPushTokenRequest(val token: String)
