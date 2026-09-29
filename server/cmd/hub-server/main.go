@@ -25,6 +25,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
+	"github.com/tonypine/job-search-hub/server/internal/jobalerts"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
@@ -137,13 +138,18 @@ func run() error {
 		if modelClient != nil {
 			classifier := mailtriage.NewClassifier(hub, googleClient, modelClient, settings.jobFactsModel)
 			mailHandler := mailactions.NewHandler(hub, updateRecorder)
+			alertReader := jobalerts.NewReader(hub, googleClient)
 			watcher.OnMailRecorded = func() {
 				classifier.Nudge()
 				mailHandler.Nudge()
 			}
-			classifier.OnClassified = mailHandler.Nudge
+			classifier.OnClassified = func() {
+				mailHandler.Nudge()
+				alertReader.Nudge()
+			}
 			go classifier.Run(ctx, mailTriageInterval)
 			go mailHandler.Run(ctx, mailTriageInterval)
+			go alertReader.Run(ctx, mailTriageInterval)
 		}
 		go watcher.Run(ctx)
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)

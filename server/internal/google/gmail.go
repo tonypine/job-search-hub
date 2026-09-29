@@ -33,10 +33,11 @@ type MessageSummary struct {
 	LabelIDs []string  `json:"label_ids,omitempty"`
 }
 
-// Message is one message with its text.
+// Message is one message with its text, and its HTML part when it has one.
 type Message struct {
 	MessageSummary
 	Text string `json:"text"`
+	HTML string `json:"-"`
 }
 
 type gmailMessage struct {
@@ -122,14 +123,20 @@ func (client *Client) GetMessage(ctx context.Context, id string) (Message, error
 		return Message{}, err
 	}
 	var message gmailMessage
-	if err := client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages/"+url.PathEscape(id)+"?format=full", &message); err != nil {
+	err = client.callGoogle(ctx, httpClient, client.gmailBase+"/gmail/v1/users/me/messages/"+url.PathEscape(id)+"?format=full", &message)
+	var status *StatusError
+	if errors.As(err, &status) && status.Status == http.StatusNotFound {
+		return Message{}, ErrMessageNotFound
+	}
+	if err != nil {
 		return Message{}, err
 	}
+	markup := findPartText(message.Payload, "text/html")
 	text := findPartText(message.Payload, "text/plain")
 	if text == "" {
-		text = convertHTMLToText(findPartText(message.Payload, "text/html"))
+		text = convertHTMLToText(markup)
 	}
-	return Message{MessageSummary: summarize(message), Text: strings.TrimSpace(text)}, nil
+	return Message{MessageSummary: summarize(message), Text: strings.TrimSpace(text), HTML: markup}, nil
 }
 
 func summarize(message gmailMessage) MessageSummary {
