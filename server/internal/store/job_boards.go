@@ -15,7 +15,7 @@ import (
 var ErrJobBoardTaken = errors.New("this job board is already stored for another company")
 
 // JobBoardProviders are the providers a job board can be stored under.
-var JobBoardProviders = []string{"greenhouse", "lever", "ashby", "workable", "recruitee", "personio", "smartrecruiters", "other"}
+var JobBoardProviders = []string{"greenhouse", "lever", "ashby", "workable", "recruitee", "personio", "smartrecruiters", "eightfold", "other"}
 
 type JobBoard struct {
 	ID               uuid.UUID  `json:"id"`

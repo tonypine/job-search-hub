@@ -28,7 +28,7 @@ const boardSyncTimeout = time.Minute
 
 type setJobBoardInput struct {
 	CompanyID  uuid.UUID `json:"company_id"`
-	Provider   string    `json:"provider" jsonschema:"one of greenhouse, lever, ashby, workable, recruitee, personio, smartrecruiters, other"`
+	Provider   string    `json:"provider" jsonschema:"one of greenhouse, lever, ashby, workable, recruitee, personio, smartrecruiters, eightfold, other; an Eightfold board_token is <tenant>/<company domain>, e.g. acme/acme.com for acme.eightfold.ai"`
 	BoardToken string    `json:"board_token" jsonschema:"the board's identifier in the provider's job board URL, e.g. stripe in job-boards.greenhouse.io/stripe, jobs.lever.co/stripe or jobs.ashbyhq.com/stripe"`
 	BoardURL   string    `json:"board_url,omitempty" jsonschema:"the public job board URL, for providers the hub cannot verify"`
 	SourceURL  string    `json:"source_url,omitempty" jsonschema:"the page that led to this board, usually the careers page"`
@@ -37,7 +37,7 @@ type setJobBoardInput struct {
 func addJobBoardTools(server *mcp.Server, hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) {
 	addTool(server, &mcp.Tool{
 		Name: "set_job_board",
-		Description: "Store the job board where a company lists its open roles. Greenhouse, Lever, Ashby and Workable boards are " +
+		Description: "Store the job board where a company lists its open roles. Greenhouse, Lever, Ashby, Workable and Eightfold boards are " +
 			"checked against the provider's public API first, and a board the provider does not know is rejected; " +
 			"a verified board's jobs are read at once. Boards on other providers are stored unverified.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input setJobBoardInput) (*mcp.CallToolResult, store.JobBoard, error) {

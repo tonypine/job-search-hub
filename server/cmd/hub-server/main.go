@@ -110,6 +110,13 @@ func run() error {
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
+	boards.SearchTerms = func(ctx context.Context) []string {
+		saved, err := hub.GetJobCriteria(ctx)
+		if err != nil {
+			return nil
+		}
+		return saved.Criteria.SearchTerms
+	}
 	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
 	googleClient := makeGoogleClient(settings, hub)
 	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)

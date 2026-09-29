@@ -47,6 +47,12 @@ type Verifier struct {
 	AshbyBoardBase    string
 	WorkableAPIBase   string
 	HimalayasAPIBase  string
+	// EightfoldAPIBase is empty for each tenant's own site; tests set it.
+	EightfoldAPIBase string
+	// SearchTerms are what a large employer's board is searched by, rather
+	// than read whole: the owner's criteria.
+	SearchTerms           func(ctx context.Context) []string
+	eightfoldDescriptions eightfoldDescriptions
 }
 
 func NewVerifier() *Verifier {
@@ -79,6 +85,8 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 	case Workable:
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken
 		boardURL = "https://apply.workable.com/" + escapedToken + "/"
+	case Eightfold:
+		return verifier.verifyEightfold(ctx, boardToken)
 	default:
 		return Verification{}, ErrUnsupportedProvider
 	}

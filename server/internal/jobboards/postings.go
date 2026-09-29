@@ -33,6 +33,8 @@ func (verifier *Verifier) FetchPostings(ctx context.Context, provider, boardToke
 		apiURL = verifier.AshbyAPIBase + "/posting-api/job-board/" + escapedToken + "?includeCompensation=true"
 	case Workable:
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken + "?details=true"
+	case Eightfold:
+		return verifier.fetchEightfoldPostings(ctx, boardToken)
 	default:
 		return nil, ErrUnsupportedProvider
 	}
