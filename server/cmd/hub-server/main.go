@@ -104,6 +104,7 @@ func run() error {
 	api.RegisterAgentPromptRoutes(routes, hub, requireOwner)
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
+	api.RegisterDeviceRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
 	updateRecorder := hubevents.NewRecorder(hub, broadcaster)
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)

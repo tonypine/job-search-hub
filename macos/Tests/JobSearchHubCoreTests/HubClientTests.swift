@@ -64,3 +64,12 @@ struct HubClientTests {
         #expect(await ConnectionStatus.check(baseURL: hubURL, token: nil, session: session) == .missingToken)
     }
 }
+
+@Test func aPairingLinkCarriesTheAddressAndTokenBothWays() throws {
+    let link = try #require(PairingLink.make(hubURL: "https://mac.tailnet.ts.net", token: "hubdev_abc+/="))
+    #expect(link.hasPrefix("jobsearchhub://pair?"))
+    let parsed = try #require(PairingLink.parse(link))
+    #expect(parsed.hubURL == "https://mac.tailnet.ts.net")
+    #expect(parsed.token == "hubdev_abc+/=")
+    #expect(PairingLink.parse("https://example.com/?token=x") == nil)
+}

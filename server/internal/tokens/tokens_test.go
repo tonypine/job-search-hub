@@ -20,9 +20,13 @@ var ownerToken = strings.Repeat("o", 64)
 
 type fakeAgentRuns struct{ running map[string]store.AgentRun }
 
+func (runs fakeAgentRuns) GetActiveDeviceByTokenHash(context.Context, []byte) (store.Device, error) {
+	return store.Device{}, store.ErrDeviceNotFound
+}
+
 func (runs fakeAgentRuns) GetRunningAgentRunByTokenHash(_ context.Context, tokenHash []byte) (store.AgentRun, error) {
 	for token, run := range runs.running {
-		if bytes.Equal(tokens.HashAgentRunToken(token), tokenHash) {
+		if bytes.Equal(tokens.HashToken(token), tokenHash) {
 			return run, nil
 		}
 	}
@@ -62,7 +66,7 @@ func TestVerifierRejectsAnyOtherToken(t *testing.T) {
 func TestNewAgentRunTokenReturnsItsHash(t *testing.T) {
 	token, hash := tokens.NewAgentRunToken()
 	other, _ := tokens.NewAgentRunToken()
-	if token == other || len(token) < 26 || !bytes.Equal(hash, tokens.HashAgentRunToken(token)) {
+	if token == other || len(token) < 26 || !bytes.Equal(hash, tokens.HashToken(token)) {
 		t.Fatalf("token=%q other=%q", token, other)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -22,19 +23,35 @@ const (
 	ScopeAgentRun = "agent_run"
 )
 
-type agentRunLookup interface {
+// DevicePrefix starts every device token, so the verifier knows where to
+// look one up.
+const DevicePrefix = "hubdev_"
+
+type tokenLookup interface {
 	GetRunningAgentRunByTokenHash(ctx context.Context, tokenHash []byte) (store.AgentRun, error)
+	GetActiveDeviceByTokenHash(ctx context.Context, tokenHash []byte) (store.Device, error)
 }
 
-// NewVerifier accepts the owner token, and the token of any agent run that is
-// still running and unexpired.
-func NewVerifier(ownerToken string, agentRuns agentRunLookup) auth.TokenVerifier {
+// NewVerifier accepts the owner token; a paired device's token, which acts
+// as the owner; and the token of any agent run that is still running and
+// unexpired.
+func NewVerifier(ownerToken string, lookup tokenLookup) auth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(ownerToken)) == 1 {
 			return &auth.TokenInfo{UserID: ScopeOwner, Scopes: []string{ScopeOwner}}, nil
 		}
+		if strings.HasPrefix(token, DevicePrefix) {
+			device, err := lookup.GetActiveDeviceByTokenHash(ctx, HashToken(token))
+			if errors.Is(err, store.ErrDeviceNotFound) {
+				return nil, auth.ErrInvalidToken
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &auth.TokenInfo{UserID: "device:" + device.ID.String(), Scopes: []string{ScopeOwner}, Extra: map[string]any{"device_id": device.ID}}, nil
+		}
 
-		run, err := agentRuns.GetRunningAgentRunByTokenHash(ctx, HashAgentRunToken(token))
+		run, err := lookup.GetRunningAgentRunByTokenHash(ctx, HashToken(token))
 		if errors.Is(err, store.ErrAgentRunNotFound) {
 			return nil, auth.ErrInvalidToken
 		}
@@ -50,14 +67,38 @@ func NewVerifier(ownerToken string, agentRuns agentRunLookup) auth.TokenVerifier
 	}
 }
 
+// NewDeviceToken returns a fresh device token and the hash the store keeps
+// in its place.
+func NewDeviceToken() (string, []byte) {
+	token := DevicePrefix + rand.Text()
+	return token, HashToken(token)
+}
+
+// IsOwnersOwnToken says whether the request carries the owner token itself,
+// rather than a device's: pairing phones is done from the Mac.
+func IsOwnersOwnToken(ctx context.Context) bool {
+	info := auth.TokenInfoFromContext(ctx)
+	return info != nil && info.UserID == ScopeOwner
+}
+
+// GetDeviceID returns the paired device the request's token belongs to.
+func GetDeviceID(ctx context.Context) (uuid.UUID, bool) {
+	info := auth.TokenInfoFromContext(ctx)
+	if info == nil {
+		return uuid.UUID{}, false
+	}
+	id, found := info.Extra["device_id"].(uuid.UUID)
+	return id, found
+}
+
 // NewAgentRunToken returns a fresh random token and the hash the store keeps
 // in its place.
 func NewAgentRunToken() (string, []byte) {
 	token := rand.Text()
-	return token, HashAgentRunToken(token)
+	return token, HashToken(token)
 }
 
-func HashAgentRunToken(token string) []byte {
+func HashToken(token string) []byte {
 	hash := sha256.Sum256([]byte(token))
 	return hash[:]
 }

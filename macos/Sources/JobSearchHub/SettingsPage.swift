@@ -38,6 +38,7 @@ struct SettingsPage: View {
                 NetworkSection(client: client)
                 JobCriteriaSection(client: client)
                 PipelinePhasesSection(client: client)
+                PhonesSection(client: client)
             }
         }
         .formStyle(.grouped)

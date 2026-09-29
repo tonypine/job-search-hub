@@ -59,6 +59,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterAgentPromptRoutes(routes, hub, requireOwner)
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
+	api.RegisterDeviceRoutes(routes, hub, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, url: server.URL}
@@ -111,7 +112,7 @@ func TestStartingARunReturnsItsTokenAndStoresOnlyTheHash(t *testing.T) {
 	if err := service.pool.QueryRow(context.Background(), `SELECT token_hash FROM agent_runs WHERE id = $1`, started.AgentRun.ID).Scan(&storedHash); err != nil {
 		t.Fatalf("read hash: %v", err)
 	}
-	if !bytes.Equal(storedHash, tokens.HashAgentRunToken(started.Token)) || bytes.Contains(storedHash, []byte(started.Token)) {
+	if !bytes.Equal(storedHash, tokens.HashToken(started.Token)) || bytes.Contains(storedHash, []byte(started.Token)) {
 		t.Fatal("the database does not hold exactly the token's hash")
 	}
 }
