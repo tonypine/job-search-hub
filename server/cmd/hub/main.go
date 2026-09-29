@@ -23,6 +23,11 @@ const usage = `usage:
       [--model <model>]             draft a message back to a recruiter who wrote before
   hub profile audit [--model <model>]
                                     audit the LinkedIn profile for recruiters searching
+  hub attach <path> --kind resume|company_document|saved_page|other [--company <domain>]
+                                    attach a file the agents read as context
+  hub artifacts [--company <domain>]
+                                    list your attached files, or a company's
+  hub artifacts delete <id>         delete an attached file
 `
 
 func main() {
@@ -79,6 +84,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		err = auditProfile(ctx, config, *model, stdout)
+	case len(args) >= 2 && args[0] == "attach":
+		flags := flag.NewFlagSet("attach", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		kind := flags.String("kind", "", "resume, company_document, saved_page or other")
+		company := flags.String("company", "", "the domain of the company the file is about")
+		if flags.Parse(args[2:]) != nil || flags.NArg() > 0 || *kind == "" {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = attachFile(ctx, config, args[1], *kind, *company, stdout)
+	case len(args) == 3 && args[0] == "artifacts" && args[1] == "delete":
+		err = deleteFile(ctx, config, args[2], stdout)
+	case len(args) >= 1 && args[0] == "artifacts":
+		flags := flag.NewFlagSet("artifacts", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		company := flags.String("company", "", "the domain of the company whose files to list")
+		if flags.Parse(args[1:]) != nil || flags.NArg() > 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		err = listFiles(ctx, config, *company, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2

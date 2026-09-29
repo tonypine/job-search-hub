@@ -26,13 +26,24 @@ func getJSON(ctx context.Context, config cliConfig, path string, response any) e
 }
 
 func callREST(ctx context.Context, config cliConfig, method, path string, body io.Reader, response any) error {
+	contentType := ""
+	if body != nil {
+		contentType = "application/json"
+	}
+	return callRESTWithContentType(ctx, config, method, path, body, contentType, response)
+}
+
+// callRESTWithContentType calls the REST API as the owner with a body of
+// contentType, and decodes a successful answer into response unless it is
+// nil.
+func callRESTWithContentType(ctx context.Context, config cliConfig, method, path string, body io.Reader, contentType string, response any) error {
 	httpRequest, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(config.HubURL, "/")+path, body)
 	if err != nil {
 		return err
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+config.OwnerToken)
-	if body != nil {
-		httpRequest.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		httpRequest.Header.Set("Content-Type", contentType)
 	}
 
 	httpResponse, err := http.DefaultClient.Do(httpRequest)
@@ -47,6 +58,9 @@ func callREST(ctx context.Context, config cliConfig, method, path string, body i
 		}
 		json.NewDecoder(httpResponse.Body).Decode(&failure)
 		return fmt.Errorf("%s %s: %d %s", method, path, httpResponse.StatusCode, failure.Error)
+	}
+	if response == nil {
+		return nil
 	}
 	return json.NewDecoder(httpResponse.Body).Decode(response)
 }
