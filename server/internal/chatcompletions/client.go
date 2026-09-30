@@ -123,12 +123,16 @@ func hashInput(request JSONRequest) string {
 }
 
 func (client *Client) complete(ctx context.Context, request JSONRequest) (json.RawMessage, tokenUsage, string, error) {
+	// response_format only constrains decoding: servers such as LM Studio and
+	// llama.cpp never show the schema to the model, which then guesses each
+	// field's meaning from its name.
+	system := strings.TrimRight(request.System, "\n") + "\n\nAnswer with only a JSON object that matches this JSON Schema:\n" + string(request.Schema)
 	body, err := json.Marshal(map[string]any{
 		"model":       request.Model,
 		"temperature": 0,
 		"max_tokens":  request.MaxTokens,
 		"messages": []map[string]string{
-			{"role": "system", "content": request.System},
+			{"role": "system", "content": system},
 			{"role": "user", "content": request.User},
 		},
 		"response_format": map[string]any{

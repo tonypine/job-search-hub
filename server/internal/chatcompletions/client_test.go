@@ -47,6 +47,10 @@ func TestTheAnswerComesFromContentAndTheRequestCarriesTheSchema(t *testing.T) {
 	if (*received)["model"] != "qwen/qwen3.5-9b" || format["type"] != "json_schema" || schema["name"] != "job_facts" || schema["strict"] != true || schema["schema"] == nil {
 		t.Fatalf("request = %+v", *received)
 	}
+	system := (*received)["messages"].([]any)[0].(map[string]any)["content"]
+	if system != "Record the facts.\n\nAnswer with only a JSON object that matches this JSON Schema:\n"+string(request.Schema) {
+		t.Fatalf("system message = %q", system)
+	}
 }
 
 func TestAnEmptyContentFallsBackToReasoningContent(t *testing.T) {
