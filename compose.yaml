@@ -21,7 +21,11 @@ services:
       retries: 10
       start_period: 5s
 
+  # The hub server runs natively on the Mac (server/scripts/install-native-server.sh),
+  # so it can own a model runtime on the GPU. This container is for other hosts:
+  # docker compose --profile docker-server up -d
   server:
+    profiles: [docker-server]
     build: ./server
     image: job-search-hub-server:dev
     restart: unless-stopped

@@ -20,15 +20,16 @@ It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions t
 
 You need Docker, Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use your subscription).
 
-1. **Configure and start the stack.**
+1. **Configure and start the stack.** Postgres runs in Docker; the server runs natively on the Mac as a LaunchAgent, so it can run local models on the GPU.
 
    ```bash
    cp .env.example .env    # then fill in both values; each line says how to generate it
-   docker compose up -d --build
+   docker compose up -d                     # Postgres only
+   server/scripts/install-native-server.sh  # builds hub-server, installs and starts the LaunchAgent
    curl -fsS localhost:8090/v1/health
    ```
 
-   Both services listen on 127.0.0.1 only: the server on 8090, Postgres on 5434.
+   Both listen on 127.0.0.1 only: the server on 8090, Postgres on 5434. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes, and `--uninstall` to remove the agent. On a host other than a Mac, run the server in Docker instead: `docker compose --profile docker-server up -d --build`.
 
 2. **Install the CLI.**
 
