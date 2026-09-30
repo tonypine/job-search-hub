@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
+	"github.com/tonypine/job-search-hub/server/internal/modelruntime"
 	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -150,9 +152,23 @@ func run() error {
 		slog.Error("read the task routes", "error", err)
 		os.Exit(1)
 	}
+	// The hub's own model runtime starts llama-server only when a route to
+	// it has work, and stops it when idle.
+	logDirectory := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		logDirectory = filepath.Join(home, "Library", "Logs", "JobSearchHub")
+		_ = os.MkdirAll(logDirectory, 0o755)
+	}
+	modelRuntime := modelruntime.New(modelruntime.Settings{
+		LlamaServer: settings.llamaServer, ModelsDir: settings.modelsDir, Port: settings.runtimePort,
+		IdleTimeout: settings.runtimeIdleTimeout, LogPath: filepath.Join(logDirectory, "llama-server.log"),
+	})
+	go modelRuntime.Run(ctx)
+
 	var modelClient *modelrouter.Router
 	if len(taskRoutes) > 0 {
 		modelClient = modelrouter.New(hub)
+		modelClient.Runtime = modelRuntime
 		modelClient.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
 			if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
 				Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,

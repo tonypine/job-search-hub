@@ -3,17 +3,22 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	minimumOwnerTokenLength  = 32
-	defaultBoardPollInterval = time.Hour
-	defaultJobFactsModel     = "qwen/qwen3.5-9b"
-	defaultJobFactsInterval  = 10 * time.Minute
-	defaultFeedPollInterval  = 3 * time.Hour
-	defaultPublicURL         = "http://localhost:8090"
+	minimumOwnerTokenLength   = 32
+	defaultBoardPollInterval  = time.Hour
+	defaultJobFactsModel      = "qwen/qwen3.5-9b"
+	defaultJobFactsInterval   = 10 * time.Minute
+	defaultRuntimePort        = 8095
+	defaultRuntimeIdleTimeout = 10 * time.Minute
+	defaultFeedPollInterval   = 3 * time.Hour
+	defaultPublicURL          = "http://localhost:8090"
 )
 
 type config struct {
@@ -44,6 +49,13 @@ type config struct {
 	// firebaseServiceAccountFile is the key the hub pushes to phones with;
 	// empty, or no file there, leaves pushes off.
 	firebaseServiceAccountFile string
+	// llamaServer, modelsDir, runtimePort and runtimeIdleTimeout set up the hub's
+	// own model runtime: the llama-server binary, the folder of GGUF files
+	// routes can name, its port, and how long an idle model stays loaded.
+	llamaServer        string
+	modelsDir          string
+	runtimePort        int
+	runtimeIdleTimeout time.Duration
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -101,6 +113,27 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	parsed.jobFactsModel = lookup("HUB_JOB_FACTS_MODEL")
 	if parsed.jobFactsModel == "" {
 		parsed.jobFactsModel = defaultJobFactsModel
+	}
+	parsed.llamaServer = lookup("HUB_LLAMA_SERVER")
+	if parsed.llamaServer == "" {
+		parsed.llamaServer = "llama-server"
+	}
+	parsed.modelsDir = lookup("HUB_MODELS_DIR")
+	if parsed.modelsDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			parsed.modelsDir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "models")
+		}
+	}
+	parsed.runtimePort = defaultRuntimePort
+	if raw := lookup("HUB_RUNTIME_PORT"); raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port <= 0 || port > 65535 {
+			return config{}, fmt.Errorf("HUB_RUNTIME_PORT must be a port number, got %q", raw)
+		}
+		parsed.runtimePort = port
+	}
+	if parsed.runtimeIdleTimeout, err = parseInterval(lookup, "HUB_RUNTIME_IDLE_TIMEOUT", defaultRuntimeIdleTimeout); err != nil {
+		return config{}, err
 	}
 	return parsed, nil
 }

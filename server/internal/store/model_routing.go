@@ -27,10 +27,18 @@ var RoutedTaskKinds = []string{AgentPromptKindJobFacts, AgentPromptKindMailTriag
 // settings, the local model server it used before routes existed.
 const DefaultModelProviderName = "Local model"
 
-// ModelProvider is a model server the hub can call, local or hosted. Its key
-// is never served back; HasKey says whether one is set.
+// The kinds of model provider: an OpenAI-compatible server at an address,
+// local or hosted, or the hub's own runtime, whose routes name a GGUF file.
+const (
+	ModelProviderKindOpenAICompatible = "openai_compatible"
+	ModelProviderKindHubRuntime       = "hub_runtime"
+)
+
+// ModelProvider is a model server the hub can call. Its key is never served
+// back; HasKey says whether one is set.
 type ModelProvider struct {
 	ID             uuid.UUID `json:"id"`
+	Kind           string    `json:"kind"`
 	Name           string    `json:"name"`
 	BaseURL        string    `json:"base_url"`
 	APIKey         string    `json:"-"`
@@ -42,6 +50,8 @@ type ModelProvider struct {
 // ModelProviderInput adds or replaces a provider. A nil APIKey keeps the
 // key already saved; an empty one removes it.
 type ModelProviderInput struct {
+	// Kind defaults to ModelProviderKindOpenAICompatible.
+	Kind           string  `json:"kind"`
 	Name           string  `json:"name"`
 	BaseURL        string  `json:"base_url"`
 	APIKey         *string `json:"api_key,omitempty"`
@@ -67,11 +77,11 @@ type TaskRouteInput struct {
 	FallbackModel      string     `json:"fallback_model,omitempty"`
 }
 
-const modelProviderColumns = `id, name, base_url, api_key, enforces_schema, created_at`
+const modelProviderColumns = `id, kind, name, base_url, api_key, enforces_schema, created_at`
 
 func scanModelProvider(row pgx.Row) (ModelProvider, error) {
 	var provider ModelProvider
-	err := row.Scan(&provider.ID, &provider.Name, &provider.BaseURL, &provider.APIKey, &provider.EnforcesSchema, &provider.CreatedAt)
+	err := row.Scan(&provider.ID, &provider.Kind, &provider.Name, &provider.BaseURL, &provider.APIKey, &provider.EnforcesSchema, &provider.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelProvider{}, ErrModelProviderNotFound
 	}
@@ -105,8 +115,18 @@ func (s *Store) GetModelProvider(ctx context.Context, id uuid.UUID) (ModelProvid
 // SaveModelProvider adds a provider, or replaces the one with id.
 func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUID, input ModelProviderInput) (ModelProvider, error) {
 	input.Name, input.BaseURL = strings.TrimSpace(input.Name), strings.TrimSuffix(strings.TrimSpace(input.BaseURL), "/")
-	if input.Name == "" || !(strings.HasPrefix(input.BaseURL, "http://") || strings.HasPrefix(input.BaseURL, "https://")) {
-		return ModelProvider{}, errors.New("a provider needs a name and an http(s) address, such as http://localhost:1234/v1")
+	if input.Kind == "" {
+		input.Kind = ModelProviderKindOpenAICompatible
+	}
+	switch {
+	case input.Name == "":
+		return ModelProvider{}, errors.New("a provider needs a name")
+	case input.Kind == ModelProviderKindHubRuntime:
+		input.BaseURL = ""
+	case input.Kind != ModelProviderKindOpenAICompatible:
+		return ModelProvider{}, fmt.Errorf("a provider is %s or %s", ModelProviderKindOpenAICompatible, ModelProviderKindHubRuntime)
+	case !(strings.HasPrefix(input.BaseURL, "http://") || strings.HasPrefix(input.BaseURL, "https://")):
+		return ModelProvider{}, errors.New("a provider needs an http(s) address, such as http://localhost:1234/v1")
 	}
 	var saved ModelProvider
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -117,8 +137,8 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 				key = strings.TrimSpace(*input.APIKey)
 			}
 			saved, err = scanModelProvider(tx.QueryRow(ctx, `
-				INSERT INTO model_providers (name, base_url, api_key, enforces_schema) VALUES ($1, $2, $3, $4) RETURNING `+modelProviderColumns,
-				input.Name, input.BaseURL, key, input.EnforcesSchema))
+				INSERT INTO model_providers (kind, name, base_url, api_key, enforces_schema) VALUES ($1, $2, $3, $4, $5) RETURNING `+modelProviderColumns,
+				input.Kind, input.Name, input.BaseURL, key, input.EnforcesSchema))
 		} else {
 			var key *string
 			if input.APIKey != nil {
@@ -126,8 +146,8 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 				key = &trimmed
 			}
 			saved, err = scanModelProvider(tx.QueryRow(ctx, `
-				UPDATE model_providers SET name = $2, base_url = $3, api_key = coalesce($4, api_key), enforces_schema = $5
-				WHERE id = $1 RETURNING `+modelProviderColumns, *id, input.Name, input.BaseURL, key, input.EnforcesSchema))
+				UPDATE model_providers SET kind = $6, name = $2, base_url = $3, api_key = coalesce($4, api_key), enforces_schema = $5
+				WHERE id = $1 RETURNING `+modelProviderColumns, *id, input.Name, input.BaseURL, key, input.EnforcesSchema, input.Kind))
 		}
 		if isUniqueViolation(err) {
 			return errors.New("another provider has that name")
@@ -137,7 +157,7 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 		}
 		return insertChange(ctx, tx, actor, change{
 			entityType: "model_provider", entityID: saved.ID, operation: "save",
-			after: map[string]any{"name": saved.Name, "base_url": saved.BaseURL, "has_key": saved.HasKey, "enforces_schema": saved.EnforcesSchema},
+			after: map[string]any{"kind": saved.Kind, "name": saved.Name, "base_url": saved.BaseURL, "has_key": saved.HasKey, "enforces_schema": saved.EnforcesSchema},
 		})
 	})
 	return saved, err

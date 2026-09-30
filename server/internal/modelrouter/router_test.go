@@ -132,3 +132,52 @@ func TestAProviderThatCannotEnforceSchemasGetsOneRetry(t *testing.T) {
 		t.Fatalf("err = %v after %d requests; want invalid after one retry", err, len(stubborn.received))
 	}
 }
+
+// fakeRuntime serves every model from one test server and counts releases.
+type fakeRuntime struct {
+	url      string
+	acquired []string
+	released int
+	failWith error
+}
+
+func (runtime *fakeRuntime) Acquire(_ context.Context, modelFile string) (string, func(), error) {
+	if runtime.failWith != nil {
+		return "", nil, runtime.failWith
+	}
+	runtime.acquired = append(runtime.acquired, modelFile)
+	return runtime.url, func() { runtime.released++ }, nil
+}
+
+func TestAHubRuntimeRouteRunsOnTheHubsOwnRuntime(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	server := startModelServer(t, `{"stack":"Go"}`)
+	provider, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{Kind: store.ModelProviderKindHubRuntime, Name: "Hub runtime", EnforcesSchema: true})
+	if err != nil || provider.BaseURL != "" {
+		t.Fatalf("provider = %+v, %v", provider, err)
+	}
+	if _, err := hub.SaveTaskRoute(context.Background(), owner, store.AgentPromptKindJobFacts, store.TaskRouteInput{ProviderID: provider.ID, Model: "Qwen3.8-27B-Q4_K_M.gguf"}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := modelrouter.New(hub)
+	if _, err := router.CompleteJSON(context.Background(), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
+		t.Fatalf("without a runtime: %v", err)
+	}
+	runtime := &fakeRuntime{url: server.url + "/v1"}
+	router.Runtime = runtime
+	answer, err := router.CompleteJSON(context.Background(), request)
+	if err != nil || answer.Model != "Qwen3.8-27B-Q4_K_M.gguf" || len(runtime.acquired) != 1 || runtime.released != 1 {
+		t.Fatalf("answer = %+v, %v, runtime = %+v", answer, err, runtime)
+	}
+
+	var records []chatcompletions.RunRecord
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+	runtime.failWith = errors.New("llama-server exited while loading")
+	if _, err := router.CompleteJSON(context.Background(), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
+		t.Fatalf("a runtime that can't load: %v", err)
+	}
+	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed {
+		t.Fatalf("records = %+v; want the failed start recorded", records)
+	}
+}

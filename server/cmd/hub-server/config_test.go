@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -111,5 +112,24 @@ func TestGmailChangesNeedBothPubSubNamesOrNeither(t *testing.T) {
 	delete(both, "HUB_GMAIL_PUBSUB_SUBSCRIPTION")
 	if _, err := parseEnvironment(lookupFrom(both)); err == nil || !strings.Contains(err.Error(), "HUB_GMAIL_PUBSUB_SUBSCRIPTION") {
 		t.Fatalf("a topic without a subscription: err = %v", err)
+	}
+}
+
+func TestTheModelRuntimeHasDefaultsAndChecksItsPort(t *testing.T) {
+	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
+	if err != nil || parsed.llamaServer != "llama-server" || parsed.runtimePort != defaultRuntimePort || parsed.runtimeIdleTimeout != defaultRuntimeIdleTimeout ||
+		!strings.HasSuffix(parsed.modelsDir, "Application Support/JobSearchHub/models") {
+		t.Fatalf("parsed = %+v, err = %v", parsed, err)
+	}
+
+	environment := maps.Clone(validEnvironment)
+	environment["HUB_LLAMA_SERVER"], environment["HUB_MODELS_DIR"], environment["HUB_RUNTIME_PORT"], environment["HUB_RUNTIME_IDLE_TIMEOUT"] = "/opt/llama-server", "/models", "9000", "1m"
+	parsed, err = parseEnvironment(lookupFrom(environment))
+	if err != nil || parsed.llamaServer != "/opt/llama-server" || parsed.modelsDir != "/models" || parsed.runtimePort != 9000 || parsed.runtimeIdleTimeout != time.Minute {
+		t.Fatalf("parsed = %+v, err = %v", parsed, err)
+	}
+	environment["HUB_RUNTIME_PORT"] = "eighty"
+	if _, err := parseEnvironment(lookupFrom(environment)); err == nil {
+		t.Fatal("a bad port was accepted")
 	}
 }

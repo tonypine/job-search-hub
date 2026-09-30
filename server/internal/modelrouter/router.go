@@ -7,16 +7,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
+// HubRuntimeAddress stands for the hub's own runtime in the record of a
+// request that never reached it.
+const HubRuntimeAddress = "hub runtime"
+
+// runtime runs the hub's own local models (see modelruntime.Runtime).
+type runtime interface {
+	Acquire(ctx context.Context, modelFile string) (baseURL string, release func(), err error)
+}
+
 // Router answers requests on the routed model. Routes are read on every
 // request, so a change applies to the next one.
 type Router struct {
 	hub *store.Store
+	// Runtime serves routes to a hub runtime provider; nil leaves them
+	// unreachable.
+	Runtime runtime
 	// RecordRun, when set, hears about every attempt, fallbacks and retries
 	// included.
 	RecordRun func(context.Context, chatcompletions.RunRecord)
@@ -49,7 +62,27 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 	if err != nil {
 		return chatcompletions.Answer{}, fmt.Errorf("read the model provider: %w", err)
 	}
-	client := chatcompletions.NewClient(provider.BaseURL)
+	baseURL := provider.BaseURL
+	if provider.Kind == store.ModelProviderKindHubRuntime {
+		if router.Runtime == nil {
+			return chatcompletions.Answer{}, fmt.Errorf("%w: the hub's model runtime isn't set up", chatcompletions.ErrUnreachable)
+		}
+		startedAt := time.Now()
+		runtimeURL, release, err := router.Runtime.Acquire(ctx, model)
+		if err != nil {
+			err = fmt.Errorf("%w: %v", chatcompletions.ErrUnreachable, err)
+			if router.RecordRun != nil {
+				router.RecordRun(context.WithoutCancel(ctx), chatcompletions.RunRecord{
+					Kind: request.SchemaName, Task: request.Task, BaseURL: HubRuntimeAddress, Model: model,
+					StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: chatcompletions.RunFailed, Error: err.Error(),
+				})
+			}
+			return chatcompletions.Answer{}, err
+		}
+		defer release()
+		baseURL = runtimeURL
+	}
+	client := chatcompletions.NewClient(baseURL)
 	client.APIKey = provider.APIKey
 	client.RecordRun = router.RecordRun
 	request.Model = model
