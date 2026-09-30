@@ -28,6 +28,8 @@ public struct JobFactEntry: Decodable, Equatable, Identifiable, Sendable {
     public var title: String
     public var description: String?
     public var value: JSONValue
+    /// The posting's words the fact rests on, when it was read with them.
+    public var evidence: String?
 
     public var id: String { key }
 

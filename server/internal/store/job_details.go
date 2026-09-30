@@ -40,12 +40,15 @@ type LabelledJobFacts struct {
 }
 
 // JobFactEntry is one fact: its key, the schema's title and description for
-// it, and the value read.
+// it, the value read, and the evidence for it.
 type JobFactEntry struct {
 	Key         string          `json:"key"`
 	Title       string          `json:"title"`
 	Description string          `json:"description,omitempty"`
 	Value       json.RawMessage `json:"value"`
+	// Evidence is the posting's words the fact rests on, when it was read
+	// with them.
+	Evidence string `json:"evidence,omitempty"`
 }
 
 func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, error) {
@@ -107,50 +110,36 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 	return details, connectionsErr
 }
 
-// labelJobFacts orders the facts as the schema's required list does, then
-// the schema's other properties, then any fact the schema does not name, and
-// labels each with the schema's title and description. A fact the schema
-// does not title is labelled with its key.
+// labelJobFacts flattens the facts (see FlattenJobFacts) and orders them as
+// the schema does (see listJobFactLabels), then any fact the schema doesn't
+// name, labelling each with the schema's title and description and its
+// evidence when it was read with some.
 func labelJobFacts(rawFacts, schema json.RawMessage) ([]JobFactEntry, error) {
-	var facts map[string]json.RawMessage
-	if err := json.Unmarshal(rawFacts, &facts); err != nil {
+	values, evidence, err := FlattenJobFacts(rawFacts)
+	if err != nil {
 		return nil, err
 	}
-	var parsedSchema struct {
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Title       string `json:"title"`
-			Description string `json:"description"`
-		} `json:"properties"`
+	labels, err := listJobFactLabels(schema)
+	if err != nil {
+		return nil, err
 	}
-	if len(schema) > 0 {
-		if err := json.Unmarshal(schema, &parsedSchema); err != nil {
-			return nil, err
+	labelled := map[string]bool{}
+	for _, label := range labels {
+		labelled[label.Key] = true
+	}
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		if !labelled[key] {
+			labels = append(labels, jobFactLabel{Key: key, Title: key})
 		}
 	}
 
-	var orderedKeys []string
-	seen := map[string]bool{}
-	addKeys := func(keys []string) {
-		for _, key := range keys {
-			if _, hasFact := facts[key]; hasFact && !seen[key] {
-				seen[key] = true
-				orderedKeys = append(orderedKeys, key)
-			}
+	entries := make([]JobFactEntry, 0, len(values))
+	for _, label := range labels {
+		value, hasFact := values[label.Key]
+		if !hasFact {
+			continue
 		}
-	}
-	addKeys(parsedSchema.Required)
-	addKeys(slices.Sorted(maps.Keys(parsedSchema.Properties)))
-	addKeys(slices.Sorted(maps.Keys(facts)))
-
-	entries := make([]JobFactEntry, 0, len(orderedKeys))
-	for _, key := range orderedKeys {
-		property := parsedSchema.Properties[key]
-		title := property.Title
-		if title == "" {
-			title = key
-		}
-		entries = append(entries, JobFactEntry{Key: key, Title: title, Description: property.Description, Value: facts[key]})
+		entries = append(entries, JobFactEntry{Key: label.Key, Title: label.Title, Description: label.Description, Value: value, Evidence: evidence[label.Key]})
 	}
 	return entries, nil
 }
@@ -163,7 +152,7 @@ type JobFactColumn struct {
 }
 
 // ListJobFactColumns returns the facts the current job_facts prompt reads, in
-// the schema's order: its required list, then its other properties.
+// the schema's order (see listJobFactLabels).
 func (s *Store) ListJobFactColumns(ctx context.Context) ([]JobFactColumn, error) {
 	prompt, err := s.GetLatestAgentPrompt(ctx, AgentPromptKindJobFacts)
 	if errors.Is(err, ErrAgentPromptNotFound) || (err == nil && len(prompt.ResultSchema) == 0) {
@@ -172,28 +161,13 @@ func (s *Store) ListJobFactColumns(ctx context.Context) ([]JobFactColumn, error)
 	if err != nil {
 		return nil, err
 	}
-	var schema struct {
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Title string `json:"title"`
-		} `json:"properties"`
-	}
-	if err := json.Unmarshal(prompt.ResultSchema, &schema); err != nil {
+	labels, err := listJobFactLabels(prompt.ResultSchema)
+	if err != nil {
 		return nil, err
 	}
 	columns := []JobFactColumn{}
-	seen := map[string]bool{}
-	for _, key := range append(slices.Clone(schema.Required), slices.Sorted(maps.Keys(schema.Properties))...) {
-		property, known := schema.Properties[key]
-		if !known || seen[key] {
-			continue
-		}
-		seen[key] = true
-		title := property.Title
-		if title == "" {
-			title = key
-		}
-		columns = append(columns, JobFactColumn{Key: key, Title: title})
+	for _, label := range labels {
+		columns = append(columns, JobFactColumn{Key: label.Key, Title: label.Title})
 	}
 	return columns, nil
 }

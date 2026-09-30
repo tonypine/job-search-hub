@@ -43,14 +43,19 @@ type Fit struct {
 	Checks []Check `json:"checks"`
 }
 
-// readFacts are the facts the checks read, by their keys in the job_facts
-// prompt's schema. A renamed fact reads as missing, and its check as unclear.
+// readFacts are the facts the checks read, flattened (see
+// store.FlattenJobFacts), by their keys in the job_facts prompt's schemas:
+// the flat one, then the one with evidence. A renamed fact reads as missing,
+// and its check as unclear.
 type readFacts struct {
 	LocationRestriction string   `json:"location_restriction"`
+	Location            string   `json:"location"`
+	OpenToBrazil        string   `json:"location.open_to_brazil"`
 	Technologies        []string `json:"technologies"`
 	Seniority           string   `json:"seniority"`
 	PayInText           string   `json:"pay_in_text"`
 	ContractType        string   `json:"contract_type"`
+	Contract            string   `json:"contract"`
 	TimezoneRequirement string   `json:"timezone_requirement"`
 }
 
@@ -61,7 +66,13 @@ const notStated = "not stated"
 func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria, rates ExchangeRates) Fit {
 	var facts readFacts
 	if len(rawFacts) > 0 {
-		_ = json.Unmarshal(rawFacts, &facts)
+		_ = json.Unmarshal(store.FlattenJobFactsToJSON(rawFacts), &facts)
+	}
+	if facts.LocationRestriction == "" {
+		facts.LocationRestriction = facts.Location
+	}
+	if facts.ContractType == "" {
+		facts.ContractType = facts.Contract
 	}
 	checks := []Check{
 		checkRole(job, criteria),
@@ -154,6 +165,14 @@ func normalizeTitle(title string) string {
 
 func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) Check {
 	const name = "Where they hire"
+	// The model's own reading of the rule, when the prompt asks for one, is
+	// more reliable than matching terms in it.
+	switch facts.OpenToBrazil {
+	case "yes":
+		return Check{Name: name, Verdict: VerdictYes, Reason: "open to someone in Brazil"}
+	case "no":
+		return Check{Name: name, Verdict: VerdictNo, Reason: "not open to someone in Brazil"}
+	}
 	restriction := facts.LocationRestriction
 	if strings.EqualFold(strings.TrimSpace(restriction), notStated) {
 		restriction = ""

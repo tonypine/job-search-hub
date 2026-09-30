@@ -2,6 +2,7 @@ package jobfit_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
@@ -220,5 +221,26 @@ func TestTheFitLevel(t *testing.T) {
 
 	if good.Level != jobfit.LevelGood || unclear.Level != jobfit.LevelUnclear || poor.Level != jobfit.LevelPoor {
 		t.Fatalf("levels = %s, %s, %s", good.Level, unclear.Level, poor.Level)
+	}
+}
+
+func TestFactsReadWithEvidenceAreJudgedLikeFlatOnes(t *testing.T) {
+	job := store.Job{Title: "Senior Front-End Engineer", Location: "Remote"}
+	flat := facts(t, map[string]any{"location_restriction": "Anywhere in the Americas", "seniority": "Senior", "technologies": []string{"React"}, "timezone_requirement": "overlap with EST"})
+	withEvidence := facts(t, map[string]any{
+		"location":             map[string]any{"evidence": "Americas", "restriction": "Anywhere in the Americas", "open_to_brazil": "unclear", "reason": "x"},
+		"seniority":            map[string]any{"evidence": "Senior", "as_written": "Senior", "levels": []string{"senior"}},
+		"technologies":         map[string]any{"evidence": "React", "value": []string{"React"}},
+		"timezone_requirement": map[string]any{"evidence": "EST", "value": "overlap with EST"},
+	})
+	if left, right := jobfit.Judge(job, flat, criteria, rates), jobfit.Judge(job, withEvidence, criteria, rates); fmt.Sprint(left) != fmt.Sprint(right) {
+		t.Fatalf("flat:          %+v\nwith evidence: %+v", left, right)
+	}
+
+	for answer, want := range map[string]jobfit.Verdict{"yes": jobfit.VerdictYes, "no": jobfit.VerdictNo} {
+		read := facts(t, map[string]any{"location": map[string]any{"evidence": "", "restriction": "Canada", "open_to_brazil": answer, "reason": "x"}})
+		if check := findCheck(t, jobfit.Judge(job, read, criteria, rates), "Where they hire"); check.Verdict != want {
+			t.Errorf("open_to_brazil %q: %+v, want %s", answer, check, want)
+		}
 	}
 }

@@ -209,10 +209,18 @@ struct JobDetailView: View {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
                     ForEach(facts.entries) { entry in
                         factRow(entry.title, help: entry.description) {
-                            switch entry.display {
-                            case let .text(text): Text(text).textSelection(.enabled)
-                            case let .list(items): Text(items.joined(separator: ", ")).textSelection(.enabled)
-                            case .notStated: Text("Not stated").foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                switch entry.display {
+                                case let .text(text): Text(text).textSelection(.enabled)
+                                case let .list(items): Text(items.joined(separator: ", ")).textSelection(.enabled)
+                                case .notStated: Text("Not stated").foregroundStyle(.secondary)
+                                }
+                                if let evidence = entry.evidence {
+                                    Text("\u{201C}\(evidence)\u{201D}")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
                             }
                         }
                     }

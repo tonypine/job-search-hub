@@ -347,8 +347,8 @@ type JobListItem struct {
 	Job           Job     `json:"job"`
 	CompanyName   *string `json:"company_name,omitempty"`
 	UnseenUpdates int     `json:"unseen_updates"`
-	// Facts are the facts read from the job's text, by key; absent until
-	// read.
+	// Facts are the facts read from the job's text, flattened by key (see
+	// FlattenJobFacts); absent until read.
 	Facts json.RawMessage `json:"facts,omitempty"`
 }
 
@@ -391,6 +391,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		var item JobListItem
 		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts)
 		item.Job = job
+		item.Facts = FlattenJobFactsToJSON(item.Facts)
 		return item, err
 	})
 	return items, total, err

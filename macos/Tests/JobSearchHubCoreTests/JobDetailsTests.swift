@@ -10,7 +10,7 @@ private let detailsJSON = #"""
         "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
  "company_name":"Acme",
  "facts":{"entries":[{"key":"summary","title":"Summary","description":"One line.","value":"Builds agents."},
-                     {"key":"technologies","title":"Technologies","value":["Go","TypeScript"]},
+                     {"key":"technologies","title":"Technologies","value":["Go","TypeScript"],"evidence":"Go and TypeScript"},
                      {"key":"years_of_experience","title":"Years of experience","value":8},
                      {"key":"timezone_requirement","title":"Timezone","value":"not stated"},
                      {"key":"visa","title":"Visa","value":null},
@@ -42,6 +42,7 @@ private let detailsJSON = #"""
     #expect(entries.map(\.key) == ["summary", "technologies", "years_of_experience", "timezone_requirement", "visa", "languages"])
     #expect(entries[0].display == .text("Builds agents."))
     #expect(entries[1].display == .list(["Go", "TypeScript"]))
+    #expect(entries[1].evidence == "Go and TypeScript" && entries[0].evidence == nil)
     #expect(entries[2].display == .text("8"))
     #expect(entries[3].display == .notStated)
     #expect(entries[4].display == .notStated)
