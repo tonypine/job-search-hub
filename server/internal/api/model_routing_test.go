@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -76,5 +79,51 @@ func TestATaskIsRoutedToAProviderThatThenCannotBeDeleted(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/task-routes", "", ""); status != http.StatusUnauthorized {
 		t.Errorf("without the owner token: %d", status)
+	}
+}
+
+// makeModelsDir is a models folder with two GGUF files and one other file.
+func makeModelsDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"Small-Q4.gguf", "Big-Q4.gguf", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestAProvidersModelsAreListed(t *testing.T) {
+	service := startAPI(t)
+	_, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"kind":"hub_runtime","name":"Hub runtime","enforces_schema":true}`)
+	var runtime store.ModelProvider
+	json.Unmarshal(answer, &runtime)
+	status, answer := send(t, http.MethodGet, service.url+"/v1/model-providers/"+runtime.ID.String()+"/models", ownerToken, "")
+	if status != http.StatusOK || string(answer) != `{"models":["Big-Q4.gguf","Small-Q4.gguf"]}`+"\n" {
+		t.Fatalf("runtime models: %d %s", status, answer)
+	}
+
+	served := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer sk-list" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"qwen/qwen3.5-9b"},{"id":"gemma"}]}`))
+	}))
+	defer served.Close()
+	_, answer = send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, fmt.Sprintf(`{"name":"Served","base_url":%q,"api_key":"sk-list","enforces_schema":true}`, served.URL+"/v1"))
+	var hosted store.ModelProvider
+	json.Unmarshal(answer, &hosted)
+	status, answer = send(t, http.MethodGet, service.url+"/v1/model-providers/"+hosted.ID.String()+"/models", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(answer), `["gemma","qwen/qwen3.5-9b"]`) {
+		t.Fatalf("served models: %d %s", status, answer)
+	}
+
+	_, answer = send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"name":"Down","base_url":"http://127.0.0.1:9/v1","enforces_schema":true}`)
+	var down store.ModelProvider
+	json.Unmarshal(answer, &down)
+	if status, _ := send(t, http.MethodGet, service.url+"/v1/model-providers/"+down.ID.String()+"/models", ownerToken, ""); status != http.StatusBadGateway {
+		t.Errorf("a provider that doesn't answer: %d", status)
 	}
 }
