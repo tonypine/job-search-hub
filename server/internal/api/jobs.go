@@ -35,7 +35,8 @@ func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource excha
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
-	return judgedJobDetails{JobDetails: details, Fit: jobfit.Judge(details.Job, details.RawFacts, criteria, rates)}, nil
+	fit := jobfit.Judge(details.Job, details.RawFacts, criteria, rates)
+	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: buildScreenOutAnswers(details, fit)}, nil
 }
 
 // readFitInputs reads the criteria and, when they judge take-home, the day's
@@ -69,10 +70,12 @@ type judgedJobListItem struct {
 	Fit jobfit.Fit `json:"fit"`
 }
 
-// judgedJobDetails are a job's details with its fit.
+// judgedJobDetails are a job's details with its fit and the answers that
+// could screen the owner out.
 type judgedJobDetails struct {
 	store.JobDetails
-	Fit jobfit.Fit `json:"fit"`
+	Fit       jobfit.Fit        `json:"fit"`
+	ScreenOut []screenOutAnswer `json:"screen_out"`
 }
 
 type addJobRequest struct {

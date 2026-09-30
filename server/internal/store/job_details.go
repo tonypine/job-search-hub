@@ -28,6 +28,8 @@ type JobDetails struct {
 	Connections []Connection `json:"connections"`
 	// RawFacts are the facts as read, which the fit is judged from.
 	RawFacts json.RawMessage `json:"-"`
+	// Brief is the job's full brief, or else its pre-brief; absent until written.
+	Brief *JobBrief `json:"brief,omitempty"`
 }
 
 // LabelledJobFacts are a job's facts, each labelled by the schema of the
@@ -95,6 +97,10 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 		details.Application = &application
 		details.Phase = &phase
 	case !errors.Is(err, ErrApplicationNotFound):
+		return JobDetails{}, err
+	}
+
+	if details.Brief, err = s.GetJobBrief(ctx, id); err != nil {
 		return JobDetails{}, err
 	}
 

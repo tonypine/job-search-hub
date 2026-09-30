@@ -137,6 +137,10 @@ func TestTheJobsListFiltersBySearchCompanyAndStatus(t *testing.T) {
 }
 
 type jobDetailsAnswer struct {
+	Brief     *store.JobBrief `json:"brief"`
+	ScreenOut []struct {
+		Name, Verdict, Answer, Evidence string
+	} `json:"screen_out"`
 	Job         store.Job               `json:"job"`
 	CompanyName *string                 `json:"company_name"`
 	Facts       *store.LabelledJobFacts `json:"facts"`
@@ -316,5 +320,45 @@ func TestJobsAreDismissedAndRestoredTogether(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/dismiss", ownerToken, `{"job_ids":["`+store.Job{}.ID.String()+`"]}`); status != http.StatusNotFound {
 		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}
+
+func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Senior Front-End Engineer", URL: "https://acme.com/jobs/1", Description: "React."})
+	prompt, _ := service.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	awaiting, _ := service.hub.ListJobsAwaitingFacts(ctx, prompt.ID, 10)
+	facts := `{"location":{"evidence":"Remote in LATAM","restriction":"LATAM","open_to_brazil":"yes","reason":"LATAM"},
+		"seniority":{"evidence":"Senior engineer","as_written":"Senior","levels":["senior"]},
+		"contract":{"evidence":"as a contractor","as_written":"contractor","kinds":["contractor"]}}`
+	if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: "m", TextHash: awaiting[0].TextHash, Facts: json.RawMessage(facts)}); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := service.hub.GetKnowledgeHash(ctx)
+	if err := service.hub.SaveJobBrief(ctx, store.JobBrief{JobID: job.ID, Tier: store.JobBriefTierPre, PromptID: prompt.ID, Model: "local",
+		Match: "strong", Reason: "React at scale.", KnowledgeHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, details := readJobDetails(t, service, job.ID.String())
+	if details.Brief == nil || details.Brief.Match != "strong" || details.Brief.Reason != "React at scale." {
+		t.Fatalf("brief = %+v", details.Brief)
+	}
+	answers := map[string]string{}
+	for _, answer := range details.ScreenOut {
+		answers[answer.Name] = answer.Verdict + "|" + answer.Answer + "|" + answer.Evidence
+	}
+	want := map[string]string{
+		"Hires from Brazil": "yes|open to someone in Brazil|Remote in LATAM",
+		"Level":             "unclear|the criteria name no levels|Senior engineer",
+		"Timezone":          "unclear|the posting doesn't say|",
+		"Contract":          "|contractor|as a contractor",
+	}
+	for name, answer := range want {
+		if answers[name] != answer {
+			t.Errorf("%s = %q, want %q", name, answers[name], answer)
+		}
 	}
 }

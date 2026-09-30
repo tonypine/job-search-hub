@@ -357,6 +357,9 @@ type JobListItem struct {
 	// Facts are the facts read from the job's text, flattened by key (see
 	// FlattenJobFacts); absent until read.
 	Facts json.RawMessage `json:"facts,omitempty"`
+	// Match is its brief's match class, the full brief's over the pre-brief;
+	// absent until briefed.
+	Match *string `json:"match,omitempty"`
 }
 
 // ListJobs returns one page of jobs, newest first, with the total that match.
@@ -388,7 +391,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), `+jobUnseenUpdates+`,
-		       (SELECT facts FROM job_facts WHERE job_facts.job_id = jobs.id)
+		       (SELECT facts FROM job_facts WHERE job_facts.job_id = jobs.id),
+		       (SELECT match FROM job_briefs WHERE job_briefs.job_id = jobs.id ORDER BY tier = 'full' DESC LIMIT 1)
 		`+matches+`
 		ORDER BY jobs.first_seen_at DESC, jobs.title
 		LIMIT $4 OFFSET $5`, query, filter.CompanyID, status, limit, filter.Offset)
@@ -397,7 +401,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobListItem, error) {
 		var item JobListItem
-		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts)
+		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts, &item.Match)
 		item.Job = job
 		item.Facts = FlattenJobFactsToJSON(item.Facts)
 		return item, err
