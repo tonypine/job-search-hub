@@ -18,8 +18,14 @@ log_dir="$HOME/Library/Logs/JobSearchHub"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 domain="gui/$(id -u)"
 
+# stop_agent unloads the agent and waits until launchd has let it go, since
+# bootstrapping it again before that fails.
 stop_agent() {
   launchctl bootout "$domain/$label" 2>/dev/null || true
+  for _ in {1..30}; do
+    launchctl print "$domain/$label" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
