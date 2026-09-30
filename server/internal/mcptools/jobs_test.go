@@ -42,3 +42,32 @@ func TestTheOwnerDismissesAndRestoresJobsAndAnAgentCant(t *testing.T) {
 		}
 	}
 }
+
+func TestTheOwnerDismissesAndRestoresACardAndAnAgentCant(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	company, _, _ := hub.store.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.example"})
+	card, _, err := hub.store.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := connect(t, hub, ownerToken)
+
+	callTool[store.Application](t, session, "dismiss_application", map[string]any{"application_id": card.ID, "note": "agency"})
+	if dismissed, _ := hub.store.ListDismissedPipelineCards(ctx); len(dismissed) != 1 || dismissed[0].DismissalReason != "not a good fit: agency" {
+		t.Fatalf("dismissed cards = %+v", dismissed)
+	}
+	callTool[store.Application](t, session, "restore_application", map[string]any{"application_id": card.ID})
+	if onBoard, _ := hub.store.ListPipelineCards(ctx); len(onBoard) != 1 {
+		t.Fatalf("board after restoring = %+v", onBoard)
+	}
+
+	_, agentToken := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	agent := connect(t, hub, agentToken)
+	for _, tool := range []string{"dismiss_application", "restore_application"} {
+		if text := callRefusedTool(t, agent, tool, map[string]any{"application_id": card.ID}); !strings.Contains(text, "unknown tool") {
+			t.Errorf("%s from an agent: %s", tool, text)
+		}
+	}
+}

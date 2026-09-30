@@ -198,6 +198,9 @@ func (s *Store) UpdateApplicationNotes(ctx context.Context, actor Actor, id uuid
 	return application, err
 }
 
+// cardDismissedAt is a card's dismissal: its job's, or its own when it has no job.
+const cardDismissedAt = `CASE WHEN applications.job_id IS NOT NULL THEN jobs.dismissed_at ELSE applications.dismissed_at END`
+
 // PipelineCard is one application as the board shows it.
 type PipelineCard struct {
 	Application Application `json:"application"`
@@ -208,9 +211,24 @@ type PipelineCard struct {
 	// phase asks for none.
 	FollowUpDueAt *time.Time `json:"follow_up_due_at,omitempty"`
 	UnseenUpdates int        `json:"unseen_updates"`
+	// DismissedAt is when the card was dismissed as not a good fit: its job's
+	// dismissal, or its own when it has no job.
+	DismissedAt     *time.Time `json:"dismissed_at,omitempty"`
+	DismissalReason string     `json:"dismissal_reason,omitempty"`
 }
 
+// ListPipelineCards returns the cards on the board, leaving dismissed ones out.
 func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
+	return s.listPipelineCards(ctx, false)
+}
+
+// ListDismissedPipelineCards returns the cards dismissed as not a good fit,
+// in the phases they left.
+func (s *Store) ListDismissedPipelineCards(ctx context.Context) ([]PipelineCard, error) {
+	return s.listPipelineCards(ctx, true)
+}
+
+func (s *Store) listPipelineCards(ctx context.Context, dismissed bool) ([]PipelineCard, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
 		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.contacted_at, applications.created_at,
@@ -218,18 +236,21 @@ func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
 		       jobs.title, jobs.url, COALESCE(companies.name, NULLIF(jobs.company_name, '')),
 		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
 		           + make_interval(days => pipeline_phases.follow_up_days),
-		       `+cardUnseenUpdates+`
+		       `+cardUnseenUpdates+`, `+cardDismissedAt+`,
+		       CASE WHEN applications.job_id IS NOT NULL THEN jobs.dismissal_reason ELSE applications.dismissal_reason END
 		FROM applications
 		JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
 		LEFT JOIN jobs ON jobs.id = applications.job_id
 		LEFT JOIN companies ON companies.id = applications.company_id
-		ORDER BY applications.phase_entered_at DESC`)
+		WHERE (`+cardDismissedAt+` IS NOT NULL) = $1
+		ORDER BY applications.phase_entered_at DESC`, dismissed)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PipelineCard, error) {
 		var card PipelineCard
-		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName, &card.FollowUpDueAt, &card.UnseenUpdates)
+		application, err := scanApplication(row, &card.JobTitle, &card.JobURL, &card.CompanyName, &card.FollowUpDueAt, &card.UnseenUpdates,
+			&card.DismissedAt, &card.DismissalReason)
 		card.Application = application
 		return card, err
 	})

@@ -211,3 +211,29 @@ func TestFollowUpsAreRecordedAndPhaseIntervalsSetOverREST(t *testing.T) {
 		t.Errorf("zero days: %d, want 400", status)
 	}
 }
+
+func TestACardIsDismissedAndListedApartFromTheBoard(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	company, _, _ := service.hub.CreateCompany(ctx, store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	card, _, err := service.hub.AddApplication(ctx, store.Actor{Kind: store.ActorOwner}, store.ApplicationInput{CompanyID: &company.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, body := send(t, http.MethodPost, service.url+"/v1/applications/"+card.ID.String()+"/dismiss", ownerToken, `{"note":"agency"}`); status != http.StatusOK {
+		t.Fatalf("dismiss: %d %s", status, body)
+	}
+	var board struct{ Cards []store.PipelineCard }
+	_, body := send(t, http.MethodGet, service.url+"/v1/pipeline", ownerToken, "")
+	if err := json.Unmarshal(body, &board); err != nil || len(board.Cards) != 0 {
+		t.Fatalf("board: %s", body)
+	}
+	_, body = send(t, http.MethodGet, service.url+"/v1/pipeline?dismissed=true", ownerToken, "")
+	if err := json.Unmarshal(body, &board); err != nil || len(board.Cards) != 1 || board.Cards[0].DismissalReason != "not a good fit: agency" {
+		t.Fatalf("dismissed board: %s", body)
+	}
+	if status, body := send(t, http.MethodPost, service.url+"/v1/applications/"+card.ID.String()+"/restore", ownerToken, ""); status != http.StatusOK {
+		t.Fatalf("restore: %d %s", status, body)
+	}
+}

@@ -43,6 +43,12 @@ type renamePhaseRequest struct {
 	Name string `json:"name"`
 }
 
+// dismissApplicationRequest carries the owner's note on why the card isn't a
+// good fit; it may be empty.
+type dismissApplicationRequest struct {
+	Note string `json:"note"`
+}
+
 type followUpRequest struct {
 	Note string `json:"note"`
 }
@@ -72,7 +78,11 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			writeStoreError(w, err)
 			return
 		}
-		cards, err := hub.ListPipelineCards(r.Context())
+		listCards := hub.ListPipelineCards
+		if r.URL.Query().Get("dismissed") == "true" {
+			listCards = hub.ListDismissedPipelineCards
+		}
+		cards, err := listCards(r.Context())
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -118,6 +128,36 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 		if err == nil && request.Notes != nil {
 			application, err = hub.UpdateApplicationNotes(r.Context(), owner, id, *request.Notes)
 		}
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
+	})
+
+	handle("POST /v1/applications/{id}/dismiss", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		var request dismissApplicationRequest
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
+			return
+		}
+		application, err := hub.DismissApplication(r.Context(), owner, id, request.Note)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
+	})
+
+	handle("POST /v1/applications/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		application, err := hub.RestoreApplication(r.Context(), owner, id)
 		if err != nil {
 			writeStoreError(w, err)
 			return
