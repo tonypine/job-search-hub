@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -179,5 +181,40 @@ func TestAHubRuntimeRouteRunsOnTheHubsOwnRuntime(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed {
 		t.Fatalf("records = %+v; want the failed start recorded", records)
+	}
+}
+
+// recordingQueue grants every ticket at once and keeps them.
+type recordingQueue struct{ tickets []modelqueue.Ticket }
+
+func (queue *recordingQueue) Wait(_ context.Context, ticket modelqueue.Ticket) (func(), error) {
+	queue.tickets = append(queue.tickets, ticket)
+	return func() {}, nil
+}
+
+func TestEachRequestWaitsItsTurnWithItsKindsPriority(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	server := startModelServer(t, `{"stack":"Go"}`)
+	provider := route(t, hub, server.url, true, "", nil)
+	if _, err := hub.SaveTaskRoute(context.Background(), owner, store.AgentPromptKindMailTriage, store.TaskRouteInput{ProviderID: provider.ID, Model: "small"}); err != nil {
+		t.Fatal(err)
+	}
+	queue := &recordingQueue{}
+	router := modelrouter.New(hub)
+	router.Queue = queue
+
+	router.CompleteJSON(context.Background(), request)
+	mail := request
+	mail.SchemaName = store.AgentPromptKindMailTriage
+	router.CompleteJSON(context.Background(), mail)
+	router.CompleteJSON(modelqueue.WithPriority(context.Background(), modelqueue.PriorityDispatched), request)
+
+	want := []modelqueue.Ticket{
+		{Kind: store.AgentPromptKindJobFacts, Model: "routed-model", Priority: modelqueue.PriorityBackground},
+		{Kind: store.AgentPromptKindMailTriage, Model: "small", Priority: modelqueue.PrioritySorting},
+		{Kind: store.AgentPromptKindJobFacts, Model: "routed-model", Priority: modelqueue.PriorityDispatched},
+	}
+	if fmt.Sprint(queue.tickets) != fmt.Sprint(want) {
+		t.Fatalf("tickets = %+v\nwant      %+v", queue.tickets, want)
 	}
 }

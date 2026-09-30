@@ -43,3 +43,17 @@ func TestDefaultRoutesAreSeededOnceAndNeverOverwriteAChoice(t *testing.T) {
 		t.Fatalf("a restart overwrote the chosen route: %+v, providers %d", route, len(providers))
 	}
 }
+
+func TestModelWorkStartsPausedAndRemembersItsPause(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if paused, err := hub.GetModelWorkPaused(ctx); err != nil || !paused {
+		t.Fatalf("a new hub: paused = %v, %v", paused, err)
+	}
+	if err := hub.SetModelWorkPaused(ctx, owner, false); err != nil {
+		t.Fatal(err)
+	}
+	if paused, _ := hub.GetModelWorkPaused(ctx); paused {
+		t.Fatal("the resume didn't stick")
+	}
+}

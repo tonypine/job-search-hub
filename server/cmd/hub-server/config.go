@@ -14,7 +14,7 @@ const (
 	minimumOwnerTokenLength   = 32
 	defaultBoardPollInterval  = time.Hour
 	defaultJobFactsModel      = "qwen/qwen3.5-9b"
-	defaultJobFactsInterval   = 10 * time.Minute
+	defaultJobFactsInterval   = time.Minute
 	defaultRuntimePort        = 8095
 	defaultRuntimeIdleTimeout = 10 * time.Minute
 	defaultFeedPollInterval   = 3 * time.Hour

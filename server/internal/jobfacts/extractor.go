@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -75,18 +77,9 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 
 	var summary PassSummary
 	for _, job := range jobs {
-		answer, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-			System: prompt.Body, User: formatJobText(job.Job),
-			SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
-			Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
-		})
+		err := extractor.readJobFacts(ctx, job, prompt)
 		if errors.Is(err, chatcompletions.ErrUnreachable) || ctx.Err() != nil {
 			return summary, err
-		}
-		if err == nil {
-			err = extractor.hub.SaveJobFacts(ctx, store.NewJobFacts{
-				JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object,
-			})
 		}
 		if err != nil {
 			summary.Failed++
@@ -96,6 +89,35 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 		summary.Read++
 	}
 	return summary, nil
+}
+
+// ReadJobNow reads one job's facts with the latest prompt as a run the owner
+// dispatched: it goes ahead of background work, even while that is paused.
+func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) error {
+	prompt, err := extractor.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	if err != nil {
+		return fmt.Errorf("read the job_facts prompt: %w", err)
+	}
+	job, err := extractor.hub.GetJobForFacts(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	return extractor.readJobFacts(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched), job, prompt)
+}
+
+// readJobFacts asks the model for the job's facts and saves them.
+func (extractor *Extractor) readJobFacts(ctx context.Context, job store.JobAwaitingFacts, prompt store.AgentPrompt) error {
+	answer, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
+		System: prompt.Body, User: formatJobText(job.Job),
+		SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
+		Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
+	})
+	if err != nil {
+		return err
+	}
+	return extractor.hub.SaveJobFacts(ctx, store.NewJobFacts{
+		JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object,
+	})
 }
 
 // formatJobText is what the model reads: the posting's headline facts, then

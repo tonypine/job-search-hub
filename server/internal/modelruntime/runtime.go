@@ -128,6 +128,13 @@ func (runtime *Runtime) Acquire(ctx context.Context, modelFile string) (baseURL 
 	return fmt.Sprintf("http://127.0.0.1:%d/v1", runtime.settings.Port), release, nil
 }
 
+// Unload stops the server and frees its memory, once no request is using it.
+func (runtime *Runtime) Unload() {
+	runtime.turn <- struct{}{}
+	defer func() { <-runtime.turn }()
+	runtime.stopServer()
+}
+
 // Run unloads the model once it has been idle for the idle timeout, and
 // stops the server when ctx ends.
 func (runtime *Runtime) Run(ctx context.Context) {

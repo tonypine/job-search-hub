@@ -32,8 +32,10 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/modelruntime"
+	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -133,7 +135,8 @@ func run() error {
 	googleClient := makeGoogleClient(settings, hub)
 	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)
 	boardPoller := boardpoller.New(hub, boards)
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardPoller), mcptools.NewAgentServer(hub, boards, boardPoller), verifier))
+	ownerTools := mcptools.NewServer(hub, boards, boardPoller)
+	routes.Handle("/mcp", mcptools.NewHandler(ownerTools, mcptools.NewAgentServer(hub, boards, boardPoller), verifier))
 
 	if settings.boardPollInterval > 0 {
 		go boardPoller.Run(ctx, settings.boardPollInterval)
@@ -164,11 +167,24 @@ func run() error {
 		IdleTimeout: settings.runtimeIdleTimeout, LogPath: filepath.Join(logDirectory, "llama-server.log"),
 	})
 	go modelRuntime.Run(ctx)
+	// Model calls take turns through one queue, which starts paused if the
+	// owner left it paused.
+	paused, err := hub.GetModelWorkPaused(ctx)
+	if err != nil {
+		slog.Error("read whether model work is paused", "error", err)
+		os.Exit(1)
+	}
+	modelQueue := modelqueue.New(paused, modelqueue.Settings{
+		GetLoadedModel: func() string { return modelRuntime.Status().Model },
+		UnloadModel:    modelRuntime.Unload,
+	})
+	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime}
 
 	var modelClient *modelrouter.Router
 	if len(taskRoutes) > 0 {
 		modelClient = modelrouter.New(hub)
 		modelClient.Runtime = modelRuntime
+		modelClient.Queue = modelQueue
 		modelClient.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
 			if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
 				Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
@@ -183,11 +199,16 @@ func run() error {
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
 	}
-	if modelClient != nil && settings.jobFactsInterval > 0 {
+	if modelClient != nil {
 		extractor := jobfacts.NewExtractor(hub, modelClient)
-		go extractor.Run(ctx, settings.jobFactsInterval)
-		slog.Info("job facts reading on", "every", settings.jobFactsInterval.String())
+		modelWork.Facts = extractor
+		if settings.jobFactsInterval > 0 {
+			go extractor.Run(ctx, settings.jobFactsInterval)
+			slog.Info("job facts reading on", "every", settings.jobFactsInterval.String(), "paused", paused)
+		}
 	}
+	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
+	mcptools.AddModelWorkTools(ownerTools, modelWork)
 
 	var mailBackfiller api.MailBackfiller
 	if googleClient != nil && settings.gmailSubscription != "" {

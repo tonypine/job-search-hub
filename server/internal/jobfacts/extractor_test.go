@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
@@ -23,10 +25,12 @@ type fakeModel struct {
 	failOn      string
 	unreachable bool
 	requests    []chatcompletions.JSONRequest
+	priorities  []modelqueue.Priority
 }
 
-func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+func (model *fakeModel) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests = append(model.requests, request)
+	model.priorities = append(model.priorities, modelqueue.GetPriority(ctx, modelqueue.PriorityBackground))
 	if model.unreachable {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
@@ -136,5 +140,30 @@ func TestTheExtractorSendsThePromptsWorkedExamples(t *testing.T) {
 	}
 	if len(model.requests) != 1 || len(model.requests[0].Examples) != 1 || model.requests[0].Examples[0].Input != "Title: Example" {
 		t.Fatalf("requests = %+v", model.requests)
+	}
+}
+
+func TestAJobReadNowRunsAsADispatchedRunEvenWithCurrentFacts(t *testing.T) {
+	hub := startJobs(t, "Engineer", "Designer")
+	ctx := context.Background()
+	model := &fakeModel{}
+	extractor := jobfacts.NewExtractor(hub, model)
+	if _, err := extractor.ExtractOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ := hub.ListJobs(ctx, store.JobFilter{})
+	model.requests, model.priorities = nil, nil
+	if err := extractor.ReadJobNow(ctx, jobs[0].Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 1 || model.priorities[0] != modelqueue.PriorityDispatched || *model.requests[0].Task.SubjectID != jobs[0].Job.ID {
+		t.Fatalf("requests = %d, priorities = %v", len(model.requests), model.priorities)
+	}
+	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	if waiting, _ := hub.CountJobsAwaitingFacts(ctx, prompt.ID); waiting != 0 {
+		t.Fatalf("%d jobs still wait for facts", waiting)
+	}
+	if err := extractor.ReadJobNow(ctx, uuid.New()); !errors.Is(err, store.ErrJobNotFound) {
+		t.Fatalf("an unknown job: %v", err)
 	}
 }

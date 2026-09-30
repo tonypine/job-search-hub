@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,7 +41,7 @@ func (s *Store) ListJobsAwaitingFacts(ctx context.Context, promptID uuid.UUID, l
 		FROM jobs LEFT JOIN job_facts ON job_facts.job_id = jobs.id
 		WHERE jobs.closed_at IS NULL AND btrim(jobs.description) <> ''
 		  AND (job_facts.job_id IS NULL OR job_facts.prompt_id <> $1 OR job_facts.text_hash <> `+jobTextHash+`)
-		ORDER BY jobs.first_seen_at DESC
+		ORDER BY job_facts.job_id IS NOT NULL, jobs.first_seen_at DESC
 		LIMIT $2`, promptID, limit)
 	if err != nil {
 		return nil, err
@@ -51,6 +52,29 @@ func (s *Store) ListJobsAwaitingFacts(ctx context.Context, promptID uuid.UUID, l
 		awaiting.Job = job
 		return awaiting, err
 	})
+}
+
+// GetJobForFacts returns a job as the facts reader reads it, whether or not
+// it awaits facts.
+func (s *Store) GetJobForFacts(ctx context.Context, id uuid.UUID) (JobAwaitingFacts, error) {
+	var awaiting JobAwaitingFacts
+	job, err := scanJob(s.pool.QueryRow(ctx, `SELECT `+prefixedJobColumns+`, `+jobTextHash+` FROM jobs WHERE jobs.id = $1`, id), &awaiting.TextHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return JobAwaitingFacts{}, ErrJobNotFound
+	}
+	awaiting.Job = job
+	return awaiting, err
+}
+
+// CountJobsAwaitingFacts counts the open jobs whose facts the prompt hasn't
+// read, or read from text that has changed since.
+func (s *Store) CountJobsAwaitingFacts(ctx context.Context, promptID uuid.UUID) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM jobs LEFT JOIN job_facts ON job_facts.job_id = jobs.id
+		WHERE jobs.closed_at IS NULL AND btrim(jobs.description) <> ''
+		  AND (job_facts.job_id IS NULL OR job_facts.prompt_id <> $1 OR job_facts.text_hash <> `+jobTextHash+`)`, promptID).Scan(&count)
+	return count, err
 }
 
 // NewJobFacts are facts just read from a job's text, whose hash is TextHash.
