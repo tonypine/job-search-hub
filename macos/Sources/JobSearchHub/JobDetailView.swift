@@ -107,7 +107,9 @@ struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(JobDismissals.self) private var dismissals
     @State private var model = JobDetailModel()
+    @State private var isAskingForDismissal = false
 
     var body: some View {
         Group {
@@ -139,13 +141,24 @@ struct JobDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onChange(of: dismissals.revision) { Task { await model.load(jobID, with: client) } }
+        .sheet(isPresented: $isAskingForDismissal) {
+            DismissJobsSheet(jobCount: 1) { reason in
+                do {
+                    _ = try await dismissals.dismiss([jobID], reason: reason, with: client)
+                    return nil
+                } catch {
+                    return String(describing: error)
+                }
+            }
+        }
         .task(id: jobID) {
             await model.load(jobID, with: client)
             if let details = model.details, details.unseenUpdates > 0 {
                 await unseen.markSeen(UpdateSelection(jobID: jobID), with: client)
             }
         }
-        .alert("Could not add to the pipeline", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
+        .alert("Could not update the job", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
             Button("OK") {}
         } message: {
             Text(model.actionError ?? "")
@@ -162,6 +175,10 @@ struct JobDetailView: View {
             Text(details.job.title).font(.title2.weight(.semibold)).textSelection(.enabled)
             Text([details.companyName, details.job.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                 .foregroundStyle(.secondary)
+            if details.job.dismissedAt != nil {
+                let reason = details.job.dismissalReason ?? ""
+                Label(reason.isEmpty ? "Dismissed" : "Dismissed: \(reason)", systemImage: "eye.slash").foregroundStyle(.orange)
+            }
         }
     }
 
@@ -178,6 +195,19 @@ struct JobDetailView: View {
                 if model.isAddingToPipeline {
                     ProgressView().controlSize(.small)
                 }
+            }
+            if details.job.dismissedAt != nil {
+                Button("Restore", systemImage: "arrow.uturn.backward") {
+                    Task {
+                        do {
+                            _ = try await dismissals.restore([jobID], with: client)
+                        } catch {
+                            model.actionError = String(describing: error)
+                        }
+                    }
+                }
+            } else {
+                Button("Dismiss…", systemImage: "eye.slash") { isAskingForDismissal = true }
             }
         }
     }

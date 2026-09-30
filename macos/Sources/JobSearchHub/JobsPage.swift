@@ -33,10 +33,16 @@ final class JobsModel {
     private(set) var isLoading = false
     private(set) var loadError: String?
     private(set) var isAddingToPipeline = false
-    private(set) var pipelineNotice: String?
+    /// What the last action on the selected jobs did, shown for a moment.
+    private(set) var notice: String?
     var search = ""
     var status: JobStatusFilter = .open
-    var selectedID: UUID?
+    var selectedIDs: Set<UUID> = []
+
+    /// The job whose details show: the selection, when it's one job.
+    var selectedID: UUID? {
+        selectedIDs.count == 1 ? selectedIDs.first : nil
+    }
 
     func load(with client: HubClient) async {
         isLoading = true
@@ -64,15 +70,37 @@ final class JobsModel {
                 let response = try await client.send("POST", "v1/applications", body: AddApplicationRequest(jobID: id), as: ApplicationResponse.self)
                 if response.created { addedCount += 1 } else { alreadyThereCount += 1 }
             } catch {
-                pipelineNotice = "Could not add to the pipeline: \(error)"
+                notice = "Could not add to the pipeline: \(error)"
                 return
             }
         }
-        pipelineNotice = getPipelineAdditionsNotice(added: addedCount, alreadyThere: alreadyThereCount)
+        notice = getPipelineAdditionsNotice(added: addedCount, alreadyThere: alreadyThereCount)
     }
 
-    func clearPipelineNotice() {
-        pipelineNotice = nil
+    /// Dismisses the jobs and reports it, or returns why it failed.
+    func dismiss(_ ids: Set<UUID>, reason: String, through dismissals: JobDismissals, with client: HubClient) async -> String? {
+        do {
+            let jobs = try await dismissals.dismiss(ids, reason: reason, with: client)
+            selectedIDs.subtract(ids)
+            notice = jobs.count == 1 ? "Dismissed 1 job" : "Dismissed \(jobs.count) jobs"
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    func restore(_ ids: Set<UUID>, through dismissals: JobDismissals, with client: HubClient) async {
+        do {
+            let jobs = try await dismissals.restore(ids, with: client)
+            selectedIDs.subtract(ids)
+            notice = jobs.count == 1 ? "Restored 1 job" : "Restored \(jobs.count) jobs"
+        } catch {
+            notice = "Could not restore: \(error)"
+        }
+    }
+
+    func clearNotice() {
+        notice = nil
     }
 
     private func getPipelineAdditionsNotice(added: Int, alreadyThere: Int) -> String {
@@ -89,8 +117,10 @@ struct JobsPage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(CompanyJobFinder.self) private var jobFinder
+    @Environment(JobDismissals.self) private var dismissals
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
+    @State private var dismissal: JobDismissalTarget?
     @State private var isShowingFilters = false
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
@@ -106,7 +136,7 @@ struct JobsPage: View {
         self.initialJobID = initialJobID
         self.opensSession = opensSession
         let model = JobsModel()
-        model.selectedID = initialJobID
+        model.selectedIDs = Set([initialJobID].compactMap { $0 })
         _model = State(initialValue: model)
     }
 
@@ -118,16 +148,22 @@ struct JobsPage: View {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
                     }
-                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, dismissals.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
                         details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
                     }
                     .onChange(of: details.getSubject(on: .jobs)) {
-                        if details.getSubject(on: .jobs) == nil { model.selectedID = nil }
+                        // Closing the details of one job deselects it; several selected jobs show no details at all.
+                        if details.getSubject(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                    }
+                    .sheet(item: $dismissal) { target in
+                        DismissJobsSheet(jobCount: target.jobIDs.count) { reason in
+                            await model.dismiss(target.jobIDs, reason: reason, through: dismissals, with: client)
+                        }
                     }
                     .sheet(isPresented: $isAddingByURL) {
                         AddJobSheet(client: client) { added in
-                            model.selectedID = added.id
+                            model.selectedIDs = [added.id]
                             Task { await model.load(with: client) }
                         }
                     }
@@ -148,14 +184,17 @@ struct JobsPage: View {
     }
 
     private func table(client: HubClient) -> some View {
-        Table(of: JobListItem.self, selection: $model.selectedID, sortOrder: sortOrder, columnCustomization: columnCustomization) {
+        Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
             TableColumn("Fit", sortUsing: JobsSortComparator(.fit)) { item in FitLabel(level: item.fit.level) }
                 .width(70)
                 .customizationID("fit")
             TableColumn("Title", sortUsing: JobsSortComparator(.title)) { item in
                 HStack(spacing: 6) {
                     UnseenDot(count: item.unseenUpdates)
-                    Text(item.job.title).help(item.job.title)
+                    Text(item.job.title).help(item.job.title).layoutPriority(1)
+                    if let reason = item.job.dismissalReason, !reason.isEmpty {
+                        Text(reason).foregroundStyle(.secondary).help("Dismissed: \(reason)")
+                    }
                     if item.isNew(since: model.previousVisit) {
                         Text("New").font(.caption2.weight(.semibold)).padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Color.accentColor.opacity(0.2), in: Capsule())
@@ -207,8 +246,21 @@ struct JobsPage: View {
             Button("Open posting") { open(ids) }
             Button("Add to pipeline") { Task { await model.addToPipeline(ids, with: client) } }
                 .disabled(ids.isEmpty || model.isAddingToPipeline)
+            Divider()
+            if model.status == .dismissed {
+                Button("Restore") { Task { await model.restore(ids, through: dismissals, with: client) } }
+                    .disabled(ids.isEmpty)
+            } else {
+                Button("Dismiss…") { dismissal = JobDismissalTarget(jobIDs: ids) }
+                    .disabled(ids.isEmpty)
+            }
         } primaryAction: { ids in
             open(ids)
+        }
+        .onDeleteCommand {
+            if model.status != .dismissed && !model.selectedIDs.isEmpty {
+                dismissal = JobDismissalTarget(jobIDs: model.selectedIDs)
+            }
         }
         .toolbar {
             Button("Filters", systemImage: filter.wrappedValue.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") {
@@ -232,7 +284,7 @@ struct JobsPage: View {
             }
             .labelStyle(.titleAndIcon)
             .fixedSize()
-            .help("Show open, closed or all jobs")
+            .help("Show open, closed, all or dismissed jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
             Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
@@ -243,6 +295,8 @@ struct JobsPage: View {
         .overlay {
             if let loadError = model.loadError {
                 ContentUnavailableView("Could not load jobs", systemImage: "exclamationmark.triangle", description: Text(loadError))
+            } else if model.items.isEmpty && !model.isLoading && model.status == .dismissed {
+                ContentUnavailableView("No dismissed jobs", systemImage: "tray", description: Text("Jobs dismissed from the list show here, where they can be restored."))
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("No jobs", systemImage: "briefcase", description: Text("Jobs from watched companies' boards appear here after the next poll."))
             } else if model.getMatchingItems(filter.wrappedValue).isEmpty && !model.isLoading {
@@ -254,7 +308,7 @@ struct JobsPage: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let notice = model.pipelineNotice {
+            if let notice = model.notice {
                 Text(notice)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -262,7 +316,7 @@ struct JobsPage: View {
                     .padding(.bottom, 16)
                     .task(id: notice) {
                         try? await Task.sleep(for: .seconds(4))
-                        model.clearPipelineNotice()
+                        model.clearNotice()
                     }
             }
         }

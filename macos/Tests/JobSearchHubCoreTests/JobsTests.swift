@@ -88,3 +88,31 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     #expect(!item.isNew(since: Date(timeIntervalSince1970: 300)))
     #expect(!item.isNew(since: nil))
 }
+
+@Test func jobsAreDismissedWithAReasonAndRestoredWithout() async throws {
+    let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
+    let dismissedJob = #"{"jobs":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Agency Role","url":"https://acme.com/1","#
+        + #""first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z","dismissed_at":"2026-09-30T19:00:00Z","dismissal_reason":"agency"}]}"#
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/jobs/dismiss": StubHub.Answer(status: 200, body: dismissedJob),
+        "/v1/jobs/restore": StubHub.Answer(status: 200, body: #"{"jobs":[]}"#),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    let dismissed = try await client.dismissJobs([jobID], reason: "  agency \n")
+    #expect(dismissed.first?.dismissedAt != nil && dismissed.first?.dismissalReason == "agency")
+    let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
+    #expect(sent?["job_ids"] as? [String] == [jobID.uuidString])
+    #expect(sent?["reason"] as? String == "agency")
+    #expect(recording.lastRequest?.httpMethod == "POST")
+
+    _ = try await client.restoreJobs([jobID])
+    let restoreBody = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
+    #expect(recording.lastRequest?.url?.path == "/v1/jobs/restore")
+    #expect(restoreBody?["reason"] == nil)
+}
+
+@Test func dismissedJobsAreAStatusOfTheirOwn() {
+    #expect(JobsQuery.makeItems(search: "", status: .dismissed, limit: 100).contains(URLQueryItem(name: "status", value: "dismissed")))
+    #expect(JobStatusFilter.dismissed.title == "Dismissed")
+}

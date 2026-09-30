@@ -18,10 +18,14 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     public var firstSeenAt: Date
     public var lastSeenAt: Date
     public var closedAt: Date?
+    /// When the owner dismissed the job, and why in their words; a dismissed
+    /// job leaves the jobs list until restored.
+    public var dismissedAt: Date?
+    public var dismissalReason: String?
 
     enum CodingKeys: String, CodingKey {
         case id, source, title, location, workplaceType, url, description, pay, employmentType, department, otherLocations, publishedAt
-        case firstSeenAt, lastSeenAt, closedAt
+        case firstSeenAt, lastSeenAt, closedAt, dismissedAt, dismissalReason
         case companyID = "companyId"
         case jobBoardID = "jobBoardId"
     }
@@ -147,7 +151,8 @@ public struct AddJobResponse: Codable, Equatable, Sendable {
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
-    case open, closed, all
+    /// All is every job that isn't dismissed; dismissed ones only show under Dismissed.
+    case open, closed, all, dismissed
 
     public var id: String { rawValue }
     public var title: String { rawValue.capitalized }
@@ -189,5 +194,38 @@ public extension HubClient {
             response.jobs += page.jobs
         }
         return response
+    }
+}
+
+/// The jobs to dismiss or restore; restoring leaves the reason out.
+public struct JobDismissalRequest: Encodable, Equatable, Sendable {
+    public var jobIDs: [UUID]
+    public var reason: String?
+
+    public init(jobIDs: [UUID], reason: String? = nil) {
+        self.jobIDs = jobIDs
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case jobIDs = "jobIds"
+    }
+}
+
+public struct JobDismissalResponse: Decodable, Sendable {
+    public var jobs: [Job]
+}
+
+public extension HubClient {
+    /// Dismisses every job named, with the owner's reason, or none of them.
+    func dismissJobs(_ jobIDs: [UUID], reason: String) async throws -> [Job] {
+        let request = JobDismissalRequest(jobIDs: jobIDs, reason: reason.trimmingCharacters(in: .whitespacesAndNewlines))
+        return try await send("POST", "v1/jobs/dismiss", body: request, as: JobDismissalResponse.self).jobs
+    }
+
+    /// Brings every dismissed job named back to the jobs list, or none of them.
+    func restoreJobs(_ jobIDs: [UUID]) async throws -> [Job] {
+        try await send("POST", "v1/jobs/restore", body: JobDismissalRequest(jobIDs: jobIDs), as: JobDismissalResponse.self).jobs
     }
 }
