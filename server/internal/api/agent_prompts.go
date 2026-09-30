@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -29,7 +30,10 @@ type agentPromptVersionsResponse struct {
 
 type saveAgentPromptRequest struct {
 	Body string `json:"body"`
-	Note string `json:"note"`
+	// Examples replace the previous version's worked examples; absent keeps
+	// them, and an empty list removes them.
+	Examples []chatcompletions.Example `json:"examples"`
+	Note     string                    `json:"note"`
 }
 
 // RegisterAgentPromptRoutes adds the owner-only routes for reading every
@@ -69,7 +73,7 @@ func RegisterAgentPromptRoutes(routes *http.ServeMux, hub *store.Store, requireO
 			return
 		}
 		prompt, err := hub.SaveAgentPrompt(r.Context(), store.Actor{Kind: store.ActorOwner}, store.NewAgentPrompt{
-			Kind: r.PathValue("kind"), Body: request.Body, Note: request.Note,
+			Kind: r.PathValue("kind"), Body: request.Body, Examples: request.Examples, Note: request.Note,
 		})
 		switch {
 		case errors.Is(err, store.ErrAgentPromptNotFound):

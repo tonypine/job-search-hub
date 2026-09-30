@@ -87,3 +87,18 @@ func TestAgentsReadTheCriteriaAndOnlyTheOwnerSavesThem(t *testing.T) {
 		t.Fatal("an unknown field was accepted")
 	}
 }
+
+func TestTheOwnerSavesWorkedExamplesWithAPrompt(t *testing.T) {
+	session := connect(t, startHub(t), ownerToken)
+	saved := callTool[store.AgentPrompt](t, session, "update_agent_prompt", map[string]any{
+		"kind": "job_facts", "body": "Record the stack.",
+		"result_schema": map[string]any{"type": "object", "properties": map[string]any{
+			"stack": map[string]any{"title": "Stack", "description": "Tools named.", "type": "string"},
+		}},
+		"examples": []any{map[string]any{"input": "Title: Go developer", "answer": map[string]any{"stack": "Go"}}},
+	})
+	latest := callTool[store.AgentPrompt](t, session, "get_agent_prompt", map[string]any{"kind": "job_facts"})
+	if len(saved.Examples) != 1 || len(latest.Examples) != 1 || latest.Examples[0].Input != "Title: Go developer" || !strings.Contains(string(latest.Examples[0].Answer), `"Go"`) {
+		t.Fatalf("saved = %+v, latest = %+v", saved.Examples, latest.Examples)
+	}
+}

@@ -126,7 +126,7 @@ func (classifier *Classifier) classifyByModel(
 ) (store.ConversationClassification, error) {
 	answer, err := classifier.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
 		System: prompt.Body, User: formatConversationText(conversation, messages),
-		SchemaName: store.AgentPromptKindLinkedInConversation, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
+		SchemaName: store.AgentPromptKindLinkedInConversation, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &conversation.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
 	if err != nil {

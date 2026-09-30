@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
@@ -172,5 +173,41 @@ func TestASeedGivesOnlyAKindWithoutAPromptItsFirstVersion(t *testing.T) {
 	}
 	if facts, err := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts); err != nil || facts.ID != stored.ID {
 		t.Fatalf("job facts = %+v, %v; want the stored prompt kept", facts, err)
+	}
+}
+
+func TestAPromptVersionCarriesWorkedExamplesThatMatchItsSchema(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	schema := json.RawMessage(`{"type":"object","required":["stack"],"properties":{"stack":{"title":"Stack","description":"Tools named.","type":"string"}}}`)
+	examples := []chatcompletions.Example{
+		{Input: "Title: Go developer", Answer: json.RawMessage(`{"stack":"Go"}`)},
+		{Input: "Title: Designer", Answer: json.RawMessage(`{"stack":"not stated"}`)},
+	}
+	saved, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "Record the stack.", ResultSchema: schema, Examples: examples})
+	if err != nil || len(saved.Examples) != 2 || saved.Examples[1].Input != "Title: Designer" {
+		t.Fatalf("saved = %+v, %v", saved.Examples, err)
+	}
+
+	kept, _ := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "Record the stack, again."})
+	if len(kept.Examples) != 2 {
+		t.Fatalf("a version saved without examples has %d; want the previous two kept", len(kept.Examples))
+	}
+	removed, _ := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "No examples.", Examples: []chatcompletions.Example{}})
+	if len(removed.Examples) != 0 {
+		t.Fatalf("an empty list kept %d examples", len(removed.Examples))
+	}
+
+	for name, example := range map[string]chatcompletions.Example{
+		"no input":           {Input: " ", Answer: json.RawMessage(`{"stack":"Go"}`)},
+		"not an object":      {Input: "x", Answer: json.RawMessage(`["Go"]`)},
+		"against the schema": {Input: "x", Answer: json.RawMessage(`{"stack":3}`)},
+	} {
+		if _, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: "x", Examples: []chatcompletions.Example{example}}); err == nil {
+			t.Errorf("%s: saved, want refused", name)
+		}
+	}
+	if latest, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts); latest.Version != removed.Version {
+		t.Errorf("a refused example still saved version %d", latest.Version)
 	}
 }

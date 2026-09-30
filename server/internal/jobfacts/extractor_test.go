@@ -119,3 +119,22 @@ func TestANewPromptVersionMakesThePassReadEveryJobAgain(t *testing.T) {
 		t.Fatalf("summary after a new prompt = %+v, %v", summary, err)
 	}
 }
+
+func TestTheExtractorSendsThePromptsWorkedExamples(t *testing.T) {
+	hub := startJobs(t, "Engineer")
+	ctx := context.Background()
+	seeded, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	_, err := hub.SaveAgentPrompt(ctx, owner, store.NewAgentPrompt{Kind: store.AgentPromptKindJobFacts, Body: seeded.Body,
+		ResultSchema: json.RawMessage(`{"type":"object","properties":{"summary":{"title":"Summary","description":"The role.","type":"string"}}}`),
+		Examples:     []chatcompletions.Example{{Input: "Title: Example", Answer: json.RawMessage(`{"summary":"An example"}`)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &fakeModel{}
+	if _, err := jobfacts.NewExtractor(hub, model).ExtractOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 1 || len(model.requests[0].Examples) != 1 || model.requests[0].Examples[0].Input != "Title: Example" {
+		t.Fatalf("requests = %+v", model.requests)
+	}
+}

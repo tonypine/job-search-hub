@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,5 +160,30 @@ func TestAServerThatCannotEnforceTheSchemaHasItsAnswerValidated(t *testing.T) {
 	mismatched, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":3}"}}]}`)
 	if _, err := mismatched.CompleteJSON(context.Background(), unenforced); !errors.Is(err, chatcompletions.ErrInvalidAnswer) {
 		t.Fatalf("a mismatched answer gave %v", err)
+	}
+}
+
+func TestWorkedExamplesAreSentAsEarlierTurns(t *testing.T) {
+	client, received := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":\"Go\"}"}}]}`)
+	withExamples := request
+	for index := range 4 {
+		withExamples.Examples = append(withExamples.Examples, chatcompletions.Example{Input: fmt.Sprintf("Title: Example %d", index), Answer: json.RawMessage(`{"stack":"Rust"}`)})
+	}
+
+	if _, err := client.CompleteJSON(context.Background(), withExamples); err != nil {
+		t.Fatal(err)
+	}
+	messages := (*received)["messages"].([]any)
+	if len(messages) != 10 {
+		t.Fatalf("%d messages, want the system prompt, 4 example pairs and the input", len(messages))
+	}
+	roles := ""
+	for _, message := range messages {
+		roles += message.(map[string]any)["role"].(string)[:1]
+	}
+	second := messages[2].(map[string]any)
+	last := messages[9].(map[string]any)
+	if roles != "suauauauau" || second["content"] != `{"stack":"Rust"}` || last["content"] != request.User {
+		t.Fatalf("roles = %s, second = %v, last = %v", roles, second, last)
 	}
 }

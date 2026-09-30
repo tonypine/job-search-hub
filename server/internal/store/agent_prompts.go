@@ -11,8 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 )
 
 var ErrAgentPromptNotFound = errors.New("agent prompt not found")
@@ -61,24 +64,29 @@ type AgentPrompt struct {
 	Version      int             `json:"version"`
 	Body         string          `json:"body"`
 	ResultSchema json.RawMessage `json:"result_schema,omitempty"`
-	Note         string          `json:"note,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
+	// Examples are shown to the model before the real input, as earlier
+	// turns of the conversation.
+	Examples  []chatcompletions.Example `json:"examples,omitempty"`
+	Note      string                    `json:"note,omitempty"`
+	CreatedAt time.Time                 `json:"created_at"`
 }
 
 // NewAgentPrompt is the next version of a prompt. A nil ResultSchema keeps
-// the previous version's schema.
+// the previous version's schema, and nil Examples its examples; an empty
+// Examples removes them.
 type NewAgentPrompt struct {
 	Kind         string
 	Body         string
 	ResultSchema json.RawMessage
+	Examples     []chatcompletions.Example
 	Note         string
 }
 
-const agentPromptColumns = `id, kind, version, body, result_schema, note, created_at`
+const agentPromptColumns = `id, kind, version, body, result_schema, examples, note, created_at`
 
 func scanAgentPrompt(row pgx.Row) (AgentPrompt, error) {
 	var prompt AgentPrompt
-	err := row.Scan(&prompt.ID, &prompt.Kind, &prompt.Version, &prompt.Body, &prompt.ResultSchema, &prompt.Note, &prompt.CreatedAt)
+	err := row.Scan(&prompt.ID, &prompt.Kind, &prompt.Version, &prompt.Body, &prompt.ResultSchema, &prompt.Examples, &prompt.Note, &prompt.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentPrompt{}, ErrAgentPromptNotFound
 	}
@@ -119,16 +127,30 @@ func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgent
 		}
 	}
 
+	var examples *string
+	if input.Examples != nil {
+		encoded, err := json.Marshal(input.Examples)
+		if err != nil {
+			return AgentPrompt{}, err
+		}
+		text := string(encoded)
+		examples = &text
+	}
+
 	var prompt AgentPrompt
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		prompt, err = scanAgentPrompt(tx.QueryRow(ctx, `
-			INSERT INTO agent_prompts (kind, version, body, result_schema, note)
+			INSERT INTO agent_prompts (kind, version, body, result_schema, examples, note)
 			SELECT $1, COALESCE(MAX(version), 0) + 1, $2,
-			       COALESCE($3::jsonb, (SELECT result_schema FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1)), $4
+			       COALESCE($3::jsonb, (SELECT result_schema FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1)),
+			       COALESCE($4::jsonb, (SELECT examples FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1), '[]'::jsonb), $5
 			FROM agent_prompts WHERE kind = $1
-			RETURNING `+agentPromptColumns, input.Kind, input.Body, input.ResultSchema, input.Note))
+			RETURNING `+agentPromptColumns, input.Kind, input.Body, input.ResultSchema, examples, input.Note))
 		if err != nil {
+			return err
+		}
+		if err := checkExamples(prompt.Examples, prompt.ResultSchema); err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{
@@ -176,6 +198,37 @@ func (s *Store) SeedAgentPrompts(ctx context.Context, seed fs.FS) ([]string, err
 // checkResultSchema refuses a schema that is not a JSON object, or that uses
 // a list of types anywhere: LM Studio's MLX backend rejects "type": [...], and
 // anyOf says the same thing in a form it accepts.
+// checkExamples refuses an example without an input, or whose answer isn't
+// a JSON object matching the schema, when the prompt has one.
+func checkExamples(examples []chatcompletions.Example, schemaText json.RawMessage) error {
+	var resolved *jsonschema.Resolved
+	if len(schemaText) > 0 {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(schemaText, &schema); err != nil {
+			return fmt.Errorf("read the result schema: %w", err)
+		}
+		var err error
+		if resolved, err = schema.Resolve(nil); err != nil {
+			return fmt.Errorf("resolve the result schema: %w", err)
+		}
+	}
+	for index, example := range examples {
+		if strings.TrimSpace(example.Input) == "" {
+			return fmt.Errorf("example %d has no input", index+1)
+		}
+		var answer map[string]any
+		if err := json.Unmarshal(example.Answer, &answer); err != nil {
+			return fmt.Errorf("example %d's answer is not a JSON object", index+1)
+		}
+		if resolved != nil {
+			if err := resolved.Validate(answer); err != nil {
+				return fmt.Errorf("example %d's answer doesn't match the result schema: %w", index+1, err)
+			}
+		}
+	}
+	return nil
+}
+
 func checkResultSchema(schema json.RawMessage) error {
 	var decoded any
 	if err := json.Unmarshal(schema, &decoded); err != nil {

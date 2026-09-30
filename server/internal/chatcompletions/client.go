@@ -93,10 +93,19 @@ type JSONRequest struct {
 	Schema     json.RawMessage
 	MaxTokens  int
 	Task       TaskLabel
+	// Examples are worked examples sent before User as earlier turns of the
+	// conversation, each an input and the answer the model should give.
+	Examples []Example
 	// SchemaNotEnforced is for a server that can't enforce a schema: it is
 	// only asked for a JSON object, and the answer is validated against the
 	// schema instead.
 	SchemaNotEnforced bool
+}
+
+// Example is a worked example: an input and the answer for it.
+type Example struct {
+	Input  string          `json:"input"`
+	Answer json.RawMessage `json:"answer"`
 }
 
 // Answer is a model's JSON object and the model that gave it.
@@ -138,7 +147,11 @@ type tokenUsage struct {
 // hashInput identifies what the model was asked, so runs on the same input
 // can be compared.
 func hashInput(request JSONRequest) string {
-	sum := sha256.Sum256([]byte(request.System + "\x00" + request.User + "\x00" + string(request.Schema)))
+	text := request.System + "\x00" + request.User + "\x00" + string(request.Schema)
+	for _, example := range request.Examples {
+		text += "\x00" + example.Input + "\x00" + string(example.Answer)
+	}
+	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -155,13 +168,10 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 		responseFormat = map[string]any{"type": "json_object"}
 	}
 	body, err := json.Marshal(map[string]any{
-		"model":       request.Model,
-		"temperature": 0,
-		"max_tokens":  request.MaxTokens,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": request.User},
-		},
+		"model":           request.Model,
+		"temperature":     0,
+		"max_tokens":      request.MaxTokens,
+		"messages":        buildMessages(system, request),
 		"response_format": responseFormat,
 	})
 	if err != nil {
@@ -224,6 +234,18 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 		}
 	}
 	return json.RawMessage(strings.TrimSpace(answer)), completion.Usage, RunSucceeded, nil
+}
+
+// buildMessages lays out the conversation: the system prompt, each worked
+// example as a user turn and the assistant's answer, then the input.
+func buildMessages(system string, request JSONRequest) []map[string]string {
+	messages := []map[string]string{{"role": "system", "content": system}}
+	for _, example := range request.Examples {
+		messages = append(messages,
+			map[string]string{"role": "user", "content": example.Input},
+			map[string]string{"role": "assistant", "content": string(example.Answer)})
+	}
+	return append(messages, map[string]string{"role": "user", "content": request.User})
 }
 
 // validateAgainstSchema checks an answer a server wasn't made to fit.

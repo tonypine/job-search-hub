@@ -194,7 +194,7 @@ func (classifier *Classifier) classifyByModel(ctx context.Context, message store
 	}
 	answer, err := classifier.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
 		System: prompt.Body, User: formatMessageText(message, full.Text, companyName),
-		SchemaName: store.AgentPromptKindMailTriage, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
+		SchemaName: store.AgentPromptKindMailTriage, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &message.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
 	if err != nil {
