@@ -1,5 +1,6 @@
 /// The app's top-level pages, in sidebar order.
 public enum Page: String, CaseIterable, Identifiable, Sendable {
+    case decide
     case pipeline
     case updates
     case jobs
@@ -14,6 +15,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
+        case .decide: "Decide"
         case .pipeline: "Pipeline"
         case .updates: "Updates"
         case .jobs: "Jobs"
@@ -29,6 +31,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     /// The SF Symbol shown beside the title in the sidebar.
     public var symbolName: String {
         switch self {
+        case .decide: "checklist"
         case .pipeline: "rectangle.split.3x1"
         case .updates: "bell"
         case .jobs: "briefcase"

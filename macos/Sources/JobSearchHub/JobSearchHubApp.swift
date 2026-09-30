@@ -134,6 +134,7 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             switch selectedPage {
+            case .decide: DecidePage()
             case .settings: SettingsPage()
             case .updates:
                 UpdatesPage(
