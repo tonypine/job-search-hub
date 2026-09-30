@@ -133,3 +133,20 @@ func TestTheModelRuntimeHasDefaultsAndChecksItsPort(t *testing.T) {
 		t.Fatal("a bad port was accepted")
 	}
 }
+
+func TestBackupsGoToApplicationSupportWithPgDumpFromThePath(t *testing.T) {
+	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(parsed.backupsDir, "/Library/Application Support/JobSearchHub/backups") || parsed.pgDump != "pg_dump" {
+		t.Fatalf("backups: %q with %q", parsed.backupsDir, parsed.pgDump)
+	}
+
+	environment := maps.Clone(validEnvironment)
+	environment["HUB_BACKUPS_DIR"] = "/srv/hub-backups"
+	environment["HUB_PG_DUMP"] = "/usr/lib/postgresql/18/bin/pg_dump"
+	if parsed, _ = parseEnvironment(lookupFrom(environment)); parsed.backupsDir != "/srv/hub-backups" || parsed.pgDump != "/usr/lib/postgresql/18/bin/pg_dump" {
+		t.Fatalf("backups: %q with %q", parsed.backupsDir, parsed.pgDump)
+	}
+}

@@ -56,6 +56,10 @@ type config struct {
 	modelsDir          string
 	runtimePort        int
 	runtimeIdleTimeout time.Duration
+	// backupsDir is the private folder nightly database dumps go to, and
+	// pgDump the pg_dump binary that writes them.
+	backupsDir string
+	pgDump     string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -134,6 +138,16 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	}
 	if parsed.runtimeIdleTimeout, err = parseInterval(lookup, "HUB_RUNTIME_IDLE_TIMEOUT", defaultRuntimeIdleTimeout); err != nil {
 		return config{}, err
+	}
+	parsed.backupsDir = lookup("HUB_BACKUPS_DIR")
+	if parsed.backupsDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			parsed.backupsDir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "backups")
+		}
+	}
+	parsed.pgDump = lookup("HUB_PG_DUMP")
+	if parsed.pgDump == "" {
+		parsed.pgDump = "pg_dump"
 	}
 	return parsed, nil
 }

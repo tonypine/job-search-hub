@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
+	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
@@ -50,6 +52,9 @@ const (
 	// conversationTriageInterval picks up LinkedIn conversations imported
 	// since the last pass, or that the model couldn't read.
 	conversationTriageInterval = 10 * time.Minute
+	// databaseBackupCheckInterval is how often the server checks whether
+	// the night's database dump is due.
+	databaseBackupCheckInterval = 15 * time.Minute
 )
 
 func main() {
@@ -237,6 +242,13 @@ func run() error {
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)
 	}
 	api.RegisterMailRoutes(routes, hub, mailBackfiller, requireOwner)
+
+	if pgDump, err := exec.LookPath(settings.pgDump); err != nil {
+		slog.Warn("database backups off: pg_dump not found", "pg_dump", settings.pgDump)
+	} else {
+		go databasebackup.NewDumper(settings.databaseURL, settings.backupsDir, pgDump).Run(ctx, databaseBackupCheckInterval)
+		slog.Info("database backups on", "folder", settings.backupsDir)
+	}
 
 	server := &http.Server{
 		Addr:              settings.address,

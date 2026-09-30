@@ -29,7 +29,7 @@ You need Docker, Go 1.26 and Claude Code, logged in with a Claude plan (agent ru
    curl -fsS localhost:8090/v1/health
    ```
 
-   Both listen on 127.0.0.1 only: the server on 8090, Postgres on 5434. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes, and `--uninstall` to remove the agent. On a host other than a Mac, run the server in Docker instead: `docker compose --profile docker-server up -d --build`.
+   Both listen on 127.0.0.1 only: the server on 8090, Postgres on 5434. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Each night from 03:00 the server dumps the database with `pg_dump` (`brew install libpq`) to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14; restore one with `pg_restore --clean --dbname=<url> <file>`. Run the script again after pulling changes, and `--uninstall` to remove the agent. On a host other than a Mac, run the server in Docker instead: `docker compose --profile docker-server up -d --build`.
 
 2. **Install the CLI.**
 
