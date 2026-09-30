@@ -9,6 +9,10 @@ final class JobDetailModel {
     private(set) var loadError: String?
     private(set) var isAddingToPipeline = false
     var actionError: String?
+    /// Where a "Read facts now" run stands, while one is going.
+    private(set) var factsReadState: JobFactsReadState = .notQueued
+    private(set) var isReadingFacts = false
+    var factsError: String?
 
     func load(_ jobID: UUID, with client: HubClient) async {
         do {
@@ -31,6 +35,36 @@ final class JobDetailModel {
             actionError = String(describing: error)
         }
     }
+}
+
+extension JobDetailModel {
+    /// Asks the hub to read the job's facts ahead of background work, follows
+    /// the run through the model queue, then shows the fresh facts.
+    func readFactsNow(_ jobID: UUID, with client: HubClient) async {
+        isReadingFacts = true
+        factsReadState = .queued
+        defer {
+            isReadingFacts = false
+            factsReadState = .notQueued
+        }
+        do {
+            _ = try await client.send("POST", "v1/jobs/\(jobID.uuidString)/facts/read", body: EmptyBody(), as: FactsReadResponse.self)
+            let deadline = Date.now.addingTimeInterval(20 * 60)
+            while Date.now < deadline {
+                try await Task.sleep(for: .seconds(2))
+                factsReadState = try await client.get("v1/model-work", as: ModelWork.self).getFactsReadState(for: jobID)
+                if factsReadState == .notQueued { break }
+            }
+            await load(jobID, with: client)
+        } catch is CancellationError {
+        } catch {
+            factsError = String(describing: error)
+        }
+    }
+}
+
+private struct FactsReadResponse: Decodable {
+    var queued: Bool
 }
 
 /// One job's details, read from the hub: what the board publishes, the facts
@@ -115,6 +149,11 @@ struct JobDetailView: View {
             Button("OK") {}
         } message: {
             Text(model.actionError ?? "")
+        }
+        .alert("Could not read the facts", isPresented: Binding(get: { model.factsError != nil }, set: { if !$0 { model.factsError = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(model.factsError ?? "")
         }
     }
 
@@ -228,13 +267,36 @@ struct JobDetailView: View {
                 Text("Read by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                readFactsNowRow
             }
         } else {
             section("Read from the posting") {
-                Text("Not read yet. The hub reads new postings every few minutes while the local model server runs.")
+                Text("Not read yet. The hub reads new postings as they arrive, unless its model work is paused.")
                     .foregroundStyle(.secondary)
+                readFactsNowRow
             }
         }
+    }
+
+    /// The "Read facts now" button, and where its run stands.
+    private var readFactsNowRow: some View {
+        HStack(spacing: 8) {
+            Button(model.isReadingFacts ? "Reading…" : "Read facts now", systemImage: "arrow.clockwise") {
+                Task { await model.readFactsNow(jobID, with: client) }
+            }
+            .disabled(model.isReadingFacts)
+            switch model.factsReadState {
+            case .queued:
+                ProgressView().controlSize(.small)
+                Text("Waiting for its turn").foregroundStyle(.secondary)
+            case .running:
+                ProgressView().controlSize(.small)
+                Text("Reading now").foregroundStyle(.secondary)
+            case .notQueued:
+                EmptyView()
+            }
+        }
+        .padding(.top, 4)
     }
 
     @ViewBuilder
