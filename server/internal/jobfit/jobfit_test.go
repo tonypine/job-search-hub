@@ -244,3 +244,44 @@ func TestFactsReadWithEvidenceAreJudgedLikeFlatOnes(t *testing.T) {
 		}
 	}
 }
+
+func TestLevelReadsAbbreviationsAndCanonicalLevels(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		title      string
+		seniority  any
+		want       jobfit.Verdict
+		wantReason string
+	}{
+		{"an abbreviated senior", "Front-end React Sr", "Sr", jobfit.VerdictYes, "Senior"},
+		{"pleno", "Desenvolvedor Front-end Pleno", "Pleno", jobfit.VerdictNo, "Pleno (mid)"},
+		{"semi-senior isn't senior", "Semi-Senior React Developer", "Semi-Senior", jobfit.VerdictNo, "Semi-Senior (mid)"},
+		{"an abbreviated junior", "Jr Front-end Developer", "Jr", jobfit.VerdictNo, "Jr (junior)"},
+		{"canonical senior", "Front-end React Sr", map[string]any{"evidence": "Sr", "as_written": "Sr", "levels": []string{"senior"}}, jobfit.VerdictYes, "Senior"},
+		{"canonical mid", "Desenvolvedor Front-end Pleno", map[string]any{"evidence": "Pleno", "as_written": "Pleno", "levels": []string{"mid"}}, jobfit.VerdictNo, "Pleno (mid)"},
+		{"canonical mid beside a senior word", "Semi Senior Engineer", map[string]any{"evidence": "Semi Senior", "as_written": "Semi Senior", "levels": []string{"mid"}}, jobfit.VerdictNo, "Semi Senior (mid)"},
+		{"no canonical level falls back to the title", "Senior Engineer", map[string]any{"evidence": "", "as_written": "not stated", "levels": []string{}}, jobfit.VerdictYes, "Senior"},
+		{"a junior title before facts are read", "Desenvolvedor Front-end JR", nil, jobfit.VerdictNo, "jr (junior)"},
+		{"a pleno title before facts are read", "Analista Funcional Pleno", nil, jobfit.VerdictNo, "pleno (mid)"},
+		{"a market segment isn't a level", "Account Executive, Mid-Market", nil, jobfit.VerdictUnclear, "the posting doesn't say"},
+	} {
+		var read json.RawMessage
+		if test.seniority != nil {
+			read = facts(t, map[string]any{"seniority": test.seniority})
+		}
+		level := findCheck(t, jobfit.Judge(store.Job{Title: test.title, Location: "Americas"}, read, criteria, rates), "Level")
+		if level.Verdict != test.want || level.Reason != test.wantReason {
+			t.Errorf("%s: %+v, want %s (%s)", test.name, level, test.want, test.wantReason)
+		}
+	}
+}
+
+func TestLevelCriteriaMayBeAbbreviated(t *testing.T) {
+	midCriteria := criteria
+	midCriteria.SeniorityLevels = []string{"Pleno"}
+
+	level := findCheck(t, jobfit.Judge(store.Job{Title: "Semi-Senior Developer", Location: "Americas"}, nil, midCriteria, rates), "Level")
+	if level.Verdict != jobfit.VerdictYes || level.Reason != "Pleno" {
+		t.Fatalf("level = %+v, want yes (Pleno)", level)
+	}
+}

@@ -6,6 +6,7 @@ package jobfit
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -53,6 +54,7 @@ type readFacts struct {
 	OpenToBrazil        string   `json:"location.open_to_brazil"`
 	Technologies        []string `json:"technologies"`
 	Seniority           string   `json:"seniority"`
+	SeniorityLevels     []string `json:"seniority.levels"`
 	PayInText           string   `json:"pay_in_text"`
 	ContractType        string   `json:"contract_type"`
 	Contract            string   `json:"contract"`
@@ -233,13 +235,65 @@ func checkLevel(job store.Job, facts readFacts, criteria store.JobCriteria) Chec
 	if strings.EqualFold(seniority, notStated) {
 		seniority = ""
 	}
-	if term, found := findTerm([]string{job.Title, seniority}, criteria.SeniorityLevels); found {
-		return Check{Name: name, Verdict: VerdictYes, Reason: term}
+	levelTexts := facts.SeniorityLevels
+	if len(levelTexts) == 0 {
+		levelTexts = []string{expandLevelAbbreviations(job.Title), expandLevelAbbreviations(seniority)}
 	}
-	if seniority != "" {
-		return Check{Name: name, Verdict: VerdictNo, Reason: seniority}
+	for _, wanted := range criteria.SeniorityLevels {
+		if _, found := findTerm(levelTexts, []string{expandLevelAbbreviations(wanted)}); found {
+			return Check{Name: name, Verdict: VerdictYes, Reason: wanted}
+		}
+	}
+	if seniority != "" || len(facts.SeniorityLevels) > 0 {
+		return Check{Name: name, Verdict: VerdictNo, Reason: describeLevel(seniority, facts.SeniorityLevels)}
+	}
+	if level := juniorOrMidLevelPattern.FindString(wordmatch.Normalize(job.Title)); level != "" {
+		return Check{Name: name, Verdict: VerdictNo, Reason: describeLevel(level, nil)}
 	}
 	return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
+}
+
+// juniorOrMidLevelPattern finds a junior or mid level in a title with no
+// seniority fact yet. A bare "mid" isn't one: "Mid-Market" is a segment.
+var juniorOrMidLevelPattern = regexp.MustCompile(`\b(junior|jr|pleno|ssr|semi[- ]?senior|mid[- ]level|intern|estagiario|trainee)\b`)
+
+// levelAbbreviations turn the levels postings abbreviate, in English, Spanish
+// and Portuguese, into the words the criteria use. Semi-senior goes first, so
+// its "senior" isn't read as senior.
+var levelAbbreviations = []struct {
+	pattern *regexp.Regexp
+	level   string
+}{
+	{regexp.MustCompile(`\b(semi[- ]?senior|ssr|pleno)\b`), "mid"},
+	{regexp.MustCompile(`\bsr\b`), "senior"},
+	{regexp.MustCompile(`\bjr\b`), "junior"},
+}
+
+// expandLevelAbbreviations returns the text normalized, with each
+// abbreviated level written out: "React Sr." becomes "react senior.".
+func expandLevelAbbreviations(text string) string {
+	expanded := wordmatch.Normalize(text)
+	for _, abbreviation := range levelAbbreviations {
+		expanded = abbreviation.pattern.ReplaceAllString(expanded, abbreviation.level)
+	}
+	return expanded
+}
+
+// describeLevel names the level as the posting wrote it, followed by the
+// level it means when that reads differently: "Pleno (mid)".
+func describeLevel(seniority string, canonicalLevels []string) string {
+	meaning := strings.Join(canonicalLevels, ", ")
+	if len(canonicalLevels) == 0 {
+		meaning = expandLevelAbbreviations(seniority)
+	}
+	switch {
+	case seniority == "":
+		return meaning
+	case meaning == wordmatch.Normalize(seniority):
+		return seniority
+	default:
+		return seniority + " (" + meaning + ")"
+	}
 }
 
 // checkTimezone applies when the posting states the hours it requires; most
