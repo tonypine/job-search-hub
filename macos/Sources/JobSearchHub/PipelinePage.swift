@@ -9,8 +9,11 @@ final class PipelineModel {
     private(set) var isLoading = false
     private(set) var loadError: String?
     private(set) var movingCardID: UUID?
-    var moveError: String?
+    /// Why the last change to a card failed: a move, a follow-up, a dismissal.
+    var actionError: String?
     var showsOnlyDue = false
+    /// Shows the cards dismissed as not a good fit instead of the board.
+    var showsDismissed = false
 
     /// The board's cards for a phase, only the due ones when asked.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
@@ -25,7 +28,27 @@ final class PipelineModel {
             _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
             await load(with: client)
         } catch {
-            moveError = String(describing: error)
+            actionError = String(describing: error)
+        }
+    }
+
+    /// Takes the card off the board as not a good fit, then reads the board again.
+    func dismiss(_ cardID: UUID, note: String, with client: HubClient) async {
+        do {
+            _ = try await client.dismissApplication(cardID, note: note)
+            await load(with: client)
+        } catch {
+            actionError = String(describing: error)
+        }
+    }
+
+    /// Puts the card back in the phase it left, then reads the dismissed cards again.
+    func restore(_ cardID: UUID, with client: HubClient) async {
+        do {
+            _ = try await client.restoreApplication(cardID)
+            await load(with: client)
+        } catch {
+            actionError = String(describing: error)
         }
     }
 
@@ -33,7 +56,7 @@ final class PipelineModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            board = PipelineBoard(try await client.get("v1/pipeline", as: PipelineResponse.self))
+            board = PipelineBoard(try await showsDismissed ? client.getDismissedPipeline() : client.getPipeline())
             loadError = nil
         } catch {
             loadError = String(describing: error)
@@ -53,7 +76,7 @@ final class PipelineModel {
             )
             board.replaceApplication(response.application)
         } catch {
-            moveError = String(describing: error)
+            actionError = String(describing: error)
         }
     }
 }
@@ -73,12 +96,15 @@ struct PipelinePage: View {
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
+    @Environment(JobDismissals.self) private var dismissals
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
     @State private var selectedCardID: UUID?
     @State private var followUpCardID: UUID?
     @State private var followUpNote = ""
+    @State private var dismissingCardID: UUID?
+    @State private var dismissalNote = ""
     /// A job whose card is selected once the board loads.
     let initialJobID: UUID?
 
@@ -96,7 +122,11 @@ struct PipelinePage: View {
                             selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
                         }
                     }
-                    .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, dismissals.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: model.showsDismissed) {
+                        selectedCardID = nil
+                        Task { await model.load(with: client) }
+                    }
                     .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
                     .onChange(of: details.getSubject(on: .pipeline)) {
                         if details.getSubject(on: .pipeline) == nil { selectedCardID = nil }
@@ -106,7 +136,15 @@ struct PipelinePage: View {
             }
         }
         .navigationTitle("Pipeline")
-        .navigationSubtitle(model.board.cards.count == 1 ? "1 application" : "\(model.board.cards.count) applications")
+        .navigationSubtitle(describeCount())
+    }
+
+    private func describeCount() -> String {
+        let count = model.board.cards.count
+        if model.showsDismissed {
+            return count == 1 ? "1 dismissed" : "\(count) dismissed"
+        }
+        return count == 1 ? "1 application" : "\(count) applications"
     }
 
     private func board(client: HubClient) -> some View {
@@ -121,7 +159,12 @@ struct PipelinePage: View {
                             onFollowUp: { cardID in
                                 followUpNote = ""
                                 followUpCardID = cardID
-                            }
+                            },
+                            onDismiss: { cardID in
+                                dismissalNote = ""
+                                dismissingCardID = cardID
+                            },
+                            onRestore: { cardID in Task { await model.restore(cardID, with: client) } }
                         ) { cardID, target in
                             requestMove(cardID, to: target, with: client)
                         }
@@ -134,6 +177,8 @@ struct PipelinePage: View {
         .toolbar {
             Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
                 .help("Show only the cards whose follow-up is due")
+            Toggle("Dismissed", systemImage: "eye.slash", isOn: $model.showsDismissed)
+                .help("Show the cards dismissed as not a good fit, where they can be restored")
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                 .disabled(model.isLoading)
         }
@@ -152,10 +197,20 @@ struct PipelinePage: View {
                 ContentUnavailableView("Could not load the pipeline", systemImage: "exclamationmark.triangle", description: Text(loadError))
             }
         }
-        .alert("Could not move the card", isPresented: Binding(get: { model.moveError != nil }, set: { if !$0 { model.moveError = nil } })) {
+        .alert("Could not update the card", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
             Button("OK") {}
         } message: {
-            Text(model.moveError ?? "")
+            Text(model.actionError ?? "")
+        }
+        .alert("Not a good fit", isPresented: Binding(get: { dismissingCardID != nil }, set: { if !$0 { dismissingCardID = nil } })) {
+            TextField("Note (optional)", text: $dismissalNote)
+            Button("Dismiss") {
+                guard let cardID = dismissingCardID else { return }
+                Task { await model.dismiss(cardID, note: dismissalNote, with: client) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The card leaves the board without closing, and its job leaves the Jobs list. Restore it from Dismissed.")
         }
         .alert("Close the application", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
             TextField("Reason", text: $closedReason)
@@ -209,6 +264,8 @@ struct PipelineColumn: View {
     let width: CGFloat
     @Binding var selectedCardID: UUID?
     let onFollowUp: (UUID) -> Void
+    let onDismiss: (UUID) -> Void
+    let onRestore: (UUID) -> Void
     let onMove: (UUID, PipelinePhase) -> Void
     @State private var isTargeted = false
 
@@ -229,13 +286,19 @@ struct PipelineColumn: View {
                                 if let jobURL = card.jobURL.flatMap(URL.init(string:)) {
                                     Button("Open posting") { NSWorkspace.shared.open(jobURL) }
                                 }
-                                Button("Followed up…") { onFollowUp(card.id) }
-                                Menu("Move to") {
-                                    ForEach(phases.filter { $0.id != card.application.phaseID }) { target in
-                                        Button(target.name) { onMove(card.id, target) }
+                                if card.dismissedAt != nil {
+                                    Button("Restore") { onRestore(card.id) }
+                                } else {
+                                    Button("Followed up…") { onFollowUp(card.id) }
+                                    Menu("Move to") {
+                                        ForEach(phases.filter { $0.id != card.application.phaseID }) { target in
+                                            Button(target.name) { onMove(card.id, target) }
+                                        }
                                     }
+                                    .disabled(movingCardID != nil)
+                                    Divider()
+                                    Button("Not a good fit…") { onDismiss(card.id) }
                                 }
-                                .disabled(movingCardID != nil)
                             }
                     }
                 }
@@ -278,6 +341,9 @@ struct PipelineCardView: View {
             }
             if let closedReason = card.application.closedReason {
                 Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            if let dismissalReason = card.dismissalReason, !dismissalReason.isEmpty {
+                Label(dismissalReason, systemImage: "eye.slash").font(.caption).foregroundStyle(.orange).lineLimit(2)
             }
             HStack {
                 Text(getTimeInPhaseText(days: card.getDaysInPhase(now: .now)))

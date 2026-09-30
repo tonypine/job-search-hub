@@ -163,3 +163,8 @@ public enum HubJSON {
         return encoder
     }
 }
+
+/// The body of a POST that carries nothing but its path.
+public struct EmptyBody: Encodable, Sendable {
+    public init() {}
+}

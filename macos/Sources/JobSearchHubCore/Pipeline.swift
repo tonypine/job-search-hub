@@ -42,6 +42,10 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     /// Unseen updates about the card's job, or about its company when the
     /// application has no job.
     public var unseenUpdates: Int
+    /// When the card was dismissed as not a good fit, and why: its job's
+    /// dismissal, or its own for a card with no job.
+    public var dismissedAt: Date?
+    public var dismissalReason: String?
 
     public var id: UUID { application.id }
 
@@ -64,7 +68,7 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case application, jobTitle, companyName, followUpDueAt, unseenUpdates
+        case application, jobTitle, companyName, followUpDueAt, unseenUpdates, dismissedAt, dismissalReason
         case jobURL = "jobUrl"
     }
 }
@@ -215,5 +219,37 @@ public struct FollowUpDaysRequest: Encodable, Sendable {
 
     public init(days: Int?) {
         self.days = days
+    }
+}
+
+/// Why a card isn't a good fit, in the owner's words; it may be empty.
+public struct DismissApplicationRequest: Encodable, Equatable, Sendable {
+    public var note: String
+
+    public init(note: String) {
+        self.note = note
+    }
+}
+
+public extension HubClient {
+    /// The board: every card not dismissed.
+    func getPipeline() async throws -> PipelineResponse {
+        try await get("v1/pipeline", as: PipelineResponse.self)
+    }
+
+    /// The cards dismissed as not a good fit, in the phases they left.
+    func getDismissedPipeline() async throws -> PipelineResponse {
+        try await get("v1/pipeline", query: [URLQueryItem(name: "dismissed", value: "true")], as: PipelineResponse.self)
+    }
+
+    /// Takes the card off the board as not a good fit; a card's job leaves the Jobs list too.
+    func dismissApplication(_ id: UUID, note: String) async throws -> Application {
+        let request = DismissApplicationRequest(note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+        return try await send("POST", "v1/applications/\(id.uuidString)/dismiss", body: request, as: ApplicationResponse.self).application
+    }
+
+    /// Puts a dismissed card back on the board, in the phase it left.
+    func restoreApplication(_ id: UUID) async throws -> Application {
+        try await send("POST", "v1/applications/\(id.uuidString)/restore", body: EmptyBody(), as: ApplicationResponse.self).application
     }
 }

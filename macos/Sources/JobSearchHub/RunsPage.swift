@@ -58,8 +58,6 @@ final class ModelWorkModel {
     }
 }
 
-struct EmptyBody: Encodable {}
-
 /// What the hub's models and agents are doing: the agent runs going on now,
 /// every kind of run with its failures and each model's average time, and
 /// the latest runs.

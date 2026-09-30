@@ -125,3 +125,25 @@ private func decodeBoard() throws -> PipelineBoard {
     card.followUpDueAt = nil
     #expect(card.getFollowUpStatus(now: now) == nil)
 }
+
+@Test func aCardIsDismissedWithANoteAndTheDismissedBoardIsReadApart() async throws {
+    let cardID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
+    let application = #"{"application":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"0aa55565-58d2-4247-ba01-cba65060a316","#
+        + #""phase_entered_at":"2026-09-28T14:00:00Z","created_at":"2026-09-28T14:00:00Z","updated_at":"2026-09-30T14:00:00Z"}}"#
+    let dismissedBoard = #"{"phases":[],"cards":[{"application":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"0aa55565-58d2-4247-ba01-cba65060a316","#
+        + #""phase_entered_at":"2026-09-28T14:00:00Z","created_at":"2026-09-28T14:00:00Z","updated_at":"2026-09-30T14:00:00Z"},"#
+        + #""company_name":"Acme","unseen_updates":0,"dismissed_at":"2026-09-30T19:00:00Z","dismissal_reason":"not a good fit: agency"}]}"#
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/applications/\(cardID.uuidString)/dismiss": StubHub.Answer(status: 200, body: application),
+        "/v1/pipeline": StubHub.Answer(status: 200, body: dismissedBoard),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    _ = try await client.dismissApplication(cardID, note: " agency ")
+    let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
+    #expect(sent?["note"] as? String == "agency")
+
+    let board = try await client.getDismissedPipeline()
+    #expect(recording.lastRequest?.url?.query == "dismissed=true")
+    #expect(board.cards.first?.dismissalReason == "not a good fit: agency" && board.cards.first?.dismissedAt != nil)
+}
