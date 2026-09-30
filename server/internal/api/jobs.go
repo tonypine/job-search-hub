@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,8 +85,19 @@ type addJobResponse struct {
 	Created bool      `json:"created"`
 }
 
+// jobDismissalRequest names the jobs to dismiss or restore; the reason is
+// the owner's own words, and restoring ignores it.
+type jobDismissalRequest struct {
+	JobIDs []uuid.UUID `json:"job_ids"`
+	Reason string      `json:"reason"`
+}
+
+type jobDismissalResponse struct {
+	Jobs []store.Job `json:"jobs"`
+}
+
 // RegisterJobRoutes adds the owner-only routes for listing jobs, reading one
-// job's details, and adding one by URL.
+// job's details, adding one by URL, and dismissing and restoring jobs.
 func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parameters := r.URL.Query()
@@ -159,6 +171,35 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusOK, addJobResponse{Job: job})
 		}
 	})))
+
+	owner := store.Actor{Kind: store.ActorOwner}
+	routes.Handle("POST /v1/jobs/dismiss", requireOwner(handleJobDismissal(func(ctx context.Context, request jobDismissalRequest) ([]store.Job, error) {
+		return hub.DismissJobs(ctx, owner, request.JobIDs, strings.TrimSpace(request.Reason))
+	})))
+	routes.Handle("POST /v1/jobs/restore", requireOwner(handleJobDismissal(func(ctx context.Context, request jobDismissalRequest) ([]store.Job, error) {
+		return hub.RestoreJobs(ctx, owner, request.JobIDs)
+	})))
+}
+
+// handleJobDismissal serves a dismissal or restore: every job it names
+// changes, or none does.
+func handleJobDismissal(apply func(context.Context, jobDismissalRequest) ([]store.Job, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request jobDismissalRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
+			return
+		}
+		jobs, err := apply(r.Context(), request)
+		switch {
+		case errors.Is(err, store.ErrJobNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "a job named isn't in the hub"})
+		case err != nil:
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		default:
+			writeJSON(w, http.StatusOK, jobDismissalResponse{Jobs: jobs})
+		}
+	})
 }
 
 // addJobByURL stores the job behind a URL. A Greenhouse, Lever or Ashby

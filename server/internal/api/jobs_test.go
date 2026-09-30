@@ -287,3 +287,34 @@ func TestTheFitJudgesPayInTheTakeHomeCurrency(t *testing.T) {
 		t.Fatalf("pay check = %+v", payCheck)
 	}
 }
+
+func TestJobsAreDismissedAndRestoredTogether(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	company, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	board, _ := service.hub.SetJobBoard(ctx, owner, store.JobBoardInput{CompanyID: company.ID, Provider: "lever", BoardToken: "acme", Verified: true})
+	postings := []store.JobPosting{{ExternalID: "1", Title: "One", URL: "https://example.com/1"}, {ExternalID: "2", Title: "Two", URL: "https://example.com/2"}}
+	if _, err := service.hub.SyncBoardJobs(ctx, store.Actor{Kind: store.ActorSystem}, board, postings, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ := service.hub.ListJobs(ctx, store.JobFilter{})
+	ids := `["` + jobs[0].Job.ID.String() + `","` + jobs[1].Job.ID.String() + `"]`
+
+	status, body := send(t, http.MethodPost, service.url+"/v1/jobs/dismiss", ownerToken, `{"job_ids":`+ids+`,"reason":"agency"}`)
+	var dismissed struct{ Jobs []store.Job }
+	if err := json.Unmarshal(body, &dismissed); status != http.StatusOK || err != nil || len(dismissed.Jobs) != 2 {
+		t.Fatalf("dismiss: %d %s", status, body)
+	}
+	status, body = send(t, http.MethodGet, service.url+"/v1/jobs?status=dismissed", ownerToken, "")
+	var listed struct{ Total int }
+	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || listed.Total != 2 {
+		t.Fatalf("dismissed list: %d %s", status, body)
+	}
+	if status, body := send(t, http.MethodPost, service.url+"/v1/jobs/restore", ownerToken, `{"job_ids":`+ids+`}`); status != http.StatusOK {
+		t.Fatalf("restore: %d %s", status, body)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/dismiss", ownerToken, `{"job_ids":["`+store.Job{}.ID.String()+`"]}`); status != http.StatusNotFound {
+		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}

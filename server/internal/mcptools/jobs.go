@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,7 +16,43 @@ type setJobCompanyInput struct {
 	CompanyID uuid.UUID `json:"company_id" jsonschema:"a company already in the hub; create it first with create_company"`
 }
 
+type dismissJobsInput struct {
+	JobIDs []uuid.UUID `json:"job_ids" jsonschema:"the jobs to dismiss"`
+	Reason string      `json:"reason,omitempty" jsonschema:"why, in the owner's words; optional"`
+}
+
+type restoreJobsInput struct {
+	JobIDs []uuid.UUID `json:"job_ids" jsonschema:"the dismissed jobs to bring back"`
+}
+
+type jobsOutput struct {
+	Jobs []store.Job `json:"jobs"`
+}
+
 func addJobTools(server *mcp.Server, hub *store.Store) {
+	addTool(server, &mcp.Tool{
+		Name: "dismiss_job",
+		Description: "Dismiss one or more jobs the owner doesn't want to see again, with an optional reason. They leave the jobs list, " +
+			"stay dismissed when their board lists them again, and can be restored with restore_job. An unknown id dismisses nothing. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input dismissJobsInput) (*mcp.CallToolResult, jobsOutput, error) {
+		actor, err := getOwnerActor(ctx)
+		if err != nil {
+			return nil, jobsOutput{}, err
+		}
+		jobs, err := hub.DismissJobs(ctx, actor, input.JobIDs, strings.TrimSpace(input.Reason))
+		return nil, jobsOutput{Jobs: jobs}, err
+	})
+	addTool(server, &mcp.Tool{
+		Name:        "restore_job",
+		Description: "Bring dismissed jobs back to the jobs list. An unknown id restores nothing. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restoreJobsInput) (*mcp.CallToolResult, jobsOutput, error) {
+		actor, err := getOwnerActor(ctx)
+		if err != nil {
+			return nil, jobsOutput{}, err
+		}
+		jobs, err := hub.RestoreJobs(ctx, actor, input.JobIDs)
+		return nil, jobsOutput{Jobs: jobs}, err
+	})
 	addTool(server, &mcp.Tool{
 		Name: "set_job_company",
 		Description: "Tie a job added by hand, or found in a feed, to its company; its pipeline card follows. " +

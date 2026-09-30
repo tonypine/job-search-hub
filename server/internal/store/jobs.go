@@ -31,6 +31,10 @@ type Job struct {
 	FirstSeenAt time.Time  `json:"first_seen_at"`
 	LastSeenAt  time.Time  `json:"last_seen_at"`
 	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+	// DismissedAt is when the owner dismissed the job; dismissed jobs leave
+	// the jobs list until restored.
+	DismissedAt     *time.Time `json:"dismissed_at,omitempty"`
+	DismissalReason string     `json:"dismissal_reason,omitempty"`
 }
 
 // BoardFacts are what a job board publishes about a posting beyond its text.
@@ -60,12 +64,13 @@ type PayRange struct {
 }
 
 const jobColumns = `id, company_id, job_board_id, external_id, source, title, location, workplace_type, url, description,
-	pay, employment_type, department, other_locations, published_at, first_seen_at, last_seen_at, closed_at`
+	pay, employment_type, department, other_locations, published_at, first_seen_at, last_seen_at, closed_at, dismissed_at, dismissal_reason`
 
 // prefixedJobColumns are the jobColumns qualified for queries that join
 // companies, whose id would otherwise be ambiguous.
 const prefixedJobColumns = `jobs.id, jobs.company_id, jobs.job_board_id, jobs.external_id, jobs.source, jobs.title, jobs.location, jobs.workplace_type, jobs.url, jobs.description,
-	jobs.pay, jobs.employment_type, jobs.department, jobs.other_locations, jobs.published_at, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at`
+	jobs.pay, jobs.employment_type, jobs.department, jobs.other_locations, jobs.published_at, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at,
+	jobs.dismissed_at, jobs.dismissal_reason`
 
 // scanJob reads the jobColumns, then any extra columns the query selects
 // after them into extra.
@@ -73,7 +78,7 @@ func scanJob(row pgx.Row, extra ...any) (Job, error) {
 	var job Job
 	destinations := append([]any{&job.ID, &job.CompanyID, &job.JobBoardID, &job.ExternalID, &job.Source, &job.Title, &job.Location,
 		&job.WorkplaceType, &job.URL, &job.Description, &job.Pay, &job.EmploymentType, &job.Department, &job.OtherLocations, &job.PublishedAt,
-		&job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt}, extra...)
+		&job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt, &job.DismissedAt, &job.DismissalReason}, extra...)
 	err := row.Scan(destinations...)
 	return job, err
 }
@@ -325,7 +330,9 @@ func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard,
 const (
 	JobStatusOpen   = "open"
 	JobStatusClosed = "closed"
-	JobStatusAll    = "all"
+	// JobStatusAll is every job that isn't dismissed.
+	JobStatusAll       = "all"
+	JobStatusDismissed = "dismissed"
 
 	defaultJobPageSize = 100
 	maximumJobPageSize = 500
@@ -362,8 +369,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 	if status == "" {
 		status = JobStatusOpen
 	}
-	if status != JobStatusOpen && status != JobStatusClosed && status != JobStatusAll {
-		return nil, 0, errors.New("status must be open, closed or all")
+	if status != JobStatusOpen && status != JobStatusClosed && status != JobStatusAll && status != JobStatusDismissed {
+		return nil, 0, errors.New("status must be open, closed, all or dismissed")
 	}
 
 	const matches = `
@@ -371,7 +378,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		WHERE ($1 = '' OR strpos(lower(jobs.title), $1) > 0 OR strpos(lower(jobs.location), $1) > 0
 		       OR strpos(lower(COALESCE(companies.name, jobs.company_name)), $1) > 0)
 		  AND ($2::uuid IS NULL OR jobs.company_id = $2)
-		  AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL))`
+		  AND CASE WHEN $3 = 'dismissed' THEN jobs.dismissed_at IS NOT NULL
+		           ELSE jobs.dismissed_at IS NULL AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL)) END`
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 
 	var total int
