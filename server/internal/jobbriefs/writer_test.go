@@ -3,9 +3,12 @@ package jobbriefs_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/jobbriefs"
@@ -141,5 +144,67 @@ func TestGoodFitsAreBriefedBeforeUnclearOnes(t *testing.T) {
 	}
 	if len(model.requests) != 3 || !strings.Contains(model.requests[0].User, "Title: Senior Product Engineer, Growth") {
 		t.Fatalf("first briefed:\n%s", model.requests[0].User)
+	}
+}
+
+// matchModel answers every brief with the match it holds.
+type matchModel struct {
+	match    string
+	model    string
+	requests int
+}
+
+func (model *matchModel) CompleteJSON(_ context.Context, _ chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+	model.requests++
+	return chatcompletions.Answer{Model: model.model, Object: json.RawMessage(`{"match":"` + model.match + `","reason":"R","strengths":[],"weaknesses":[]}`)}, nil
+}
+
+func TestFullBriefsGoToTheBestUndecidedJobsAndOnDemand(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobBrief)
+	hash, _ := hub.GetKnowledgeHash(ctx)
+	matches := map[string]string{"Strong one": "strong", "Stretch one": "stretch", "Strong on the pipeline": "strong"}
+	ids := map[string]uuid.UUID{}
+	for title, match := range matches {
+		job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: title, URL: "https://acme.com/" + title})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[title] = job.ID
+		if err := hub.SaveJobBrief(ctx, store.JobBrief{JobID: job.ID, Tier: store.JobBriefTierPre, PromptID: prompt.ID, Model: "local", Match: match, Reason: "r", KnowledgeHash: hash}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	onPipeline := ids["Strong on the pipeline"]
+	if _, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &onPipeline}); err != nil {
+		t.Fatal(err)
+	}
+
+	writer := jobbriefs.NewWriter(hub, &fakeModel{}, noRates{})
+	if _, err := writer.WriteNightlyFullBriefs(ctx); !errors.Is(err, jobbriefs.ErrNoFullBriefs) {
+		t.Fatalf("without Claude: %v", err)
+	}
+	claude := &matchModel{match: "possible", model: "claude-sonnet"}
+	writer.FullClient = claude
+	summary, err := writer.WriteNightlyFullBriefs(ctx)
+	if err != nil || summary.Written != 1 {
+		t.Fatalf("nightly = %+v, %v; want only the strong job off the pipeline", summary, err)
+	}
+	if brief, _ := hub.GetJobBrief(ctx, ids["Strong one"]); brief.Tier != store.JobBriefTierFull || brief.Model != "claude-sonnet" || brief.Match != "possible" {
+		t.Errorf("strong job's brief = %+v", brief)
+	}
+	if summary, _ := writer.WriteNightlyFullBriefs(ctx); summary.Written != 0 {
+		t.Errorf("a second night wrote %d, want 0", summary.Written)
+	}
+
+	if err := writer.WriteFullBrief(ctx, ids["Stretch one"]); err != nil {
+		t.Fatal(err)
+	}
+	if brief, _ := hub.GetJobBrief(ctx, ids["Stretch one"]); brief.Tier != store.JobBriefTierFull {
+		t.Errorf("on demand: %+v", brief)
+	}
+	if err := writer.WriteFullBrief(ctx, uuid.New()); !errors.Is(err, store.ErrJobNotFound) {
+		t.Errorf("an unknown job: %v", err)
 	}
 }

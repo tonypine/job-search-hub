@@ -123,7 +123,7 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (An
 	if client.RecordRun != nil {
 		record := RunRecord{
 			Kind: request.SchemaName, Task: request.Task, BaseURL: client.BaseURL, Model: request.Model,
-			InputHash: hashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+			InputHash: HashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 			StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: outcome,
 		}
 		if err != nil {
@@ -144,9 +144,9 @@ type tokenUsage struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
-// hashInput identifies what the model was asked, so runs on the same input
+// HashInput identifies what the model was asked, so runs on the same input
 // can be compared.
-func hashInput(request JSONRequest) string {
+func HashInput(request JSONRequest) string {
 	text := request.System + "\x00" + request.User + "\x00" + string(request.Schema)
 	for _, example := range request.Examples {
 		text += "\x00" + example.Input + "\x00" + string(example.Answer)

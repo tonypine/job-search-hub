@@ -21,6 +21,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
@@ -59,6 +60,9 @@ const (
 	// jobBriefInterval picks up jobs whose facts were read, or whose brief went
 	// stale, since the last pass.
 	jobBriefInterval = 5 * time.Minute
+	// fullBriefCheckInterval is how often the server checks whether the
+	// night's full briefs are due.
+	fullBriefCheckInterval = 15 * time.Minute
 )
 
 func main() {
@@ -192,27 +196,46 @@ func run() error {
 	})
 	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime}
 
+	recordTaskRun := func(ctx context.Context, record chatcompletions.RunRecord) {
+		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
+			Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
+			PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
+			PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, StartedAt: record.StartedAt,
+			Duration: record.Duration, Outcome: record.Outcome, Error: record.Error,
+		}); err != nil {
+			slog.Warn("record a task run", "kind", record.Kind, "error", err)
+		}
+	}
 	var modelClient *modelrouter.Router
 	if len(taskRoutes) > 0 {
 		modelClient = modelrouter.New(hub)
 		modelClient.Runtime = modelRuntime
 		modelClient.Queue = modelQueue
-		modelClient.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
-			if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
-				Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
-				PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
-				PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, StartedAt: record.StartedAt,
-				Duration: record.Duration, Outcome: record.Outcome, Error: record.Error,
-			}); err != nil {
-				slog.Warn("record a task run", "kind", record.Kind, "error", err)
-			}
-		}
+		modelClient.RecordRun = recordTaskRun
 	}
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
 	}
+	var fullBriefs *jobbriefs.Writer
 	if modelClient != nil {
-		go jobbriefs.NewWriter(hub, modelClient, rates).Run(ctx, jobBriefInterval)
+		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
+		go briefWriter.Run(ctx, jobBriefInterval)
+		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
+			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
+		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
+			slog.Warn("full briefs off: no folder to run Claude in", "error", err)
+		} else {
+			briefWriter.FullClient = &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun}
+			fullBriefs = briefWriter
+			go briefWriter.RunNightly(ctx, fullBriefCheckInterval)
+			slog.Info("full briefs on", "model", settings.fullBriefModel)
+		}
+	}
+	if fullBriefs != nil {
+		api.RegisterJobBriefRoutes(routes, hub, fullBriefs, requireOwner)
+		mcptools.AddJobBriefTools(ownerTools, fullBriefs, hub)
+	} else {
+		api.RegisterJobBriefRoutes(routes, hub, nil, requireOwner)
 	}
 	if modelClient != nil {
 		extractor := jobfacts.NewExtractor(hub, modelClient)

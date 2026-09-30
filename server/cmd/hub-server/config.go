@@ -60,6 +60,12 @@ type config struct {
 	// pgDump the pg_dump binary that writes them.
 	backupsDir string
 	pgDump     string
+	// claudeBinary is the Claude Code CLI full briefs are written with,
+	// fullBriefModel the model it runs, and claudeFolder the empty folder
+	// it runs in, so no project's instructions reach the model.
+	claudeBinary   string
+	fullBriefModel string
+	claudeFolder   string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -148,6 +154,17 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	parsed.pgDump = lookup("HUB_PG_DUMP")
 	if parsed.pgDump == "" {
 		parsed.pgDump = "pg_dump"
+	}
+	parsed.claudeBinary = lookup("HUB_CLAUDE_BIN")
+	if parsed.claudeBinary == "" {
+		parsed.claudeBinary = "claude"
+	}
+	parsed.fullBriefModel = lookup("HUB_FULL_BRIEF_MODEL")
+	if parsed.fullBriefModel == "" {
+		parsed.fullBriefModel = "sonnet"
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		parsed.claudeFolder = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "claude-print")
 	}
 	return parsed, nil
 }
