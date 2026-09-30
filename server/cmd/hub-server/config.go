@@ -22,8 +22,9 @@ type config struct {
 	ownerToken        string
 	boardPollInterval time.Duration
 	feedPollInterval  time.Duration
-	// jobFactsModelURL is the chat-completions API root of the model that
-	// reads job facts; empty turns reading off.
+	// jobFactsModelURL and jobFactsModel seed the task routes of a database
+	// that has none: the chat-completions API root and model every routed
+	// task starts on. Empty leaves a fresh database without model work.
 	jobFactsModelURL string
 	jobFactsModel    string
 	jobFactsInterval time.Duration

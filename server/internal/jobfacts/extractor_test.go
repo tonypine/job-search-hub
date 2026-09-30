@@ -25,16 +25,16 @@ type fakeModel struct {
 	requests    []chatcompletions.JSONRequest
 }
 
-func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error) {
+func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests = append(model.requests, request)
 	if model.unreachable {
-		return nil, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
+		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
 	title := strings.TrimPrefix(strings.SplitN(request.User, "\n", 2)[0], "Title: ")
 	if title == model.failOn {
-		return nil, errors.New("the answer is not a JSON object")
+		return chatcompletions.Answer{}, errors.New("the answer is not a JSON object")
 	}
-	return json.RawMessage(fmt.Sprintf(`{"summary":%q}`, title)), nil
+	return chatcompletions.Answer{Object: json.RawMessage(fmt.Sprintf(`{"summary":%q}`, title)), Model: "routed-model"}, nil
 }
 
 func startJobs(t *testing.T, titles ...string) *store.Store {
@@ -65,7 +65,7 @@ func startJobs(t *testing.T, titles ...string) *store.Store {
 func TestAPassReadsEveryJobAndSkipsTheOneTheModelFailsOn(t *testing.T) {
 	hub := startJobs(t, "Engineer", "Designer", "Manager")
 	model := &fakeModel{failOn: "Designer"}
-	extractor := jobfacts.NewExtractor(hub, model, "test-model")
+	extractor := jobfacts.NewExtractor(hub, model)
 
 	summary, err := extractor.ExtractOnce(context.Background())
 	if err != nil || summary.Read != 2 || summary.Failed != 1 {
@@ -73,9 +73,17 @@ func TestAPassReadsEveryJobAndSkipsTheOneTheModelFailsOn(t *testing.T) {
 	}
 	prompt, _ := hub.GetLatestAgentPrompt(context.Background(), store.AgentPromptKindJobFacts)
 	request := model.requests[0]
-	if request.System != prompt.Body || string(request.Schema) != string(prompt.ResultSchema) || request.Model != "test-model" ||
+	if request.System != prompt.Body || string(request.Schema) != string(prompt.ResultSchema) || request.SchemaName != store.AgentPromptKindJobFacts ||
 		!strings.Contains(request.User, "Other locations: EMEA") || !strings.Contains(request.User, "Description:\nBuild things.") {
 		t.Fatalf("request = %+v", request)
+	}
+
+	jobs, _, _ := hub.ListJobs(context.Background(), store.JobFilter{})
+	for _, job := range jobs {
+		details, err := hub.GetJobDetails(context.Background(), job.Job.ID)
+		if err != nil || (details.Facts != nil && details.Facts.Model != "routed-model") {
+			t.Fatalf("%s: facts = %+v, %v; want them saved with the model that answered", job.Job.Title, details.Facts, err)
+		}
 	}
 
 	// The next pass only retries the failed job.
@@ -90,7 +98,7 @@ func TestAnUnreachableModelStopsThePass(t *testing.T) {
 	hub := startJobs(t, "Engineer", "Designer")
 	model := &fakeModel{unreachable: true}
 
-	summary, err := jobfacts.NewExtractor(hub, model, "test-model").ExtractOnce(context.Background())
+	summary, err := jobfacts.NewExtractor(hub, model).ExtractOnce(context.Background())
 	if !errors.Is(err, chatcompletions.ErrUnreachable) || summary.Read != 0 || len(model.requests) != 1 {
 		t.Fatalf("summary = %+v, err = %v, %d requests; want one attempt and the error", summary, err, len(model.requests))
 	}
@@ -99,7 +107,7 @@ func TestAnUnreachableModelStopsThePass(t *testing.T) {
 func TestANewPromptVersionMakesThePassReadEveryJobAgain(t *testing.T) {
 	hub := startJobs(t, "Engineer", "Designer")
 	model := &fakeModel{}
-	extractor := jobfacts.NewExtractor(hub, model, "test-model")
+	extractor := jobfacts.NewExtractor(hub, model)
 	if _, err := extractor.ExtractOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}

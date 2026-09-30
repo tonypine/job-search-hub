@@ -15,12 +15,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
 )
 
 // ErrUnreachable means the model server did not answer at all, as when it is
 // not running.
 var ErrUnreachable = errors.New("the model server is unreachable")
+
+// ErrInvalidAnswer means the server answered, but not with the JSON object
+// asked for: cut off, not JSON, or not matching the schema.
+var ErrInvalidAnswer = errors.New("the model's answer is invalid")
 
 // requestTimeout covers a model loading on its first request as well as a
 // long answer.
@@ -30,6 +35,8 @@ type Client struct {
 	// BaseURL is the API root, such as http://localhost:1234/v1.
 	BaseURL    string
 	HTTPClient *http.Client
+	// APIKey, when set, is sent as a bearer token, as hosted providers need.
+	APIKey string
 	// RecordRun, when set, hears about every request once it ends, whatever
 	// its outcome, for the hub's record of task runs.
 	RecordRun func(context.Context, RunRecord)
@@ -86,12 +93,22 @@ type JSONRequest struct {
 	Schema     json.RawMessage
 	MaxTokens  int
 	Task       TaskLabel
+	// SchemaNotEnforced is for a server that can't enforce a schema: it is
+	// only asked for a JSON object, and the answer is validated against the
+	// schema instead.
+	SchemaNotEnforced bool
+}
+
+// Answer is a model's JSON object and the model that gave it.
+type Answer struct {
+	Object json.RawMessage
+	Model  string
 }
 
 // CompleteJSON returns the model's JSON object. Some models behind LM Studio,
 // such as Qwen3.5, put a constrained answer in reasoning_content and leave
 // content empty, so that is read when content is.
-func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (json.RawMessage, error) {
+func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (Answer, error) {
 	startedAt := time.Now()
 	answer, usage, outcome, err := client.complete(ctx, request)
 	if client.RecordRun != nil {
@@ -107,7 +124,10 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (js
 		}
 		client.RecordRun(context.WithoutCancel(ctx), record)
 	}
-	return answer, err
+	if err != nil {
+		return Answer{}, err
+	}
+	return Answer{Object: answer, Model: request.Model}, nil
 }
 
 type tokenUsage struct {
@@ -127,6 +147,13 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 	// llama.cpp never show the schema to the model, which then guesses each
 	// field's meaning from its name.
 	system := strings.TrimRight(request.System, "\n") + "\n\nAnswer with only a JSON object that matches this JSON Schema:\n" + string(request.Schema)
+	responseFormat := map[string]any{
+		"type":        "json_schema",
+		"json_schema": map[string]any{"name": request.SchemaName, "strict": true, "schema": request.Schema},
+	}
+	if request.SchemaNotEnforced {
+		responseFormat = map[string]any{"type": "json_object"}
+	}
 	body, err := json.Marshal(map[string]any{
 		"model":       request.Model,
 		"temperature": 0,
@@ -135,10 +162,7 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 			{"role": "system", "content": system},
 			{"role": "user", "content": request.User},
 		},
-		"response_format": map[string]any{
-			"type":        "json_schema",
-			"json_schema": map[string]any{"name": request.SchemaName, "strict": true, "schema": request.Schema},
-		},
+		"response_format": responseFormat,
 	})
 	if err != nil {
 		return nil, tokenUsage{}, RunFailed, err
@@ -148,6 +172,9 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 		return nil, tokenUsage{}, RunFailed, err
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
+	if client.APIKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+client.APIKey)
+	}
 
 	response, err := client.HTTPClient.Do(httpRequest)
 	if err != nil {
@@ -180,15 +207,37 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 	}
 	choice := completion.Choices[0]
 	if choice.FinishReason == "length" {
-		return nil, completion.Usage, RunInvalid, errors.New("the answer was cut off at the token limit")
+		return nil, completion.Usage, RunInvalid, fmt.Errorf("%w: it was cut off at the token limit", ErrInvalidAnswer)
 	}
 	answer := strings.TrimSpace(choice.Message.Content)
 	if answer == "" {
 		answer = strings.TrimSpace(choice.Message.ReasoningContent)
 	}
-	var object map[string]json.RawMessage
+	answer = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(answer), "```json"), "```")
+	var object map[string]any
 	if err := json.Unmarshal([]byte(answer), &object); err != nil {
-		return nil, completion.Usage, RunInvalid, fmt.Errorf("the answer is not a JSON object: %w", err)
+		return nil, completion.Usage, RunInvalid, fmt.Errorf("%w: it is not a JSON object: %v", ErrInvalidAnswer, err)
 	}
-	return json.RawMessage(answer), completion.Usage, RunSucceeded, nil
+	if request.SchemaNotEnforced {
+		if err := validateAgainstSchema(object, request.Schema); err != nil {
+			return nil, completion.Usage, RunInvalid, fmt.Errorf("%w: %v", ErrInvalidAnswer, err)
+		}
+	}
+	return json.RawMessage(strings.TrimSpace(answer)), completion.Usage, RunSucceeded, nil
+}
+
+// validateAgainstSchema checks an answer a server wasn't made to fit.
+func validateAgainstSchema(answer map[string]any, schemaText json.RawMessage) error {
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(schemaText, &schema); err != nil {
+		return fmt.Errorf("read the schema: %w", err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		return fmt.Errorf("resolve the schema: %w", err)
+	}
+	if err := resolved.Validate(answer); err != nil {
+		return fmt.Errorf("the answer doesn't match the schema: %w", err)
+	}
+	return nil
 }

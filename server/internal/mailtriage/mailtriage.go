@@ -43,7 +43,7 @@ var confirmationSubjects = []string{
 }
 
 type modelClient interface {
-	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error)
+	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
 type mailbox interface {
@@ -51,17 +51,16 @@ type mailbox interface {
 }
 
 type Classifier struct {
-	hub       *store.Store
-	mailbox   mailbox
-	client    modelClient
-	modelName string
-	nudges    chan struct{}
+	hub     *store.Store
+	mailbox mailbox
+	client  modelClient
+	nudges  chan struct{}
 	// OnClassified, when set, is called after a pass classified any mail.
 	OnClassified func()
 }
 
-func NewClassifier(hub *store.Store, mailbox mailbox, client modelClient, modelName string) *Classifier {
-	return &Classifier{hub: hub, mailbox: mailbox, client: client, modelName: modelName, nudges: make(chan struct{}, 1)}
+func NewClassifier(hub *store.Store, mailbox mailbox, client modelClient) *Classifier {
+	return &Classifier{hub: hub, mailbox: mailbox, client: client, nudges: make(chan struct{}, 1)}
 }
 
 // Nudge asks for a pass now, as when new mail was recorded.
@@ -194,7 +193,7 @@ func (classifier *Classifier) classifyByModel(ctx context.Context, message store
 		companyName = company.Name
 	}
 	answer, err := classifier.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-		Model: classifier.modelName, System: prompt.Body, User: formatMessageText(message, full.Text, companyName),
+		System: prompt.Body, User: formatMessageText(message, full.Text, companyName),
 		SchemaName: store.AgentPromptKindMailTriage, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &message.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
@@ -205,7 +204,7 @@ func (classifier *Classifier) classifyByModel(ctx context.Context, message store
 		Class  string `json:"class"`
 		Reason string `json:"reason"`
 	}
-	if err := json.Unmarshal(answer, &parsed); err != nil {
+	if err := json.Unmarshal(answer.Object, &parsed); err != nil {
 		return store.MailClassification{}, fmt.Errorf("read the model's answer: %w", err)
 	}
 	return store.MailClassification{Class: parsed.Class, ClassifiedBy: store.ClassifiedByModel, Reason: parsed.Reason, PromptID: &prompt.ID}, nil

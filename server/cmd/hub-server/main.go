@@ -31,6 +31,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
+	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -106,6 +107,7 @@ func run() error {
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
 	api.RegisterTaskRunRoutes(routes, hub, requireOwner)
+	api.RegisterModelRoutingRoutes(routes, hub, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
 	api.RegisterDeviceRoutes(routes, hub, requireOwner)
 	broadcaster := hubevents.NewBroadcaster()
@@ -137,9 +139,20 @@ func run() error {
 	if settings.feedPollInterval > 0 {
 		go feedpoller.New(hub, boards).Run(ctx, settings.feedPollInterval)
 	}
-	var modelClient *chatcompletions.Client
-	if settings.jobFactsModelURL != "" {
-		modelClient = chatcompletions.NewClient(settings.jobFactsModelURL)
+	// Each kind of task runs on the model it's routed to. The settings' model
+	// server seeds the routes of a fresh database; routes changed since stay.
+	if err := hub.EnsureDefaultTaskRoutes(ctx, settings.jobFactsModelURL, settings.jobFactsModel, store.RoutedTaskKinds); err != nil {
+		slog.Error("seed the task routes", "error", err)
+		os.Exit(1)
+	}
+	taskRoutes, err := hub.ListTaskRoutes(ctx)
+	if err != nil {
+		slog.Error("read the task routes", "error", err)
+		os.Exit(1)
+	}
+	var modelClient *modelrouter.Router
+	if len(taskRoutes) > 0 {
+		modelClient = modelrouter.New(hub)
 		modelClient.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
 			if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
 				Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
@@ -152,12 +165,12 @@ func run() error {
 		}
 	}
 	if modelClient != nil {
-		go conversationtriage.NewClassifier(hub, modelClient, settings.jobFactsModel).Run(ctx, conversationTriageInterval)
+		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
 	}
 	if modelClient != nil && settings.jobFactsInterval > 0 {
-		extractor := jobfacts.NewExtractor(hub, modelClient, settings.jobFactsModel)
+		extractor := jobfacts.NewExtractor(hub, modelClient)
 		go extractor.Run(ctx, settings.jobFactsInterval)
-		slog.Info("job facts reading on", "model", settings.jobFactsModel, "every", settings.jobFactsInterval.String())
+		slog.Info("job facts reading on", "every", settings.jobFactsInterval.String())
 	}
 
 	var mailBackfiller api.MailBackfiller
@@ -165,7 +178,7 @@ func run() error {
 		watcher := gmailwatch.New(hub, googleClient, settings.gmailTopic, settings.gmailSubscription)
 		mailBackfiller = watcher
 		if modelClient != nil {
-			classifier := mailtriage.NewClassifier(hub, googleClient, modelClient, settings.jobFactsModel)
+			classifier := mailtriage.NewClassifier(hub, googleClient, modelClient)
 			mailHandler := mailactions.NewHandler(hub, updateRecorder)
 			alertReader := jobalerts.NewReader(hub, googleClient)
 			watcher.OnMailRecorded = func() {

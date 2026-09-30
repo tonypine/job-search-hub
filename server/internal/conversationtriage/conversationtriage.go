@@ -28,18 +28,17 @@ const (
 )
 
 type modelClient interface {
-	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error)
+	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
 type Classifier struct {
-	hub       *store.Store
-	client    modelClient
-	modelName string
-	nudges    chan struct{}
+	hub    *store.Store
+	client modelClient
+	nudges chan struct{}
 }
 
-func NewClassifier(hub *store.Store, client modelClient, modelName string) *Classifier {
-	return &Classifier{hub: hub, client: client, modelName: modelName, nudges: make(chan struct{}, 1)}
+func NewClassifier(hub *store.Store, client modelClient) *Classifier {
+	return &Classifier{hub: hub, client: client, nudges: make(chan struct{}, 1)}
 }
 
 // Nudge asks for a pass now, as after an import.
@@ -126,7 +125,7 @@ func (classifier *Classifier) classifyByModel(
 	ctx context.Context, conversation store.LinkedInConversation, messages []store.LinkedInMessage, prompt store.AgentPrompt,
 ) (store.ConversationClassification, error) {
 	answer, err := classifier.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-		Model: classifier.modelName, System: prompt.Body, User: formatConversationText(conversation, messages),
+		System: prompt.Body, User: formatConversationText(conversation, messages),
 		SchemaName: store.AgentPromptKindLinkedInConversation, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &conversation.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
@@ -140,7 +139,7 @@ func (classifier *Classifier) classifyByModel(
 		IsAgency bool   `json:"is_agency"`
 		Reason   string `json:"reason"`
 	}
-	if err := json.Unmarshal(answer, &parsed); err != nil {
+	if err := json.Unmarshal(answer.Object, &parsed); err != nil {
 		return store.ConversationClassification{}, fmt.Errorf("read the model's answer: %w", err)
 	}
 	role := strings.TrimSpace(parsed.Role)

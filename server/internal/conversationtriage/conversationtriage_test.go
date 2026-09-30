@@ -19,15 +19,15 @@ type fakeModel struct {
 	requests    []string
 }
 
-func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error) {
+func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests = append(model.requests, request.User)
 	if model.unreachable {
-		return nil, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
+		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
 	if strings.Contains(request.User, "a role at Globex") {
-		return json.RawMessage(`{"class":"recruiter_outreach","company":"Globex","role":"Senior Frontend Engineer","is_agency":false,"reason":"offers a role"}`), nil
+		return chatcompletions.Answer{Object: json.RawMessage(`{"class":"recruiter_outreach","company":"Globex","role":"Senior Frontend Engineer","is_agency":false,"reason":"offers a role"}`), Model: "routed-model"}, nil
 	}
-	return json.RawMessage(`{"class":"known_person","company":"","role":"known_person","is_agency":false,"reason":"a friend"}`), nil
+	return chatcompletions.Answer{Object: json.RawMessage(`{"class":"known_person","company":"","role":"known_person","is_agency":false,"reason":"a friend"}`), Model: "routed-model"}, nil
 }
 
 func TestConversationsOthersStartedAreSortedAndRecruitersNamed(t *testing.T) {
@@ -53,7 +53,7 @@ func TestConversationsOthersStartedAreSortedAndRecruitersNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := &fakeModel{unreachable: true}
-	classifier := NewClassifier(hub, model, "test-model")
+	classifier := NewClassifier(hub, model)
 
 	if _, err := classifier.ClassifyOnce(ctx); !errors.Is(err, chatcompletions.ErrUnreachable) {
 		t.Fatalf("with the model down: err = %v", err)

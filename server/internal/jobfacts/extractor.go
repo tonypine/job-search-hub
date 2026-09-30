@@ -4,7 +4,6 @@ package jobfacts
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,17 +23,16 @@ const (
 )
 
 type modelClient interface {
-	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error)
+	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
 type Extractor struct {
-	hub       *store.Store
-	client    modelClient
-	modelName string
+	hub    *store.Store
+	client modelClient
 }
 
-func NewExtractor(hub *store.Store, client modelClient, modelName string) *Extractor {
-	return &Extractor{hub: hub, client: client, modelName: modelName}
+func NewExtractor(hub *store.Store, client modelClient) *Extractor {
+	return &Extractor{hub: hub, client: client}
 }
 
 // PassSummary counts one pass over the jobs awaiting facts.
@@ -77,8 +75,8 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 
 	var summary PassSummary
 	for _, job := range jobs {
-		facts, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-			Model: extractor.modelName, System: prompt.Body, User: formatJobText(job.Job),
+		answer, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
+			System: prompt.Body, User: formatJobText(job.Job),
 			SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, MaxTokens: maximumAnswerTokens,
 			Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 		})
@@ -87,7 +85,7 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 		}
 		if err == nil {
 			err = extractor.hub.SaveJobFacts(ctx, store.NewJobFacts{
-				JobID: job.ID, PromptID: prompt.ID, Model: extractor.modelName, TextHash: job.TextHash, Facts: facts,
+				JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object,
 			})
 		}
 		if err != nil {

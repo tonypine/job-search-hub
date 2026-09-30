@@ -39,8 +39,8 @@ func TestTheAnswerComesFromContentAndTheRequestCarriesTheSchema(t *testing.T) {
 	client, received := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":\"Go\"}"}}]}`)
 
 	answer, err := client.CompleteJSON(context.Background(), request)
-	if err != nil || string(answer) != `{"stack":"Go"}` {
-		t.Fatalf("answer = %s, %v", answer, err)
+	if err != nil || string(answer.Object) != `{"stack":"Go"}` || answer.Model != "qwen/qwen3.5-9b" {
+		t.Fatalf("answer = %+v, %v", answer, err)
 	}
 	format := (*received)["response_format"].(map[string]any)
 	schema := format["json_schema"].(map[string]any)
@@ -56,8 +56,8 @@ func TestTheAnswerComesFromContentAndTheRequestCarriesTheSchema(t *testing.T) {
 func TestAnEmptyContentFallsBackToReasoningContent(t *testing.T) {
 	client, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"","reasoning_content":"{\"stack\":\"Go\"}"}}]}`)
 
-	if answer, err := client.CompleteJSON(context.Background(), request); err != nil || string(answer) != `{"stack":"Go"}` {
-		t.Fatalf("answer = %s, %v", answer, err)
+	if answer, err := client.CompleteJSON(context.Background(), request); err != nil || string(answer.Object) != `{"stack":"Go"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestFailedAnswersAreErrors(t *testing.T) {
 		"not a response": {http.StatusOK, `<html>`, "read the completion"},
 	} {
 		client, _ := answerWith(t, answer.status, answer.body)
-		if _, err := client.CompleteJSON(context.Background(), request); err == nil || !strings.Contains(err.Error(), answer.want) {
+		if _, err := client.CompleteJSON(context.Background(), request); err == nil || !strings.Contains(err.Error(), answer.want) || errors.Is(err, chatcompletions.ErrInvalidAnswer) != (name == "not an object" || name == "cut off") {
 			t.Errorf("%s: err = %v, want it to mention %q", name, err, answer.want)
 		}
 	}
@@ -124,5 +124,40 @@ func TestEveryRequestIsRecordedWithItsOutcome(t *testing.T) {
 	}
 	if records[0].InputHash != records[1].InputHash {
 		t.Error("the same input hashed differently")
+	}
+}
+
+func TestAKeyIsSentAsABearerToken(t *testing.T) {
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":\"Go\"}"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	client := chatcompletions.NewClient(server.URL)
+	client.APIKey = "sk-test"
+
+	if _, err := client.CompleteJSON(context.Background(), request); err != nil || authorization != "Bearer sk-test" {
+		t.Fatalf("authorization = %q, %v", authorization, err)
+	}
+}
+
+func TestAServerThatCannotEnforceTheSchemaHasItsAnswerValidated(t *testing.T) {
+	unenforced := request
+	unenforced.SchemaNotEnforced = true
+	unenforced.Schema = json.RawMessage(`{"type":"object","required":["stack"],"properties":{"stack":{"type":"string"}}}`)
+
+	client, received := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"`+"```json\\n"+`{\"stack\":\"Go\"}`+"\\n```"+`"}}]}`)
+	answer, err := client.CompleteJSON(context.Background(), unenforced)
+	if err != nil || string(answer.Object) != `{"stack":"Go"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if format := (*received)["response_format"].(map[string]any); format["type"] != "json_object" {
+		t.Fatalf("response_format = %v", format)
+	}
+
+	mismatched, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":3}"}}]}`)
+	if _, err := mismatched.CompleteJSON(context.Background(), unenforced); !errors.Is(err, chatcompletions.ErrInvalidAnswer) {
+		t.Fatalf("a mismatched answer gave %v", err)
 	}
 }

@@ -34,8 +34,8 @@ services:
       HUB_OWNER_TOKEN: ${HUB_OWNER_TOKEN:?set HUB_OWNER_TOKEN in .env; see .env.example}
       HUB_BOARD_POLL_INTERVAL: ${HUB_BOARD_POLL_INTERVAL:-1h}
       HUB_FEED_POLL_INTERVAL: ${HUB_FEED_POLL_INTERVAL:-3h}
-      # The model that reads job facts, through LM Studio on the host by default.
-      # An empty HUB_JOB_FACTS_MODEL_URL turns reading off.
+      # The model server and model the task routes start on, through LM Studio
+      # on the host by default. Routes are changed through /v1/task-routes after.
       HUB_JOB_FACTS_MODEL_URL: ${HUB_JOB_FACTS_MODEL_URL-http://host.docker.internal:1234/v1}
       HUB_JOB_FACTS_MODEL: ${HUB_JOB_FACTS_MODEL:-qwen/qwen3.5-9b}
       HUB_JOB_FACTS_INTERVAL: ${HUB_JOB_FACTS_INTERVAL:-10m}

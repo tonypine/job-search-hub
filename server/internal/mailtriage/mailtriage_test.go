@@ -64,17 +64,17 @@ type fakeModel struct {
 	requests    []chatcompletions.JSONRequest
 }
 
-func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (json.RawMessage, error) {
+func (model *fakeModel) CompleteJSON(_ context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests = append(model.requests, request)
 	if model.unreachable {
-		return nil, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
+		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
 	for subject, answer := range model.answers {
 		if strings.Contains(request.User, "Subject: "+subject) {
-			return json.RawMessage(answer), nil
+			return chatcompletions.Answer{Object: json.RawMessage(answer), Model: "routed-model"}, nil
 		}
 	}
-	return nil, errors.New("no answer for this message")
+	return chatcompletions.Answer{}, errors.New("no answer for this message")
 }
 
 type fakeMailbox struct{}
@@ -110,7 +110,7 @@ func TestAPassSortsByRuleAndModelAndRetriesWhatTheModelCouldNotRead(t *testing.T
 		"Next steps": `{"class":"interview_invite","reason":"asks to book a call"}`,
 		"Hello":      `{"class":"noise","reason":"a friend"}`,
 	}}
-	classifier := NewClassifier(hub, fakeMailbox{}, model, "test-model")
+	classifier := NewClassifier(hub, fakeMailbox{}, model)
 
 	summary, err := classifier.ClassifyOnce(ctx)
 	if !errors.Is(err, chatcompletions.ErrUnreachable) || summary.ByRule != 2 || summary.ByModel != 0 {
