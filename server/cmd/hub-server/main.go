@@ -81,6 +81,9 @@ func run() error {
 		return fmt.Errorf("configure the database pool: %w", err)
 	}
 	defer database.Close()
+	if err := waitForDatabase(ctx, database, startupDatabaseWait); err != nil {
+		return err
+	}
 	if err := store.Migrate(ctx, database); err != nil {
 		return err
 	}
