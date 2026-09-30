@@ -12,6 +12,11 @@ public struct JobDetails: Decodable, Equatable, Sendable {
     public var unseenUpdates: Int
     /// The owner's connections at the job's company.
     public var connections: [Connection]?
+    /// The full brief, or else the pre-brief; nil until briefed.
+    public var brief: JobBrief?
+    public var screenOut: [ScreenOutAnswer]?
+    /// The owner's latest decision; nil while undecided.
+    public var decision: JobDecision?
 }
 
 /// A job's facts in the order and with the labels of the prompt version they

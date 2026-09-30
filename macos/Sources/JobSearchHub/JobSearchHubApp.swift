@@ -12,7 +12,7 @@ struct JobSearchHubApp: App {
     @State private var research: CompanyResearch
     @State private var taskRunner: RemoteTaskRunner
     @State private var profileSeed = ProfileSeed()
-    @State private var jobDismissals = JobDismissals()
+    @State private var jobDecisions = JobDecisions()
 
     init() {
         Self.importOwnerTokenIfAsked()
@@ -35,7 +35,7 @@ struct JobSearchHubApp: App {
                 .environment(research)
                 .environment(jobFinder)
                 .environment(profileSeed)
-                .environment(jobDismissals)
+                .environment(jobDecisions)
                 .frame(minWidth: 900, minHeight: 600)
                 .task(id: connection.hubURLText) {
                     if let client = connection.makeClient() {

@@ -32,7 +32,7 @@ final class JobsModel {
     private(set) var factColumns: [JobFactColumn] = []
     private(set) var isLoading = false
     private(set) var loadError: String?
-    private(set) var isAddingToPipeline = false
+    private(set) var isPursuing = false
     /// What the last action on the selected jobs did, shown for a moment.
     private(set) var notice: String?
     var search = ""
@@ -58,29 +58,26 @@ final class JobsModel {
         }
     }
 
-    /// Adds each job to the pipeline's first phase and reports what the
-    /// server answered; a job already on the pipeline stays where it is.
-    func addToPipeline(_ ids: Set<UUID>, with client: HubClient) async {
-        isAddingToPipeline = true
-        defer { isAddingToPipeline = false }
-        var addedCount = 0
-        var alreadyThereCount = 0
+    /// Pursues each job, which puts it on the pipeline's first phase, and
+    /// reports it; a job already on the pipeline stays where it is.
+    func pursue(_ ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async {
+        isPursuing = true
+        defer { isPursuing = false }
         for id in ids {
             do {
-                let response = try await client.send("POST", "v1/applications", body: AddApplicationRequest(jobID: id), as: ApplicationResponse.self)
-                if response.created { addedCount += 1 } else { alreadyThereCount += 1 }
+                _ = try await decisions.decide(id, .pursue, with: client)
             } catch {
-                notice = "Could not add to the pipeline: \(error)"
+                notice = "Could not pursue: \(error)"
                 return
             }
         }
-        notice = getPipelineAdditionsNotice(added: addedCount, alreadyThere: alreadyThereCount)
+        notice = ids.count == 1 ? "Pursued 1 job" : "Pursued \(ids.count) jobs"
     }
 
     /// Dismisses the jobs and reports it, or returns why it failed.
-    func dismiss(_ ids: Set<UUID>, reason: String, through dismissals: JobDismissals, with client: HubClient) async -> String? {
+    func dismiss(_ ids: Set<UUID>, reason: String, through decisions: JobDecisions, with client: HubClient) async -> String? {
         do {
-            let jobs = try await dismissals.dismiss(ids, reason: reason, with: client)
+            let jobs = try await decisions.dismiss(ids, reason: reason, with: client)
             selectedIDs.subtract(ids)
             notice = jobs.count == 1 ? "Dismissed 1 job" : "Dismissed \(jobs.count) jobs"
             return nil
@@ -89,9 +86,9 @@ final class JobsModel {
         }
     }
 
-    func restore(_ ids: Set<UUID>, through dismissals: JobDismissals, with client: HubClient) async {
+    func restore(_ ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async {
         do {
-            let jobs = try await dismissals.restore(ids, with: client)
+            let jobs = try await decisions.restore(ids, with: client)
             selectedIDs.subtract(ids)
             notice = jobs.count == 1 ? "Restored 1 job" : "Restored \(jobs.count) jobs"
         } catch {
@@ -102,13 +99,6 @@ final class JobsModel {
     func clearNotice() {
         notice = nil
     }
-
-    private func getPipelineAdditionsNotice(added: Int, alreadyThere: Int) -> String {
-        var parts: [String] = []
-        if added > 0 { parts.append(added == 1 ? "Added 1 job to the pipeline" : "Added \(added) jobs to the pipeline") }
-        if alreadyThere > 0 { parts.append(alreadyThere == 1 ? "1 was already on it" : "\(alreadyThere) were already on it") }
-        return parts.joined(separator: "; ")
-    }
 }
 
 struct JobsPage: View {
@@ -117,7 +107,7 @@ struct JobsPage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(CompanyJobFinder.self) private var jobFinder
-    @Environment(JobDismissals.self) private var dismissals
+    @Environment(JobDecisions.self) private var decisions
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
     @State private var dismissal: JobDismissalTarget?
@@ -148,7 +138,7 @@ struct JobsPage: View {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
                     }
-                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, dismissals.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
                         details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
                     }
@@ -158,7 +148,7 @@ struct JobsPage: View {
                     }
                     .sheet(item: $dismissal) { target in
                         DismissJobsSheet(jobCount: target.jobIDs.count) { reason in
-                            await model.dismiss(target.jobIDs, reason: reason, through: dismissals, with: client)
+                            await model.dismiss(target.jobIDs, reason: reason, through: decisions, with: client)
                         }
                     }
                     .sheet(isPresented: $isAddingByURL) {
@@ -244,11 +234,11 @@ struct JobsPage: View {
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
-            Button("Add to pipeline") { Task { await model.addToPipeline(ids, with: client) } }
-                .disabled(ids.isEmpty || model.isAddingToPipeline)
+            Button("Pursue") { Task { await model.pursue(ids, through: decisions, with: client) } }
+                .disabled(ids.isEmpty || model.isPursuing)
             Divider()
             if model.status == .dismissed {
-                Button("Restore") { Task { await model.restore(ids, through: dismissals, with: client) } }
+                Button("Restore") { Task { await model.restore(ids, through: decisions, with: client) } }
                     .disabled(ids.isEmpty)
             } else {
                 Button("Dismiss…") { dismissal = JobDismissalTarget(jobIDs: ids) }

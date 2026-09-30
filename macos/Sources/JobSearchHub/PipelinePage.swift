@@ -96,7 +96,7 @@ struct PipelinePage: View {
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
-    @Environment(JobDismissals.self) private var dismissals
+    @Environment(JobDecisions.self) private var decisions
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
@@ -122,7 +122,7 @@ struct PipelinePage: View {
                             selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
                         }
                     }
-                    .onChange(of: [events.revision, unseen.revision, dismissals.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.showsDismissed) {
                         selectedCardID = nil
                         Task { await model.load(with: client) }
