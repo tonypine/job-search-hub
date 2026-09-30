@@ -48,12 +48,29 @@ func (s *Store) RestoreJobs(ctx context.Context, actor Actor, jobIDs []uuid.UUID
 	return jobs, nil
 }
 
+// dismissJobsInTransaction dismisses the jobs and records each as skipped:
+// a dismissal is the owner's decision to skip a job.
 func dismissJobsInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, jobIDs []uuid.UUID, reason string) ([]Job, error) {
-	return updateJobDismissals(ctx, tx, actor, jobIDs, change{operation: "dismiss", after: map[string]string{"reason": reason}}, dismissJobsUpdate, reason)
+	jobs, err := updateJobDismissals(ctx, tx, actor, jobIDs, change{operation: "dismiss", after: map[string]string{"reason": reason}}, dismissJobsUpdate, reason)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		if err := recordJobDecision(ctx, tx, job.ID, JobDecisionSkip, reason); err != nil {
+			return nil, err
+		}
+	}
+	return jobs, nil
 }
 
+// restoreJobsInTransaction restores the jobs and takes back their skips,
+// which leaves them undecided.
 func restoreJobsInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, jobIDs []uuid.UUID) ([]Job, error) {
-	return updateJobDismissals(ctx, tx, actor, jobIDs, change{operation: "restore"}, restoreJobsUpdate)
+	jobs, err := updateJobDismissals(ctx, tx, actor, jobIDs, change{operation: "restore"}, restoreJobsUpdate)
+	if err == nil {
+		_, err = tx.Exec(ctx, `DELETE FROM job_decisions WHERE job_id = ANY($1) AND decision = $2`, jobIDs, JobDecisionSkip)
+	}
+	return jobs, err
 }
 
 // updateJobDismissals runs update, whose first argument is the job ids, and

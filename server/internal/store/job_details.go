@@ -30,6 +30,8 @@ type JobDetails struct {
 	RawFacts json.RawMessage `json:"-"`
 	// Brief is the job's full brief, or else its pre-brief; absent until written.
 	Brief *JobBrief `json:"brief,omitempty"`
+	// Decision is the owner's latest decision on the job; absent until decided.
+	Decision *JobDecision `json:"decision,omitempty"`
 }
 
 // LabelledJobFacts are a job's facts, each labelled by the schema of the
@@ -101,6 +103,9 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 	}
 
 	if details.Brief, err = s.GetJobBrief(ctx, id); err != nil {
+		return JobDetails{}, err
+	}
+	if details.Decision, err = s.GetJobDecision(ctx, id); err != nil {
 		return JobDetails{}, err
 	}
 

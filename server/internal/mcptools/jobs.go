@@ -25,11 +25,29 @@ type restoreJobsInput struct {
 	JobIDs []uuid.UUID `json:"job_ids" jsonschema:"the dismissed jobs to bring back"`
 }
 
+type decideJobInput struct {
+	JobID    uuid.UUID `json:"job_id"`
+	Decision string    `json:"decision" jsonschema:"pursue, skip or later"`
+	Reason   string    `json:"reason,omitempty" jsonschema:"why, in the owner's words; a skip keeps it"`
+}
+
 type jobsOutput struct {
 	Jobs []store.Job `json:"jobs"`
 }
 
 func addJobTools(server *mcp.Server, hub *store.Store) {
+	addTool(server, &mcp.Tool{
+		Name: "decide_job",
+		Description: "Record the owner's decision on a job: pursue puts it on the pipeline, skip dismisses it with the reason, " +
+			"and later only records it. Pursuing or leaving for later a dismissed job restores it. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input decideJobInput) (*mcp.CallToolResult, store.JobDecision, error) {
+		actor, err := getOwnerActor(ctx)
+		if err != nil {
+			return nil, store.JobDecision{}, err
+		}
+		decision, err := hub.DecideJob(ctx, actor, input.JobID, input.Decision, input.Reason)
+		return nil, decision, err
+	})
 	addTool(server, &mcp.Tool{
 		Name: "dismiss_job",
 		Description: "Dismiss one or more jobs the owner doesn't want to see again, with an optional reason. They leave the jobs list, " +

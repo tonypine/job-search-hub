@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -360,5 +362,25 @@ func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
 		if answers[name] != answer {
 			t.Errorf("%s = %q, want %q", name, answers[name], answer)
 		}
+	}
+}
+
+func TestADecisionIsRecordedAndActedOn(t *testing.T) {
+	service := startAPI(t)
+	job, _, _ := service.hub.AddManualJob(context.Background(), store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
+
+	status, body := send(t, http.MethodPost, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, `{"decision":"pursue"}`)
+	var decision store.JobDecision
+	if err := json.Unmarshal(body, &decision); status != http.StatusOK || err != nil || decision.Decision != "pursue" {
+		t.Fatalf("pursue: %d %s", status, body)
+	}
+	if _, details := readJobDetails(t, service, job.ID.String()); details.Application == nil {
+		t.Error("the pursued job isn't on the pipeline")
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, `{"decision":"maybe"}`); status != http.StatusBadRequest {
+		t.Errorf("an unknown decision: %d, want 400", status)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, `{"decision":"later"}`); status != http.StatusNotFound {
+		t.Errorf("an unknown job: %d, want 404", status)
 	}
 }

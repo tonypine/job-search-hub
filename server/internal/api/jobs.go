@@ -78,8 +78,16 @@ type jobDismissalResponse struct {
 	Jobs []store.Job `json:"jobs"`
 }
 
+// jobDecisionRequest is the owner's decision on a job: pursue, skip or
+// later, with a reason a skip keeps.
+type jobDecisionRequest struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
 // RegisterJobRoutes adds the owner-only routes for listing jobs, reading one
-// job's details, adding one by URL, and dismissing and restoring jobs.
+// job's details, adding one by URL, dismissing and restoring jobs, and
+// deciding on one.
 func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parameters := r.URL.Query()
@@ -160,6 +168,28 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 	})))
 	routes.Handle("POST /v1/jobs/restore", requireOwner(handleJobDismissal(func(ctx context.Context, request jobDismissalRequest) ([]store.Job, error) {
 		return hub.RestoreJobs(ctx, owner, request.JobIDs)
+	})))
+
+	routes.Handle("POST /v1/jobs/{id}/decision", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		var request jobDecisionRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
+			return
+		}
+		decision, err := hub.DecideJob(r.Context(), owner, id, request.Decision, request.Reason)
+		switch {
+		case errors.Is(err, store.ErrJobNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case err != nil:
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		default:
+			writeJSON(w, http.StatusOK, decision)
+		}
 	})))
 }
 

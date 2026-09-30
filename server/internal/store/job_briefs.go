@@ -193,7 +193,8 @@ func (s *Store) GetJobToBrief(ctx context.Context, jobID uuid.UUID) (JobToBrief,
 }
 
 // ListJobsForFullBriefs returns up to limit of the best pre-briefed jobs that
-// are still open, undismissed and off the pipeline, and whose full brief is
+// are still open, undismissed, off the pipeline and neither pursued nor
+// skipped, and whose full brief is
 // missing or outdated: strong matches first, then possible ones, each the
 // most recently pre-briefed first.
 func (s *Store) ListJobsForFullBriefs(ctx context.Context, promptID uuid.UUID, knowledgeHash string, limit int) ([]JobToBrief, error) {
@@ -206,6 +207,7 @@ func (s *Store) ListJobsForFullBriefs(ctx context.Context, promptID uuid.UUID, k
 		LEFT JOIN companies ON companies.id = jobs.company_id
 		WHERE jobs.closed_at IS NULL AND jobs.dismissed_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id)
+		  AND NOT EXISTS (SELECT 1 FROM job_decisions WHERE job_decisions.job_id = jobs.id AND job_decisions.decision IN ('pursue', 'skip'))
 		  AND (full_brief.job_id IS NULL OR full_brief.prompt_id <> $1 OR full_brief.knowledge_hash <> $2)
 		ORDER BY pre.match = 'strong' DESC, pre.written_at DESC
 		LIMIT $3`, promptID, knowledgeHash, limit)

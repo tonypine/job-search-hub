@@ -97,44 +97,49 @@ func (s *Store) AddApplication(ctx context.Context, actor Actor, input Applicati
 	var application Application
 	created := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		companyID := input.CompanyID
-		if input.JobID != nil {
-			var jobCompanyID *uuid.UUID
-			err := tx.QueryRow(ctx, `SELECT company_id FROM jobs WHERE id = $1`, *input.JobID).Scan(&jobCompanyID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrJobNotFound
-			}
-			if err != nil {
-				return err
-			}
-			if companyID == nil {
-				companyID = jobCompanyID
-			}
-			existing, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE job_id = $1`, *input.JobID))
-			if err == nil {
-				application = existing
-				return nil
-			}
-			if !errors.Is(err, ErrApplicationNotFound) {
-				return err
-			}
-		}
-
-		inserted, err := scanApplication(tx.QueryRow(ctx, `
-			INSERT INTO applications (job_id, company_id, phase_id, notes)
-			VALUES ($1, $2, (SELECT id FROM pipeline_phases ORDER BY position LIMIT 1), $3)
-			RETURNING `+applicationColumns, input.JobID, companyID, input.Notes))
-		if isForeignKeyViolation(err) {
-			return ErrCompanyNotFound
-		}
-		if err != nil {
-			return err
-		}
-		application = inserted
-		created = true
-		return insertChange(ctx, tx, actor, change{entityType: "application", entityID: application.ID, operation: "create", after: application})
+		var err error
+		application, created, err = addApplicationInTransaction(ctx, tx, actor, input)
+		return err
 	})
 	return application, created, err
+}
+
+// addApplicationInTransaction is AddApplication inside tx.
+func addApplicationInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, input ApplicationInput) (Application, bool, error) {
+	companyID := input.CompanyID
+	if input.JobID != nil {
+		var jobCompanyID *uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT company_id FROM jobs WHERE id = $1`, *input.JobID).Scan(&jobCompanyID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Application{}, false, ErrJobNotFound
+		}
+		if err != nil {
+			return Application{}, false, err
+		}
+		if companyID == nil {
+			companyID = jobCompanyID
+		}
+		existing, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE job_id = $1`, *input.JobID))
+		if err == nil {
+			return existing, false, nil
+		}
+		if !errors.Is(err, ErrApplicationNotFound) {
+			return Application{}, false, err
+		}
+	}
+
+	application, err := scanApplication(tx.QueryRow(ctx, `
+		INSERT INTO applications (job_id, company_id, phase_id, notes)
+		VALUES ($1, $2, (SELECT id FROM pipeline_phases ORDER BY position LIMIT 1), $3)
+		RETURNING `+applicationColumns, input.JobID, companyID, input.Notes))
+	if isForeignKeyViolation(err) {
+		return Application{}, false, ErrCompanyNotFound
+	}
+	if err != nil {
+		return Application{}, false, err
+	}
+	err = insertChange(ctx, tx, actor, change{entityType: "application", entityID: application.ID, operation: "create", after: application})
+	return application, true, err
 }
 
 // MoveApplication puts the application in another phase and records the

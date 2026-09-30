@@ -71,3 +71,18 @@ func TestTheOwnerDismissesAndRestoresACardAndAnAgentCant(t *testing.T) {
 		}
 	}
 }
+
+func TestTheOwnerDecidesOnAJobAndAnAgentCant(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	job, _, _ := hub.store.AddManualJob(ctx, store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
+	session := connect(t, hub, ownerToken)
+
+	if decision := callTool[store.JobDecision](t, session, "decide_job", map[string]any{"job_id": job.ID, "decision": "later"}); decision.Decision != "later" {
+		t.Fatalf("decision = %+v", decision)
+	}
+	_, agentToken := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	if text := callRefusedTool(t, connect(t, hub, agentToken), "decide_job", map[string]any{"job_id": job.ID, "decision": "skip"}); !strings.Contains(text, "unknown tool") {
+		t.Errorf("decide_job from an agent: %s", text)
+	}
+}
