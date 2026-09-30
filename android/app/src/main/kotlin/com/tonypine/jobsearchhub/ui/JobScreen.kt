@@ -13,8 +13,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -27,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.core.JobDetails
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -47,8 +52,30 @@ import kotlinx.serialization.json.contentOrNull
 fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCompany: (String) -> Unit) {
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var isAskingForDismissal by remember { mutableStateOf(false) }
+    var reason by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(id) {
         viewModel.loadJob(id).onSuccess { details = it }.onFailure { error = it.message }
+    }
+    if (isAskingForDismissal) {
+        AlertDialog(
+            onDismissRequest = { isAskingForDismissal = false },
+            title = { Text("Dismiss this job?") },
+            text = {
+                Column {
+                    Text("It leaves the jobs list and stays dismissed when its board lists it again. Restore it from the Mac.")
+                    OutlinedTextField(reason, { reason = it }, label = { Text("Reason (optional)") })
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    isAskingForDismissal = false
+                    scope.launch { viewModel.dismissJob(id, reason).fold({ onBack() }, { error = it.message }) }
+                }) { Text("Dismiss") }
+            },
+            dismissButton = { TextButton(onClick = { isAskingForDismissal = false }) { Text("Cancel") } },
+        )
     }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -56,7 +83,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
         )
         when {
-            details != null -> JobDetailsView(details!!, onOpenCompany)
+            details != null -> JobDetailsView(details!!, onOpenCompany, onDismiss = { isAskingForDismissal = true }, error = error)
             error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
             else -> CircularProgressIndicator(Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
@@ -64,7 +91,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
 }
 
 @Composable
-private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit) {
+private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, onDismiss: () -> Unit, error: String?) {
     val context = LocalContext.current
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(details.job.title, style = MaterialTheme.typography.titleLarge)
@@ -74,7 +101,9 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit)
             details.job.companyId?.let { companyId ->
                 OutlinedButton(onClick = { onOpenCompany(companyId) }) { Text("Company brief") }
             }
+            OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
         }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Fit  ", fontWeight = FontWeight.SemiBold)

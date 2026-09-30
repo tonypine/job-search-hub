@@ -154,6 +154,18 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Dismisses the job, then reads the lists again without it. */
+    suspend fun dismissJob(id: String, reason: String): Result<Unit> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            client.dismissJob(id, reason)
+            refresh()
+            Result.success(Unit)
+        } catch (error: HubException) {
+            Result.failure(error)
+        }
+    }
+
     suspend fun loadJob(id: String): Result<JobDetails> {
         val client = client ?: return Result.failure(HubException("Not paired."))
         return try {

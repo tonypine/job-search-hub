@@ -2,6 +2,7 @@ package com.tonypine.jobsearchhub.data
 
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
+import com.tonypine.jobsearchhub.core.JobDismissalRequest
 import com.tonypine.jobsearchhub.core.JobsResponse
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
@@ -41,6 +42,11 @@ class HubClient(
 
     /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
     suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
+
+    /** Dismisses a job: it leaves the jobs lists, and stays dismissed when its board lists it again. */
+    suspend fun dismissJob(id: String, reason: String) {
+        fetch("POST", "/v1/jobs/dismiss", hubJson.encodeToString(JobDismissalRequest(listOf(id), reason.trim())))
+    }
 
     /** Registers the token FCM gave this app, so the hub pushes its updates here. */
     suspend fun setPushToken(token: String) {

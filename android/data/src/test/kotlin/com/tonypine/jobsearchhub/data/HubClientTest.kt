@@ -41,6 +41,20 @@ class HubClientTest {
     }
 
     @Test
+    fun aJobIsDismissedWithTheOwnersReason() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("""{"jobs":[]}""").build())
+            server.start()
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).dismissJob("7", "  agency ")
+
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/v1/jobs/dismiss", request.target)
+            assertEquals("""{"job_ids":["7"],"reason":"agency"}""", request.body?.utf8())
+        }
+    }
+
+    @Test
     fun aRefusedTokenSaysToPairAgain() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(401).build())
