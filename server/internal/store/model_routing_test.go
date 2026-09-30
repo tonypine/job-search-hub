@@ -23,7 +23,7 @@ func TestDefaultRoutesAreSeededOnceAndNeverOverwriteAChoice(t *testing.T) {
 	}
 	routes, _ := hub.ListTaskRoutes(ctx)
 	providers, _ := hub.ListModelProviders(ctx)
-	if len(routes) != 3 || len(providers) != 1 || providers[0].Name != store.DefaultModelProviderName || providers[0].BaseURL != "http://localhost:1234/v1" {
+	if len(routes) != len(store.RoutedTaskKinds) || len(providers) != 1 || providers[0].Name != store.DefaultModelProviderName || providers[0].BaseURL != "http://localhost:1234/v1" {
 		t.Fatalf("routes = %+v, providers = %+v", routes, providers)
 	}
 

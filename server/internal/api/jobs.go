@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,9 +20,7 @@ type postingSource interface {
 	FetchPosting(ctx context.Context, reference jobboards.PostingReference) (store.JobPosting, error)
 }
 
-type exchangeRateSource interface {
-	GetRates(ctx context.Context, base string) (map[string]float64, error)
-}
+type exchangeRateSource = jobfit.RateSource
 
 // getJudgedJobDetails reads a job's details and judges its fit.
 func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource exchangeRateSource, id uuid.UUID) (judgedJobDetails, error) {
@@ -31,30 +28,12 @@ func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource excha
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
-	criteria, rates, err := readFitInputs(ctx, hub, rateSource)
+	criteria, rates, err := jobfit.ReadInputs(ctx, hub, rateSource)
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
 	fit := jobfit.Judge(details.Job, details.RawFacts, criteria, rates)
 	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: buildScreenOutAnswers(details, fit)}, nil
-}
-
-// readFitInputs reads the criteria and, when they judge take-home, the day's
-// exchange rates. A failed rate fetch is logged and leaves foreign pay unclear.
-func readFitInputs(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (store.JobCriteria, jobfit.ExchangeRates, error) {
-	saved, err := hub.GetJobCriteria(ctx)
-	if err != nil {
-		return store.JobCriteria{}, jobfit.ExchangeRates{}, err
-	}
-	takeHome := saved.Criteria.TakeHome
-	if takeHome == nil {
-		return saved.Criteria, jobfit.ExchangeRates{}, nil
-	}
-	rates := jobfit.ExchangeRates{Base: takeHome.Currency}
-	if rates.PerBase, err = rateSource.GetRates(ctx, takeHome.Currency); err != nil {
-		slog.Warn("exchange rates unavailable; foreign pay reads unclear", "error", err)
-	}
-	return saved.Criteria, rates, nil
 }
 
 type jobsResponse struct {
@@ -121,7 +100,7 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
 		}
-		criteria, rates, err := readFitInputs(r.Context(), hub, rateSource)
+		criteria, rates, err := jobfit.ReadInputs(r.Context(), hub, rateSource)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return

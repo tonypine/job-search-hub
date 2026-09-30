@@ -30,6 +30,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/jobalerts"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
+	"github.com/tonypine/job-search-hub/server/internal/jobbriefs"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
@@ -55,6 +56,9 @@ const (
 	// databaseBackupCheckInterval is how often the server checks whether
 	// the night's database dump is due.
 	databaseBackupCheckInterval = 15 * time.Minute
+	// jobBriefInterval picks up jobs whose facts were read, or whose brief went
+	// stale, since the last pass.
+	jobBriefInterval = 5 * time.Minute
 )
 
 func main() {
@@ -206,6 +210,9 @@ func run() error {
 	}
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
+	}
+	if modelClient != nil {
+		go jobbriefs.NewWriter(hub, modelClient, rates).Run(ctx, jobBriefInterval)
 	}
 	if modelClient != nil {
 		extractor := jobfacts.NewExtractor(hub, modelClient)

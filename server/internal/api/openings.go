@@ -30,7 +30,7 @@ type opening struct {
 // getOpeningsByCompany counts every open job, and the ones judged a good
 // fit, by the normalized name of its company.
 func getOpeningsByCompany(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (map[string]companyOpenings, error) {
-	criteria, rates, err := readFitInputs(ctx, hub, rateSource)
+	criteria, rates, err := jobfit.ReadInputs(ctx, hub, rateSource)
 	if err != nil {
 		return nil, err
 	}

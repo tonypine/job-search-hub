@@ -173,7 +173,7 @@ type namedCount struct {
 // getMarket counts the titles and technologies of the open jobs judged a
 // good or unclear fit.
 func getMarket(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (market, error) {
-	criteria, rates, err := readFitInputs(ctx, hub, rateSource)
+	criteria, rates, err := jobfit.ReadInputs(ctx, hub, rateSource)
 	if err != nil {
 		return market{}, err
 	}

@@ -108,7 +108,7 @@ func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) err
 // readJobFacts asks the model for the job's facts and saves them.
 func (extractor *Extractor) readJobFacts(ctx context.Context, job store.JobAwaitingFacts, prompt store.AgentPrompt) error {
 	answer, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-		System: prompt.Body, User: formatJobText(job.Job),
+		System: prompt.Body, User: FormatJobText(job.Job, maximumDescriptionLength),
 		SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
@@ -120,9 +120,9 @@ func (extractor *Extractor) readJobFacts(ctx context.Context, job store.JobAwait
 	})
 }
 
-// formatJobText is what the model reads: the posting's headline facts, then
-// its description.
-func formatJobText(job store.Job) string {
+// FormatJobText is what a model reads of a posting: its headline facts, then
+// its description, cut at maximumDescriptionLength bytes.
+func FormatJobText(job store.Job, maximumDescriptionLength int) string {
 	var text strings.Builder
 	fmt.Fprintf(&text, "Title: %s\n", job.Title)
 	if job.Location != "" {

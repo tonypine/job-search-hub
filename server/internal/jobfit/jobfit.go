@@ -4,8 +4,10 @@
 package jobfit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -536,4 +538,28 @@ func firstOf(items []string, count int) []string {
 		return items
 	}
 	return items[:count]
+}
+
+// RateSource gives the exchange rates from one currency to the others.
+type RateSource interface {
+	GetRates(ctx context.Context, base string) (map[string]float64, error)
+}
+
+// ReadInputs reads what a fit is judged against: the saved criteria, and the
+// exchange rates into the take-home currency when the criteria set one.
+// Missing rates leave foreign pay unclear rather than failing.
+func ReadInputs(ctx context.Context, hub *store.Store, rateSource RateSource) (store.JobCriteria, ExchangeRates, error) {
+	saved, err := hub.GetJobCriteria(ctx)
+	if err != nil {
+		return store.JobCriteria{}, ExchangeRates{}, err
+	}
+	takeHome := saved.Criteria.TakeHome
+	if takeHome == nil {
+		return saved.Criteria, ExchangeRates{}, nil
+	}
+	rates := ExchangeRates{Base: takeHome.Currency}
+	if rates.PerBase, err = rateSource.GetRates(ctx, takeHome.Currency); err != nil {
+		slog.Warn("exchange rates unavailable; foreign pay reads unclear", "error", err)
+	}
+	return saved.Criteria, rates, nil
 }

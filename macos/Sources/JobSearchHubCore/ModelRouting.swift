@@ -96,6 +96,7 @@ public struct ProviderModelsResponse: Decodable, Sendable {
 /// Settings lists them.
 public enum RoutedTaskKind: String, CaseIterable, Identifiable, Sendable {
     case jobFacts = "job_facts"
+    case jobBrief = "job_brief"
     case mailTriage = "mail_triage"
     case linkedInConversation = "linkedin_conversation"
 

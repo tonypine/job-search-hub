@@ -135,3 +135,37 @@ func copyPointsForStorage(points []JobBriefPoint) []JobBriefPoint {
 	}
 	return copied
 }
+
+// JobToBrief is an open, undismissed job with facts whose pre-brief is
+// missing, or was written by another prompt version or knowledge base.
+type JobToBrief struct {
+	Job         Job
+	CompanyName *string
+	// Facts are the facts as read, which the fit is judged from.
+	Facts json.RawMessage
+	// HasOutdatedBrief says a pre-brief exists but is out of date.
+	HasOutdatedBrief bool
+}
+
+// ListJobsToBrief returns the jobs whose pre-brief the prompt should write:
+// the ones without one first, each group newest first.
+func (s *Store) ListJobsToBrief(ctx context.Context, promptID uuid.UUID, knowledgeHash string) ([]JobToBrief, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), job_facts.facts, job_briefs.job_id IS NOT NULL
+		FROM jobs
+		JOIN job_facts ON job_facts.job_id = jobs.id
+		LEFT JOIN companies ON companies.id = jobs.company_id
+		LEFT JOIN job_briefs ON job_briefs.job_id = jobs.id AND job_briefs.tier = 'pre'
+		WHERE jobs.closed_at IS NULL AND jobs.dismissed_at IS NULL
+		  AND (job_briefs.job_id IS NULL OR job_briefs.prompt_id <> $1 OR job_briefs.knowledge_hash <> $2)
+		ORDER BY job_briefs.job_id IS NOT NULL, jobs.first_seen_at DESC`, promptID, knowledgeHash)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobToBrief, error) {
+		var toBrief JobToBrief
+		job, err := scanJob(row, &toBrief.CompanyName, &toBrief.Facts, &toBrief.HasOutdatedBrief)
+		toBrief.Job = job
+		return toBrief, err
+	})
+}

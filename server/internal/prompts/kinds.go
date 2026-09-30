@@ -31,6 +31,8 @@ var Kinds = []KindInfo{
 	{store.AgentPromptKindProfileAudit, "LinkedIn profile audit", "Audits the LinkedIn profile for the recruiters searching.",
 		[]string{"{{owner_profile}}", "{{criteria}}", "{{market}}", "{{recruiter_history}}"}},
 	{store.AgentPromptKindJobFacts, "Job facts", "Tells the local model which facts to read from each posting; its schema lists them.", []string{}},
+	{store.AgentPromptKindJobBrief, "Job brief", "Writes each good or unclear job's brief: how well you match it, citing your knowledge base.",
+		[]string{"{{knowledge_base}}", "{{job_criteria}}"}},
 	{store.AgentPromptKindMailTriage, "Mail triage", "Tells the local model how to sort received mail no rule could sort.", []string{}},
 	{store.AgentPromptKindLinkedInConversation, "LinkedIn conversations", "Tells the local model how to sort LinkedIn conversations others started.", []string{}},
 }

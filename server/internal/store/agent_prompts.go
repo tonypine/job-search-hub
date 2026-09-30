@@ -46,12 +46,16 @@ const (
 	// AgentPromptKindProfileInterview starts the Claude session that
 	// interviews the owner to deepen their knowledge base.
 	AgentPromptKindProfileInterview = "profile_interview"
+	// AgentPromptKindJobBrief writes a job's brief: how well the owner
+	// matches it, from the knowledge base.
+	AgentPromptKindJobBrief = "job_brief"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
+	AgentPromptKindJobBrief: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["match", "reason", "strengths", "weaknesses"],
+  "properties": {
+    "match": {"enum": ["strong", "possible", "stretch", "mismatch"]},
+    "reason": {"type": "string"},
+    "strengths": {"type": "array", "items": {"type": "object", "properties": {"point": {"type": "string"}, "entries": {"type": "array", "items": {"type": "string"}}}}},
+    "weaknesses": {"type": "array", "items": {"type": "object", "properties": {"point": {"type": "string"}, "entries": {"type": "array", "items": {"type": "string"}}}}}
+  }
+}
