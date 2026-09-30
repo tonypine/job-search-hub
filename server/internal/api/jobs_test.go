@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -382,5 +383,38 @@ func TestADecisionIsRecordedAndActedOn(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, `{"decision":"later"}`); status != http.StatusNotFound {
 		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}
+
+func TestTheDecisionSignalsCountTheWeeksDecisions(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	for index, decision := range []string{"pursue", "skip", "later"} {
+		job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Senior Front-End Engineer " + decision, URL: fmt.Sprintf("https://acme.com/%d", index)})
+		if _, err := service.hub.DecideJob(ctx, owner, job.ID, decision, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Senior Front-End Engineer, undecided", URL: "https://acme.com/open"})
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/decision-signals", ownerToken, "")
+	var signals struct {
+		Decisions            map[string]int `json:"decisions"`
+		MedianHoursToDecide  *float64       `json:"median_hours_to_decide"`
+		GoodOrUnclearSeen    int            `json:"good_or_unclear_seen"`
+		GoodOrUnclearDecided int            `json:"good_or_unclear_decided"`
+	}
+	if err := json.Unmarshal(body, &signals); status != http.StatusOK || err != nil {
+		t.Fatalf("signals: %d %s", status, body)
+	}
+	if signals.Decisions["pursue"] != 1 || signals.Decisions["skip"] != 1 || signals.Decisions["later"] != 1 || signals.MedianHoursToDecide == nil {
+		t.Errorf("signals = %+v", signals)
+	}
+	if signals.GoodOrUnclearSeen != 4 || signals.GoodOrUnclearDecided != 3 {
+		t.Errorf("seen %d, decided %d; want 4 and 3", signals.GoodOrUnclearSeen, signals.GoodOrUnclearDecided)
+	}
+	if status, _ := send(t, http.MethodGet, service.url+"/v1/decision-queue", ownerToken, ""); status != http.StatusOK {
+		t.Errorf("queue: %d", status)
 	}
 }

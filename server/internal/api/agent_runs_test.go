@@ -64,6 +64,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterModelRoutingRoutes(routes, hub, makeModelsDir(t), requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
 	api.RegisterDeviceRoutes(routes, hub, requireOwner)
+	api.RegisterDecisionRoutes(routes, hub, stubRates{}, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, url: server.URL}
