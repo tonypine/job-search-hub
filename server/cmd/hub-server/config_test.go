@@ -56,7 +56,7 @@ func TestParseEnvironmentRejectsAShortOwnerToken(t *testing.T) {
 }
 
 func TestParseEnvironmentReadsTheBoardPollInterval(t *testing.T) {
-	for raw, want := range map[string]time.Duration{"": time.Hour, "30m": 30 * time.Minute, "0": 0} {
+	for raw, want := range map[string]time.Duration{"": 15 * time.Minute, "30m": 30 * time.Minute, "0": 0} {
 		environment := map[string]string{"HUB_BOARD_POLL_INTERVAL": raw}
 		for name, value := range validEnvironment {
 			environment[name] = value
@@ -78,7 +78,7 @@ func TestParseEnvironmentReadsTheBoardPollInterval(t *testing.T) {
 func TestJobFactsReadingIsOffWithoutAModelURLAndDefaultsOtherwise(t *testing.T) {
 	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
 	if err != nil || parsed.jobFactsModelURL != "" || parsed.jobFactsModel != defaultJobFactsModel || parsed.jobFactsInterval != defaultJobFactsInterval ||
-		parsed.feedPollInterval != defaultFeedPollInterval {
+		parsed.feedPollInterval != time.Hour {
 		t.Fatalf("defaults = %+v, %v", parsed, err)
 	}
 

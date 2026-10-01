@@ -12,12 +12,12 @@ import (
 
 const (
 	minimumOwnerTokenLength   = 32
-	defaultBoardPollInterval  = time.Hour
+	defaultBoardPollInterval  = 15 * time.Minute
 	defaultJobFactsModel      = "qwen/qwen3.5-9b"
 	defaultJobFactsInterval   = time.Minute
 	defaultRuntimePort        = 8095
 	defaultRuntimeIdleTimeout = 10 * time.Minute
-	defaultFeedPollInterval   = 3 * time.Hour
+	defaultFeedPollInterval   = time.Hour
 	defaultPublicURL          = "http://localhost:8090"
 )
 
