@@ -89,12 +89,37 @@ final class ClaudeSessionHost {
         terminal.send(source: terminal, data: ArraySlice(Array(ClaudeLaunch.getPastedMessage(message).utf8)))
     }
 
-    /// Ends the session's process; the end is recorded when it happens.
+    /// Ends the session's process and the session with it. SwiftTerm stops
+    /// watching for the process's exit when asked to terminate it, so the end
+    /// never arrives from the terminal: the session ends here at once, and its
+    /// process is reaped once it exits.
     func stop(_ sessionID: UUID) {
-        terminals[sessionID]?.terminate()
+        guard let terminal = terminals[sessionID] else { return }
+        let pid = terminal.process.shellPid
+        terminal.terminate()
+        Self.reapProcess(pid)
+        watchers[sessionID]?.notifyEnd()
+    }
+
+    /// Waits for the stopped process to exit, so it doesn't linger as a
+    /// zombie, and kills it if it hasn't within a few seconds.
+    private nonisolated static func reapProcess(_ pid: pid_t) {
+        guard pid > 0 else { return }
+        let exited = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
+            exited.signal()
+        }
+        DispatchQueue.global(qos: .utility).async {
+            if exited.wait(timeout: .now() + 5) == .timedOut {
+                kill(pid, SIGKILL)
+            }
+        }
     }
 
     private func handleEnd(of sessionID: UUID, client: HubClient) {
+        guard terminals[sessionID] != nil else { return }
         terminals[sessionID] = nil
         watchers[sessionID] = nil
         stateFiles[sessionID] = nil
@@ -155,6 +180,11 @@ private final class ProcessEndWatcher: LocalProcessTerminalViewDelegate {
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         Task { @MainActor [onEnd] in onEnd() }
+    }
+
+    /// Ends the session now, for a stop the terminal won't report.
+    @MainActor func notifyEnd() {
+        onEnd()
     }
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
