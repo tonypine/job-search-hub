@@ -61,11 +61,26 @@ func startTenantBoards(t *testing.T) *Verifier {
 			"workplace_type":"remote","employment_type_text":"Full Time","compensation_minimum":null,"compensation_maximum":null,
 			"compensation_visible":true,"location":{"name":"Remote","city":"Remote","province":""},"job":{"department":{"name":"Engineering"}}}]}`)
 	})
+	nextPage := func(pageProps string) string {
+		return `<html><body><div id="__next"></div><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":` + pageProps +
+			`},"page":"/"}</script></body></html>`
+	}
+	routes.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, nextPage(`{"subdomain":"acme","jobs":[
+			{"id":7,"title":"Desenvolvedor(a) Front-end Sênior","type":"vacancy_type_effective","workplace":{"workplaceType":"remote"}},
+			{"id":8,"title":"Banco de Talentos","type":"vacancy_type_talent_pool","workplace":{"workplaceType":"remote"}}]}`))
+	})
+	routes.HandleFunc("GET /jobs/7", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, nextPage(`{"job":{"id":"7","name":"Desenvolvedor(a) Front-end Sênior","description":"<p>Construa o app.</p>",
+			"responsibilities":"<ul><li>React</li></ul>","prerequisites":"","relevantExperiences":null,"addressCity":"Curitiba",
+			"addressState":"Paraná","addressCountry":"Brasil","workplaceType":"remote","jobType":"vacancy_type_effective",
+			"status":"published","publishedAt":"2026-09-20T12:00:00.000Z"}}`))
+	})
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return &Verifier{
 		HTTPClient: &http.Client{Timeout: time.Second}, RecruiteeAPIBase: server.URL, BambooHRAPIBase: server.URL,
-		SmartRecruitersAPIBase: server.URL, PersonioAPIBase: server.URL, PinpointAPIBase: server.URL,
+		SmartRecruitersAPIBase: server.URL, PersonioAPIBase: server.URL, PinpointAPIBase: server.URL, GupyBase: server.URL,
 	}
 }
 
@@ -86,6 +101,8 @@ func TestTenantBoardsAreReadWithTheirText(t *testing.T) {
 			BoardFacts: store.BoardFacts{EmploymentType: "Full-time"}}},
 		{Personio, store.JobPosting{ExternalID: "55", Title: "Fullstack Developer", Location: "Berlin", WorkplaceType: "Remote",
 			Description: "Your tasks\nBuild & run.", BoardFacts: store.BoardFacts{EmploymentType: "Full-time", Department: "Tech", OtherLocations: []string{"Remote"}}}},
+		{Gupy, store.JobPosting{ExternalID: "7", Title: "Desenvolvedor(a) Front-end Sênior", Location: "Curitiba, Paraná, Brasil",
+			WorkplaceType: "Remote", Description: "Construa o app.\n\nReact"}},
 		{Pinpoint, store.JobPosting{ExternalID: "9", Title: "Senior Software Engineer - React / Node.js", URL: "https://acme.pinpointhq.com/en/postings/9",
 			Location: "Remote", WorkplaceType: "Remote", Description: "Lead the web app.\n\nQualifications\n5+ years",
 			BoardFacts: store.BoardFacts{EmploymentType: "Full Time", Department: "Engineering"}}},
@@ -97,8 +114,11 @@ func TestTenantBoardsAreReadWithTheirText(t *testing.T) {
 				t.Fatalf("postings = %+v, %v; want one open posting", postings, err)
 			}
 			got, want := postings[0], testCase.want
-			if testCase.provider == Personio {
+			switch testCase.provider {
+			case Personio:
 				want.URL = verifier.PersonioAPIBase + "/job/55"
+			case Gupy:
+				want.URL = verifier.GupyBase + "/jobs/7"
 			}
 			if got.ExternalID != want.ExternalID || got.Title != want.Title || got.URL != want.URL || got.Location != want.Location ||
 				got.WorkplaceType != want.WorkplaceType || got.Description != want.Description || got.EmploymentType != want.EmploymentType ||
@@ -125,7 +145,7 @@ func TestTenantBoardsListTheirTitlesInOneRequest(t *testing.T) {
 	verifier := startTenantBoards(t)
 	want := map[string]string{
 		Recruitee: "[Senior Frontend Engineer Old Role]", BambooHR: "[Backend Engineer]", SmartRecruiters: "[Web Developer]",
-		Personio: "[Fullstack Developer]", Pinpoint: "[Senior Software Engineer - React / Node.js]",
+		Personio: "[Fullstack Developer]", Pinpoint: "[Senior Software Engineer - React / Node.js]", Gupy: "[Desenvolvedor(a) Front-end Sênior]",
 	}
 	for provider, titles := range want {
 		got, err := verifier.ListPostingTitles(context.Background(), provider, "acme")

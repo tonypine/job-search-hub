@@ -11,6 +11,9 @@ import (
 // provider's list alone, without their text: enough to tell whose board it
 // is, in one request, where FetchPostings may make one per posting.
 func (verifier *Verifier) ListPostingTitles(ctx context.Context, provider, boardToken string) ([]string, error) {
+	if provider == Gupy {
+		return verifier.listGupyTitles(ctx, boardToken)
+	}
 	listURL, err := verifier.getPostingListURL(provider, boardToken)
 	if err != nil {
 		return nil, err
@@ -125,4 +128,18 @@ func readPostingTitles(provider string, body []byte) ([]string, error) {
 		err := json.Unmarshal(body, &answer)
 		return collect(len(answer.Jobs), func(index int) string { return answer.Jobs[index].Title }), err
 	}
+}
+
+// listGupyTitles reads the titles off a Gupy career page.
+func (verifier *Verifier) listGupyTitles(ctx context.Context, boardToken string) ([]string, error) {
+	base, err := getTenantBase(verifier.GupyBase, boardToken, "gupy.io")
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := verifier.listGupyJobs(ctx, base)
+	titles := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		titles = append(titles, job.Title)
+	}
+	return titles, err
 }

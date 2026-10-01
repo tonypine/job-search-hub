@@ -66,6 +66,7 @@ type Verifier struct {
 	BambooHRAPIBase        string
 	PersonioAPIBase        string
 	PinpointAPIBase        string
+	GupyBase               string
 	// SearchTerms are what a large employer's board is searched by, rather
 	// than read whole: the owner's criteria.
 	SearchTerms           func(ctx context.Context) []string
@@ -141,7 +142,7 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken
 	case Eightfold:
 		return verifier.verifyEightfold(ctx, boardToken)
-	case Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint:
+	case Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint, Gupy:
 		return verifier.verifyByPostings(ctx, provider, boardToken)
 	default:
 		return Verification{}, ErrUnsupportedProvider
@@ -192,6 +193,8 @@ func GetBoardURL(provider, boardToken string) string {
 		return "https://" + boardToken + ".jobs.personio.com/"
 	case Pinpoint:
 		return "https://" + boardToken + ".pinpointhq.com/"
+	case Gupy:
+		return "https://" + boardToken + ".gupy.io/"
 	}
 	return ""
 }

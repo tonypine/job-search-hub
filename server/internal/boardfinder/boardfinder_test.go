@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -188,7 +189,7 @@ func TestTheCompanyBehindAnUnreadAlertJobIsSearchedWhateverItsFit(t *testing.T) 
 	expiresAt := time.Now().Add(30 * 24 * time.Hour)
 	alertJob := func(company, title string) store.JobPosting {
 		return store.JobPosting{ExternalID: company + title, CompanyName: company, Title: title, Location: "Lisbon",
-			ExpiresAt: &expiresAt, URL: "https://www.glassdoor.com.br/job-listing/j?jl=1"}
+			ExpiresAt: &expiresAt, URL: "https://www.glassdoor.com.br/job-listing/j?jl=1", Description: "R$ 11 mil - R$ 13 mil (estimativa)"}
 	}
 	if _, err := hub.SyncFeedJobs(ctx, owner, store.JobSourceGlassdoor, []store.JobPosting{
 		alertJob("Initech", "Frontend Engineer"), alertJob("Globex", "Sales Manager"),
@@ -202,5 +203,41 @@ func TestTheCompanyBehindAnUnreadAlertJobIsSearchedWhateverItsFit(t *testing.T) 
 	summary, err := finder.FindOnce(ctx)
 	if err != nil || summary != (PassSummary{Found: 1}) {
 		t.Fatalf("summary = %+v, %v; want Initech's board found, though its job reads poor without text, and Globex left out", summary, err)
+	}
+}
+
+func TestACompanyWaitingOnALimitingProviderLeavesItsTurn(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveJobCriteria(ctx, owner, store.JobCriteria{Roles: []string{"Frontend Engineer"}}); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+	var postings []store.JobPosting
+	for _, company := range []string{"Alpha", "Beta", "Gamma"} {
+		postings = append(postings, store.JobPosting{ExternalID: company, CompanyName: company, Title: "Frontend Engineer", Location: "Remote",
+			ExpiresAt: &expiresAt, URL: "https://himalayas.app/companies/x/jobs/" + company, Description: "Build."})
+	}
+	if _, err := hub.SyncFeedJobs(ctx, owner, store.JobSourceHimalayas, postings, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	allButWorkable := slices.DeleteFunc(slices.Clone(boardProviders), func(provider string) bool { return provider == jobboards.Workable })
+	for _, company := range []string{"Alpha", "Beta"} {
+		if err := hub.RecordBoardSearch(ctx, company, allButWorkable, nil, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	boards := &fakeBoards{limiting: map[string]bool{jobboards.Workable: true}}
+	finder := New(hub, boards, noRates{})
+	finder.RequestPause = 0
+
+	summary, err := finder.FindOnce(ctx)
+	if err != nil || summary != (PassSummary{Unfinished: 2}) {
+		t.Fatalf("summary = %+v, %v; want Alpha asking Workable, Beta skipped, and Gamma searched everywhere but Workable", summary, err)
+	}
+	for _, key := range boards.asked {
+		if strings.HasSuffix(key, "/beta") {
+			t.Errorf("Beta, waiting only on Workable, was searched: %s", key)
+		}
 	}
 }

@@ -20,7 +20,7 @@ import (
 var ErrPostingAPIOff = errors.New("the board's posting API is off")
 
 // PostingProviders are the providers whose postings FetchPostings reads.
-var PostingProviders = []string{Greenhouse, Lever, Ashby, Workable, Eightfold, Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint}
+var PostingProviders = []string{Greenhouse, Lever, Ashby, Workable, Eightfold, Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint, Gupy}
 
 // maximumDetailedPostings bounds the postings read one by one from a board
 // whose list has no text, as on BambooHR and SmartRecruiters.
@@ -52,6 +52,8 @@ func (verifier *Verifier) FetchPostings(ctx context.Context, provider, boardToke
 		return verifier.fetchPersonioPostings(ctx, boardToken)
 	case Pinpoint:
 		return verifier.fetchPinpointPostings(ctx, boardToken)
+	case Gupy:
+		return verifier.fetchGupyPostings(ctx, boardToken)
 	default:
 		return nil, ErrUnsupportedProvider
 	}

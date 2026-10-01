@@ -28,7 +28,7 @@ const boardSyncTimeout = time.Minute
 
 type setJobBoardInput struct {
 	CompanyID  uuid.UUID `json:"company_id"`
-	Provider   string    `json:"provider" jsonschema:"one of greenhouse, lever, ashby, workable, recruitee, personio, smartrecruiters, eightfold, bamboohr, pinpoint, other; an Eightfold board_token is <tenant>/<company domain>, e.g. acme/acme.com for acme.eightfold.ai"`
+	Provider   string    `json:"provider" jsonschema:"one of greenhouse, lever, ashby, workable, recruitee, personio, smartrecruiters, eightfold, bamboohr, pinpoint, gupy, other; an Eightfold board_token is <tenant>/<company domain>, e.g. acme/acme.com for acme.eightfold.ai"`
 	BoardToken string    `json:"board_token" jsonschema:"the board's identifier in the provider's job board URL, e.g. stripe in job-boards.greenhouse.io/stripe, jobs.lever.co/stripe or jobs.ashbyhq.com/stripe"`
 	BoardURL   string    `json:"board_url,omitempty" jsonschema:"the public job board URL, for providers the hub cannot verify"`
 	SourceURL  string    `json:"source_url,omitempty" jsonschema:"the page that led to this board, usually the careers page"`

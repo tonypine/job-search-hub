@@ -16,7 +16,7 @@ var ErrJobBoardTaken = errors.New("this job board is already stored for another 
 
 // JobBoardProviders are the providers a job board can be stored under.
 var JobBoardProviders = []string{
-	"greenhouse", "lever", "ashby", "workable", "recruitee", "personio", "smartrecruiters", "eightfold", "bamboohr", "pinpoint", "other",
+	"greenhouse", "lever", "ashby", "workable", "recruitee", "personio", "smartrecruiters", "eightfold", "bamboohr", "pinpoint", "gupy", "other",
 }
 
 type JobBoard struct {

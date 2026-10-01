@@ -36,7 +36,7 @@ const (
 // reads. When two list the company's titles, the earlier one's board is kept.
 var boardProviders = []string{
 	jobboards.Greenhouse, jobboards.Lever, jobboards.Ashby, jobboards.Workable, jobboards.Recruitee, jobboards.BambooHR,
-	jobboards.SmartRecruiters, jobboards.Personio, jobboards.Pinpoint,
+	jobboards.SmartRecruiters, jobboards.Personio, jobboards.Pinpoint, jobboards.Gupy,
 }
 
 // slowProviders limit requests harder than the others, and get this pause
@@ -123,7 +123,17 @@ func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 	}
 	var summary PassSummary
 	finder.limitingProviders = map[string]bool{}
-	for _, company := range companies[:min(len(companies), maximumSearchesPerPass)] {
+	searches := 0
+	for _, company := range companies {
+		if searches == maximumSearchesPerPass {
+			break
+		}
+		// A company waiting only on providers limiting requests this pass
+		// waits for the next one, leaving its turn to the others.
+		if !slices.ContainsFunc(company.ProvidersToSearch, func(provider string) bool { return !finder.limitingProviders[provider] }) {
+			continue
+		}
+		searches++
 		board, found, answered, err := finder.searchBoard(ctx, company)
 		if ctx.Err() != nil {
 			return summary, ctx.Err()
@@ -226,11 +236,16 @@ func (finder *Finder) listCompaniesToSearch(ctx context.Context) ([]FeedCompany,
 	return companies, nil
 }
 
-// isUnreadAlertJob reports whether a job came from a mail alert without its
-// posting's text, so its fit can't be judged yet, and its title doesn't rule
-// it out: its company's board would give the text.
+// alertSnippetLength is the most text an alert gives of a posting: its
+// snippets ran up to 366 characters, and full postings from 621.
+const alertSnippetLength = 500
+
+// isUnreadAlertJob reports whether a job came from a mail alert with no more
+// of its posting than a snippet, so its fit can't be judged yet, and its
+// title doesn't rule it out: its company's board would give the text.
 func isUnreadAlertJob(job store.Job, criteria store.JobCriteria) bool {
-	return slices.Contains(alertSources, job.Source) && strings.TrimSpace(job.Description) == "" && !jobfit.IsRoleRuledOut(job, criteria)
+	return slices.Contains(alertSources, job.Source) && len(strings.TrimSpace(job.Description)) < alertSnippetLength &&
+		!jobfit.IsRoleRuledOut(job, criteria)
 }
 
 // getSearchedProviders returns the providers that answered the company's
