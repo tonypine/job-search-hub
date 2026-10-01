@@ -53,7 +53,7 @@ func TestTheOwnerSeesEveryTool(t *testing.T) {
 	want := []string{
 		"add_person", "add_to_watch_list", "confirm_profile_entries", "create_company", "decide_job", "delete_profile_entry", "dismiss_application", "dismiss_job", "find_companies", "find_jobs", "fix_job", "get_agent_prompt",
 		"get_artifact_text", "get_company", "get_job_criteria", "get_owner_profile", "list_application_answers", "list_artifacts", "list_profile_entries",
-		"list_watch_list", "record_company_jobs", "remove_from_watch_list", "restore_application", "restore_job", "save_application_answer", "save_profile_entry", "set_job_board",
+		"list_watch_list", "move_application", "record_company_jobs", "remove_from_watch_list", "restore_application", "restore_job", "save_application_answer", "save_profile_entry", "set_job_board",
 		"set_job_company", "update_agent_prompt", "update_company", "update_job", "update_job_criteria", "update_owner_profile",
 	}
 	if !slices.Equal(names, want) {
