@@ -61,8 +61,11 @@ final class ClaudeSessionHost {
         let stateFile = states.appending(path: "\(session.id.uuidString.lowercased()).state")
         try? fileManager.removeItem(at: stateFile)
         let transcript = ClaudeLaunch.getTranscriptURL(for: session, workingDirectory: folder, home: fileManager.homeDirectoryForCurrentUser)
+        let readableFolder = UserDefaults.standard.string(forKey: ClaudeLaunch.readableFolderKey)
+            ?? ClaudeLaunch.getDefaultReadableFolder(home: fileManager.homeDirectoryForCurrentUser)
         let command = ClaudeLaunch.getShellCommand(
-            claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path), firstMessage: firstMessage
+            claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path),
+            readableFolder: fileManager.fileExists(atPath: readableFolder) ? readableFolder : nil, firstMessage: firstMessage
         )
 
         let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))

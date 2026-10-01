@@ -102,3 +102,14 @@ private func makeSession(name: String = "Frontend Engineer · Acme") -> ClaudeSe
     let request = try #require(try JSONSerialization.jsonObject(with: HubJSON.makeEncoder().encode(CreateClaudeSessionRequest(.profile))) as? [String: Any])
     #expect(request["about_profile"] as? Bool == true)
 }
+
+@Test func aReadableFolderIsAddedOnStartAndResumeAndQuoted() {
+    let folder = "/Users/me/Job Search/Tony's files"
+    for hasConversation in [false, true] {
+        let command = ClaudeLaunch.getShellCommand(claude: "claude", session: makeSession(), hasConversation: hasConversation, readableFolder: folder, firstMessage: "hi")
+        #expect(command.contains(#"'--add-dir' '/Users/me/Job Search/Tony'\''s files'"#))
+        #expect(command.hasSuffix("'--' 'hi'"))
+    }
+    #expect(!ClaudeLaunch.getShellCommand(claude: "claude", session: makeSession(), hasConversation: false, readableFolder: "").contains("--add-dir"))
+    #expect(ClaudeLaunch.getDefaultReadableFolder(home: URL(filePath: "/Users/me")) == "/Users/me/Interview")
+}

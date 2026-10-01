@@ -35,6 +35,7 @@ struct SettingsPage: View {
             }
             if let client = connection.makeClient() {
                 ServerSection(client: client)
+                SessionFilesSection()
                 GoogleSection(client: client)
                 NetworkSection(client: client)
                 JobCriteriaSection(client: client)

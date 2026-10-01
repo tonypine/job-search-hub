@@ -111,7 +111,9 @@ public enum ClaudeLaunch {
     /// resumed, and one without starts under its own ID. Either way it reads
     /// its context fresh and loads the app's hooks on top of the owner's own
     /// settings.
-    public static func getShellCommand(claude: String, session: ClaudeSession, hasConversation: Bool, firstMessage: String? = nil) -> String {
+    public static func getShellCommand(
+        claude: String, session: ClaudeSession, hasConversation: Bool, readableFolder: String? = nil, firstMessage: String? = nil
+    ) -> String {
         var arguments = [claude, "--settings", ClaudeHooks.settingsFileName]
         if hasConversation {
             arguments += ["--resume", session.claudeSessionID.uuidString.lowercased()]
@@ -119,6 +121,10 @@ public enum ClaudeLaunch {
             arguments += ["--session-id", session.claudeSessionID.uuidString.lowercased(), "--name", session.name]
         }
         arguments += ["--append-system-prompt-file", getContextFileName(for: session)]
+        if let readableFolder, !readableFolder.isEmpty {
+            // Read without /add-dir, so an agent can attach the owner's files, such as the CV, to a form.
+            arguments += ["--add-dir", readableFolder]
+        }
         if let firstMessage {
             arguments += ["--", firstMessage]
         }
@@ -129,6 +135,15 @@ public enum ClaudeLaunch {
     /// breaks don't submit it early, then sent with Enter.
     public static func getPastedMessage(_ message: String) -> String {
         "\u{1b}[200~" + message + "\u{1b}[201~\r"
+    }
+
+    /// The settings key of the folder sessions can read.
+    public static let readableFolderKey = "sessionReadableFolder"
+
+    /// The folder sessions can read when the owner hasn't chosen one:
+    /// ~/Interview, where the CV is kept.
+    public static func getDefaultReadableFolder(home: URL) -> String {
+        home.appending(path: "Interview").path
     }
 
     /// Single-quotes an argument for a POSIX shell.
