@@ -19,6 +19,9 @@ import (
 // postings, as with Ashby customers who turn the posting API off.
 var ErrPostingAPIOff = errors.New("the board's posting API is off")
 
+// PostingProviders are the providers whose postings FetchPostings reads.
+var PostingProviders = []string{Greenhouse, Lever, Ashby, Workable, Eightfold, Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint}
+
 // maximumDetailedPostings bounds the postings read one by one from a board
 // whose list has no text, as on BambooHR and SmartRecruiters.
 const maximumDetailedPostings = 100

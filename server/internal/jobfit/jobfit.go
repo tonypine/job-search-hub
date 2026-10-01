@@ -93,6 +93,16 @@ func Judge(job store.Job, rawFacts json.RawMessage, criteria store.JobCriteria, 
 	return Fit{Level: getLevel(checks), Checks: checks}
 }
 
+// CouldFit reports whether a posting on a board the owner doesn't watch is
+// worth storing, from its title and locations alone, before any facts are
+// read: its title names one of the roles, and where it hires isn't ruled
+// out. An engineering title naming none of the roles is left out: on large
+// boards those are most postings, and they never get past unclear.
+func CouldFit(posting store.JobPosting, criteria store.JobCriteria) bool {
+	job := store.Job{Title: posting.Title, Location: posting.Location, BoardFacts: store.BoardFacts{OtherLocations: posting.OtherLocations}}
+	return checkRole(job, criteria).Verdict == VerdictYes && checkLocation(job, readFacts{}, criteria).Verdict != VerdictNo
+}
+
 func getLevel(checks []Check) Level {
 	allYes := true
 	for _, check := range checks {

@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,22 @@ func TestAnEmptyBoardClosesEveryOpenJob(t *testing.T) {
 	result, err := hub.SyncBoardJobs(ctx, hubSystem, board, nil, time.Now())
 	if err != nil || result.Closed != 1 {
 		t.Fatalf("sync = %+v, %v", result, err)
+	}
+}
+
+func TestAFilteredSyncDecidesOnlyAboutNewPostings(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	board := createBoard(t, hub)
+	ctx := context.Background()
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{posting("a", "Generic Engineer")}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	isFrontend := func(posting store.JobPosting) bool { return strings.Contains(posting.Title, "Frontend") }
+
+	result, err := hub.SyncBoardJobsStoringNewIf(ctx, hubSystem, board,
+		[]store.JobPosting{posting("a", "Generic Engineer"), posting("b", "Frontend Engineer"), posting("c", "Data Engineer")}, time.Now(), isFrontend)
+	if err != nil || result.Created != 1 || result.Dropped != 1 || result.Closed != 0 {
+		t.Fatalf("sync = %+v, %v; want b stored, c dropped, and a, already stored, kept open", result, err)
 	}
 }
 

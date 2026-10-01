@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -111,18 +112,37 @@ func (posting JobPosting) boardFactsArguments() []any {
 
 // BoardSyncResult counts what one sync of a board changed.
 type BoardSyncResult struct {
-	Created  int `json:"created"`
+	Created int `json:"created"`
+	// Adopted counts the feed and alert jobs that became the board's own
+	// posting.
+	Adopted  int `json:"adopted"`
 	Closed   int `json:"closed"`
 	Reopened int `json:"reopened"`
 	Seen     int `json:"seen"`
+	// Dropped counts the new postings left unstored.
+	Dropped int `json:"dropped"`
 }
+
+// feedJobSources are the sources of jobs copied from somewhere other than the
+// company's own board.
+var feedJobSources = []string{JobSourceHimalayas, JobSourceIndeed, JobSourceLinkedIn, JobSourceGlassdoor}
 
 // SyncBoardJobs makes the board's jobs match its current postings, as seen at
 // seenAt: new postings are created, known ones are refreshed, postings that
-// disappeared are closed, and a closed one that returns is reopened. Only
-// those lifecycle events are recorded as changes; refreshing a posting that
-// is still open is not.
+// disappeared are closed, and a closed one that returns is reopened. A new
+// posting that an open feed or alert job copies, by the same company under
+// the same title, adopts that job instead: it keeps its id, decisions and
+// briefs, and takes the board's text and link. Only those lifecycle events are
+// recorded as changes; refreshing a posting that is still open is not.
 func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, postings []JobPosting, seenAt time.Time) (BoardSyncResult, error) {
+	return s.SyncBoardJobsStoringNewIf(ctx, actor, board, postings, seenAt, nil)
+}
+
+// SyncBoardJobsStoringNewIf syncs the board's jobs as SyncBoardJobs does,
+// but stores a new posting only when shouldStore says so; nil stores every
+// one. Postings already stored, or adopting a feed job, sync whatever it says.
+func (s *Store) SyncBoardJobsStoringNewIf(ctx context.Context, actor Actor, board JobBoard, postings []JobPosting, seenAt time.Time,
+	shouldStore func(JobPosting) bool) (BoardSyncResult, error) {
 	result := BoardSyncResult{Seen: len(postings)}
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT external_id, id, closed_at FROM jobs WHERE job_board_id = $1 FOR UPDATE`, board.ID)
@@ -146,10 +166,26 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 			return err
 		}
 
+		copies, err := listFeedCopies(ctx, tx, board)
+		if err != nil {
+			return err
+		}
 		seenExternalIDs := make([]string, 0, len(postings))
 		for _, posting := range postings {
 			seenExternalIDs = append(seenExternalIDs, posting.ExternalID)
 			existing, isKnown := known[posting.ExternalID]
+			if copyID, isCopied := copies[getTitleKey(posting.Title)]; !isKnown && isCopied {
+				delete(copies, getTitleKey(posting.Title))
+				if err := adoptFeedCopy(ctx, tx, actor, board, copyID, posting, seenAt); err != nil {
+					return err
+				}
+				result.Adopted++
+				continue
+			}
+			if !isKnown && shouldStore != nil && !shouldStore(posting) {
+				result.Dropped++
+				continue
+			}
 			if !isKnown {
 				job, err := scanJob(tx.QueryRow(ctx, `
 					INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
@@ -210,6 +246,73 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 		return nil
 	})
 	return result, err
+}
+
+// listFeedCopies returns the open feed and alert jobs of the board's
+// company, by their title's key.
+func listFeedCopies(ctx context.Context, tx pgx.Tx, board JobBoard) (map[string]uuid.UUID, error) {
+	companyName := board.CompanyName
+	if board.CompanyID != nil {
+		if err := tx.QueryRow(ctx, `SELECT name FROM companies WHERE id = $1`, *board.CompanyID).Scan(&companyName); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT jobs.id, jobs.title, coalesce(companies.name, jobs.company_name)
+		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
+		WHERE jobs.closed_at IS NULL AND jobs.dismissed_at IS NULL AND jobs.source = ANY($1)
+		ORDER BY jobs.first_seen_at`, feedJobSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	companyKey := NormalizeCompanyName(companyName)
+	copies := map[string]uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		var title, jobCompanyName string
+		if err := rows.Scan(&id, &title, &jobCompanyName); err != nil {
+			return nil, err
+		}
+		if _, listed := copies[getTitleKey(title)]; !listed && NormalizeCompanyName(jobCompanyName) == companyKey {
+			copies[getTitleKey(title)] = id
+		}
+	}
+	return copies, rows.Err()
+}
+
+// adoptFeedCopy turns a feed or alert job into the board's posting, seen at
+// seenAt. Fields the owner fixed stay as fixed.
+func adoptFeedCopy(ctx context.Context, tx pgx.Tx, actor Actor, board JobBoard, jobID uuid.UUID, posting JobPosting, seenAt time.Time) error {
+	var previousSource, previousURL string
+	if err := tx.QueryRow(ctx, `SELECT source, url FROM jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&previousSource, &previousURL); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE jobs SET source = 'job_board', job_board_id = $2, external_id = $3, company_id = coalesce(company_id, $4),
+			`+buildPollAssignment(JobFieldTitle, "$5")+`, `+buildPollAssignment(JobFieldLocation, "$6")+`,
+			`+buildPollAssignment(JobFieldWorkplaceType, "$7")+`, url = $8, description = $9, raw = $10,
+			last_seen_at = $11, expires_at = NULL, closed_at = NULL,
+			`+buildPollAssignment(JobFieldPay, "$12")+`, `+buildPollAssignment(JobFieldEmploymentType, "$13")+`,
+			department = $14, other_locations = $15, published_at = $16
+		WHERE id = $1`,
+		append([]any{jobID, board.ID, posting.ExternalID, board.CompanyID, posting.Title, posting.Location, posting.WorkplaceType,
+			posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...); err != nil {
+		return err
+	}
+	return insertChange(ctx, tx, actor, change{
+		entityType: "job", entityID: jobID, operation: "update",
+		before: map[string]string{"source": previousSource, "url": previousURL},
+		after:  map[string]string{"source": JobSourceJobBoard, "url": posting.URL}, sourceURL: posting.URL,
+	})
+}
+
+var nonTitleCharacters = regexp.MustCompile(`[^[:alnum:]]+`)
+
+// getTitleKey compares job titles as the alert reader does: case and
+// punctuation ignored.
+func getTitleKey(title string) string {
+	return nonTitleCharacters.ReplaceAllString(strings.ToLower(title), "")
 }
 
 type ManualJobInput struct {

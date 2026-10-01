@@ -126,19 +126,32 @@ func (s *Store) ListJobBoards(ctx context.Context, companyID uuid.UUID) ([]JobBo
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobBoard, error) { return scanJobBoard(row) })
 }
 
-// ListWatchedJobBoards returns the verified boards of watched companies on the
-// providers whose postings can be fetched.
-func (s *Store) ListWatchedJobBoards(ctx context.Context) ([]JobBoard, error) {
+// PolledJobBoard is a board the poller reads, and whether its company is
+// watched: a watched company's board keeps every posting, any other only the
+// postings that could fit.
+type PolledJobBoard struct {
+	JobBoard
+	IsWatched bool
+}
+
+// ListPolledJobBoards returns the verified boards on the providers whose
+// postings can be fetched.
+func (s *Store) ListPolledJobBoards(ctx context.Context, providers []string) ([]PolledJobBoard, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+jobBoardColumns+` FROM job_boards
-		WHERE verified_at IS NOT NULL
-		  AND provider IN ('greenhouse', 'lever', 'ashby')
-		  AND company_id IN (SELECT company_id FROM watch_list_entries WHERE removed_at IS NULL)
-		ORDER BY created_at`)
+		SELECT `+jobBoardColumns+`,
+			coalesce(company_id IN (SELECT company_id FROM watch_list_entries WHERE removed_at IS NULL), false)
+		FROM job_boards
+		WHERE verified_at IS NOT NULL AND provider = ANY($1)
+		ORDER BY created_at`, providers)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobBoard, error) { return scanJobBoard(row) })
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PolledJobBoard, error) {
+		var board PolledJobBoard
+		err := row.Scan(&board.ID, &board.CompanyID, &board.CompanyName, &board.Provider, &board.BoardToken, &board.BoardURL, &board.VerifiedAt,
+			&board.OpenPostingCount, &board.IsWatched)
+		return board, err
+	})
 }
 
 var ErrJobBoardNotFound = errors.New("job board not found")

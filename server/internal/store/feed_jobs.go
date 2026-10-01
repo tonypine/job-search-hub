@@ -17,12 +17,16 @@ type FeedSyncResult struct {
 	Closed   int `json:"closed"`
 	Reopened int `json:"reopened"`
 	Seen     int `json:"seen"`
+	// ListedOnBoard counts new postings left out because the company's own
+	// board lists them.
+	ListedOnBoard int `json:"listed_on_board"`
 }
 
 // SyncFeedJobs stores the postings a feed returned, as seen at seenAt, then
 // closes the feed's jobs whose expiry has passed. A feed returns only what a
 // search matches, so a posting missing from it is not closed. A new posting
-// is linked to the hub's company of the same name when there is one. Only
+// is linked to the hub's company of the same name when there is one, and left
+// out when that company's own board lists it under the same title. Only
 // lifecycle events are recorded as changes.
 func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, postings []JobPosting, seenAt time.Time) (FeedSyncResult, error) {
 	result := FeedSyncResult{Seen: len(postings)}
@@ -52,8 +56,16 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 			return err
 		}
 
+		boardJobKeys, err := listOpenBoardJobKeys(ctx, tx)
+		if err != nil {
+			return err
+		}
 		for _, posting := range postings {
 			existing, isKnown := known[posting.ExternalID]
+			if !isKnown && boardJobKeys[NormalizeCompanyName(posting.CompanyName)+"/"+getTitleKey(posting.Title)] {
+				result.ListedOnBoard++
+				continue
+			}
 			if !isKnown {
 				job, err := scanJob(tx.QueryRow(ctx, `
 					INSERT INTO jobs (company_id, source, external_id, company_name, title, location, workplace_type, url, description, raw,
@@ -116,4 +128,26 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 		return err
 	})
 	return result, err
+}
+
+// listOpenBoardJobKeys returns the keys of the open jobs from companies' own
+// boards: their company's normalized name and their title's key, joined by "/".
+func listOpenBoardJobKeys(ctx context.Context, tx pgx.Tx) (map[string]bool, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT coalesce(companies.name, jobs.company_name), jobs.title
+		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
+		WHERE jobs.job_board_id IS NOT NULL AND jobs.closed_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	boardJobKeys := map[string]bool{}
+	for rows.Next() {
+		var companyName, title string
+		if err := rows.Scan(&companyName, &title); err != nil {
+			return nil, err
+		}
+		boardJobKeys[NormalizeCompanyName(companyName)+"/"+getTitleKey(title)] = true
+	}
+	return boardJobKeys, rows.Err()
 }

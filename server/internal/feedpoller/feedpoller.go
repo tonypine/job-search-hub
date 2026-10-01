@@ -47,7 +47,7 @@ func (poller *Poller) Run(ctx context.Context, interval time.Duration) {
 			slog.Error("feed poll failed", "error", err)
 		} else {
 			slog.Info("feed poll done", "feed", jobboards.Himalayas, "created", result.Created, "closed", result.Closed,
-				"reopened", result.Reopened, "seen", result.Seen)
+				"reopened", result.Reopened, "seen", result.Seen, "listed on board", result.ListedOnBoard)
 		}
 		select {
 		case <-ctx.Done():

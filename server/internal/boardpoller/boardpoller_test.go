@@ -27,6 +27,13 @@ func (boards *fakeBoards) FetchPostings(_ context.Context, _, boardToken string)
 		}, nil
 	case "pageonly":
 		return nil, jobboards.ErrPostingAPIOff
+	case "unwatched":
+		return []store.JobPosting{
+			{ExternalID: "3", Title: "Frontend Engineer", URL: "https://jobs.example/3"},
+			{ExternalID: "4", Title: "Sales Manager", URL: "https://jobs.example/4"},
+			{ExternalID: "6", Title: "Distributed Systems Engineer", URL: "https://jobs.example/6"},
+			{ExternalID: "5", Title: "Senior Frontend Engineer", Location: "Berlin, must be based in the EU", URL: "https://jobs.example/5"},
+		}, nil
 	default:
 		return nil, errors.New("provider answered 503")
 	}
@@ -49,9 +56,14 @@ func addCompanyWithBoard(t *testing.T, hub *store.Store, domain, boardToken stri
 	}
 }
 
-func TestAPollSyncsWatchedBoardsAndCarriesOnPastFailures(t *testing.T) {
+func TestAPollSyncsEveryVerifiedBoardAndCarriesOnPastFailures(t *testing.T) {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
+	if _, err := hub.SaveJobCriteria(context.Background(), owner, store.JobCriteria{
+		Roles: []string{"Frontend Engineer"}, ExcludedRoleTerms: []string{"Sales"}, IneligibleLocationTerms: []string{"must be based in the EU"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	addCompanyWithBoard(t, hub, "broken.com", "broken", true)
 	addCompanyWithBoard(t, hub, "working.com", "working", true)
 	addCompanyWithBoard(t, hub, "pageonly.com", "pageonly", true)
@@ -62,16 +74,11 @@ func TestAPollSyncsWatchedBoardsAndCarriesOnPastFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Boards != 3 || summary.Failed != 1 || summary.Skipped != 1 || summary.Totals.Created != 2 {
-		t.Fatalf("summary = %+v", summary)
-	}
-	for _, token := range boards.fetched {
-		if token == "unwatched" {
-			t.Fatal("an unwatched company's board was read")
-		}
+	if summary.Boards != 4 || summary.Failed != 1 || summary.Skipped != 1 || summary.Totals.Created != 3 || summary.Totals.Dropped != 3 {
+		t.Fatalf("summary = %+v; want the watched board's two postings and the unwatched board's one that could fit", summary)
 	}
 	var jobs int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM jobs`).Scan(&jobs); err != nil || jobs != 2 {
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM jobs`).Scan(&jobs); err != nil || jobs != 3 {
 		t.Fatalf("jobs = %d, err = %v", jobs, err)
 	}
 

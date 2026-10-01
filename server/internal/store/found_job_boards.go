@@ -23,8 +23,8 @@ type FoundJobBoardInput struct {
 }
 
 // SaveFoundJobBoard stores a board found for a company, tied to the hub's
-// company of that name when there is one. A board already stored is returned
-// as it is.
+// company of that name when there is one. A board already stored is returned,
+// verified now if it wasn't: the found titles confirm it.
 func (s *Store) SaveFoundJobBoard(ctx context.Context, actor Actor, input FoundJobBoardInput) (JobBoard, error) {
 	if !slices.Contains(JobBoardProviders, input.Provider) {
 		return JobBoard{}, errors.New("provider must be one of " + strings.Join(JobBoardProviders, ", "))
@@ -48,7 +48,9 @@ func (s *Store) SaveFoundJobBoard(ctx context.Context, actor Actor, input FoundJ
 		board, err = scanJobBoard(tx.QueryRow(ctx, `
 			INSERT INTO job_boards (company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count)
 			VALUES ($1, $2, $3, $4, $5, now(), $6)
-			ON CONFLICT (provider, board_token) DO NOTHING
+			ON CONFLICT (provider, board_token) DO UPDATE SET verified_at = now(), open_posting_count = EXCLUDED.open_posting_count,
+				updated_at = now()
+				WHERE job_boards.verified_at IS NULL
 			RETURNING `+jobBoardColumns,
 			companyID, companyName, input.Provider, boardToken, input.BoardURL, &openPostingCount))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -67,11 +69,12 @@ func (s *Store) SaveFoundJobBoard(ctx context.Context, actor Actor, input FoundJ
 }
 
 // ListCompanyNamesWithJobBoards returns the normalized names of the companies
-// with a stored board, whether the hub keeps the company or not.
+// with a verified board, whether the hub keeps the company or not.
 func (s *Store) ListCompanyNamesWithJobBoards(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT coalesce(companies.name, job_boards.company_name)
-		FROM job_boards LEFT JOIN companies ON companies.id = job_boards.company_id`)
+		FROM job_boards LEFT JOIN companies ON companies.id = job_boards.company_id
+		WHERE job_boards.verified_at IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
