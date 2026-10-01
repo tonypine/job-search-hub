@@ -40,7 +40,11 @@ func TestRulesSortTheObviousMailAndLeaveTheRestToTheModel(t *testing.T) {
 		{"mail about a company the hub knows", aboutACompany, ""},
 		{"mail in the Personal category", received("Pat <pat@gmail.com>", "Quick question", "CATEGORY_PERSONAL"), ""},
 		{"a LinkedIn message", received("LinkedIn <messaging-digest-noreply@linkedin.com>", "Geovanne just messaged you"), ""},
-		{"a newsletter", received("News <news@example.com>", "This week", "CATEGORY_UPDATES"), store.MailNoise},
+		{"a recruiter the hub doesn't know, under Updates", received("Sam <sam@newco.com>", "Frontend role at Newco", "CATEGORY_UPDATES"), ""},
+		{"a newsletter under Updates", received("News <news@example.com>", "This week", "CATEGORY_UPDATES"), ""},
+		{"mail in no category", received("Lee <lee@example.com>", "Hello", "INBOX"), ""},
+		{"a shop's promotion", received("Shop <news@shop.example.com>", "20% off today", "CATEGORY_PROMOTIONS"), store.MailNoise},
+		{"a social network notification", received("Network <notify@network.example.com>", "Ada posted", "CATEGORY_SOCIAL"), store.MailNoise},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

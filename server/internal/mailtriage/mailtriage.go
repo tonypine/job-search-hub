@@ -36,6 +36,10 @@ var jobBoardApplicationSenders = []string{"indeedapply@indeed.com"}
 // directMessageSenders relay a person's message, where recruiters write first.
 var directMessageSenders = []string{"messaging-digest-noreply@linkedin.com", "messages-noreply@linkedin.com", "inmail-hit-reply@linkedin.com"}
 
+// bulkCategories are the Gmail categories of marketing and social network
+// mail. Gmail files people's mail under Primary or Updates.
+var bulkCategories = []string{"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"}
+
 // confirmationSubjects are subjects only an application confirmation has.
 var confirmationSubjects = []string{
 	"received your application", "application received", "thank you for applying", "thanks for applying",
@@ -154,9 +158,11 @@ func (classifier *Classifier) ClassifyOnce(ctx context.Context) (PassSummary, er
 }
 
 // ClassifyByRule sorts the mail rules can: job alerts, application
-// confirmations, and mail with nothing to do with the job search, which is
-// noise. found is false for mail the model must read: mail about a company
-// the hub knows, mail in the Personal category, and relayed direct messages.
+// confirmations, and promotions or social mail about no company the hub
+// knows, which is noise. found is false for mail the model must read: mail
+// about a company the hub knows, relayed direct messages, and the rest of the
+// mail outside the bulk categories, where a recruiter the hub doesn't know
+// yet may write.
 func ClassifyByRule(message store.MailMessage) (store.MailClassification, bool) {
 	sender := strings.ToLower(message.Sender)
 	byRule := func(class, reason string) (store.MailClassification, bool) {
@@ -169,10 +175,10 @@ func ClassifyByRule(message store.MailMessage) (store.MailClassification, bool) 
 		return byRule(store.MailApplicationConfirmation, "sent by a job board when an application goes through")
 	case hasConfirmationSubject(message.Subject) && IsAutomatedSender(sender):
 		return byRule(store.MailApplicationConfirmation, "an automated sender with an application-received subject")
-	case message.CompanyID != nil, slices.Contains(message.LabelIDs, "CATEGORY_PERSONAL"), containsAny(sender, directMessageSenders):
+	case message.CompanyID != nil, containsAny(sender, directMessageSenders), !isInBulkCategory(message.LabelIDs):
 		return store.MailClassification{}, false
 	default:
-		return byRule(store.MailNoise, "not about a company the hub knows, and not personal mail")
+		return byRule(store.MailNoise, "promotions or social mail, not about a company the hub knows")
 	}
 }
 
@@ -224,6 +230,10 @@ func formatMessageText(message store.MailMessage, text, companyName string) stri
 	}
 	fmt.Fprintf(&formatted, "\nText:\n%s", text)
 	return formatted.String()
+}
+
+func isInBulkCategory(labelIDs []string) bool {
+	return slices.ContainsFunc(labelIDs, func(label string) bool { return slices.Contains(bulkCategories, label) })
 }
 
 func containsAny(text string, parts []string) bool {

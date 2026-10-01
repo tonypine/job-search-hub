@@ -117,7 +117,8 @@ func (client *Client) getMessageSummary(ctx context.Context, httpClient *http.Cl
 }
 
 // GetMessage returns one message with its text: the plain-text part when it
-// has one, otherwise its HTML part without the markup.
+// has one, otherwise its HTML part without the markup. A plain-text part
+// holding an HTML document, as some senders send, loses its markup too.
 func (client *Client) GetMessage(ctx context.Context, id string) (Message, error) {
 	httpClient, _, err := client.getAuthorizedClient(ctx)
 	if err != nil {
@@ -134,10 +135,18 @@ func (client *Client) GetMessage(ctx context.Context, id string) (Message, error
 	}
 	markup := findPartText(message.Payload, "text/html")
 	text := findPartText(message.Payload, "text/plain")
-	if text == "" {
+	switch {
+	case text == "":
 		text = textextract.ConvertHTMLToText(markup)
+	case isHTMLDocument(text):
+		text = textextract.ConvertHTMLToText(text)
 	}
 	return Message{MessageSummary: summarize(message), Text: strings.TrimSpace(text), HTML: markup}, nil
+}
+
+func isHTMLDocument(text string) bool {
+	start := strings.ToLower(strings.TrimSpace(text))
+	return strings.HasPrefix(start, "<!doctype html") || strings.HasPrefix(start, "<html")
 }
 
 func summarize(message gmailMessage) MessageSummary {

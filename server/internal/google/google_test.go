@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,12 @@ func startFakeGoogle(t *testing.T) (*Client, *store.Store) {
 		fmt.Fprintf(w, `{"id":"m1","threadId":"t1","internalDate":"1790600000000","payload":{"mimeType":"multipart/alternative",%s,"parts":[
 			{"mimeType":"text/html","body":{"data":"PHA-SGkgPGI-VG9ueTwvYj4sPC9wPg"}},
 			{"mimeType":"text/plain","body":{"data":"SGkgVG9ueSw"}}]}}`, headers)
+	})
+	routes.HandleFunc("GET /gmail/v1/users/me/messages/html-as-plain", func(w http.ResponseWriter, r *http.Request) {
+		// A plain-text part holding an HTML document.
+		fmt.Fprint(w, `{"id":"html-as-plain","threadId":"t3","internalDate":"1790600000000","payload":{"mimeType":"text/plain",
+			"headers":[{"name":"Subject","value":"Your request was updated"}],"body":{"data":"`+
+			base64.RawURLEncoding.EncodeToString([]byte(`<!DOCTYPE html><html><head><style>p{color:red}</style></head><body><p>Your refund request 4471 is under review.</p></body></html>`))+`"}}}`)
 	})
 	routes.HandleFunc("POST /gmail/v1/users/me/watch", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -176,6 +183,11 @@ func TestGmailIsSearchedAndReadAsText(t *testing.T) {
 	message, err := client.GetMessage(ctx, "m1")
 	if err != nil || message.Text != "Hi Tony," || message.Subject != "Thank you for applying" {
 		t.Fatalf("message = %+v, %v", message, err)
+	}
+
+	message, err = client.GetMessage(ctx, "html-as-plain")
+	if err != nil || message.Text != "Your refund request 4471 is under review." {
+		t.Fatalf("an HTML document in the plain-text part read as %q, %v; want its text", message.Text, err)
 	}
 }
 
