@@ -218,3 +218,22 @@ func TestEachRequestWaitsItsTurnWithItsKindsPriority(t *testing.T) {
 		t.Fatalf("tickets = %+v\nwant      %+v", queue.tickets, want)
 	}
 }
+
+func TestARequestOnAGivenModelSkipsTheRoute(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	routed := startModelServer(t, `{"stack":"Routed"}`)
+	route(t, hub, routed.url, true, "", nil)
+	other := startModelServer(t, `{"stack":"Go"}`)
+	provider, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{Name: "Other", BaseURL: other.url, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := modelrouter.New(hub).CompleteJSONOn(context.Background(), provider.ID, "chosen-model", request)
+	if err != nil || string(answer.Object) != `{"stack":"Go"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(routed.received) != 0 || other.received[0]["model"] != "chosen-model" {
+		t.Fatalf("routed got %d requests; other got %v", len(routed.received), other.received)
+	}
+}

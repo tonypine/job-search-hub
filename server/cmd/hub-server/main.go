@@ -22,6 +22,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
+	"github.com/tonypine/job-search-hub/server/internal/comparisons"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
 	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
@@ -222,6 +223,7 @@ func run() error {
 	}
 	var fullBriefs *jobbriefs.Writer
 	var cvDrafter *cvdrafts.Drafter
+	var newClaudeClient func(model string) comparisons.ModelClient
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
 		go briefWriter.Run(ctx, jobBriefInterval)
@@ -236,6 +238,9 @@ func run() error {
 			cvDrafter = cvdrafts.NewDrafter(hub, claude)
 			go cvDrafter.Run(ctx, cvDraftInterval)
 			go briefWriter.RunNightly(ctx, fullBriefCheckInterval)
+			newClaudeClient = func(model string) comparisons.ModelClient {
+				return &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: model, RecordRun: recordTaskRun}
+			}
 			slog.Info("full briefs on", "model", settings.fullBriefModel)
 		}
 	}
@@ -254,6 +259,14 @@ func run() error {
 		}
 	}
 	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
+	if modelClient != nil {
+		comparisonRunner := comparisons.NewRunner(hub, modelClient)
+		comparisonRunner.NewClaudeClient = newClaudeClient
+		go comparisonRunner.RunUnfinished(ctx)
+		api.RegisterComparisonRoutes(routes, hub, comparisonRunner, requireOwner)
+	} else {
+		api.RegisterComparisonRoutes(routes, hub, nil, requireOwner)
+	}
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
 	if cvDrafter != nil {
 		api.RegisterCVRoutes(routes, hub, cvDrafter, requireOwner)

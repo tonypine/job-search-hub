@@ -59,21 +59,39 @@ func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.
 	if err != nil {
 		return chatcompletions.Answer{}, err
 	}
-	if router.Queue != nil {
-		release, err := router.Queue.Wait(ctx, modelqueue.Ticket{
-			Kind: request.SchemaName, SubjectID: request.Task.SubjectID, Model: route.Model,
-			Priority: modelqueue.GetPriority(ctx, getKindPriority(request.SchemaName)),
-		})
-		if err != nil {
-			return chatcompletions.Answer{}, err
-		}
-		defer release()
+	release, err := router.waitInQueue(ctx, route.Model, request)
+	if err != nil {
+		return chatcompletions.Answer{}, err
 	}
+	defer release()
 	answer, err := router.completeOnProvider(ctx, route.ProviderID, route.Model, request)
 	if errors.Is(err, chatcompletions.ErrUnreachable) && route.FallbackProviderID != nil {
 		return router.completeOnProvider(ctx, *route.FallbackProviderID, route.FallbackModel, request)
 	}
 	return answer, err
+}
+
+// CompleteJSONOn asks a given provider and model, past the task's route, as a
+// comparison does. It still waits its turn in the model queue.
+func (router *Router) CompleteJSONOn(ctx context.Context, providerID uuid.UUID, model string, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+	release, err := router.waitInQueue(ctx, model, request)
+	if err != nil {
+		return chatcompletions.Answer{}, err
+	}
+	defer release()
+	return router.completeOnProvider(ctx, providerID, model, request)
+}
+
+// waitInQueue waits for the request's turn at the model; without a queue it
+// goes at once.
+func (router *Router) waitInQueue(ctx context.Context, model string, request chatcompletions.JSONRequest) (func(), error) {
+	if router.Queue == nil {
+		return func() {}, nil
+	}
+	return router.Queue.Wait(ctx, modelqueue.Ticket{
+		Kind: request.SchemaName, SubjectID: request.Task.SubjectID, Model: model,
+		Priority: modelqueue.GetPriority(ctx, getKindPriority(request.SchemaName)),
+	})
 }
 
 // getKindPriority is how soon a kind of task runs when nobody asked for it:
