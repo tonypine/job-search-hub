@@ -38,6 +38,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/mailactions"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
+	"github.com/tonypine/job-search-hub/server/internal/marketgaps"
 	"github.com/tonypine/job-search-hub/server/internal/mcptools"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
@@ -72,6 +73,9 @@ const (
 	// cvScreenInterval picks up tailored CVs drafted or edited since the last
 	// pass, to screen them as a recruiter would.
 	cvScreenInterval = 5 * time.Minute
+	// marketGapsCheckInterval is how often the server checks whether the
+	// day's market gaps are due.
+	marketGapsCheckInterval = time.Hour
 )
 
 func main() {
@@ -232,6 +236,7 @@ func run() error {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
 		go briefWriter.Run(ctx, jobBriefInterval)
 		go cvscreens.NewScreener(hub, modelClient).Run(ctx, cvScreenInterval)
+		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(ctx, marketGapsCheckInterval)
 		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
 			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
@@ -273,6 +278,7 @@ func run() error {
 		api.RegisterComparisonRoutes(routes, hub, nil, requireOwner)
 	}
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
+	api.RegisterMarketGapRoutes(routes, hub, requireOwner)
 	if cvDrafter != nil {
 		api.RegisterCVRoutes(routes, hub, cvDrafter, requireOwner)
 		mcptools.AddCVTools(ownerTools, cvDrafter)

@@ -54,6 +54,9 @@ const (
 	// AgentPromptKindRecruiterScreen reads a pursued job's tailored CV as
 	// the job's recruiter would, listing the likely reasons to reject it.
 	AgentPromptKindRecruiterScreen = "recruiter_screen"
+	// AgentPromptKindMarketGaps plans how to close the skills good fits keep
+	// asking for and the knowledge base lacks.
+	AgentPromptKindMarketGaps = "market_gaps"
 )
 
 var agentPromptKinds = map[string]bool{
@@ -61,6 +64,7 @@ var agentPromptKinds = map[string]bool{
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
 	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true, AgentRunKindJobFix: true, AgentPromptKindRecruiterScreen: true,
+	AgentPromptKindMarketGaps: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

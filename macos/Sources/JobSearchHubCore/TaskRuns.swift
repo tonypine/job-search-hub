@@ -82,6 +82,7 @@ public enum RunsSummary {
         case "job_facts": "Job facts"
         case "job_brief": "Job briefs"
         case "recruiter_screen": "Recruiter screens"
+        case "market_gaps": "Market gaps"
         case "mail_triage": "Mail sorting"
         case "linkedin_conversation": "LinkedIn conversations"
         case "company_triage": "Company research"

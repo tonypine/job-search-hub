@@ -98,6 +98,7 @@ public enum RoutedTaskKind: String, CaseIterable, Identifiable, Sendable {
     case jobFacts = "job_facts"
     case jobBrief = "job_brief"
     case recruiterScreen = "recruiter_screen"
+    case marketGaps = "market_gaps"
     case mailTriage = "mail_triage"
     case linkedInConversation = "linkedin_conversation"
 

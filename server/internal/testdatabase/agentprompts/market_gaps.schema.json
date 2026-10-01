@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plans"
+  ],
+  "properties": {
+    "plans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gap",
+          "kind",
+          "plan"
+        ],
+        "properties": {
+          "gap": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "learn",
+              "portfolio"
+            ]
+          },
+          "plan": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

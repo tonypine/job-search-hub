@@ -38,6 +38,7 @@ struct ProfilePage: View {
                     VStack(alignment: .leading, spacing: 28) {
                         ProfileDocument(markdown: profile.body)
                         KnowledgeBaseSection(client: client)
+                        MarketGapsSection(client: client)
                         if let linkedIn, !linkedIn.profile.isEmpty {
                             LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
                         }
