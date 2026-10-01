@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "is_job_posting",
+    "company",
+    "roles"
+  ],
+  "properties": {
+    "is_job_posting": {
+      "type": "boolean",
+      "description": "Whether a company is hiring."
+    },
+    "company": {
+      "type": "string",
+      "description": "The company."
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "location",
+          "workplace_type"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "The role."
+          },
+          "location": {
+            "type": "string",
+            "description": "Where."
+          },
+          "workplace_type": {
+            "type": "string",
+            "enum": [
+              "Remote",
+              "Hybrid",
+              "On-site",
+              ""
+            ],
+            "description": "How."
+          }
+        }
+      }
+    }
+  }
+}

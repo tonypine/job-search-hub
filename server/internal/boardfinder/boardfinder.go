@@ -44,7 +44,9 @@ var boardProviders = []string{
 var slowProviders = map[string]time.Duration{jobboards.Workable: 6 * time.Second, jobboards.Personio: 2 * time.Second}
 
 // feedSources are the sources whose jobs name a company without its board.
-var feedSources = []string{store.JobSourceHimalayas, store.JobSourceRemoteOK, store.JobSourceIndeed, store.JobSourceLinkedIn, store.JobSourceGlassdoor}
+var feedSources = []string{
+	store.JobSourceHimalayas, store.JobSourceRemoteOK, store.JobSourceHackerNews, store.JobSourceIndeed, store.JobSourceLinkedIn, store.JobSourceGlassdoor,
+}
 
 type titleLister interface {
 	ListPostingTitles(ctx context.Context, provider, boardToken string) ([]string, error)

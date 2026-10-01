@@ -33,6 +33,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
+	"github.com/tonypine/job-search-hub/server/internal/hiringthread"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/interviewpacks"
 	"github.com/tonypine/job-search-hub/server/internal/jobalerts"
@@ -82,6 +83,9 @@ const (
 	// interviewPackInterval picks up jobs pursued, or whose knowledge base
 	// changed, since the last pass, to prepare their interview packs.
 	interviewPackInterval = 10 * time.Minute
+	// hiringThreadInterval paces the reading of Hacker News' monthly "Who is
+	// hiring?" thread, whose comments keep arriving for days.
+	hiringThreadInterval = 6 * time.Hour
 )
 
 func main() {
@@ -253,6 +257,7 @@ func run() error {
 		go cvscreens.NewScreener(hub, modelClient).Run(ctx, cvScreenInterval)
 		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(ctx, marketGapsCheckInterval)
 		go interviewpacks.NewPreparer(hub, modelClient).Run(ctx, interviewPackInterval)
+		go hiringthread.NewReader(hub, modelClient).Run(ctx, hiringThreadInterval)
 		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
 			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {

@@ -14,6 +14,10 @@ const JobSourceHimalayas = "himalayas"
 // JobSourceRemoteOK marks jobs gathered from Remote OK's feed.
 const JobSourceRemoteOK = "remoteok"
 
+// JobSourceHackerNews marks jobs read from Hacker News' monthly "Who is
+// hiring?" thread.
+const JobSourceHackerNews = "hackernews"
+
 // FeedSyncResult counts what one sync of a job feed changed.
 type FeedSyncResult struct {
 	Created  int `json:"created"`

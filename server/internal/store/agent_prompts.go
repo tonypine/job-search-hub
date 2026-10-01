@@ -60,6 +60,9 @@ const (
 	// AgentPromptKindInterviewPrep writes a pursued job's interview pack:
 	// the likely questions and the confirmed cases to tell.
 	AgentPromptKindInterviewPrep = "interview_prep"
+	// AgentPromptKindHiringThread reads a comment of Hacker News' monthly
+	// "Who is hiring?" thread into its company and roles.
+	AgentPromptKindHiringThread = "hiring_thread"
 )
 
 var agentPromptKinds = map[string]bool{
@@ -67,7 +70,7 @@ var agentPromptKinds = map[string]bool{
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
 	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true, AgentRunKindJobFix: true, AgentPromptKindRecruiterScreen: true,
-	AgentPromptKindMarketGaps: true, AgentPromptKindInterviewPrep: true,
+	AgentPromptKindMarketGaps: true, AgentPromptKindInterviewPrep: true, AgentPromptKindHiringThread: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

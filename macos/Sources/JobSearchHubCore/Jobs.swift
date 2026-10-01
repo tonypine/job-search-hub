@@ -43,6 +43,7 @@ extension Job {
         case "careers_page": "Careers page"
         case "himalayas": "Himalayas"
         case "remoteok": "Remote OK"
+        case "hackernews": "HN Who is hiring"
         case "indeed": "Indeed alert"
         case "linkedin": "LinkedIn alert"
         case "glassdoor": "Glassdoor alert"

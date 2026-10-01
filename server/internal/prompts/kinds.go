@@ -42,4 +42,5 @@ var Kinds = []KindInfo{
 		[]string{"{{knowledge_base}}", "{{job_criteria}}"}},
 	{store.AgentPromptKindMailTriage, "Mail triage", "Tells the local model how to sort received mail no rule could sort.", []string{}},
 	{store.AgentPromptKindLinkedInConversation, "LinkedIn conversations", "Tells the local model how to sort LinkedIn conversations others started.", []string{}},
+	{store.AgentPromptKindHiringThread, "HN hiring thread", "Tells the local model how to read a comment of Hacker News' monthly “Who is hiring?” thread into its company and roles.", []string{}},
 }
