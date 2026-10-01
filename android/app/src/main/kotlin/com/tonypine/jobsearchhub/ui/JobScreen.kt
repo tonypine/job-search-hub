@@ -45,6 +45,7 @@ import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.core.JobBrief
 import com.tonypine.jobsearchhub.core.JobBriefPoint
 import com.tonypine.jobsearchhub.core.JobDetails
+import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -58,6 +59,9 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
     var error by remember { mutableStateOf<String?>(null) }
     var isAskingForSkip by remember { mutableStateOf(false) }
     var reason by remember { mutableStateOf("") }
+    var isAskingForFix by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(id) {
         viewModel.loadJob(id).onSuccess { details = it }.onFailure { error = it.message }
@@ -84,13 +88,38 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
             dismissButton = { TextButton(onClick = { isAskingForSkip = false }) { Text("Cancel") } },
         )
     }
+    if (isAskingForFix) {
+        AlertDialog(
+            onDismissRequest = { isAskingForFix = false },
+            title = { Text("Fix this job?") },
+            text = {
+                Column {
+                    Text("Say what's wrong. An agent on the Mac corrects the details, and the outcome comes as an update.")
+                    OutlinedTextField(note, { note = it }, label = { Text("What's wrong") })
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = note.isNotBlank(), onClick = {
+                    isAskingForFix = false
+                    scope.launch {
+                        message = viewModel.askTheMac(QueueTaskRequest(kind = "fix_job", jobId = id, note = note.trim()))
+                            .fold({ "Sent to the Mac. The result comes as an update." }, { it.message })
+                    }
+                }) { Text("Fix") }
+            },
+            dismissButton = { TextButton(onClick = { isAskingForFix = false }) { Text("Cancel") } },
+        )
+    }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text(details?.companyName ?: "Job") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
         )
         when {
-            details != null -> JobDetailsView(details!!, onOpenCompany, onSkip = { isAskingForSkip = true }, onDecide = { decide(it, "") }, error = error)
+            details != null -> JobDetailsView(
+                details!!, onOpenCompany, onSkip = { isAskingForSkip = true }, onDecide = { decide(it, "") },
+                onFix = { isAskingForFix = true }, message = message, error = error,
+            )
             error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
             else -> CircularProgressIndicator(Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
@@ -98,7 +127,15 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
 }
 
 @Composable
-private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, onSkip: () -> Unit, onDecide: (String) -> Unit, error: String?) {
+private fun JobDetailsView(
+    details: JobDetails,
+    onOpenCompany: (String) -> Unit,
+    onSkip: () -> Unit,
+    onDecide: (String) -> Unit,
+    onFix: () -> Unit,
+    message: String?,
+    error: String?,
+) {
     val context = LocalContext.current
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(details.job.title, style = MaterialTheme.typography.titleLarge)
@@ -108,6 +145,7 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit,
             details.job.companyId?.let { companyId ->
                 OutlinedButton(onClick = { onOpenCompany(companyId) }) { Text("Company brief") }
             }
+            OutlinedButton(onClick = onFix) { Text("Fix…") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { onDecide("pursue") }) { Text("Pursue") }
@@ -115,6 +153,7 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit,
             OutlinedButton(onClick = { onDecide("later") }) { Text("Later") }
         }
         details.decision?.let { Text(describeDecision(it.decision, it.reason), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         details.brief?.let { brief ->

@@ -47,10 +47,17 @@ data class PipelineBoard(val phases: List<PipelinePhase>, val cards: List<Pipeli
 
 /** Work asked of the Mac, which is the only place agents run. */
 @Serializable
-data class TaskRequest(val id: String, val kind: String, val status: String, val companyId: String? = null, val input: String? = null)
+data class TaskRequest(val id: String, val kind: String, val status: String, val companyId: String? = null, val jobId: String? = null, val input: String? = null)
 
 @Serializable
-data class QueueTaskRequest(val kind: String, val companyId: String? = null, val company: String? = null)
+data class QueueTaskRequest(
+    val kind: String,
+    val companyId: String? = null,
+    val company: String? = null,
+    /** A fix_job's job and the note on what's wrong with it. */
+    val jobId: String? = null,
+    val note: String? = null,
+)
 
 @Serializable
 data class SetPushTokenRequest(val token: String)

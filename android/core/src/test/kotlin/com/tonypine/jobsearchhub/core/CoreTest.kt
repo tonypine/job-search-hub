@@ -26,6 +26,14 @@ class CoreTest {
     }
 
     @Test
+    fun aFixRequestCarriesTheJobAndTheNote() {
+        val encoded = hubJson.encodeToString(QueueTaskRequest.serializer(), QueueTaskRequest(kind = "fix_job", jobId = "j1", note = "the city is Lisbon"))
+        assertEquals("""{"kind":"fix_job","job_id":"j1","note":"the city is Lisbon"}""", encoded)
+        val task = hubJson.decodeFromString<TaskRequest>("""{"id":"t1","kind":"fix_job","status":"queued","job_id":"j1","input":"the city is Lisbon"}""")
+        assertEquals("j1", task.jobId)
+    }
+
+    @Test
     fun goodFitsComeFirstThenUnclearOnesWhenAsked() {
         fun item(id: String, level: String, seen: String) =
             JobListItem(Job(id = id, source = "x", title = id, url = "https://x/$id", firstSeenAt = seen), fit = JobFit(level))
