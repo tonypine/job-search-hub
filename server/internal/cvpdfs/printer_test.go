@@ -86,3 +86,34 @@ func TestTheBaseCVPrintsToItsOwnFolderAndAMissingCommandFails(t *testing.T) {
 		t.Errorf("a missing command: %v", err)
 	}
 }
+
+func TestOneRolePostedForTwoRegionsPrintsToTwoFolders(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Customer.io", Domain: "customer.io"})
+	folder := t.TempDir()
+	printer := NewPrinter(hub, writeFakePrintCommand(t), folder)
+	content := resume.Resume{Basics: resume.Basics{Name: "Ada Lovelace"}}
+	var cvs []store.CV
+	for index, location := range []string{"Americas Remote", "EMEA Remote", "EMEA Remote"} {
+		job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &company.ID, Title: "Senior Engineer", Location: location,
+			URL: "https://customer.io/jobs/" + string(rune('a'+index))})
+		cv, _ := hub.SaveTailoredCV(ctx, owner, job.ID, content, map[string]string{})
+		cvs = append(cvs, cv)
+	}
+	var paths []string
+	for _, cv := range cvs {
+		printed, err := printer.PrintCV(ctx, owner, cv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, printed.PDFPath)
+	}
+	if !strings.HasSuffix(filepath.Dir(paths[0]), "Customer.io - Senior Engineer (Americas Remote)") ||
+		!strings.HasSuffix(filepath.Dir(paths[1]), "Customer.io - Senior Engineer (EMEA Remote)") {
+		t.Errorf("paths = %v, want each region in its folder", paths)
+	}
+	if paths[2] == paths[1] || !strings.Contains(paths[2], "(EMEA Remote) ") {
+		t.Errorf("the second EMEA posting printed to %q, want its own folder with a short id", paths[2])
+	}
+}

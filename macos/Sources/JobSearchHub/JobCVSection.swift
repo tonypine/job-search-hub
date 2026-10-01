@@ -132,14 +132,24 @@ struct JobCVSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("CV").font(.headline)
+            HStack {
+                Text("CV").font(.headline)
+                Spacer()
+                if let file = model.cv?.printedFile {
+                    Button("Open CV", systemImage: "doc.richtext") { NSWorkspace.shared.open(file) }
+                        .help(file.path)
+                    Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                } else if model.cv != nil {
+                    Text("Printing within a few minutes").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if let comparison = model.comparison {
                 editor(comparison)
             } else if model.isLoading {
                 ProgressView().controlSize(.small)
             } else {
-                Text(details.decision?.decision == .pursue
-                     ? "Claude drafts a CV for this job within a few minutes of pursuing it."
+                Text(details.decision?.decision == .pursue || details.fit.level == .good
+                     ? "Claude drafts and prints a CV for this job within a few minutes."
                      : "Pursue the job, or draft a CV now.").foregroundStyle(.secondary)
                 draftButton
             }

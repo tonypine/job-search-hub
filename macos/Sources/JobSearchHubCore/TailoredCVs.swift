@@ -34,6 +34,12 @@ public struct CV: Decodable, Equatable, Identifiable, Sendable {
     /// until it's printed again.
     public var pdfPath: String? = nil
 
+    /// The printed file, when the CV is printed as it stands.
+    public var printedFile: URL? {
+        guard hasPDF, let pdfPath, !pdfPath.isEmpty else { return nil }
+        return URL(filePath: pdfPath)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, kind, content, citations, updatedAt, pdfPath
         case hasPDF = "hasPdf"
@@ -158,10 +164,21 @@ public extension HubClient {
         _ = try await send("POST", "v1/jobs/\(jobID.uuidString)/cv", body: EmptyBody(), as: FullBriefResponse.self)
     }
 
+    /// Starts generating the CV of every good-fit or pursued job that has
+    /// none, in the background; returns how many it will make, 0 when none
+    /// are missing or a run is already going.
+    func generateMissingCVs() async throws -> Int {
+        try await send("POST", "v1/cvs/backfill", body: EmptyBody(), as: GenerateMissingCVsResponse.self).queued
+    }
+
     /// Has the hub print the CV to its PDF file, replacing an earlier print.
     func printCV(_ cvID: UUID) async throws -> CV {
         try await send("POST", "v1/cvs/\(cvID.uuidString)/print", body: EmptyBody(), as: CV.self)
     }
+}
+
+public struct GenerateMissingCVsResponse: Decodable, Sendable {
+    public var queued: Int
 }
 
 /// A recruiter's one-minute screen of a job's tailored CV: what would make

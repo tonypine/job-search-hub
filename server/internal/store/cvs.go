@@ -179,3 +179,23 @@ func (s *Store) ListTailoredCVsWithoutPDF(ctx context.Context, limit int) ([]CV,
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (CV, error) { return scanCV(row) })
 }
+
+// HasJobsSharingTitle reports whether another job has the job's title at the
+// same company, as when a company posts one role for several regions.
+func (s *Store) HasJobsSharingTitle(ctx context.Context, jobID uuid.UUID) (bool, error) {
+	var shared bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM jobs other, jobs job
+			WHERE job.id = $1 AND other.id <> job.id AND lower(other.title) = lower(job.title)
+			  AND (other.company_id = job.company_id OR (job.company_id IS NULL AND other.company_name <> '' AND lower(other.company_name) = lower(job.company_name))))`,
+		jobID).Scan(&shared)
+	return shared, err
+}
+
+// IsCVPDFPathTaken reports whether a CV other than cvID prints to path.
+func (s *Store) IsCVPDFPathTaken(ctx context.Context, path string, cvID uuid.UUID) (bool, error) {
+	var taken bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cvs WHERE pdf_path = $1 AND id <> $2)`, path, cvID).Scan(&taken)
+	return taken, err
+}

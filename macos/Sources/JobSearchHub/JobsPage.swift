@@ -110,6 +110,8 @@ struct JobsPage: View {
     @Environment(JobDecisions.self) private var decisions
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
+    /// What starting the missing CVs said: how many it will make.
+    @State private var missingCVsNotice: String?
     @State private var dismissal: JobDismissalTarget?
     @State private var fix: JobFixTarget?
     @Environment(RemoteTaskRunner.self) private var taskRunner
@@ -163,6 +165,9 @@ struct JobsPage: View {
                             }
                         }
                     }
+                    .alert(missingCVsNotice ?? "", isPresented: Binding(get: { missingCVsNotice != nil }, set: { if !$0 { missingCVsNotice = nil } })) {
+                        Button("OK") {}
+                    }
                     .sheet(isPresented: $isAddingByURL) {
                         AddJobSheet(client: client) { added in
                             model.selectedIDs = [added.id]
@@ -178,6 +183,19 @@ struct JobsPage: View {
     }
 
     /// How many jobs show out of all, and how many of those are good fits.
+    /// Starts the hub generating the CVs good fits and pursued jobs lack,
+    /// and says how many it will make.
+    private func generateMissingCVs(with client: HubClient) async {
+        do {
+            let queued = try await client.generateMissingCVs()
+            missingCVsNotice = queued == 0
+                ? "No CVs are missing, or the hub is already making them."
+                : "Generating \(queued) \(queued == 1 ? "CV" : "CVs") in the background. Each appears in its job's details once printed."
+        } catch {
+            missingCVsNotice = "Couldn't start them: \(error)"
+        }
+    }
+
     private func describeCounts() -> String {
         let shownItems = model.getMatchingItems(filter.wrappedValue)
         let goodCount = shownItems.count { $0.fit.level == .good }
@@ -295,6 +313,8 @@ struct JobsPage: View {
             .help("Show open, closed, all or dismissed jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
             Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
+            Button("Generate missing CVs", systemImage: "doc.badge.plus") { Task { await generateMissingCVs(with: client) } }
+                .help("Draft and print a CV for every good-fit or pursued job that has none")
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                 .disabled(model.isLoading)
             ToolbarSearchField(text: $model.search, prompt: "Title, location or company")

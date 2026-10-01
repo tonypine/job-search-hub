@@ -75,7 +75,9 @@ func (printer *Printer) PrintCV(ctx context.Context, actor store.Actor, cvID uui
 }
 
 // getCVFolder is the CV's folder: its job's company and title for a tailored
-// CV, or one for the base CV.
+// CV, or one for the base CV. A job sharing its title with another at the
+// same company, as one role posted for several regions, adds its location,
+// and a folder another CV already prints to adds the job's short id.
 func (printer *Printer) getCVFolder(ctx context.Context, cv store.CV) (string, error) {
 	if cv.JobID == nil {
 		if cv.Kind != store.CVKindBase {
@@ -91,7 +93,19 @@ func (printer *Printer) getCVFolder(ctx context.Context, cv store.CV) (string, e
 	if details.CompanyName != nil && *details.CompanyName != "" {
 		name = *details.CompanyName + " - " + name
 	}
-	return filepath.Join(printer.Folder, buildFolderName(name)), nil
+	shared, err := printer.hub.HasJobsSharingTitle(ctx, *cv.JobID)
+	if err != nil {
+		return "", err
+	}
+	if shared && details.Job.Location != "" {
+		name += " (" + details.Job.Location + ")"
+	}
+	folder := filepath.Join(printer.Folder, buildFolderName(name))
+	taken, err := printer.hub.IsCVPDFPathTaken(ctx, filepath.Join(folder, buildFileName(cv.Content.Basics.Name)), cv.ID)
+	if err != nil || !taken {
+		return folder, err
+	}
+	return filepath.Join(printer.Folder, buildFolderName(name+" "+cv.JobID.String()[:8])), nil
 }
 
 // printHTML runs the print command on the HTML and returns the PDF.
