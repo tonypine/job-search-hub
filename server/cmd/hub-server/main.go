@@ -32,6 +32,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
+	"github.com/tonypine/job-search-hub/server/internal/interviewpacks"
 	"github.com/tonypine/job-search-hub/server/internal/jobalerts"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobbriefs"
@@ -76,6 +77,9 @@ const (
 	// marketGapsCheckInterval is how often the server checks whether the
 	// day's market gaps are due.
 	marketGapsCheckInterval = time.Hour
+	// interviewPackInterval picks up jobs pursued, or whose knowledge base
+	// changed, since the last pass, to prepare their interview packs.
+	interviewPackInterval = 10 * time.Minute
 )
 
 func main() {
@@ -237,6 +241,7 @@ func run() error {
 		go briefWriter.Run(ctx, jobBriefInterval)
 		go cvscreens.NewScreener(hub, modelClient).Run(ctx, cvScreenInterval)
 		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(ctx, marketGapsCheckInterval)
+		go interviewpacks.NewPreparer(hub, modelClient).Run(ctx, interviewPackInterval)
 		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
 			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
@@ -279,6 +284,7 @@ func run() error {
 	}
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterMarketGapRoutes(routes, hub, requireOwner)
+	api.RegisterInterviewPackRoutes(routes, hub, requireOwner)
 	if cvDrafter != nil {
 		api.RegisterCVRoutes(routes, hub, cvDrafter, requireOwner)
 		mcptools.AddCVTools(ownerTools, cvDrafter)

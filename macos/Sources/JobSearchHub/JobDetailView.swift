@@ -146,6 +146,9 @@ struct JobDetailView: View {
                         if details.decision?.decision == .pursue || details.cvID != nil {
                             JobCVSection(jobID: jobID, details: details, client: client)
                         }
+                        if details.decision?.decision == .pursue {
+                            InterviewPackSection(jobID: jobID, client: client)
+                        }
                         screenOutAnswers(details.screenOut ?? [])
                         if let connections = details.connections, !connections.isEmpty {
                             section("People you know at \(details.companyName ?? "this company")") {

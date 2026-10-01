@@ -57,6 +57,9 @@ const (
 	// AgentPromptKindMarketGaps plans how to close the skills good fits keep
 	// asking for and the knowledge base lacks.
 	AgentPromptKindMarketGaps = "market_gaps"
+	// AgentPromptKindInterviewPrep writes a pursued job's interview pack:
+	// the likely questions and the confirmed cases to tell.
+	AgentPromptKindInterviewPrep = "interview_prep"
 )
 
 var agentPromptKinds = map[string]bool{
@@ -64,7 +67,7 @@ var agentPromptKinds = map[string]bool{
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
 	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true, AgentRunKindJobFix: true, AgentPromptKindRecruiterScreen: true,
-	AgentPromptKindMarketGaps: true,
+	AgentPromptKindMarketGaps: true, AgentPromptKindInterviewPrep: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

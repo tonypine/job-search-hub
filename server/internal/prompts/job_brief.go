@@ -53,12 +53,19 @@ func formatKnowledgeBase(entries []store.ProfileEntry) (string, map[string]uuid.
 		refs[ref] = entry.ID
 		fmt.Fprintf(&text, "%s[%s] %s\n", indent, ref, describeEntry(entry))
 	}
+	roleIDs := map[uuid.UUID]bool{}
+	for _, entry := range entries {
+		if entry.Kind == "role" {
+			roleIDs[entry.ID] = true
+		}
+	}
 	childrenByRole := map[uuid.UUID][]store.ProfileEntry{}
 	var unattached []store.ProfileEntry
 	for _, entry := range entries {
 		switch {
 		case entry.Kind == "role":
-		case entry.RoleID != nil:
+		// A child whose role isn't listed, as when only confirmed entries are, stands alone.
+		case entry.RoleID != nil && roleIDs[*entry.RoleID]:
 			childrenByRole[*entry.RoleID] = append(childrenByRole[*entry.RoleID], entry)
 		default:
 			unattached = append(unattached, entry)
@@ -127,4 +134,26 @@ func shortenText(text string, length int) string {
 func formatBriefCriteria(criteria store.JobCriteria) string {
 	return fmt.Sprintf("Roles: %s\nLevels: %s\nStack: %s",
 		strings.Join(criteria.Roles, "; "), strings.Join(criteria.SeniorityLevels, ", "), strings.Join(criteria.Technologies, ", "))
+}
+
+// InterviewPrepPrompt is the interview_prep prompt with the confirmed
+// knowledge base filled in, and the references its entries carry: a pack
+// cites "E3", and EntryRefs turns it back into the entry.
+type InterviewPrepPrompt struct {
+	Rendered
+	EntryRefs map[string]uuid.UUID
+}
+
+// RenderInterviewPrepPrompt fills the prompt's {{knowledge_base}} with the
+// confirmed entries only, each marked with a reference: an interview pack
+// tells the cases the owner stands behind.
+func RenderInterviewPrepPrompt(ctx context.Context, hub *store.Store, prompt store.AgentPrompt) (InterviewPrepPrompt, error) {
+	confirmed := true
+	entries, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Confirmed: &confirmed})
+	if err != nil {
+		return InterviewPrepPrompt{}, err
+	}
+	knowledgeBase, refs := formatKnowledgeBase(entries)
+	filled := strings.NewReplacer("{{knowledge_base}}", knowledgeBase).Replace(prompt.Body)
+	return InterviewPrepPrompt{Rendered: Rendered{Body: filled, Version: prompt.Version}, EntryRefs: refs}, nil
 }
