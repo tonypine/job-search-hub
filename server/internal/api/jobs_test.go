@@ -418,3 +418,23 @@ func TestTheDecisionSignalsCountTheWeeksDecisions(t *testing.T) {
 		t.Errorf("queue: %d", status)
 	}
 }
+
+func TestTheBaseCVIsSavedAndRenderedAsHTML(t *testing.T) {
+	service := startAPI(t)
+	if status, _ := send(t, http.MethodGet, service.url+"/v1/cvs/base", ownerToken, ""); status != http.StatusNotFound {
+		t.Errorf("before a base CV: %d, want 404", status)
+	}
+	body := `{"basics":{"name":"Ada Lovelace","label":"Senior Engineer"},"work":[{"name":"Acme","position":"Engineer","startDate":"2020-03","highlights":["Shipped it."]}]}`
+	status, answer := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, body)
+	var saved store.CV
+	if err := json.Unmarshal(answer, &saved); status != http.StatusOK || err != nil || saved.Kind != "base" || saved.Content.Work[0].Highlights[0] != "Shipped it." {
+		t.Fatalf("save: %d %s", status, answer)
+	}
+	status, page := send(t, http.MethodGet, service.url+"/v1/cvs/base/html", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(page), "<h1>Ada Lovelace</h1>") || !strings.Contains(string(page), "Mar 2020 - Present") {
+		t.Fatalf("html: %d %s", status, page)
+	}
+	if status, _ := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, `{"basics":{}}`); status != http.StatusBadRequest {
+		t.Errorf("a CV without a name: %d, want 400", status)
+	}
+}

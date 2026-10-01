@@ -247,6 +247,7 @@ func run() error {
 	}
 	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
+	api.RegisterCVRoutes(routes, hub, requireOwner)
 	mcptools.AddModelWorkTools(ownerTools, modelWork)
 
 	var mailBackfiller api.MailBackfiller

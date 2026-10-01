@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Basics.Name}}</title>
+<style>
+  @page { size: A4; margin: 18mm 17mm 16mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, "Liberation Sans", Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.35; color: #111; }
+  h1 { margin: 0; font-size: 25pt; font-weight: 700; letter-spacing: -0.2pt; }
+  .label { margin-top: 4pt; font-size: 11pt; color: #222; }
+  .location { margin-top: 3pt; font-size: 9pt; color: #444; }
+  h2 { margin: 14pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.2pt solid #111; font-size: 10.5pt; font-weight: 700; letter-spacing: 1.1pt; text-transform: uppercase; }
+  p { margin: 0; }
+  .entry { margin-bottom: 9pt; break-inside: avoid; }
+  .heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12pt; }
+  .heading strong { font-weight: 700; }
+  .dates { font-size: 9pt; color: #444; white-space: nowrap; }
+  .place { color: #444; }
+  ul { margin: 4pt 0 0; padding-left: 13pt; }
+  li { margin: 1pt 0; }
+  .skills { margin-top: 3pt; font-size: 9pt; }
+  .skills strong { font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{.Basics.Name}}</h1>
+  {{with .Basics.Label}}<p class="label">{{.}}</p>{{end}}
+  {{with formatLocation .Basics.Location}}<p class="location">{{.}}</p>{{end}}
+</header>
+{{with .Basics.Summary}}
+<section>
+  <h2>Summary</h2>
+  <p>{{.}}</p>
+</section>
+{{end}}
+{{if .Work}}
+<section>
+  <h2>Experience</h2>
+  {{range .Work}}
+  <div class="entry">
+    <div class="heading"><strong>{{.Position}}</strong><span class="dates">{{formatDateRange .StartDate .EndDate}}</span></div>
+    <p class="place">{{.Name}}{{with .Location}} | {{.}}{{end}}</p>
+    {{if .Highlights}}<ul>{{range .Highlights}}<li>{{.}}</li>{{end}}</ul>{{end}}
+    {{if .Skills}}<p class="skills"><strong>Skills:</strong> {{join .Skills ", "}}</p>{{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{if .Education}}
+<section>
+  <h2>Education</h2>
+  {{range .Education}}
+  <div class="entry">
+    <div class="heading"><strong>{{formatDegree .}}</strong><span class="dates">{{formatDateRange .StartDate .EndDate}}</span></div>
+    <p class="place">{{.Institution}}</p>
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{if .Skills}}
+<section>
+  <h2>Skills</h2>
+  <p>{{joinSkillNames .Skills}}</p>
+</section>
+{{end}}
+{{if .Languages}}
+<section>
+  <h2>Languages</h2>
+  <p>{{joinLanguages .Languages}}</p>
+</section>
+{{end}}
+</body>
+</html>
