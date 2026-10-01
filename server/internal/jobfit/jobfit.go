@@ -103,6 +103,11 @@ func CouldFit(posting store.JobPosting, criteria store.JobCriteria) bool {
 	return checkRole(job, criteria).Verdict == VerdictYes && checkLocation(job, readFacts{}, criteria).Verdict != VerdictNo
 }
 
+// IsRoleRuledOut reports whether a job's title alone rules it out.
+func IsRoleRuledOut(job store.Job, criteria store.JobCriteria) bool {
+	return checkRole(job, criteria).Verdict == VerdictNo
+}
+
 func getLevel(checks []Check) Level {
 	allYes := true
 	for _, check := range checks {

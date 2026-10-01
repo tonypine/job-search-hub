@@ -176,3 +176,31 @@ func TestAProviderLimitingRequestsIsLeftAloneForThePass(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCompanyBehindAnUnreadAlertJobIsSearchedWhateverItsFit(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveJobCriteria(ctx, owner, store.JobCriteria{
+		Roles: []string{"Frontend Engineer"}, ExcludedRoleTerms: []string{"Sales"}, EligibleLocationTerms: []string{"Brazil"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+	alertJob := func(company, title string) store.JobPosting {
+		return store.JobPosting{ExternalID: company + title, CompanyName: company, Title: title, Location: "Lisbon",
+			ExpiresAt: &expiresAt, URL: "https://www.glassdoor.com.br/job-listing/j?jl=1"}
+	}
+	if _, err := hub.SyncFeedJobs(ctx, owner, store.JobSourceGlassdoor, []store.JobPosting{
+		alertJob("Initech", "Frontend Engineer"), alertJob("Globex", "Sales Manager"),
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	boards := &fakeBoards{titles: map[string][]string{jobboards.Recruitee + "/initech": {"Frontend Engineer"}}}
+	finder := New(hub, boards, noRates{})
+	finder.RequestPause = 0
+
+	summary, err := finder.FindOnce(ctx)
+	if err != nil || summary != (PassSummary{Found: 1}) {
+		t.Fatalf("summary = %+v, %v; want Initech's board found, though its job reads poor without text, and Globex left out", summary, err)
+	}
+}

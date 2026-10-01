@@ -95,7 +95,12 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// FeedCompany is a company that good or unclear feed jobs name.
+// alertSources are the sources whose jobs come from mail alerts, often with
+// no text to judge them by.
+var alertSources = []string{store.JobSourceIndeed, store.JobSourceLinkedIn, store.JobSourceGlassdoor}
+
+// FeedCompany is a company that good or unclear feed jobs name, or alert
+// jobs without text whose titles don't rule them out.
 type FeedCompany struct {
 	Name   string
 	Titles []string
@@ -148,8 +153,8 @@ func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 }
 
 // listCompaniesToSearch returns the companies behind open good or unclear
-// feed jobs that have no board stored and providers left to ask, good fits
-// first, then the ones with the most jobs.
+// feed jobs, or unread alert jobs, that have no board stored and providers
+// left to ask, good fits first, then the ones with the most jobs.
 func (finder *Finder) listCompaniesToSearch(ctx context.Context) ([]FeedCompany, error) {
 	criteria, rates, err := jobfit.ReadInputs(ctx, finder.hub, finder.rates)
 	if err != nil {
@@ -188,7 +193,7 @@ func (finder *Finder) listCompaniesToSearch(ctx context.Context) ([]FeedCompany,
 				company = &FeedCompany{Name: name, SearchedProviders: searchedProviders, ProvidersToSearch: providersToSearch}
 			}
 			level := jobfit.Judge(item.Job, item.Facts, criteria, rates).Level
-			if level == jobfit.LevelPoor {
+			if level == jobfit.LevelPoor && !isUnreadAlertJob(item.Job, criteria) {
 				continue
 			}
 			if !known {
@@ -219,6 +224,13 @@ func (finder *Finder) listCompaniesToSearch(ctx context.Context) ([]FeedCompany,
 		return cmp.Compare(len(b.Titles), len(a.Titles))
 	})
 	return companies, nil
+}
+
+// isUnreadAlertJob reports whether a job came from a mail alert without its
+// posting's text, so its fit can't be judged yet, and its title doesn't rule
+// it out: its company's board would give the text.
+func isUnreadAlertJob(job store.Job, criteria store.JobCriteria) bool {
+	return slices.Contains(alertSources, job.Source) && strings.TrimSpace(job.Description) == "" && !jobfit.IsRoleRuledOut(job, criteria)
 }
 
 // getSearchedProviders returns the providers that answered the company's

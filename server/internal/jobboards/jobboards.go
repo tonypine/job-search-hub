@@ -32,7 +32,9 @@ const (
 )
 
 const (
-	requestTimeout = 10 * time.Second
+	// requestTimeout leaves room for a large board's full text, which
+	// Greenhouse took over 10 seconds to send for 96 postings.
+	requestTimeout = 30 * time.Second
 	userAgent      = "job-search-hub/0.1"
 )
 

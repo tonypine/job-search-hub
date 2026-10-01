@@ -120,6 +120,33 @@ func TestAGlassdoorAlertGivesItsCardsFromTheHTML(t *testing.T) {
 	}
 }
 
+func TestAGlassdoorCheckInGivesItsCards(t *testing.T) {
+	card := func(listingID, title, company, location string) string {
+		link := `<a href="https://www.glassdoor.com.br/partner/jobListing.htm?pos=101&amp;jobListingId=` + listingID + `&amp;utm_source=jobalert">`
+		return link + `<img class="logo" alt="` + company + `"/></a></td><td valign="top">` + link +
+			`<table><tr><td class="gd-title">` + title + `</td></tr></table><span class="gd-company">` + company + `<!-- --> - </span>` +
+			`<span class="gd-place">` + location + `</span><table><tr><td>Candidatura rápida</td></tr></table></a>`
+	}
+	alert := jobalerts.Alert{
+		Sender: "Vagas do Glassdoor <noreply@glassdoor.com>", Subject: "Como está sua busca de vagas de Engenheiro(a) De Software Front-end?", SentAt: sentAt,
+		HTML: `<html><body><table><tr><td>` + card("801", "Especialista de Desenvolvimento Frontend", "Initech", "Campinas, São Paulo") +
+			card("802", "Desenvolvedor Front-end", "Globex &amp; Filhos", "Trabalho remoto") + `</td></tr></table></body></html>`,
+	}
+
+	postings := jobalerts.ParsePostings(store.JobSourceGlassdoor, alert)
+
+	if len(postings) != 2 {
+		t.Fatalf("postings = %+v", postings)
+	}
+	if first := postings[0]; first.ExternalID != "801" || first.Title != "Especialista de Desenvolvimento Frontend" || first.CompanyName != "Initech" ||
+		first.Location != "Campinas, São Paulo" || first.URL != "https://www.glassdoor.com.br/job-listing/j?jl=801" {
+		t.Errorf("first = %+v", first)
+	}
+	if second := postings[1]; second.CompanyName != "Globex & Filhos" || second.Location != "Trabalho remoto" {
+		t.Errorf("second = %+v", second)
+	}
+}
+
 func TestOnlyAlertSendersHaveASource(t *testing.T) {
 	for sender, want := range map[string]bool{
 		"Indeed <donotreply@match.indeed.com>":       true,

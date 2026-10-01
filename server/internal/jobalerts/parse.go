@@ -215,12 +215,16 @@ var (
 	glassdoorParagraph = regexp.MustCompile(`(?s)<p[^>]*>(.*?)</p>`)
 	glassdoorAge       = regexp.MustCompile(`^(\d+)\+?\s*(dia\(s\)|d|days?|h)$`)
 	glassdoorPay       = regexp.MustCompile(`(?:R\$|US\$|\$|€|£)\s*\d`)
-	anyTag             = regexp.MustCompile(`<[^>]*>`)
+	// glassdoorCheckInCard is a card of the "how's your search going" mail:
+	// the title in a cell, then the company and the location in spans.
+	glassdoorCheckInCard = regexp.MustCompile(`(?s)<td[^>]*>([^<]+)</td>.*?<span[^>]*>([^<]*)<!--\s*-->[^<]*</span>\s*<span[^>]*>([^<]*)</span>`)
+	anyTag               = regexp.MustCompile(`<[^>]*>`)
 )
 
 // parseGlassdoor reads Glassdoor's alerts from their HTML, where each posting
 // is a card linked to its listing: the company, then paragraphs for the
-// title, the location, the pay, and how many days ago it was posted.
+// title, the location, the pay, and how many days ago it was posted. A
+// search check-in's cards give the title, the company and the location.
 func parseGlassdoor(alert Alert) []store.JobPosting {
 	seen := map[string]bool{}
 	var postings []store.JobPosting
@@ -233,7 +237,17 @@ func parseGlassdoor(alert Alert) []store.JobPosting {
 				paragraphs = append(paragraphs, text)
 			}
 		}
-		if seen[listingID] || company == nil || len(paragraphs) == 0 {
+		if seen[listingID] {
+			continue
+		}
+		if company == nil || len(paragraphs) == 0 {
+			if checkIn := glassdoorCheckInCard.FindStringSubmatch(content); checkIn != nil && getHTMLText(checkIn[2]) != "" {
+				seen[listingID] = true
+				postings = append(postings, store.JobPosting{
+					ExternalID: listingID, Title: getHTMLText(checkIn[1]), CompanyName: getHTMLText(checkIn[2]),
+					Location: getHTMLText(checkIn[3]), URL: host + "/job-listing/j?jl=" + listingID,
+				})
+			}
 			continue
 		}
 		posting := store.JobPosting{
