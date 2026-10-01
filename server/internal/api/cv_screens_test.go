@@ -22,7 +22,7 @@ func TestAJobsCVScreenIsServedOnceWritten(t *testing.T) {
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	})
 	routes := http.NewServeMux()
-	api.RegisterCVRoutes(routes, hub, nil, requireOwner)
+	api.RegisterCVRoutes(routes, hub, nil, nil, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	ctx := context.Background()

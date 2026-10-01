@@ -40,6 +40,10 @@ mkdir -p "$app_dir/bin" "$config_dir" "$log_dir"
 echo "==> Building hub-server"
 (cd "$repo/server" && go build -trimpath -o "$app_dir/bin/hub-server" ./cmd/hub-server)
 
+echo "==> Building hub-cvprint, which the server prints CVs with"
+(cd "$repo/macos" && swift build -c release --product hub-cvprint >/dev/null)
+cp "$(cd "$repo/macos" && swift build -c release --product hub-cvprint --show-bin-path)/hub-cvprint" "$app_dir/bin/hub-cvprint"
+
 env_file="$config_dir/server.env"
 if [[ ! -f "$env_file" ]]; then
   echo "==> Writing $env_file from $repo/.env"

@@ -66,6 +66,10 @@ type config struct {
 	claudeBinary   string
 	fullBriefModel string
 	claudeFolder   string
+	// cvPrintCommand is the hub-cvprint command CVs print to PDF with, and
+	// cvFolder where the PDFs go, one folder per job.
+	cvPrintCommand string
+	cvFolder       string
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -163,8 +167,16 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	if parsed.fullBriefModel == "" {
 		parsed.fullBriefModel = "sonnet"
 	}
+	parsed.cvPrintCommand = lookup("HUB_CV_PRINT_BIN")
+	parsed.cvFolder = lookup("HUB_CV_FOLDER")
 	if home, err := os.UserHomeDir(); err == nil {
 		parsed.claudeFolder = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "claude-print")
+		if parsed.cvPrintCommand == "" {
+			parsed.cvPrintCommand = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "bin", "hub-cvprint")
+		}
+		if parsed.cvFolder == "" {
+			parsed.cvFolder = filepath.Join(home, "Interview", "CVs")
+		}
 	}
 	return parsed, nil
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/comparisons"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
 	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
+	"github.com/tonypine/job-search-hub/server/internal/cvpdfs"
 	"github.com/tonypine/job-search-hub/server/internal/cvscreens"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
@@ -285,11 +286,25 @@ func run() error {
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterMarketGapRoutes(routes, hub, requireOwner)
 	api.RegisterInterviewPackRoutes(routes, hub, requireOwner)
-	if cvDrafter != nil {
-		api.RegisterCVRoutes(routes, hub, cvDrafter, requireOwner)
-		mcptools.AddCVTools(ownerTools, cvDrafter)
+	var cvPrinter *cvpdfs.Printer
+	if _, err := os.Stat(settings.cvPrintCommand); err != nil {
+		slog.Warn("CV printing off: no hub-cvprint command", "command", settings.cvPrintCommand)
 	} else {
-		api.RegisterCVRoutes(routes, hub, nil, requireOwner)
+		cvPrinter = cvpdfs.NewPrinter(hub, settings.cvPrintCommand, settings.cvFolder)
+	}
+	if cvDrafter != nil {
+		mcptools.AddCVTools(ownerTools, cvDrafter)
+	}
+	// Either can be off; a nil pointer passed as the interface wouldn't read as off.
+	switch {
+	case cvDrafter != nil && cvPrinter != nil:
+		api.RegisterCVRoutes(routes, hub, cvDrafter, cvPrinter, requireOwner)
+	case cvDrafter != nil:
+		api.RegisterCVRoutes(routes, hub, cvDrafter, nil, requireOwner)
+	case cvPrinter != nil:
+		api.RegisterCVRoutes(routes, hub, nil, cvPrinter, requireOwner)
+	default:
+		api.RegisterCVRoutes(routes, hub, nil, nil, requireOwner)
 	}
 	mcptools.AddModelWorkTools(ownerTools, modelWork)
 

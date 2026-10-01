@@ -133,7 +133,7 @@ func TestAnEditKeepsItsCitationsAndAPrintedPDFIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.SaveCVPDF(ctx, owner, cv.ID, []byte("%PDF-1.4 x")); err != nil {
+	if err := hub.SaveCVPDF(ctx, owner, cv.ID, []byte("%PDF-1.4 x"), "/tmp/cv.pdf"); err != nil {
 		t.Fatal(err)
 	}
 	if printed, _ := hub.GetCV(ctx, cv.ID); !printed.HasPDF {

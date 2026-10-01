@@ -23,10 +23,11 @@ private func makeCV(label: String, summary: String, work: [[String]], citations:
 }
 
 @Test func aCVDecodesWithItsCitationsAndPDF() throws {
-    let json = #"{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","kind":"tailored","has_pdf":true,"citations":{"w0h0":"base:w1h0"},"#
+    let json = #"{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","kind":"tailored","has_pdf":true,"pdf_path":"/Users/ada/Interview/CVs/Acme - Engineer/Ada_CV.pdf","citations":{"w0h0":"base:w1h0"},"#
         + #""content":{"basics":{"name":"Ada","label":"L","summary":"S","location":{"city":"X"}},"work":[{"name":"Co","position":"P","startDate":"2020-01","highlights":["H"]}]}}"#
     let cv = try HubJSON.makeDecoder().decode(CV.self, from: Data(json.utf8))
     #expect(cv.hasPDF && cv.citations["w0h0"] == "base:w1h0" && cv.content.work.first?.startDate == "2020-01")
+    #expect(cv.pdfPath == "/Users/ada/Interview/CVs/Acme - Engineer/Ada_CV.pdf")
 }
 
 @Test func aRecruiterScreenDecodesAndKnowsWhenItsCVChanged() throws {

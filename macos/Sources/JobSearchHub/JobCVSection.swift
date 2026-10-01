@@ -97,20 +97,18 @@ final class JobCVModel {
         }
     }
 
-    /// Prints the CV to a PDF in ~/Documents/Job Search Hub/CVs, keeps it in
-    /// the hub, and opens it.
-    func printPDF(fileName: String, with client: HubClient) async {
+    /// Has the hub print the CV to its PDF file, then opens it.
+    func printPDF(with client: HubClient) async {
         guard let cv else { return }
         isPrinting = true
         defer { isPrinting = false }
         do {
-            let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Job Search Hub/CVs")
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let file = folder.appending(path: fileName + ".pdf")
-            try await CVPrinter().printPDF(html: try await client.getCVHTML(cv.id), to: file)
-            self.cv = try await client.uploadCVPDF(cv.id, try Data(contentsOf: file))
-            notice = "Printed to \(file.lastPathComponent)"
-            NSWorkspace.shared.open(file)
+            let printed = try await client.printCV(cv.id)
+            self.cv = printed
+            if let path = printed.pdfPath {
+                notice = "Printed to \(path)"
+                NSWorkspace.shared.open(URL(filePath: path))
+            }
         } catch {
             self.error = String(describing: error)
         }
@@ -201,7 +199,7 @@ struct JobCVSection: View {
                 Button("Save edits") { Task { await model.saveEdits(jobID, with: client) } }
                     .disabled(!model.hasEdits || model.isSaving)
                 Button(model.isPrinting ? "Printing…" : "Print to PDF", systemImage: "printer") {
-                    Task { await model.printPDF(fileName: makeFileName(), with: client) }
+                    Task { await model.printPDF(with: client) }
                 }
                 .disabled(model.isPrinting || model.hasEdits)
                 .help(model.hasEdits ? "Save the edits first" : "Print the CV and keep the PDF")
@@ -239,10 +237,6 @@ struct JobCVSection: View {
     }
 
     /// "Acme - Senior Engineer", safe as a file name.
-    private func makeFileName() -> String {
-        let name = [details.companyName, details.job.title].compactMap { $0 }.joined(separator: " - ")
-        return name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
-    }
 }
 
 /// The recruiter screen of the tailored CV: the verdict, then each issue with

@@ -1,11 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,9 +12,14 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
+	"github.com/tonypine/job-search-hub/server/internal/cvpdfs"
 	"github.com/tonypine/job-search-hub/server/internal/resume"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
+
+type cvPrinter interface {
+	PrintCV(ctx context.Context, actor store.Actor, cvID uuid.UUID) (store.CV, error)
+}
 
 type cvDrafter interface {
 	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
@@ -27,9 +30,10 @@ type cvDrafter interface {
 const cvDraftTimeout = 5 * time.Minute
 
 // RegisterCVRoutes adds the owner-only routes for the base CV, a job's
-// tailored CV, and any CV rendered as HTML in the owner's design. A nil
-// drafter answers that drafting is off.
-func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter, requireOwner func(http.Handler) http.Handler) {
+// tailored CV, any CV rendered as HTML in the owner's design, and printing
+// one to its PDF file. A nil drafter or printer answers that drafting or
+// printing is off.
+func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter, printer cvPrinter, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	routes.Handle("GET /v1/cvs/base", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cv, err := hub.GetBaseCV(r.Context())
@@ -116,21 +120,20 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 		}
 		writeCVOrError(w, cv, err)
 	})))
-	routes.Handle("PUT /v1/cvs/{id}/pdf", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	routes.Handle("POST /v1/cvs/{id}/print", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := parsePathIDOrWriteNotFound(w, r)
 		if !ok {
 			return
 		}
-		pdf, err := io.ReadAll(io.LimitReader(r.Body, store.MaximumCVPDFSize+1))
-		if err != nil || len(pdf) > store.MaximumCVPDFSize || !bytes.HasPrefix(pdf, []byte("%PDF")) {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "send a PDF of at most 5 MB"})
+		if printer == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "printing is off: the hub found no hub-cvprint command"})
 			return
 		}
-		if err := hub.SaveCVPDF(r.Context(), owner, id, pdf); err != nil {
-			writeCVOrError(w, store.CV{}, err)
+		cv, err := printer.PrintCV(r.Context(), owner, id)
+		if errors.Is(err, cvpdfs.ErrNotTailored) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
 		}
-		cv, err := hub.GetCV(r.Context(), id)
 		writeCVOrError(w, cv, err)
 	})))
 	routes.Handle("GET /v1/cvs/{id}/pdf", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

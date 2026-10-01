@@ -30,9 +30,12 @@ public struct CV: Decodable, Equatable, Identifiable, Sendable {
     public var citations: [String: String]
     public var hasPDF: Bool
     public var updatedAt: Date? = nil
+    /// The file the CV was last printed to on this Mac; stale after an edit
+    /// until it's printed again.
+    public var pdfPath: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, content, citations, updatedAt
+        case id, kind, content, citations, updatedAt, pdfPath
         case hasPDF = "hasPdf"
     }
 }
@@ -155,12 +158,9 @@ public extension HubClient {
         _ = try await send("POST", "v1/jobs/\(jobID.uuidString)/cv", body: EmptyBody(), as: FullBriefResponse.self)
     }
 
-    func getCVHTML(_ cvID: UUID) async throws -> String {
-        String(decoding: try await getData("v1/cvs/\(cvID.uuidString)/html"), as: UTF8.self)
-    }
-
-    func uploadCVPDF(_ cvID: UUID, _ pdf: Data) async throws -> CV {
-        try await upload("v1/cvs/\(cvID.uuidString)/pdf", data: pdf, contentType: "application/pdf", method: "PUT", as: CV.self)
+    /// Has the hub print the CV to its PDF file, replacing an earlier print.
+    func printCV(_ cvID: UUID) async throws -> CV {
+        try await send("POST", "v1/cvs/\(cvID.uuidString)/print", body: EmptyBody(), as: CV.self)
     }
 }
 

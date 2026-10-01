@@ -28,21 +28,24 @@ type CV struct {
 	JobID     *uuid.UUID        `json:"job_id,omitempty"`
 	Content   resume.Resume     `json:"content"`
 	Citations map[string]string `json:"citations"`
-	// HasPDF says the owner printed it to a PDF the hub keeps.
-	HasPDF    bool      `json:"has_pdf"`
+	// HasPDF says it was printed to a PDF the hub keeps.
+	HasPDF bool `json:"has_pdf"`
+	// PDFPath is the file it was last printed to on this machine. After an
+	// edit, the file is stale until the CV is printed again.
+	PDFPath   string    `json:"pdf_path,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-const cvColumns = `id, kind, job_id, content, citations, pdf IS NOT NULL, created_at, updated_at`
+const cvColumns = `id, kind, job_id, content, citations, pdf IS NOT NULL, pdf_path, created_at, updated_at`
 
 // prefixedCVColumns are the cvColumns qualified for queries that join jobs.
-const prefixedCVColumns = `cvs.id, cvs.kind, cvs.job_id, cvs.content, cvs.citations, cvs.pdf IS NOT NULL, cvs.created_at, cvs.updated_at`
+const prefixedCVColumns = `cvs.id, cvs.kind, cvs.job_id, cvs.content, cvs.citations, cvs.pdf IS NOT NULL, cvs.pdf_path, cvs.created_at, cvs.updated_at`
 
 func scanCV(row pgx.Row) (CV, error) {
 	var cv CV
 	var content, citations json.RawMessage
-	err := row.Scan(&cv.ID, &cv.Kind, &cv.JobID, &content, &citations, &cv.HasPDF, &cv.CreatedAt, &cv.UpdatedAt)
+	err := row.Scan(&cv.ID, &cv.Kind, &cv.JobID, &content, &citations, &cv.HasPDF, &cv.PDFPath, &cv.CreatedAt, &cv.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CV{}, ErrCVNotFound
 	}
@@ -131,14 +134,11 @@ func (s *Store) ListJobsAwaitingCV(ctx context.Context) ([]uuid.UUID, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 }
 
-// MaximumCVPDFSize bounds a CV's PDF.
-const MaximumCVPDFSize = 5 << 20
-
-// SaveCVPDF keeps the PDF the owner printed of the CV. A CV saved again
-// drops its PDF, which no longer matches it.
-func (s *Store) SaveCVPDF(ctx context.Context, actor Actor, id uuid.UUID, pdf []byte) error {
+// SaveCVPDF keeps the PDF printed of the CV and the file it was printed to.
+// A CV saved again drops its PDF, which no longer matches it.
+func (s *Store) SaveCVPDF(ctx context.Context, actor Actor, id uuid.UUID, pdf []byte, path string) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE cvs SET pdf = $2 WHERE id = $1`, id, pdf)
+		tag, err := tx.Exec(ctx, `UPDATE cvs SET pdf = $2, pdf_path = $3 WHERE id = $1`, id, pdf, path)
 		if err != nil {
 			return err
 		}
