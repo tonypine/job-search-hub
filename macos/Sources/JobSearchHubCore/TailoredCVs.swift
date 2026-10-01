@@ -29,9 +29,10 @@ public struct CV: Decodable, Equatable, Identifiable, Sendable {
     public var content: CVContent
     public var citations: [String: String]
     public var hasPDF: Bool
+    public var updatedAt: Date? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, content, citations
+        case id, kind, content, citations, updatedAt
         case hasPDF = "hasPdf"
     }
 }
@@ -160,5 +161,51 @@ public extension HubClient {
 
     func uploadCVPDF(_ cvID: UUID, _ pdf: Data) async throws -> CV {
         try await upload("v1/cvs/\(cvID.uuidString)/pdf", data: pdf, contentType: "application/pdf", method: "PUT", as: CV.self)
+    }
+}
+
+/// A recruiter's one-minute screen of a job's tailored CV: what would make
+/// them reject or hold it, how the CV can answer each, and their verdict.
+public struct CVScreen: Decodable, Equatable, Sendable {
+    public var cvUpdatedAt: Date
+    public var model: String
+    public var createdAt: Date
+    public var screen: CVScreenAnswer
+
+    /// Whether the CV changed after it was screened; the next pass screens it again.
+    public func isOutdated(for cv: CV) -> Bool {
+        cv.updatedAt.map { $0 > cvUpdatedAt } ?? false
+    }
+}
+
+public struct CVScreenAnswer: Decodable, Equatable, Sendable {
+    public var issues: [CVScreenIssue]
+    public var summary: String
+    public var verdict: CVScreenVerdict
+}
+
+public struct CVScreenIssue: Decodable, Equatable, Sendable {
+    public var issue: String
+    public var postingSays: String
+    public var response: String
+}
+
+public enum CVScreenVerdict: String, Decodable, Sendable {
+    case likelyPass = "likely_pass"
+    case borderline
+    case likelyReject = "likely_reject"
+
+    public var title: String {
+        switch self {
+        case .likelyPass: "Likely to pass"
+        case .borderline: "Borderline"
+        case .likelyReject: "Likely to be rejected"
+        }
+    }
+}
+
+public extension HubClient {
+    func getCVScreen(_ jobID: UUID) async throws -> CVScreen {
+        try await get("v1/jobs/\(jobID.uuidString)/cv/screen", as: CVScreen.self)
     }
 }

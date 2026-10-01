@@ -28,5 +28,5 @@ import Testing
 }
 
 @Test func theRoutedKindsAreListedWithTheirTitles() {
-    #expect(RoutedTaskKind.allCases.map(\.title) == ["Job facts", "Job briefs", "Mail sorting", "LinkedIn conversations"])
+    #expect(RoutedTaskKind.allCases.map(\.title) == ["Job facts", "Job briefs", "Recruiter screens", "Mail sorting", "LinkedIn conversations"])
 }

@@ -36,6 +36,9 @@ type CV struct {
 
 const cvColumns = `id, kind, job_id, content, citations, pdf IS NOT NULL, created_at, updated_at`
 
+// prefixedCVColumns are the cvColumns qualified for queries that join jobs.
+const prefixedCVColumns = `cvs.id, cvs.kind, cvs.job_id, cvs.content, cvs.citations, cvs.pdf IS NOT NULL, cvs.created_at, cvs.updated_at`
+
 func scanCV(row pgx.Row) (CV, error) {
 	var cv CV
 	var content, citations json.RawMessage

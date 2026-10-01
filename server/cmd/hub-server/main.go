@@ -25,6 +25,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/comparisons"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
 	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
+	"github.com/tonypine/job-search-hub/server/internal/cvscreens"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
@@ -68,6 +69,9 @@ const (
 	// cvDraftInterval picks up jobs pursued since the last pass, to draft
 	// their CVs.
 	cvDraftInterval = 5 * time.Minute
+	// cvScreenInterval picks up tailored CVs drafted or edited since the last
+	// pass, to screen them as a recruiter would.
+	cvScreenInterval = 5 * time.Minute
 )
 
 func main() {
@@ -227,6 +231,7 @@ func run() error {
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
 		go briefWriter.Run(ctx, jobBriefInterval)
+		go cvscreens.NewScreener(hub, modelClient).Run(ctx, cvScreenInterval)
 		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
 			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {

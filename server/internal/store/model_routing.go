@@ -21,7 +21,7 @@ var (
 
 // RoutedTaskKinds are the kinds of background task that run on a routed
 // model.
-var RoutedTaskKinds = []string{AgentPromptKindJobFacts, AgentPromptKindJobBrief, AgentPromptKindMailTriage, AgentPromptKindLinkedInConversation}
+var RoutedTaskKinds = []string{AgentPromptKindJobFacts, AgentPromptKindJobBrief, AgentPromptKindRecruiterScreen, AgentPromptKindMailTriage, AgentPromptKindLinkedInConversation}
 
 // DefaultModelProviderName names the provider the hub creates from its
 // settings, the local model server it used before routes existed.

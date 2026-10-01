@@ -7,6 +7,7 @@ import SwiftUI
 final class JobCVModel {
     private(set) var cv: CV?
     private(set) var base: CV?
+    private(set) var screen: CVScreen?
     private(set) var isLoading = false
     private(set) var isSaving = false
     private(set) var isPrinting = false
@@ -34,6 +35,7 @@ final class JobCVModel {
         do {
             base = try await client.getBaseCV()
             show(try await client.getJobCV(jobID))
+            screen = try? await client.getCVScreen(jobID)
             error = nil
         } catch HubError.notFound {
             cv = nil
@@ -146,6 +148,9 @@ struct JobCVSection: View {
             if let notice = model.notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
             }
+            if let cv = model.cv {
+                CVScreenView(screen: model.screen, cv: cv)
+            }
             if let error = model.error {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
@@ -237,5 +242,56 @@ struct JobCVSection: View {
     private func makeFileName() -> String {
         let name = [details.companyName, details.job.title].compactMap { $0 }.joined(separator: " - ")
         return name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+    }
+}
+
+/// The recruiter screen of the tailored CV: the verdict, then each issue with
+/// what the posting says and how the CV can answer it.
+private struct CVScreenView: View {
+    let screen: CVScreen?
+    let cv: CV
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recruiter screen").font(.subheadline.weight(.semibold))
+            if let screen {
+                Label(screen.screen.verdict.title, systemImage: verdictSymbol(screen.screen.verdict))
+                    .foregroundStyle(verdictColor(screen.screen.verdict))
+                Text(screen.screen.summary).foregroundStyle(.secondary)
+                ForEach(Array(screen.screen.issues.enumerated()), id: \.offset) { _, issue in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(issue.issue).fontWeight(.medium)
+                        if issue.postingSays != "not stated" {
+                            Text("“\(issue.postingSays)”").font(.caption).italic().foregroundStyle(.secondary)
+                        }
+                        Text(issue.response).font(.callout)
+                    }
+                    .padding(.leading, 8)
+                }
+                if screen.isOutdated(for: cv) {
+                    Text("The CV changed since; it's screened again within a few minutes.").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("The local model screens the CV as the job's recruiter would, within a few minutes of drafting it.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func verdictSymbol(_ verdict: CVScreenVerdict) -> String {
+        switch verdict {
+        case .likelyPass: "checkmark.circle.fill"
+        case .borderline: "questionmark.circle.fill"
+        case .likelyReject: "xmark.circle.fill"
+        }
+    }
+
+    private func verdictColor(_ verdict: CVScreenVerdict) -> Color {
+        switch verdict {
+        case .likelyPass: .green
+        case .borderline: .orange
+        case .likelyReject: .red
+        }
     }
 }

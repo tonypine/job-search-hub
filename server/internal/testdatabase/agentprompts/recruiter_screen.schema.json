@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issues",
+    "summary",
+    "verdict"
+  ],
+  "properties": {
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue",
+          "posting_says",
+          "response"
+        ],
+        "properties": {
+          "issue": {
+            "type": "string"
+          },
+          "posting_says": {
+            "type": "string"
+          },
+          "response": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "likely_pass",
+        "borderline",
+        "likely_reject"
+      ]
+    }
+  }
+}

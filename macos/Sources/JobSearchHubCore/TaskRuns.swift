@@ -81,6 +81,7 @@ public enum RunsSummary {
         switch kind {
         case "job_facts": "Job facts"
         case "job_brief": "Job briefs"
+        case "recruiter_screen": "Recruiter screens"
         case "mail_triage": "Mail sorting"
         case "linkedin_conversation": "LinkedIn conversations"
         case "company_triage": "Company research"

@@ -48,6 +48,22 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 		cv, err := hub.SaveBaseCV(r.Context(), owner, content)
 		writeCVOrError(w, cv, err)
 	})))
+	routes.Handle("GET /v1/jobs/{id}/cv/screen", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		screen, err := hub.GetCVScreen(r.Context(), id)
+		if errors.Is(err, store.ErrCVScreenNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "the job's CV hasn't been screened yet"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, screen)
+	})))
 	routes.Handle("GET /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {

@@ -28,3 +28,15 @@ private func makeCV(label: String, summary: String, work: [[String]], citations:
     let cv = try HubJSON.makeDecoder().decode(CV.self, from: Data(json.utf8))
     #expect(cv.hasPDF && cv.citations["w0h0"] == "base:w1h0" && cv.content.work.first?.startDate == "2020-01")
 }
+
+@Test func aRecruiterScreenDecodesAndKnowsWhenItsCVChanged() throws {
+    let json = #"{"job_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","cv_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","cv_updated_at":"2026-09-30T22:00:00Z","model":"local","created_at":"2026-09-30T22:01:00Z","#
+        + #""screen":{"issues":[{"issue":"No GraphQL","posting_says":"GraphQL APIs","response":"The CV can't answer it."}],"summary":"Close.","verdict":"likely_reject"}}"#
+    let screen = try HubJSON.makeDecoder().decode(CVScreen.self, from: Data(json.utf8))
+    #expect(screen.screen.verdict == .likelyReject && screen.screen.issues.first?.postingSays == "GraphQL APIs")
+    var cv = CV(id: UUID(), kind: "tailored", content: CVContent(basics: CVBasics(name: "Ada", label: "L", summary: "S"), work: []), citations: [:], hasPDF: false)
+    cv.updatedAt = screen.cvUpdatedAt
+    #expect(!screen.isOutdated(for: cv))
+    cv.updatedAt = screen.cvUpdatedAt.addingTimeInterval(60)
+    #expect(screen.isOutdated(for: cv))
+}
