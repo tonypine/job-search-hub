@@ -187,3 +187,23 @@ func TestWorkedExamplesAreSentAsEarlierTurns(t *testing.T) {
 		t.Fatalf("roles = %s, second = %v, last = %v", roles, second, last)
 	}
 }
+
+func TestTheSchemaReachesTheModelInTheOrderItWasWritten(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		body = string(payload)
+		w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	ordered := request
+	ordered.Schema = json.RawMessage(`{"type":"object","properties":{"reason":{"type":"string"},"posting_says":{"type":"string"},"answer":{"type":"string"}}}`)
+
+	if _, err := chatcompletions.NewClient(server.URL+"/v1/").CompleteJSON(context.Background(), ordered); err != nil {
+		t.Fatal(err)
+	}
+	format := body[strings.Index(body, `"response_format"`):]
+	if !(strings.Index(format, `"reason"`) < strings.Index(format, `"posting_says"`) && strings.Index(format, `"posting_says"`) < strings.Index(format, `"answer"`)) {
+		t.Errorf("response_format = %s, want reason, posting_says, answer as written", format)
+	}
+}

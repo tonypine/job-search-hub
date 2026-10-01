@@ -1,8 +1,10 @@
 package mcptools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -18,7 +20,7 @@ type getAgentPromptInput struct {
 type updateAgentPromptInput struct {
 	Kind         string               `json:"kind" jsonschema:"the prompt: company_triage or job_facts"`
 	Body         string               `json:"body" jsonschema:"the whole new prompt; in company_triage, {{company}}, {{owner_profile}} and {{company_dossier}} are filled in at each run"`
-	ResultSchema map[string]any       `json:"result_schema,omitempty" jsonschema:"the JSON schema the answer must match; for job_facts, one property per fact, each with a title and a description; the previous version's schema is kept when absent"`
+	ResultSchema json.RawMessage      `json:"result_schema,omitempty" jsonschema:"the JSON schema object the answer must match, kept as written: the model fills the fields in the order listed; for job_facts, one property per fact, each with a title and a description; the previous version's schema is kept when absent"`
 	Examples     []promptExampleInput `json:"examples,omitempty" jsonschema:"worked examples shown to the model before the real input, each an input and the answer object it should give; the previous version's examples are kept when absent, and an empty list removes them"`
 	Note         string               `json:"note,omitempty" jsonschema:"why this version exists, e.g. what it changes"`
 }
@@ -47,7 +49,7 @@ func addAgentPromptTools(server *mcp.Server, hub *store.Store) {
 		Description: "Save a new version of a prompt, optionally with a new answer schema. It becomes active for the next run; " +
 			"earlier versions stay readable. It can carry worked examples, sent to the model as earlier turns. " +
 			"Saving a new job_facts version makes the hub read every open job's facts again. Owner only.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input updateAgentPromptInput) (*mcp.CallToolResult, store.AgentPrompt, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input updateAgentPromptInput) (*mcp.CallToolResult, store.AgentPrompt, error) {
 		actor, err := getOwnerActor(ctx)
 		if err != nil {
 			return nil, store.AgentPrompt{}, err
@@ -63,12 +65,30 @@ func addAgentPromptTools(server *mcp.Server, hub *store.Store) {
 				newPrompt.Examples = append(newPrompt.Examples, chatcompletions.Example{Input: example.Input, Answer: answer})
 			}
 		}
-		if input.ResultSchema != nil {
-			if newPrompt.ResultSchema, err = json.Marshal(input.ResultSchema); err != nil {
-				return nil, store.AgentPrompt{}, err
+		if schema := bytes.TrimSpace(readWrittenResultSchema(request, input.ResultSchema)); len(schema) > 0 && !bytes.Equal(schema, []byte("null")) {
+			if schema[0] != '{' || !json.Valid(schema) {
+				return nil, store.AgentPrompt{}, errors.New("result_schema must be a JSON object")
 			}
+			newPrompt.ResultSchema = schema
 		}
 		prompt, err := hub.SaveAgentPrompt(ctx, actor, newPrompt)
 		return nil, prompt, err
 	})
+}
+
+// readWrittenResultSchema returns result_schema as the caller wrote it. The
+// SDK hands the handler its arguments after a round trip through a map,
+// which sorts the schema's keys, so it's read again from the request's raw
+// arguments, falling back to the decoded one.
+func readWrittenResultSchema(request *mcp.CallToolRequest, decoded json.RawMessage) json.RawMessage {
+	if request == nil || request.Params == nil || len(request.Params.Arguments) == 0 {
+		return decoded
+	}
+	var written struct {
+		ResultSchema json.RawMessage `json:"result_schema"`
+	}
+	if json.Unmarshal(request.Params.Arguments, &written) != nil || len(written.ResultSchema) == 0 {
+		return decoded
+	}
+	return written.ResultSchema
 }

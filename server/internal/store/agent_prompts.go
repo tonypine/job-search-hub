@@ -159,7 +159,7 @@ func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgent
 		prompt, err = scanAgentPrompt(tx.QueryRow(ctx, `
 			INSERT INTO agent_prompts (kind, version, body, result_schema, examples, note)
 			SELECT $1, COALESCE(MAX(version), 0) + 1, $2,
-			       COALESCE($3::jsonb, (SELECT result_schema FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1)),
+			       COALESCE($3::json, (SELECT result_schema FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1)),
 			       COALESCE($4::jsonb, (SELECT examples FROM agent_prompts WHERE kind = $1 ORDER BY version DESC LIMIT 1), '[]'::jsonb), $5
 			FROM agent_prompts WHERE kind = $1
 			RETURNING `+agentPromptColumns, input.Kind, input.Body, input.ResultSchema, examples, input.Note))

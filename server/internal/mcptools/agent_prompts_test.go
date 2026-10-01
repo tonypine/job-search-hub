@@ -2,6 +2,7 @@ package mcptools_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -100,5 +101,27 @@ func TestTheOwnerSavesWorkedExamplesWithAPrompt(t *testing.T) {
 	latest := callTool[store.AgentPrompt](t, session, "get_agent_prompt", map[string]any{"kind": "job_facts"})
 	if len(saved.Examples) != 1 || len(latest.Examples) != 1 || latest.Examples[0].Input != "Title: Go developer" || !strings.Contains(string(latest.Examples[0].Answer), `"Go"`) {
 		t.Fatalf("saved = %+v, latest = %+v", saved.Examples, latest.Examples)
+	}
+}
+
+func TestASchemasPropertiesKeepTheOrderTheyWereWrittenIn(t *testing.T) {
+	hub := startHub(t)
+	session := connect(t, hub, ownerToken)
+	written := `{"type":"object","properties":{"reason":{"type":"string"},"posting_says":{"type":"string"},"answer":{"type":"string"}}}`
+
+	callTool[store.AgentPrompt](t, session, "update_agent_prompt", map[string]any{
+		"kind": "recruiter_screen", "body": "Screen it.", "result_schema": json.RawMessage(written),
+	})
+	// Read from the store: the SDK sorts a tool's output too.
+	saved, err := hub.store.GetLatestAgentPrompt(context.Background(), store.AgentPromptKindRecruiterScreen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(saved.ResultSchema)
+	if !(strings.Index(schema, `"reason"`) < strings.Index(schema, `"posting_says"`) && strings.Index(schema, `"posting_says"`) < strings.Index(schema, `"answer"`)) {
+		t.Fatalf("schema = %s, want reason, posting_says, answer as written", schema)
+	}
+	if text := callRefusedTool(t, session, "update_agent_prompt", map[string]any{"kind": "recruiter_screen", "body": "x", "result_schema": json.RawMessage(`["not an object"]`)}); !strings.Contains(text, "JSON object") {
+		t.Errorf("a schema that isn't an object: %s", text)
 	}
 }
