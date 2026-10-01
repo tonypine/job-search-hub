@@ -38,7 +38,7 @@ func TestACitationMustBeABaseBulletOrAConfirmedEntry(t *testing.T) {
 		{"an unconfirmed entry", "entry:" + uuid.NewString(), 0, false},
 		{"a role the base CV doesn't have", "base:w0h0", 5, false},
 	} {
-		err := checkCitations(draftAnswer{Roles: []roleAnswer{{Role: test.role, Bullets: []bulletAnswer{{Text: "x", Source: test.source}}}}}, base, []store.ProfileEntry{confirmed})
+		err := checkCitations(Draft{Roles: []DraftRole{{Role: test.role, Bullets: []DraftBullet{{Text: "x", Source: test.source}}}}}, base, []store.ProfileEntry{confirmed})
 		if (err == nil) != test.ok || (err != nil && !errors.Is(err, chatcompletions.ErrInvalidAnswer)) {
 			t.Errorf("%s: error = %v", test.name, err)
 		}
@@ -46,9 +46,9 @@ func TestACitationMustBeABaseBulletOrAConfirmedEntry(t *testing.T) {
 }
 
 func TestATailoredCVKeepsTheBaseFactsAndTakesTheDraftsWords(t *testing.T) {
-	tailored, citations := assembleTailoredCV(base, draftAnswer{
+	tailored, citations := assembleTailoredCV(base, Draft{
 		Label: "Front-End Engineer", Summary: "Builds web apps.",
-		Roles: []roleAnswer{{Role: 0, Bullets: []bulletAnswer{{Text: "Led the React web app.", Source: "base:w0h1"}}}},
+		Roles: []DraftRole{{Role: 0, Bullets: []DraftBullet{{Text: "Led the React web app.", Source: "base:w0h1"}}}},
 	})
 	if tailored.Basics.Label != "Front-End Engineer" || tailored.Basics.Summary != "Builds web apps." || tailored.Basics.Name != "Ada" {
 		t.Errorf("basics = %+v", tailored.Basics)
@@ -114,5 +114,38 @@ func TestAPursuedJobGetsADraftAndABadCitationSavesNothing(t *testing.T) {
 	}
 	if _, err := NewDrafter(hub, nil).DraftCV(ctx, job.ID); !errors.Is(err, ErrNoCVDrafts) {
 		t.Errorf("without Claude: %v", err)
+	}
+}
+
+func TestAnEditKeepsItsCitationsAndAPrintedPDFIsKept(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := hub.SaveBaseCV(ctx, owner, base); err != nil {
+		t.Fatal(err)
+	}
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
+	drafter := NewDrafter(hub, &fakeClaude{answer: `{"label":"L","summary":"S","roles":[]}`})
+	if _, err := drafter.SaveEdit(ctx, owner, job.ID, Draft{}); !errors.Is(err, store.ErrCVNotFound) {
+		t.Fatalf("editing a job without a draft: %v", err)
+	}
+	cv, err := drafter.DraftCV(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.SaveCVPDF(ctx, owner, cv.ID, []byte("%PDF-1.4 x")); err != nil {
+		t.Fatal(err)
+	}
+	if printed, _ := hub.GetCV(ctx, cv.ID); !printed.HasPDF {
+		t.Error("the PDF wasn't kept")
+	}
+
+	edited, err := drafter.SaveEdit(ctx, owner, job.ID, Draft{Label: "Mine", Summary: "My words.",
+		Roles: []DraftRole{{Role: 0, Bullets: []DraftBullet{{Text: "Led the web app, my way.", Source: "base:w0h1"}}}}})
+	if err != nil || edited.Content.Basics.Label != "Mine" || edited.Citations["w0h0"] != "base:w0h1" || edited.HasPDF {
+		t.Fatalf("edited = %+v, %v; want the edit saved with its citation and the stale PDF dropped", edited, err)
+	}
+	if _, err := drafter.SaveEdit(ctx, owner, job.ID, Draft{Roles: []DraftRole{{Role: 0, Bullets: []DraftBullet{{Text: "Mine.", Source: ""}}}}}); !errors.Is(err, chatcompletions.ErrInvalidAnswer) {
+		t.Errorf("an edit dropping a citation: %v", err)
 	}
 }

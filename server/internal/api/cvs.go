@@ -1,21 +1,26 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
 	"github.com/tonypine/job-search-hub/server/internal/resume"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 type cvDrafter interface {
 	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
+	SaveEdit(ctx context.Context, actor store.Actor, jobID uuid.UUID, edit cvdrafts.Draft) (store.CV, error)
 }
 
 // cvDraftTimeout bounds one tailored CV drafted in the background.
@@ -73,6 +78,57 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			}
 		}()
 		writeJSON(w, http.StatusAccepted, fullBriefResponse{Queued: true})
+	})))
+	routes.Handle("PUT /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		if drafter == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: the hub found no Claude CLI"})
+			return
+		}
+		var edit cvdrafts.Draft
+		if err := json.NewDecoder(r.Body).Decode(&edit); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
+			return
+		}
+		cv, err := drafter.SaveEdit(r.Context(), owner, id, edit)
+		if errors.Is(err, chatcompletions.ErrInvalidAnswer) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+			return
+		}
+		writeCVOrError(w, cv, err)
+	})))
+	routes.Handle("PUT /v1/cvs/{id}/pdf", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		pdf, err := io.ReadAll(io.LimitReader(r.Body, store.MaximumCVPDFSize+1))
+		if err != nil || len(pdf) > store.MaximumCVPDFSize || !bytes.HasPrefix(pdf, []byte("%PDF")) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "send a PDF of at most 5 MB"})
+			return
+		}
+		if err := hub.SaveCVPDF(r.Context(), owner, id, pdf); err != nil {
+			writeCVOrError(w, store.CV{}, err)
+			return
+		}
+		cv, err := hub.GetCV(r.Context(), id)
+		writeCVOrError(w, cv, err)
+	})))
+	routes.Handle("GET /v1/cvs/{id}/pdf", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		pdf, err := hub.GetCVPDF(r.Context(), id)
+		if err != nil {
+			writeCVOrError(w, store.CV{}, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(pdf)
 	})))
 	routes.Handle("GET /v1/cvs/{id}/html", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var cv store.CV

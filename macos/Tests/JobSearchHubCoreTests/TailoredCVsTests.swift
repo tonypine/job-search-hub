@@ -1,0 +1,30 @@
+import Foundation
+@testable import JobSearchHubCore
+import Testing
+
+private func makeCV(label: String, summary: String, work: [[String]], citations: [String: String] = [:]) -> CV {
+    CV(id: UUID(), kind: "tailored", content: CVContent(
+        basics: CVBasics(name: "Ada", label: label, summary: summary),
+        work: work.enumerated().map { index, highlights in CVWork(name: "Co\(index)", position: "Engineer", startDate: "2020-01", endDate: nil, highlights: highlights) }
+    ), citations: citations, hasPDF: false)
+}
+
+@Test func aTailoredCVShowsWhatItKeptRewordedAddedAndLeftOut() {
+    let base = makeCV(label: "Engineer", summary: "Builds.", work: [["Built the API.", "Led the web app."], ["Wrote reports."]])
+    let tailored = makeCV(label: "Front-End Engineer", summary: "Builds.", work: [["Led the React web app.", "Shipped the design system."], ["Wrote reports."]],
+                          citations: ["w0h0": "base:w0h1", "w0h1": "entry:abc", "w1h0": "base:w1h0"])
+
+    let comparison = CVComparison(tailored: tailored, base: base)
+
+    #expect(comparison.isLabelChanged && !comparison.isSummaryChanged)
+    #expect(comparison.roles[0].bullets.map(\.status) == [.reworded(from: "Led the web app."), .fromEntry])
+    #expect(comparison.roles[0].leftOut == ["Built the API."])
+    #expect(comparison.roles[1].bullets.map(\.status) == [.kept] && comparison.roles[1].leftOut.isEmpty)
+}
+
+@Test func aCVDecodesWithItsCitationsAndPDF() throws {
+    let json = #"{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","kind":"tailored","has_pdf":true,"citations":{"w0h0":"base:w1h0"},"#
+        + #""content":{"basics":{"name":"Ada","label":"L","summary":"S","location":{"city":"X"}},"work":[{"name":"Co","position":"P","startDate":"2020-01","highlights":["H"]}]}}"#
+    let cv = try HubJSON.makeDecoder().decode(CV.self, from: Data(json.utf8))
+    #expect(cv.hasPDF && cv.citations["w0h0"] == "base:w1h0" && cv.content.work.first?.startDate == "2020-01")
+}

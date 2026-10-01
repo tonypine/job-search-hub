@@ -28,16 +28,18 @@ type CV struct {
 	JobID     *uuid.UUID        `json:"job_id,omitempty"`
 	Content   resume.Resume     `json:"content"`
 	Citations map[string]string `json:"citations"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	// HasPDF says the owner printed it to a PDF the hub keeps.
+	HasPDF    bool      `json:"has_pdf"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-const cvColumns = `id, kind, job_id, content, citations, created_at, updated_at`
+const cvColumns = `id, kind, job_id, content, citations, pdf IS NOT NULL, created_at, updated_at`
 
 func scanCV(row pgx.Row) (CV, error) {
 	var cv CV
 	var content, citations json.RawMessage
-	err := row.Scan(&cv.ID, &cv.Kind, &cv.JobID, &content, &citations, &cv.CreatedAt, &cv.UpdatedAt)
+	err := row.Scan(&cv.ID, &cv.Kind, &cv.JobID, &content, &citations, &cv.HasPDF, &cv.CreatedAt, &cv.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CV{}, ErrCVNotFound
 	}
@@ -95,7 +97,7 @@ func (s *Store) SaveTailoredCV(ctx context.Context, actor Actor, jobID uuid.UUID
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		saved, err = scanCV(tx.QueryRow(ctx, `
 			INSERT INTO cvs (kind, job_id, content, citations) VALUES ('tailored', $1, $2, $3)
-			ON CONFLICT (job_id) WHERE kind = 'tailored' DO UPDATE SET content = EXCLUDED.content, citations = EXCLUDED.citations, updated_at = now()
+			ON CONFLICT (job_id) WHERE kind = 'tailored' DO UPDATE SET content = EXCLUDED.content, citations = EXCLUDED.citations, pdf = NULL, updated_at = now()
 			RETURNING `+cvColumns, jobID, encoded, sources))
 		if isForeignKeyViolation(err) {
 			return ErrJobNotFound
@@ -124,4 +126,32 @@ func (s *Store) ListJobsAwaitingCV(ctx context.Context) ([]uuid.UUID, error) {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
+
+// MaximumCVPDFSize bounds a CV's PDF.
+const MaximumCVPDFSize = 5 << 20
+
+// SaveCVPDF keeps the PDF the owner printed of the CV. A CV saved again
+// drops its PDF, which no longer matches it.
+func (s *Store) SaveCVPDF(ctx context.Context, actor Actor, id uuid.UUID, pdf []byte) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE cvs SET pdf = $2 WHERE id = $1`, id, pdf)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrCVNotFound
+		}
+		return insertChange(ctx, tx, actor, change{entityType: "cv", entityID: id, operation: "print"})
+	})
+}
+
+// GetCVPDF returns the CV's PDF.
+func (s *Store) GetCVPDF(ctx context.Context, id uuid.UUID) ([]byte, error) {
+	var pdf []byte
+	err := s.pool.QueryRow(ctx, `SELECT pdf FROM cvs WHERE id = $1 AND pdf IS NOT NULL`, id).Scan(&pdf)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCVNotFound
+	}
+	return pdf, err
 }

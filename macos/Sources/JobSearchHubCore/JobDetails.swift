@@ -17,6 +17,13 @@ public struct JobDetails: Decodable, Equatable, Sendable {
     public var screenOut: [ScreenOutAnswer]?
     /// The owner's latest decision; nil while undecided.
     public var decision: JobDecision?
+    /// The job's tailored CV; nil until drafted.
+    public var cvID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case job, companyName, facts, application, phase, fit, unseenUpdates, connections, brief, screenOut, decision
+        case cvID = "cvId"
+    }
 }
 
 /// A job's facts in the order and with the labels of the prompt version they

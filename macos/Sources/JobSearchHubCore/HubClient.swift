@@ -39,12 +39,17 @@ public struct HubClient: Sendable {
         return try await perform(makeRequest(method: method, path: path, body: encoded))
     }
 
-    /// Sends a file's bytes as they are, such as a CSV export, and decodes the
-    /// answer.
+    /// Reads a body that isn't JSON, such as a CV's HTML, as it is.
+    public func getData(_ path: String) async throws -> Data {
+        try await exchange(makeRequest(method: "GET", path: path, query: [], body: nil))
+    }
+
+    /// Sends a file's bytes as they are, such as a CSV export or a PDF, and
+    /// decodes the answer.
     public func upload<Response: Decodable>(
-        _ path: String, data: Data, contentType: String, as responseType: Response.Type = Response.self
+        _ path: String, data: Data, contentType: String, method: String = "POST", as responseType: Response.Type = Response.self
     ) async throws -> Response {
-        var request = makeRequest(method: "POST", path: path, body: data)
+        var request = makeRequest(method: method, path: path, body: data)
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         return try await perform(request)
     }

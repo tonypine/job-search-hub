@@ -69,19 +69,20 @@ func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// draftAnswer is the tailored CV as the job_cv schema asks Claude for it.
-type draftAnswer struct {
-	Label   string       `json:"label"`
-	Summary string       `json:"summary"`
-	Roles   []roleAnswer `json:"roles"`
+// Draft is a tailored CV's words: as the job_cv schema asks Claude for them,
+// and as the owner edits them.
+type Draft struct {
+	Label   string      `json:"label"`
+	Summary string      `json:"summary"`
+	Roles   []DraftRole `json:"roles"`
 }
 
-type roleAnswer struct {
-	Role    int            `json:"role"`
-	Bullets []bulletAnswer `json:"bullets"`
+type DraftRole struct {
+	Role    int           `json:"role"`
+	Bullets []DraftBullet `json:"bullets"`
 }
 
-type bulletAnswer struct {
+type DraftBullet struct {
 	Text   string `json:"text"`
 	Source string `json:"source"`
 }
@@ -117,7 +118,7 @@ func (drafter *Drafter) DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV,
 	if err != nil {
 		return store.CV{}, err
 	}
-	var draft draftAnswer
+	var draft Draft
 	if err := json.Unmarshal(answer.Object, &draft); err != nil {
 		return store.CV{}, fmt.Errorf("read the draft: %w", err)
 	}
@@ -128,9 +129,32 @@ func (drafter *Drafter) DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV,
 	return drafter.hub.SaveTailoredCV(ctx, store.Actor{Kind: store.ActorSystem}, jobID, content, citations)
 }
 
+// SaveEdit saves the owner's edit of the job's tailored CV: its headline,
+// summary and bullets, each bullet still citing its source. It's rebuilt from
+// the base CV, so the dates, companies and education stay the base CV's.
+func (drafter *Drafter) SaveEdit(ctx context.Context, actor store.Actor, jobID uuid.UUID, edit Draft) (store.CV, error) {
+	if _, err := drafter.hub.GetJobCV(ctx, jobID); err != nil {
+		return store.CV{}, err
+	}
+	base, err := drafter.hub.GetBaseCV(ctx)
+	if err != nil {
+		return store.CV{}, fmt.Errorf("read the base CV: %w", err)
+	}
+	confirmed := true
+	entries, err := drafter.hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Confirmed: &confirmed})
+	if err != nil {
+		return store.CV{}, err
+	}
+	if err := checkCitations(edit, base.Content, entries); err != nil {
+		return store.CV{}, err
+	}
+	content, citations := assembleTailoredCV(base.Content, edit)
+	return drafter.hub.SaveTailoredCV(ctx, actor, jobID, content, citations)
+}
+
 // checkCitations refuses a draft with a bullet whose source isn't a bullet
 // of the base CV or a confirmed entry, or a role the base CV doesn't have.
-func checkCitations(draft draftAnswer, base resume.Resume, confirmed []store.ProfileEntry) error {
+func checkCitations(draft Draft, base resume.Resume, confirmed []store.ProfileEntry) error {
 	sources := map[string]bool{}
 	for workIndex, work := range base.Work {
 		for highlightIndex := range work.Highlights {
@@ -156,7 +180,7 @@ func checkCitations(draft draftAnswer, base resume.Resume, confirmed []store.Pro
 // assembleTailoredCV is the base CV with the draft's headline, summary and
 // bullets: the roles, dates, education and skills stay the base CV's. A role
 // the draft leaves out keeps its base bullets.
-func assembleTailoredCV(base resume.Resume, draft draftAnswer) (resume.Resume, map[string]string) {
+func assembleTailoredCV(base resume.Resume, draft Draft) (resume.Resume, map[string]string) {
 	tailored := base
 	tailored.Work = append([]resume.Work(nil), base.Work...)
 	if label := strings.TrimSpace(draft.Label); label != "" {
