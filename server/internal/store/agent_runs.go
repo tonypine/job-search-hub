@@ -26,6 +26,10 @@ const AgentRunKindJobFinder = "job_finder"
 // LinkedIn export and the answers library; it is also its prompt's kind.
 const AgentRunKindProfileSeed = "profile_seed"
 
+// AgentRunKindJobFix corrects a job's details from the owner's note; it is
+// also its prompt's kind.
+const AgentRunKindJobFix = "job_fix"
+
 const (
 	AgentRunRunning   = "running"
 	AgentRunSucceeded = "succeeded"

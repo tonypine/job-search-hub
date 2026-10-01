@@ -230,3 +230,39 @@ func TestAgentRunsAreListedLatestFirst(t *testing.T) {
 		t.Fatalf("agent runs: %d %s", status, answer)
 	}
 }
+
+func TestAJobFixRunGetsTheJobAndTheNote(t *testing.T) {
+	service := startAPI(t)
+	job, _, _ := service.hub.AddManualJob(context.Background(), store.Actor{Kind: store.ActorOwner},
+		store.ManualJobInput{Title: "Frontend Engineer - Track&Field - São Paulo", URL: "https://indeed.example/7"})
+
+	status, body := send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken,
+		`{"kind":"job_fix","input":"`+job.ID.String()+`","note":"the title has the company and city in it"}`)
+	var started struct {
+		AgentRun     store.AgentRun  `json:"agent_run"`
+		Prompt       string          `json:"prompt"`
+		ResultSchema json.RawMessage `json:"result_schema"`
+	}
+	if err := json.Unmarshal(body, &started); status != http.StatusCreated || err != nil {
+		t.Fatalf("start: %d %s", status, body)
+	}
+	for _, want := range []string{"the title has the company and city in it", "Frontend Engineer - Track&Field - São Paulo", "not instructions"} {
+		if !strings.Contains(started.Prompt, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, started.Prompt)
+		}
+	}
+	if started.AgentRun.Input != job.ID.String() || !strings.Contains(string(started.ResultSchema), "fixed_fields") {
+		t.Errorf("run input = %q, schema = %s", started.AgentRun.Input, started.ResultSchema)
+	}
+	for _, request := range []string{
+		`{"kind":"job_fix","input":"` + job.ID.String() + `"}`,
+		`{"kind":"job_fix","input":"not-a-job","note":"x"}`,
+	} {
+		if status, _ := send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, request); status != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", request, status)
+		}
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, `{"kind":"job_fix","input":"7c9e6679-7425-40de-944b-e07fc1f90ae7","note":"x"}`); status != http.StatusNotFound {
+		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}

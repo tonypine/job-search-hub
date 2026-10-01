@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/agents/companytriage"
 	"github.com/tonypine/job-search-hub/server/agents/jobfinder"
+	"github.com/tonypine/job-search-hub/server/agents/jobfixer"
 	"github.com/tonypine/job-search-hub/server/agents/profileseed"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -34,6 +36,7 @@ var agentRunResultSchemas = map[string]string{
 	store.AgentRunKindCompanyTriage: companytriage.ResultSchema,
 	store.AgentRunKindJobFinder:     jobfinder.ResultSchema,
 	store.AgentRunKindProfileSeed:   profileseed.ResultSchema,
+	store.AgentRunKindJobFix:        jobfixer.ResultSchema,
 }
 
 // profileSeedInput stands for a profile seed's input, which is the owner's
@@ -43,6 +46,8 @@ const profileSeedInput = "owner profile"
 type startAgentRunRequest struct {
 	Kind  string `json:"kind"`
 	Input string `json:"input"`
+	// Note is the owner's word on what to fix, for a job_fix run.
+	Note string `json:"note"`
 }
 
 // startAgentRunResponse hands the runner everything a run needs: its token,
@@ -82,16 +87,29 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 		resultSchema, knownKind := agentRunResultSchemas[request.Kind]
 		isProfileSeed := request.Kind == store.AgentRunKindProfileSeed
 		if !knownKind || (request.Input == "" && !isProfileSeed) {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" or "job_finder" with a company as input, or kind "profile_seed"`})
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: `a run needs kind "company_triage" or "job_finder" with a company as input, ` +
+				`kind "job_fix" with a job id as input and a note, or kind "profile_seed"`})
 			return
 		}
 
 		var rendered prompts.Rendered
 		var err error
-		if isProfileSeed {
+		switch {
+		case isProfileSeed:
 			request.Input = profileSeedInput
 			rendered, err = prompts.RenderProfileSeedPrompt(r.Context(), hub)
-		} else {
+		case request.Kind == store.AgentRunKindJobFix:
+			jobID, parseErr := uuid.Parse(request.Input)
+			if parseErr != nil || strings.TrimSpace(request.Note) == "" {
+				writeJSON(w, http.StatusBadRequest, errorResponse{Error: "a job fix needs the job's id as input and a note"})
+				return
+			}
+			rendered, err = prompts.RenderJobFixPrompt(r.Context(), hub, jobID, request.Note)
+			if errors.Is(err, store.ErrJobNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such job"})
+				return
+			}
+		default:
 			rendered, err = prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
 		}
 		if err != nil {

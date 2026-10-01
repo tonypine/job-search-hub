@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "fixed_fields", "summary"],
+  "properties": {
+    "job_id": {"type": "string", "description": "The job the note is about."},
+    "fixed_fields": {
+      "type": "array",
+      "description": "The fields corrected through update_job; empty when nothing was changed.",
+      "items": {"type": "string", "enum": ["title", "company_name", "company_id", "location", "workplace_type", "employment_type", "pay"]}
+    },
+    "summary": {"type": "string", "description": "One line for the owner: what was corrected, or why nothing was."}
+  }
+}

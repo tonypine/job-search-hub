@@ -57,7 +57,7 @@ var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
-	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true,
+	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true, AgentRunKindJobFix: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

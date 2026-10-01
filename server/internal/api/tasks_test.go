@@ -59,3 +59,25 @@ func TestThePhoneQueuesWorkTheMacClaimsOnceAndFinishes(t *testing.T) {
 		t.Errorf("finished body = %q", finished.Body)
 	}
 }
+
+func TestAJobFixIsQueuedWithItsJobAndNote(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	job, _, _ := service.hub.AddManualJob(ctx, store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Frontend Engineer - Track&Field", URL: "https://indeed.example/7"})
+
+	status, body := send(t, http.MethodPost, service.url+"/v1/tasks", ownerToken, `{"kind":"fix_job","job_id":"`+job.ID.String()+`","note":" the company is Track&Field "}`)
+	var task store.TaskRequest
+	if err := json.Unmarshal(body, &task); status != http.StatusCreated || err != nil || task.JobID == nil || *task.JobID != job.ID || task.Input != "the company is Track&Field" {
+		t.Fatalf("queue: %d %s", status, body)
+	}
+	updates, _ := service.hub.ListUpdates(ctx, 10, false)
+	if len(updates.Updates) != 1 || updates.Updates[0].Title != "Fix Frontend Engineer - Track&Field: the company is Track&Field" {
+		t.Errorf("updates = %+v", updates.Updates)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks", ownerToken, `{"kind":"fix_job","job_id":"`+job.ID.String()+`"}`); status != http.StatusBadRequest {
+		t.Errorf("a fix without a note: %d, want 400", status)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks", ownerToken, `{"kind":"fix_job","job_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","note":"x"}`); status != http.StatusNotFound {
+		t.Errorf("a fix for an unknown job: %d, want 404", status)
+	}
+}

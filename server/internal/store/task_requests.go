@@ -19,6 +19,8 @@ var (
 const (
 	TaskFindJobs        = "find_jobs"
 	TaskResearchCompany = "research_company"
+	// TaskFixJob corrects a job's details from the owner's note, its input.
+	TaskFixJob = "fix_job"
 )
 
 // Task statuses.
@@ -34,6 +36,7 @@ type TaskRequest struct {
 	ID         uuid.UUID  `json:"id"`
 	Kind       string     `json:"kind"`
 	CompanyID  *uuid.UUID `json:"company_id,omitempty"`
+	JobID      *uuid.UUID `json:"job_id,omitempty"`
 	Input      string     `json:"input,omitempty"`
 	Status     string     `json:"status"`
 	Result     string     `json:"result,omitempty"`
@@ -42,11 +45,11 @@ type TaskRequest struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
-const taskColumns = `id, kind, company_id, input, status, result, created_at, started_at, finished_at`
+const taskColumns = `id, kind, company_id, job_id, input, status, result, created_at, started_at, finished_at`
 
 func scanTask(row pgx.Row) (TaskRequest, error) {
 	var task TaskRequest
-	err := row.Scan(&task.ID, &task.Kind, &task.CompanyID, &task.Input, &task.Status, &task.Result, &task.CreatedAt, &task.StartedAt, &task.FinishedAt)
+	err := row.Scan(&task.ID, &task.Kind, &task.CompanyID, &task.JobID, &task.Input, &task.Status, &task.Result, &task.CreatedAt, &task.StartedAt, &task.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskRequest{}, ErrTaskNotFound
 	}
@@ -62,8 +65,10 @@ func (s *Store) QueueTask(ctx context.Context, actor Actor, kind string, company
 		return TaskRequest{}, errors.New("finding jobs needs the company")
 	case kind == TaskResearchCompany && input == "":
 		return TaskRequest{}, errors.New("researching needs the company's name or link")
+	case kind == TaskFixJob:
+		return TaskRequest{}, errors.New("a job fix is queued with QueueJobFix")
 	case kind != TaskFindJobs && kind != TaskResearchCompany:
-		return TaskRequest{}, errors.New("kind must be find_jobs or research_company")
+		return TaskRequest{}, errors.New("kind must be find_jobs, research_company or fix_job")
 	}
 	if kind == TaskResearchCompany {
 		companyID = nil
@@ -81,6 +86,31 @@ func (s *Store) QueueTask(ctx context.Context, actor Actor, kind string, company
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{entityType: "task_request", entityID: task.ID, operation: "queue", after: map[string]string{"kind": kind}})
+	})
+	return task, err
+}
+
+// QueueJobFix asks the Mac to correct a job's details from the owner's note.
+// The task carries the job's company, so its updates show with the company.
+func (s *Store) QueueJobFix(ctx context.Context, actor Actor, jobID uuid.UUID, note string, deviceID *uuid.UUID) (TaskRequest, error) {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return TaskRequest{}, errors.New("a fix needs a note saying what's wrong")
+	}
+	var task TaskRequest
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		task, err = scanTask(tx.QueryRow(ctx, `
+			INSERT INTO task_requests (kind, company_id, job_id, input, device_id)
+			SELECT $1, jobs.company_id, jobs.id, $3, $4 FROM jobs WHERE jobs.id = $2 RETURNING `+taskColumns,
+			TaskFixJob, jobID, note, deviceID))
+		if errors.Is(err, ErrTaskNotFound) {
+			return ErrJobNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{entityType: "task_request", entityID: task.ID, operation: "queue", after: map[string]string{"kind": TaskFixJob}})
 	})
 	return task, err
 }

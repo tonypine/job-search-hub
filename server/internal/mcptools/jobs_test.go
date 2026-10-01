@@ -211,3 +211,17 @@ func TestAnAgentCorrectsAJobWithReasonsAndUnknownFieldsAreRefused(t *testing.T) 
 		t.Errorf("an unknown field: %s", text)
 	}
 }
+
+func TestTheOwnerQueuesAJobFixAndAnAgentCant(t *testing.T) {
+	hub := startHub(t)
+	job, _, _ := hub.store.AddManualJob(context.Background(), store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Engineer", URL: "https://acme.example/1"})
+	owner := connect(t, hub, ownerToken)
+	task := callTool[store.TaskRequest](t, owner, "fix_job", map[string]any{"job_id": job.ID, "note": "the location is Lisbon"})
+	if task.Kind != store.TaskFixJob || task.Status != store.TaskQueued || task.JobID == nil || *task.JobID != job.ID || task.Input != "the location is Lisbon" {
+		t.Fatalf("task = %+v", task)
+	}
+	_, agentToken := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	if text := callRefusedTool(t, connect(t, hub, agentToken), "fix_job", map[string]any{"job_id": job.ID, "note": "x"}); !strings.Contains(text, "unknown tool") {
+		t.Errorf("fix_job from an agent: %s", text)
+	}
+}

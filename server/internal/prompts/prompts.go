@@ -3,6 +3,7 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -118,6 +119,28 @@ func renderSessionContext(ctx context.Context, hub *store.Store, kind string, co
 	return Rendered{Body: filled, Version: prompt.Version}, nil
 }
 
+// RenderJobFixPrompt fills the active job_fix prompt with the job as the hub
+// holds it, fenced as data, and the owner's note on what's wrong with it.
+func RenderJobFixPrompt(ctx context.Context, hub *store.Store, jobID uuid.UUID, note string) (Rendered, error) {
+	prompt, err := hub.GetLatestAgentPrompt(ctx, store.AgentRunKindJobFix)
+	if err != nil {
+		return Rendered{}, err
+	}
+	details, err := hub.GetJobDetails(ctx, jobID)
+	if err != nil {
+		return Rendered{}, err
+	}
+	jobText, err := formatAsData(struct {
+		Job         store.Job `json:"job"`
+		CompanyName *string   `json:"company_name,omitempty"`
+	}{details.Job, details.CompanyName})
+	if err != nil {
+		return Rendered{}, err
+	}
+	filled := strings.NewReplacer("{{job}}", jobText, "{{note}}", strings.TrimSpace(note)).Replace(prompt.Body)
+	return Rendered{Body: filled, Version: prompt.Version}, nil
+}
+
 // getOwnerProfileText is what the agents know about the owner: the profile
 // they wrote, and the recommendations others wrote about them on LinkedIn.
 func getOwnerProfileText(ctx context.Context, hub *store.Store) (string, error) {
@@ -204,11 +227,15 @@ func getOwnerVoiceText(ctx context.Context, hub *store.Store) (string, error) {
 // formatAsData fences stored data so it never reads as instructions: agents
 // and job boards wrote it from web pages.
 func formatAsData(value any) (string, error) {
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	// A model reads the text as written: "Track&Field", not "Track\u0026Field".
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
 		return "", err
 	}
-	return dataPreamble + "\n\n```json\n" + string(encoded) + "\n```", nil
+	return dataPreamble + "\n\n```json\n" + strings.TrimSuffix(encoded.String(), "\n") + "\n```", nil
 }
 
 // getDossierText returns the stored dossier of the company the input names,

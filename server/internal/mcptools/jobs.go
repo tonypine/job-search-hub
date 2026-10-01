@@ -80,6 +80,11 @@ type updateJobInput struct {
 	Reasons        map[string]string `json:"reasons" jsonschema:"why each field is corrected, keyed by the field's name, such as {\"title\": \"the posting's title carries the company and city\"}"`
 }
 
+type fixJobInput struct {
+	JobID uuid.UUID `json:"job_id"`
+	Note  string    `json:"note" jsonschema:"what's wrong with the job's details, in the owner's words"`
+}
+
 type jobsOutput struct {
 	Jobs []store.Job `json:"jobs"`
 }
@@ -155,6 +160,18 @@ func addJobTools(server *mcp.Server, hub *store.Store, rates jobfit.RateSource) 
 		}
 		jobs, err := hub.RestoreJobs(ctx, actor, input.JobIDs)
 		return nil, jobsOutput{Jobs: jobs}, err
+	})
+	addTool(server, &mcp.Tool{
+		Name: "fix_job",
+		Description: "Ask the Mac to correct a job's details from a note on what's wrong; an agent reads the job and its posting " +
+			"and fixes them with update_job. It runs in the background, and its outcome arrives as an update. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fixJobInput) (*mcp.CallToolResult, store.TaskRequest, error) {
+		actor, err := getOwnerActor(ctx)
+		if err != nil {
+			return nil, store.TaskRequest{}, err
+		}
+		task, err := hub.QueueJobFix(ctx, actor, input.JobID, input.Note, nil)
+		return nil, task, err
 	})
 	addTool(server, &mcp.Tool{
 		Name: "update_job",

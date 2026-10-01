@@ -22,6 +22,9 @@ type queueTaskRequest struct {
 	Kind      string     `json:"kind"`
 	CompanyID *uuid.UUID `json:"company_id"`
 	Company   string     `json:"company"`
+	// JobID and Note are a fix_job's job and what's wrong with it.
+	JobID *uuid.UUID `json:"job_id"`
+	Note  string     `json:"note"`
 }
 
 type finishTaskRequest struct {
@@ -49,18 +52,33 @@ func RegisterTaskRoutes(routes *http.ServeMux, hub *store.Store, updates updateR
 		if id, found := tokens.GetDeviceID(r.Context()); found {
 			deviceID = &id
 		}
-		task, err := hub.QueueTask(r.Context(), owner, request.Kind, request.CompanyID, request.Company, deviceID)
+		var task store.TaskRequest
+		var err error
+		switch {
+		case request.Kind == store.TaskFixJob && request.JobID == nil:
+			err = errors.New("a fix needs the job")
+		case request.Kind == store.TaskFixJob:
+			task, err = hub.QueueJobFix(r.Context(), owner, *request.JobID, request.Note, deviceID)
+		default:
+			task, err = hub.QueueTask(r.Context(), owner, request.Kind, request.CompanyID, request.Company, deviceID)
+		}
 		switch {
 		case errors.Is(err, store.ErrCompanyNotFound):
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such company"})
+			return
+		case errors.Is(err, store.ErrJobNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such job"})
 			return
 		case err != nil:
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 			return
 		}
 		title := "From your phone: research " + task.Input
-		if task.Kind == store.TaskFindJobs {
+		switch task.Kind {
+		case store.TaskFindJobs:
 			title = "From your phone: find jobs at " + getCompanyName(r.Context(), hub, task.CompanyID)
+		case store.TaskFixJob:
+			title = "Fix " + getJobTitle(r.Context(), hub, *task.JobID) + ": " + task.Input
 		}
 		if _, err := updates.Record(r.Context(), store.NewUpdate{
 			Kind: "task_queued", Title: title, Body: "Waiting for the Mac to pick it up.", CompanyID: task.CompanyID,
@@ -147,4 +165,13 @@ func getCompanyName(ctx context.Context, hub *store.Store, companyID *uuid.UUID)
 		return "the company"
 	}
 	return company.Name
+}
+
+// getJobTitle names a job in an update, or says "a job" when it can't be read.
+func getJobTitle(ctx context.Context, hub *store.Store, jobID uuid.UUID) string {
+	details, err := hub.GetJobDetails(ctx, jobID)
+	if err != nil {
+		return "a job"
+	}
+	return details.Job.Title
 }
