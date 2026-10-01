@@ -30,9 +30,17 @@ type comparisonsResponse struct {
 	Comparisons []store.Comparison `json:"comparisons"`
 }
 
+// comparisonResponse carries each answer's readings beside it; its Answers
+// stand in for the record's.
 type comparisonResponse struct {
 	store.ComparisonRecord
-	Summary comparisons.Summary `json:"summary"`
+	Answers []answerWithReadings `json:"answers"`
+	Summary comparisons.Summary  `json:"summary"`
+}
+
+type answerWithReadings struct {
+	store.ComparisonAnswer
+	Readings []comparisons.Reading `json:"readings"`
 }
 
 type importedStack struct {
@@ -220,5 +228,9 @@ func writeComparison(w http.ResponseWriter, ctx context.Context, hub *store.Stor
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(w, status, comparisonResponse{ComparisonRecord: record, Summary: comparisons.Summarize(record)})
+	response := comparisonResponse{ComparisonRecord: record, Summary: comparisons.Summarize(record), Answers: make([]answerWithReadings, len(record.Answers))}
+	for index, answer := range record.Answers {
+		response.Answers[index] = answerWithReadings{ComparisonAnswer: answer, Readings: comparisons.ListReadings(answer.Answer)}
+	}
+	writeJSON(w, status, response)
 }

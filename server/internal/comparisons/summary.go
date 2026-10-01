@@ -70,7 +70,7 @@ func Summarize(record store.ComparisonRecord) Summary {
 			fieldSet[field] = true
 		}
 	}
-	summary := Summary{Fields: make([]string, 0, len(fieldSet))}
+	summary := Summary{Fields: make([]string, 0, len(fieldSet)), Stacks: []StackSummary{}}
 	for field := range fieldSet {
 		summary.Fields = append(summary.Fields, field)
 	}
@@ -86,7 +86,7 @@ func Summarize(record store.ComparisonRecord) Summary {
 	}
 
 	for position, stack := range record.Stacks {
-		stackSummary := StackSummary{StackID: stack.ID, Failed: failed[stack.ID]}
+		stackSummary := StackSummary{StackID: stack.ID, Failed: failed[stack.ID], Fields: []FieldScore{}}
 		for _, field := range summary.Fields {
 			score := FieldScore{Field: field}
 			for _, jobID := range record.JobIDs {

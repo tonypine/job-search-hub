@@ -8,6 +8,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     case recruiters
     case profile
     case prompts
+    case compare
     case runs
     case settings
 
@@ -23,6 +24,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .recruiters: "Recruiters"
         case .profile: "Profile"
         case .prompts: "Prompts"
+        case .compare: "Compare"
         case .runs: "Runs"
         case .settings: "Settings"
         }
@@ -39,6 +41,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .recruiters: "person.crop.rectangle.stack"
         case .profile: "person.crop.circle"
         case .prompts: "text.bubble"
+        case .compare: "square.split.2x1"
         case .runs: "gauge.with.needle"
         case .settings: "gearshape"
         }

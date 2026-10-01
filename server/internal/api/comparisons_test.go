@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,6 +29,16 @@ type comparisonAnswer struct {
 	ID     uuid.UUID   `json:"id"`
 	Status string      `json:"status"`
 	JobIDs []uuid.UUID `json:"job_ids"`
+	Jobs   []struct {
+		Title string `json:"title"`
+	} `json:"jobs"`
+	Answers []struct {
+		Readings []struct {
+			Field    string `json:"field"`
+			Text     string `json:"text"`
+			Evidence string `json:"evidence"`
+		} `json:"readings"`
+	} `json:"answers"`
 	Stacks []struct {
 		ID uuid.UUID `json:"id"`
 	} `json:"stacks"`
@@ -71,6 +82,18 @@ func TestAnImportedComparisonIsSummarizedAndJudged(t *testing.T) {
 	local := imported.Summary.Stacks[1].Fields[0]
 	if imported.Status != store.ComparisonStatusDone || local.Field != "stack.value" || local.Agreed != 1 || local.Compared != 1 {
 		t.Fatalf("imported = %s", answer)
+	}
+	if len(imported.Jobs) != 2 || imported.Jobs[0].Title != "Engineer" {
+		t.Errorf("jobs = %+v", imported.Jobs)
+	}
+	var evidence []string
+	for _, imported := range imported.Answers {
+		for _, reading := range imported.Readings {
+			evidence = append(evidence, reading.Field+"="+reading.Text+"|"+reading.Evidence)
+		}
+	}
+	if !slices.Contains(evidence, "stack.value=go|We use Go") {
+		t.Errorf("readings = %v, want the local answer's with its evidence", evidence)
 	}
 
 	verdict := `{"verdicts":[{"stack_id":"` + imported.Stacks[1].ID.String() + `","job_id":"` + first.ID.String() + `","field":"stack.value","verdict":"right"}]}`

@@ -137,35 +137,31 @@ func (s *Store) SaveComparisonVerdict(ctx context.Context, comparisonID uuid.UUI
 	return nil
 }
 
-// ComparisonRecord is a comparison with every answer and verdict.
+// ComparisonJob is a posting in a comparison, as its list shows it.
+type ComparisonJob struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	CompanyName *string   `json:"company_name,omitempty"`
+}
+
+// ComparisonRecord is a comparison with its postings, and every answer and
+// verdict.
 type ComparisonRecord struct {
 	Comparison
+	Jobs     []ComparisonJob     `json:"jobs"`
 	Answers  []ComparisonAnswer  `json:"answers"`
 	Verdicts []ComparisonVerdict `json:"verdicts"`
 }
 
-// GetComparison returns the comparison with its stacks, jobs, answers and verdicts.
+// GetComparison returns the comparison with its stacks, postings, answers
+// and verdicts.
 func (s *Store) GetComparison(ctx context.Context, id uuid.UUID) (ComparisonRecord, error) {
-	var record ComparisonRecord
-	err := s.pool.QueryRow(ctx, `SELECT id, task_kind, title, status, created_at FROM comparisons WHERE id = $1`, id).
-		Scan(&record.ID, &record.TaskKind, &record.Title, &record.Status, &record.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ComparisonRecord{}, ErrComparisonNotFound
-	}
+	comparison, jobs, err := s.getComparisonWithJobs(ctx, id)
 	if err != nil {
 		return ComparisonRecord{}, err
 	}
-	if record.Stacks, err = s.listComparisonStacks(ctx, id); err != nil {
-		return ComparisonRecord{}, err
-	}
-	rows, err := s.pool.Query(ctx, `SELECT job_id FROM comparison_jobs WHERE comparison_id = $1 ORDER BY position`, id)
-	if err != nil {
-		return ComparisonRecord{}, err
-	}
-	if record.JobIDs, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID]); err != nil {
-		return ComparisonRecord{}, err
-	}
-	rows, err = s.pool.Query(ctx, `
+	record := ComparisonRecord{Comparison: comparison, Jobs: jobs}
+	rows, err := s.pool.Query(ctx, `
 		SELECT answers.stack_id, answers.job_id, answers.answer, answers.error
 		FROM comparison_answers answers JOIN comparison_stacks stacks ON stacks.id = answers.stack_id WHERE stacks.comparison_id = $1`, id)
 	if err != nil {
@@ -197,13 +193,50 @@ func (s *Store) ListComparisons(ctx context.Context) ([]Comparison, error) {
 	}
 	comparisons := make([]Comparison, 0, len(ids))
 	for _, id := range ids {
-		record, err := s.GetComparison(ctx, id)
+		comparison, _, err := s.getComparisonWithJobs(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		comparisons = append(comparisons, record.Comparison)
+		comparisons = append(comparisons, comparison)
 	}
 	return comparisons, nil
+}
+
+// getComparisonWithJobs returns the comparison with its stacks and job ids,
+// and its postings as a list shows them.
+func (s *Store) getComparisonWithJobs(ctx context.Context, id uuid.UUID) (Comparison, []ComparisonJob, error) {
+	var comparison Comparison
+	err := s.pool.QueryRow(ctx, `SELECT id, task_kind, title, status, created_at FROM comparisons WHERE id = $1`, id).
+		Scan(&comparison.ID, &comparison.TaskKind, &comparison.Title, &comparison.Status, &comparison.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Comparison{}, nil, ErrComparisonNotFound
+	}
+	if err != nil {
+		return Comparison{}, nil, err
+	}
+	if comparison.Stacks, err = s.listComparisonStacks(ctx, id); err != nil {
+		return Comparison{}, nil, err
+	}
+	jobs, err := s.listComparisonJobs(ctx, id)
+	if err != nil {
+		return Comparison{}, nil, err
+	}
+	comparison.JobIDs = make([]uuid.UUID, len(jobs))
+	for index, job := range jobs {
+		comparison.JobIDs[index] = job.ID
+	}
+	return comparison, jobs, nil
+}
+
+func (s *Store) listComparisonJobs(ctx context.Context, comparisonID uuid.UUID) ([]ComparisonJob, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT jobs.id, jobs.title, companies.name
+		FROM comparison_jobs JOIN jobs ON jobs.id = comparison_jobs.job_id LEFT JOIN companies ON companies.id = jobs.company_id
+		WHERE comparison_jobs.comparison_id = $1 ORDER BY comparison_jobs.position`, comparisonID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[ComparisonJob])
 }
 
 func (s *Store) listComparisonStacks(ctx context.Context, comparisonID uuid.UUID) ([]ComparisonStack, error) {
