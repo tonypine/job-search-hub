@@ -164,3 +164,36 @@ func TestATokenThatCantBeASubdomainNamesNoBoard(t *testing.T) {
 		t.Errorf("err = %v, want ErrPostingAPIOff", err)
 	}
 }
+
+func TestAProviderIsLeftAloneUntilItsRetryAfter(t *testing.T) {
+	asked := 0
+	limiting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked++
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(limiting.Close)
+	verifier := &Verifier{HTTPClient: &http.Client{Timeout: time.Second}, RecruiteeAPIBase: limiting.URL, PinpointAPIBase: limiting.URL}
+	ctx := context.Background()
+	for range 3 {
+		if _, err := verifier.ListPostingTitles(ctx, Recruitee, "acme"); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("err = %v, want ErrRateLimited", err)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("Recruitee was asked %d times within its Retry-After; want once", asked)
+	}
+	if _, err := verifier.ListPostingTitles(ctx, Pinpoint, "acme"); !errors.Is(err, ErrRateLimited) || asked != 2 {
+		t.Errorf("another provider: err = %v, asked = %d; want it asked", err, asked)
+	}
+}
+
+func TestRetryAfterIsReadInSecondsOrAsADate(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	cases := map[string]time.Duration{"85612": 85612 * time.Second, "Thu, 01 Oct 2026 13:00:00 GMT": time.Hour, "": defaultRetryAfter, "soon": defaultRetryAfter}
+	for header, want := range cases {
+		if got := getRetryAfter(header, now); got != want {
+			t.Errorf("getRetryAfter(%q) = %s, want %s", header, got, want)
+		}
+	}
+}

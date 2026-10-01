@@ -13,6 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -65,6 +68,45 @@ type Verifier struct {
 	// than read whole: the owner's criteria.
 	SearchTerms           func(ctx context.Context) []string
 	eightfoldDescriptions eightfoldDescriptions
+	// limits are when each provider that answered 429 may be asked again,
+	// from its Retry-After.
+	limits providerLimits
+}
+
+// providerLimits keeps, per provider, when it may be asked again.
+type providerLimits struct {
+	lock  sync.Mutex
+	until map[string]time.Time
+}
+
+func (limits *providerLimits) getUntil(provider string) time.Time {
+	limits.lock.Lock()
+	defer limits.lock.Unlock()
+	return limits.until[provider]
+}
+
+func (limits *providerLimits) setUntil(provider string, until time.Time) {
+	limits.lock.Lock()
+	defer limits.lock.Unlock()
+	if limits.until == nil {
+		limits.until = map[string]time.Time{}
+	}
+	limits.until[provider] = until
+}
+
+// defaultRetryAfter is how long a provider that answers 429 without a
+// Retry-After is left alone.
+const defaultRetryAfter = 15 * time.Minute
+
+// getRetryAfter reads a Retry-After header, in seconds or as a date.
+func getRetryAfter(header string, now time.Time) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(header); err == nil && date.After(now) {
+		return date.Sub(now)
+	}
+	return defaultRetryAfter
 }
 
 func NewVerifier() *Verifier {
@@ -191,8 +233,12 @@ func (verifier *Verifier) verifyAshbyBoardPage(ctx context.Context, boardToken, 
 var redirectingProviders = []string{BambooHR, Personio}
 
 // fetch returns the body of a 200, or found=false for a 404 or, on a
-// redirecting provider, a redirect.
+// redirecting provider, a redirect. A provider that answered 429 isn't asked
+// again until its Retry-After has passed.
 func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) ([]byte, bool, error) {
+	if until := verifier.limits.getUntil(provider); time.Now().Before(until) {
+		return nil, false, fmt.Errorf("%w: %s, until %s", ErrRateLimited, provider, until.Format(time.RFC3339))
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return nil, false, err
@@ -218,7 +264,9 @@ func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) 
 	case response.StatusCode == http.StatusNotFound, response.StatusCode >= 300 && response.StatusCode < 400:
 		return nil, false, nil
 	case response.StatusCode == http.StatusTooManyRequests:
-		return nil, false, fmt.Errorf("%w: %s answered 429", ErrRateLimited, provider)
+		retryAfter := getRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		verifier.limits.setUntil(provider, time.Now().Add(retryAfter))
+		return nil, false, fmt.Errorf("%w: %s answered 429, retry in %s", ErrRateLimited, provider, retryAfter.Round(time.Second))
 	default:
 		return nil, false, fmt.Errorf("%s answered %d", provider, response.StatusCode)
 	}
