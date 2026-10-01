@@ -11,6 +11,9 @@ import (
 // JobSourceHimalayas marks jobs gathered from the Himalayas job feed.
 const JobSourceHimalayas = "himalayas"
 
+// JobSourceRemoteOK marks jobs gathered from Remote OK's feed.
+const JobSourceRemoteOK = "remoteok"
+
 // FeedSyncResult counts what one sync of a job feed changed.
 type FeedSyncResult struct {
 	Created  int `json:"created"`

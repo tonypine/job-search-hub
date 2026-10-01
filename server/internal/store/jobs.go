@@ -125,7 +125,7 @@ type BoardSyncResult struct {
 
 // feedJobSources are the sources of jobs copied from somewhere other than the
 // company's own board.
-var feedJobSources = []string{JobSourceHimalayas, JobSourceIndeed, JobSourceLinkedIn, JobSourceGlassdoor}
+var feedJobSources = []string{JobSourceHimalayas, JobSourceRemoteOK, JobSourceIndeed, JobSourceLinkedIn, JobSourceGlassdoor}
 
 // SyncBoardJobs makes the board's jobs match its current postings, as seen at
 // seenAt: new postings are created, known ones are refreshed, postings that

@@ -42,6 +42,7 @@ extension Job {
         case "job_board": "Company board"
         case "careers_page": "Careers page"
         case "himalayas": "Himalayas"
+        case "remoteok": "Remote OK"
         case "indeed": "Indeed alert"
         case "linkedin": "LinkedIn alert"
         case "glassdoor": "Glassdoor alert"

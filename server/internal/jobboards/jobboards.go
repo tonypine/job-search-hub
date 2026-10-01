@@ -67,6 +67,7 @@ type Verifier struct {
 	PersonioAPIBase        string
 	PinpointAPIBase        string
 	GupyBase               string
+	RemoteOKAPIBase        string
 	// SearchTerms are what a large employer's board is searched by, rather
 	// than read whole: the owner's criteria.
 	SearchTerms           func(ctx context.Context) []string
@@ -122,6 +123,7 @@ func NewVerifier() *Verifier {
 		WorkableAPIBase:        "https://apply.workable.com",
 		HimalayasAPIBase:       "https://himalayas.app",
 		SmartRecruitersAPIBase: "https://api.smartrecruiters.com",
+		RemoteOKAPIBase:        "https://remoteok.com",
 	}
 }
 

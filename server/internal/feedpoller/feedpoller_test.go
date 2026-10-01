@@ -3,6 +3,7 @@ package feedpoller_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,6 +16,13 @@ import (
 type fakeFeed struct {
 	results  map[string][]string
 	searches []jobboards.HimalayasSearch
+	remoteOK []store.JobPosting
+	tags     []string
+}
+
+func (feed *fakeFeed) FetchRemoteOKPostings(_ context.Context, tag string) ([]store.JobPosting, error) {
+	feed.tags = append(feed.tags, tag)
+	return feed.remoteOK, nil
 }
 
 func (feed *fakeFeed) SearchHimalayas(_ context.Context, search jobboards.HimalayasSearch) ([]store.JobPosting, error) {
@@ -56,5 +64,39 @@ func TestAPollWithoutSearchTermsSearchesNothing(t *testing.T) {
 
 	if _, err := feedpoller.New(hub, feed).PollOnce(context.Background()); !errors.Is(err, feedpoller.ErrNoSearchCriteria) || len(feed.searches) != 0 {
 		t.Fatalf("err = %v, %d searches", err, len(feed.searches))
+	}
+}
+
+func TestARemoteOKPollStoresThePostingsThatCouldFit(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveJobCriteria(ctx, store.Actor{Kind: store.ActorOwner}, store.JobCriteria{
+		Roles: []string{"Frontend Engineer"}, ExcludedRoleTerms: []string{"Sales"}, IneligibleLocationTerms: []string{"US only"},
+		SearchTerms: []string{"react", "Full Stack"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+	posting := func(id, title, location string) store.JobPosting {
+		return store.JobPosting{ExternalID: id, CompanyName: "Acme", Title: title, Location: location, WorkplaceType: "Remote",
+			URL: "https://remoteok.com/remote-jobs/" + id, Description: "Build.", ExpiresAt: &expiresAt}
+	}
+	old := posting("4", "Frontend Engineer", "")
+	publishedAt := time.Now().Add(-40 * 24 * time.Hour)
+	old.PublishedAt = &publishedAt
+	feed := &fakeFeed{remoteOK: []store.JobPosting{
+		posting("1", "Senior Frontend Engineer", ""), posting("2", "Sales Representative", ""), posting("3", "Frontend Engineer", "US only"), old,
+	}}
+
+	result, err := feedpoller.New(hub, feed).PollRemoteOK(ctx)
+	if err != nil || result.Created != 1 || result.Closed != 0 || result.Dropped != 3 {
+		t.Fatalf("result = %+v, %v; want the recent frontend role stored and the other three dropped", result, err)
+	}
+	if fmt.Sprint(feed.tags) != "[react full-stack]" {
+		t.Errorf("tags = %v", feed.tags)
+	}
+	items, _, _ := hub.ListJobs(ctx, store.JobFilter{})
+	if len(items) != 1 || items[0].Job.Source != store.JobSourceRemoteOK {
+		t.Fatalf("jobs = %+v", items)
 	}
 }

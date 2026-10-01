@@ -217,3 +217,35 @@ func TestRetryAfterIsReadInSecondsOrAsADate(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteOKsFeedIsReadPastItsTerms(t *testing.T) {
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("tag") != "react" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `[{"last_updated":1790792682,"legal":"Please link back."},
+			{"id":"1137451","date":"2026-09-30T18:24:42+00:00","company":"Acme","position":"Senior Frontend Engineer","tags":["react"],
+			 "description":"<p>Build the <b>app</b>.</p>","location":"Worldwide","salary_min":90000,"salary_max":120000,
+			 "url":"https://remoteOK.com/remote-jobs/1137451"},
+			{"id":"1137452","date":"2026-09-30T18:00:00+00:00","company":"Globex","position":"Designer","description":"","location":"",
+			 "salary_min":0,"salary_max":0,"url":"https://remoteOK.com/remote-jobs/1137452"}]`)
+	}))
+	t.Cleanup(feed.Close)
+	verifier := &Verifier{HTTPClient: &http.Client{Timeout: time.Second}, RemoteOKAPIBase: feed.URL}
+
+	postings, err := verifier.FetchRemoteOKPostings(context.Background(), "react")
+	if err != nil || len(postings) != 2 {
+		t.Fatalf("postings = %+v, %v", postings, err)
+	}
+	first := postings[0]
+	if first.ExternalID != "1137451" || first.CompanyName != "Acme" || first.Title != "Senior Frontend Engineer" || first.Location != "Worldwide" ||
+		first.WorkplaceType != "Remote" || first.Description != "Build the app." || first.ExpiresAt == nil || !first.ExpiresAt.After(time.Now()) ||
+		first.PublishedAt == nil ||
+		first.Pay == nil || first.Pay.Ranges[0].Min != 90000 || first.Pay.Ranges[0].Currency != "USD" || first.Pay.Ranges[0].Interval != "year" {
+		t.Errorf("first = %+v", first)
+	}
+	if postings[1].Pay != nil {
+		t.Errorf("a posting with zero pay has pay %+v", postings[1].Pay)
+	}
+}
