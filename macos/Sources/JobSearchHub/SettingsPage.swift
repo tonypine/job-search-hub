@@ -34,6 +34,7 @@ struct SettingsPage: View {
                     .foregroundStyle(statusColor)
             }
             if let client = connection.makeClient() {
+                ServerSection(client: client)
                 GoogleSection(client: client)
                 NetworkSection(client: client)
                 JobCriteriaSection(client: client)
