@@ -118,17 +118,27 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(includesUnclear = includes) }
     }
 
+    /**
+     * Reads the lists again. Its outcome only lands while the pairing it used
+     * is still the phone's: a read begun with a revoked pairing, finishing
+     * after the phone paired again, would otherwise leave its refusal on
+     * screen above lists that load fine.
+     */
     fun refresh() {
-        val client = client ?: return
+        val pairing = state.value.pairing ?: return
+        val client = HubClient(pairing)
         mutableState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
                 val updates = client.getUpdates().updates
                 val jobs = client.getJobs()
                 val queue = client.getDecisionQueue().items
-                mutableState.update { it.copy(updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, isLoading = false) }
+                mutableState.update {
+                    if (it.pairing != pairing) it
+                    else it.copy(updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, isLoading = false, error = null)
+                }
             } catch (error: HubException) {
-                mutableState.update { it.copy(isLoading = false, error = error.message) }
+                mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = error.message) }
             }
         }
     }
