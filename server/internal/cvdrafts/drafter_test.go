@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -147,5 +148,78 @@ func TestAnEditKeepsItsCitationsAndAPrintedPDFIsKept(t *testing.T) {
 	}
 	if _, err := drafter.SaveEdit(ctx, owner, job.ID, Draft{Roles: []DraftRole{{Role: 0, Bullets: []DraftBullet{{Text: "Mine.", Source: ""}}}}}); !errors.Is(err, chatcompletions.ErrInvalidAnswer) {
 		t.Errorf("an edit dropping a citation: %v", err)
+	}
+}
+
+var owner = store.Actor{Kind: store.ActorOwner}
+
+// fakePrinter records what it was asked to print and marks it printed.
+type fakePrinter struct {
+	hub     *store.Store
+	printed []uuid.UUID
+}
+
+func (printer *fakePrinter) PrintCV(ctx context.Context, actor store.Actor, cvID uuid.UUID) (store.CV, error) {
+	printer.printed = append(printer.printed, cvID)
+	if err := printer.hub.SaveCVPDF(ctx, actor, cvID, []byte("%PDF-fake"), "/cvs/"+cvID.String()+".pdf"); err != nil {
+		return store.CV{}, err
+	}
+	return printer.hub.GetCV(ctx, cvID)
+}
+
+func addJobWithFacts(t *testing.T, hub *store.Store, title, location, facts string) store.Job {
+	t.Helper()
+	ctx := context.Background()
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: title, URL: "https://acme.com/" + title, Location: location, Description: "Build."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	awaiting, _ := hub.GetJobForFacts(ctx, job.ID)
+	if err := hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: "m", TextHash: awaiting.TextHash, Facts: json.RawMessage(facts)}); err != nil {
+		t.Fatal(err)
+	}
+	return job
+}
+
+func TestGoodFitsAndPursuedJobsGetAPrintedCVOnce(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveBaseCV(ctx, owner, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveJobCriteria(ctx, owner, store.JobCriteria{Roles: []string{"Product Engineer"}, SeniorityLevels: []string{"Senior"},
+		Technologies: []string{"React"}, HomeCountry: "Brazil", EligibleLocationTerms: []string{"LATAM"}}); err != nil {
+		t.Fatal(err)
+	}
+	good := addJobWithFacts(t, hub, "Senior Product Engineer", "LATAM", `{"technologies":["React"],"location_restriction":"LATAM","seniority":"Senior"}`)
+	poor := addJobWithFacts(t, hub, "Sales Manager", "US only", `{"technologies":["Salesforce"],"location_restriction":"US only"}`)
+	pursued := addJobWithFacts(t, hub, "Platform Engineer", "", `{"technologies":["Go"]}`)
+	if _, err := hub.DecideJob(ctx, owner, pursued.ID, store.JobDecisionPursue, ""); err != nil {
+		t.Fatal(err)
+	}
+	claude := &fakeClaude{answer: `{"label":"Product Engineer","summary":"Builds.","roles":[{"role":0,"bullets":[{"text":"Led the web app.","source":"base:w0h1"}]}]}`}
+	drafter := NewDrafter(hub, claude)
+	printer := &fakePrinter{hub: hub}
+	drafter.Printer = printer
+
+	needing, err := drafter.ListJobsNeedingCV(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(needing) != 2 || needing[0] != pursued.ID || needing[1] != good.ID || slices.Contains(needing, poor.ID) {
+		t.Fatalf("needing = %v, want the pursued job, then the good fit, and not the poor one", needing)
+	}
+
+	cv, err := drafter.GenerateCV(ctx, good.ID)
+	if err != nil || !cv.HasPDF || cv.PDFPath == "" {
+		t.Fatalf("generated = %+v, %v", cv, err)
+	}
+	again, err := drafter.GenerateCV(ctx, good.ID)
+	if err != nil || again.ID != cv.ID || len(printer.printed) != 1 {
+		t.Errorf("a second generate: %+v, %v; printed %d times, want once and no new draft", again, err, len(printer.printed))
+	}
+	if needing, _ := drafter.ListJobsNeedingCV(ctx); len(needing) != 1 || needing[0] != pursued.ID {
+		t.Errorf("after generating, needing = %v, want only the pursued job", needing)
 	}
 }

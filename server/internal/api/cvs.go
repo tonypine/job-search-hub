@@ -24,6 +24,13 @@ type cvPrinter interface {
 type cvDrafter interface {
 	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
 	SaveEdit(ctx context.Context, actor store.Actor, jobID uuid.UUID, edit cvdrafts.Draft) (store.CV, error)
+	GenerateMissingCVs(ctx context.Context) (int, error)
+}
+
+type generateMissingCVsResponse struct {
+	// Queued is how many CVs the run will make; 0 when none are missing or a
+	// run is already going.
+	Queued int `json:"queued"`
 }
 
 // cvDraftTimeout bounds one tailored CV drafted in the background.
@@ -119,6 +126,18 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			return
 		}
 		writeCVOrError(w, cv, err)
+	})))
+	routes.Handle("POST /v1/cvs/backfill", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if drafter == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: cvdrafts.ErrNoCVDrafts.Error()})
+			return
+		}
+		queued, err := drafter.GenerateMissingCVs(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, generateMissingCVsResponse{Queued: queued})
 	})))
 	routes.Handle("POST /v1/cvs/{id}/print", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := parsePathIDOrWriteNotFound(w, r)

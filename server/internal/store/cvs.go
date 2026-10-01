@@ -158,3 +158,24 @@ func (s *Store) GetCVPDF(ctx context.Context, id uuid.UUID) ([]byte, error) {
 	}
 	return pdf, err
 }
+
+// ListTailoredCVJobIDs returns the jobs that have a tailored CV.
+func (s *Store) ListTailoredCVJobIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `SELECT job_id FROM cvs WHERE kind = 'tailored'`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
+
+// ListTailoredCVsWithoutPDF returns up to limit tailored CVs of open jobs
+// that haven't been printed since they last changed.
+func (s *Store) ListTailoredCVsWithoutPDF(ctx context.Context, limit int) ([]CV, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+prefixedCVColumns+` FROM cvs JOIN jobs ON jobs.id = cvs.job_id AND jobs.closed_at IS NULL AND jobs.dismissed_at IS NULL
+		WHERE cvs.kind = 'tailored' AND cvs.pdf IS NULL ORDER BY cvs.updated_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (CV, error) { return scanCV(row) })
+}

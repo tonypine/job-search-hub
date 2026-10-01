@@ -1,4 +1,5 @@
-// Package cvdrafts has Claude tailor the owner's base CV to a pursued job.
+// Package cvdrafts has Claude tailor the owner's base CV to a pursued or
+// good-fit job, and has each tailored CV printed to its PDF file.
 // Every bullet of a draft cites its source, a bullet of the base CV or a
 // confirmed knowledge-base entry; a draft citing anything else is refused.
 package cvdrafts
@@ -9,13 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/resume"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -34,33 +39,51 @@ type modelClient interface {
 	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
-// Drafter drafts tailored CVs through client, Claude.
+// maximumGeneratedPerPass bounds the CVs one pass drafts; the next pass
+// takes the rest, newest first, so new postings get theirs first.
+// maximumPrintedPerPass bounds the reprints of edited CVs.
+const (
+	maximumGeneratedPerPass = 3
+	maximumPrintedPerPass   = 10
+	jobsPageSize            = 500
+)
+
+type cvPrinter interface {
+	PrintCV(ctx context.Context, actor store.Actor, cvID uuid.UUID) (store.CV, error)
+}
+
+// Drafter drafts tailored CVs through client, Claude, and prints them with
+// Printer when there is one. Rates judge foreign pay in the fit that picks
+// which jobs get a CV on their own.
 type Drafter struct {
-	hub    *store.Store
-	client modelClient
+	hub     *store.Store
+	client  modelClient
+	Printer cvPrinter
+	Rates   jobfit.RateSource
+	// drafting serializes drafts, so a pass and a run for older postings
+	// never draft the same job twice.
+	drafting     sync.Mutex
+	isGenerating atomic.Bool
 }
 
 func NewDrafter(hub *store.Store, client modelClient) *Drafter {
 	return &Drafter{hub: hub, client: client}
 }
 
-// Run drafts a CV for every pursued job without one, at start and then every
-// interval, until ctx ends.
+// Run generates CVs at start and then every interval, until ctx ends: up to
+// maximumGeneratedPerPass jobs that need one, and a print of each edited CV.
 func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		jobIDs, err := drafter.hub.ListJobsAwaitingCV(ctx)
+		jobIDs, err := drafter.ListJobsNeedingCV(ctx)
 		if err != nil {
-			slog.Error("list jobs awaiting a CV", "error", err)
+			slog.Error("list jobs needing a CV", "error", err)
 		}
-		for _, jobID := range jobIDs {
-			if _, err := drafter.DraftCV(ctx, jobID); err != nil {
-				slog.Warn("CV draft failed", "job", jobID, "error", err)
-			} else {
-				slog.Info("CV drafted", "job", jobID)
-			}
+		for _, jobID := range jobIDs[:min(len(jobIDs), maximumGeneratedPerPass)] {
+			drafter.generateAndLog(ctx, jobID)
 		}
+		drafter.printEditedCVs(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -68,6 +91,114 @@ func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
+
+// ListJobsNeedingCV returns the open jobs with no tailored CV that should
+// have one: the pursued ones, then the good fits, the newest first.
+func (drafter *Drafter) ListJobsNeedingCV(ctx context.Context) ([]uuid.UUID, error) {
+	pursued, err := drafter.hub.ListJobsAwaitingCV(ctx)
+	if err != nil {
+		return nil, err
+	}
+	withCV, err := drafter.hub.ListTailoredCVJobIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	criteria, rates, err := jobfit.ReadInputs(ctx, drafter.hub, drafter.getRates())
+	if err != nil {
+		return nil, err
+	}
+	jobIDs := slices.Clone(pursued)
+	for offset := 0; ; offset += jobsPageSize {
+		items, total, err := drafter.hub.ListJobs(ctx, store.JobFilter{Status: store.JobStatusOpen, Limit: jobsPageSize, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if slices.Contains(withCV, item.Job.ID) || slices.Contains(jobIDs, item.Job.ID) {
+				continue
+			}
+			if jobfit.Judge(item.Job, item.Facts, criteria, rates).Level == jobfit.LevelGood {
+				jobIDs = append(jobIDs, item.Job.ID)
+			}
+		}
+		if offset+jobsPageSize >= total {
+			return jobIDs, nil
+		}
+	}
+}
+
+// GenerateCV makes sure the job has a printed tailored CV: it drafts one if
+// the job has none, and prints it if it isn't printed. It returns the CV,
+// with its PDF's path once printed.
+func (drafter *Drafter) GenerateCV(ctx context.Context, jobID uuid.UUID) (store.CV, error) {
+	drafter.drafting.Lock()
+	defer drafter.drafting.Unlock()
+	cv, err := drafter.hub.GetJobCV(ctx, jobID)
+	if errors.Is(err, store.ErrCVNotFound) {
+		cv, err = drafter.DraftCV(ctx, jobID)
+	}
+	if err != nil || cv.HasPDF || drafter.Printer == nil {
+		return cv, err
+	}
+	return drafter.Printer.PrintCV(ctx, store.Actor{Kind: store.ActorSystem}, cv.ID)
+}
+
+// GenerateMissingCVs starts generating the CV of every job that needs one,
+// in the background, and returns how many it will make. While a run is
+// going, it starts no other and returns 0.
+func (drafter *Drafter) GenerateMissingCVs(ctx context.Context) (int, error) {
+	jobIDs, err := drafter.ListJobsNeedingCV(ctx)
+	if err != nil || len(jobIDs) == 0 || !drafter.isGenerating.CompareAndSwap(false, true) {
+		return 0, err
+	}
+	go func() {
+		defer drafter.isGenerating.Store(false)
+		runCtx := context.WithoutCancel(ctx)
+		for _, jobID := range jobIDs {
+			drafter.generateAndLog(runCtx, jobID)
+		}
+		slog.Info("missing CVs generated", "jobs", len(jobIDs))
+	}()
+	return len(jobIDs), nil
+}
+
+func (drafter *Drafter) generateAndLog(ctx context.Context, jobID uuid.UUID) {
+	if cv, err := drafter.GenerateCV(ctx, jobID); err != nil {
+		slog.Warn("CV generation failed", "job", jobID, "error", err)
+	} else {
+		slog.Info("CV generated", "job", jobID, "pdf", cv.PDFPath)
+	}
+}
+
+// printEditedCVs prints the tailored CVs changed since their last print.
+func (drafter *Drafter) printEditedCVs(ctx context.Context) {
+	if drafter.Printer == nil {
+		return
+	}
+	cvs, err := drafter.hub.ListTailoredCVsWithoutPDF(ctx, maximumPrintedPerPass)
+	if err != nil {
+		slog.Error("list CVs to print", "error", err)
+		return
+	}
+	for _, cv := range cvs {
+		if _, err := drafter.Printer.PrintCV(ctx, store.Actor{Kind: store.ActorSystem}, cv.ID); err != nil {
+			slog.Warn("CV print failed", "cv", cv.ID, "error", err)
+		}
+	}
+}
+
+// getRates is the rate source the fit judges foreign pay with; without one,
+// foreign pay reads unclear.
+func (drafter *Drafter) getRates() jobfit.RateSource {
+	if drafter.Rates == nil {
+		return noRates{}
+	}
+	return drafter.Rates
+}
+
+type noRates struct{}
+
+func (noRates) GetRates(context.Context, string) (map[string]float64, error) { return nil, nil }
 
 // Draft is a tailored CV's words: as the job_cv schema asks Claude for them,
 // and as the owner edits them.

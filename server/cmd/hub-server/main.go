@@ -234,6 +234,12 @@ func run() error {
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
 	}
+	var cvPrinter *cvpdfs.Printer
+	if _, err := os.Stat(settings.cvPrintCommand); err != nil {
+		slog.Warn("CV printing off: no hub-cvprint command", "command", settings.cvPrintCommand)
+	} else {
+		cvPrinter = cvpdfs.NewPrinter(hub, settings.cvPrintCommand, settings.cvFolder)
+	}
 	var fullBriefs *jobbriefs.Writer
 	var cvDrafter *cvdrafts.Drafter
 	var newClaudeClient func(model string) comparisons.ModelClient
@@ -252,6 +258,10 @@ func run() error {
 			briefWriter.FullClient = claude
 			fullBriefs = briefWriter
 			cvDrafter = cvdrafts.NewDrafter(hub, claude)
+			cvDrafter.Rates = rates
+			if cvPrinter != nil {
+				cvDrafter.Printer = cvPrinter
+			}
 			go cvDrafter.Run(ctx, cvDraftInterval)
 			go briefWriter.RunNightly(ctx, fullBriefCheckInterval)
 			newClaudeClient = func(model string) comparisons.ModelClient {
@@ -286,12 +296,6 @@ func run() error {
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterMarketGapRoutes(routes, hub, requireOwner)
 	api.RegisterInterviewPackRoutes(routes, hub, requireOwner)
-	var cvPrinter *cvpdfs.Printer
-	if _, err := os.Stat(settings.cvPrintCommand); err != nil {
-		slog.Warn("CV printing off: no hub-cvprint command", "command", settings.cvPrintCommand)
-	} else {
-		cvPrinter = cvpdfs.NewPrinter(hub, settings.cvPrintCommand, settings.cvFolder)
-	}
 	if cvDrafter != nil {
 		mcptools.AddCVTools(ownerTools, cvDrafter)
 	}

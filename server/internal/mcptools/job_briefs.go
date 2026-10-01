@@ -50,6 +50,23 @@ func AddJobBriefTools(server *mcp.Server, writer fullBriefWriter, briefs briefRe
 
 type cvDrafter interface {
 	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
+	GenerateCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
+	GenerateMissingCVs(ctx context.Context) (int, error)
+}
+
+type generateCVInput struct {
+	JobID uuid.UUID `json:"job_id" jsonschema:"the job whose CV to generate"`
+}
+
+type generateCVOutput struct {
+	CVID uuid.UUID `json:"cv_id"`
+	// PDFPath is the file to open or attach to a form; empty when the hub
+	// can't print.
+	PDFPath string `json:"pdf_path,omitempty"`
+}
+
+type generateMissingCVsOutput struct {
+	Queued int `json:"queued"`
 }
 
 type draftCVInput struct {
@@ -65,6 +82,31 @@ type draftCVOutput struct {
 // AddCVTools gives the owner's server draft_cv. Agents don't get it: it
 // spends the owner's Claude plan.
 func AddCVTools(server *mcp.Server, drafter cvDrafter) {
+	addTool(server, &mcp.Tool{
+		Name: "generate_cv",
+		Description: "Make sure a job has its tailored CV as a PDF, and return the file's path, to open or to attach to an application " +
+			"form. Drafts the CV with Claude when the job has none (this takes a minute), and prints it when it isn't printed. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input generateCVInput) (*mcp.CallToolResult, generateCVOutput, error) {
+		if _, err := getOwnerActor(ctx); err != nil {
+			return nil, generateCVOutput{}, err
+		}
+		cv, err := drafter.GenerateCV(ctx, input.JobID)
+		if err != nil {
+			return nil, generateCVOutput{}, err
+		}
+		return nil, generateCVOutput{CVID: cv.ID, PDFPath: cv.PDFPath}, nil
+	})
+	addTool(server, &mcp.Tool{
+		Name: "generate_missing_cvs",
+		Description: "Start generating the tailored CV PDFs of every good-fit or pursued job that has none yet, in the background, " +
+			"and return how many it will make; 0 when none are missing or a run is already going. Owner only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, generateMissingCVsOutput, error) {
+		if _, err := getOwnerActor(ctx); err != nil {
+			return nil, generateMissingCVsOutput{}, err
+		}
+		queued, err := drafter.GenerateMissingCVs(ctx)
+		return nil, generateMissingCVsOutput{Queued: queued}, err
+	})
 	addTool(server, &mcp.Tool{
 		Name: "draft_cv",
 		Description: "Have Claude tailor the base CV to a job now: a new headline, summary and bullets, each bullet citing a base CV bullet " +
