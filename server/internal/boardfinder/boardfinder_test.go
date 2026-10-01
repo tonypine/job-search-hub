@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,27 +22,30 @@ func (noRates) GetRates(context.Context, string) (map[string]float64, error) { r
 
 // fakeBoards answers for the boards it knows; any other board is unknown.
 type fakeBoards struct {
-	postings map[string][]store.JobPosting
-	failing  map[string]bool
+	titles  map[string][]string
+	failing map[string]bool
 	// limiting are providers that answer 429 to every request.
 	limiting map[string]bool
+	lock     sync.Mutex
 	asked    []string
 }
 
-func (boards *fakeBoards) FetchPostings(_ context.Context, provider, boardToken string) ([]store.JobPosting, error) {
+func (boards *fakeBoards) ListPostingTitles(_ context.Context, provider, boardToken string) ([]string, error) {
 	key := provider + "/" + boardToken
+	boards.lock.Lock()
 	boards.asked = append(boards.asked, key)
+	boards.lock.Unlock()
 	if boards.failing[boardToken] {
 		return nil, errors.New("greenhouse answered 500")
 	}
 	if boards.limiting[provider] {
 		return nil, fmt.Errorf("%w: %s answered 429", jobboards.ErrRateLimited, provider)
 	}
-	postings, known := boards.postings[key]
+	titles, known := boards.titles[key]
 	if !known {
 		return nil, jobboards.ErrPostingAPIOff
 	}
-	return postings, nil
+	return titles, nil
 }
 
 func (boards *fakeBoards) countAsked(boardToken string) int {
@@ -74,9 +78,10 @@ func TestAPassFindsTheBoardThatListsAFeedJobsTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	boards := &fakeBoards{
-		postings: map[string][]store.JobPosting{
-			jobboards.Lever + "/acmelabs":      {{Title: "Office Manager"}, {Title: "senior frontend engineer"}},
-			jobboards.Greenhouse + "/namesake": {{Title: "Accountant"}},
+		titles: map[string][]string{
+			jobboards.Lever + "/acmelabs":      {"Office Manager", "senior frontend engineer"},
+			jobboards.Recruitee + "/acmelabs":  {"Senior Frontend Engineer"},
+			jobboards.Greenhouse + "/namesake": {"Accountant"},
 		},
 		failing: map[string]bool{"flaky": true},
 	}

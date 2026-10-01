@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,25 +32,28 @@ const (
 	jobPageSize            = 500
 )
 
-// boardProviders are the providers searched, in order: those whose postings
-// the hub reads.
-var boardProviders = []string{jobboards.Greenhouse, jobboards.Lever, jobboards.Ashby, jobboards.Workable}
+// boardProviders are the providers searched: those whose postings the hub
+// reads. When two list the company's titles, the earlier one's board is kept.
+var boardProviders = []string{
+	jobboards.Greenhouse, jobboards.Lever, jobboards.Ashby, jobboards.Workable, jobboards.Recruitee, jobboards.BambooHR,
+	jobboards.SmartRecruiters, jobboards.Personio, jobboards.Pinpoint,
+}
 
 // slowProviders limit requests harder than the others, and get this pause
 // before each request instead of RequestPause.
-var slowProviders = map[string]time.Duration{jobboards.Workable: 2 * time.Second}
+var slowProviders = map[string]time.Duration{jobboards.Workable: 6 * time.Second, jobboards.Personio: 2 * time.Second}
 
 // feedSources are the sources whose jobs name a company without its board.
 var feedSources = []string{store.JobSourceHimalayas, store.JobSourceIndeed, store.JobSourceLinkedIn, store.JobSourceGlassdoor}
 
-type postingFetcher interface {
-	FetchPostings(ctx context.Context, provider, boardToken string) ([]store.JobPosting, error)
+type titleLister interface {
+	ListPostingTitles(ctx context.Context, provider, boardToken string) ([]string, error)
 }
 
 type Finder struct {
-	hub     *store.Store
-	fetcher postingFetcher
-	rates   jobfit.RateSource
+	hub    *store.Store
+	boards titleLister
+	rates  jobfit.RateSource
 	// RequestPause spaces the requests to the providers.
 	RequestPause time.Duration
 	now          func() time.Time
@@ -58,8 +62,8 @@ type Finder struct {
 	limitingProviders map[string]bool
 }
 
-func New(hub *store.Store, fetcher postingFetcher, rates jobfit.RateSource) *Finder {
-	return &Finder{hub: hub, fetcher: fetcher, rates: rates, RequestPause: 500 * time.Millisecond, now: time.Now}
+func New(hub *store.Store, boards titleLister, rates jobfit.RateSource) *Finder {
+	return &Finder{hub: hub, boards: boards, rates: rates, RequestPause: 500 * time.Millisecond, now: time.Now}
 }
 
 // PassSummary counts one pass over the companies awaiting a search.
@@ -227,49 +231,82 @@ func getSearchedProviders(searches map[string]store.BoardSearch, key string, now
 	return search.SearchedProviders
 }
 
-// searchBoard asks each provider left for the company, under each board token
-// it may use, and returns the first board listing one of the company's
-// titles. answered are the providers that answered every token without a
-// board; err is the last failure, when a provider couldn't answer.
+// searchBoard asks the providers left for the company, all at once since
+// they're different hosts, under each board token it may use. It returns the
+// board listing one of the company's titles, on the earliest provider when
+// several do. answered are the providers that answered every token without a
+// board; err is a failure, when a provider couldn't answer.
 func (finder *Finder) searchBoard(ctx context.Context, company FeedCompany) (store.FoundJobBoardInput, bool, []string, error) {
+	searches := make([]providerSearch, len(company.ProvidersToSearch))
+	var group sync.WaitGroup
+	for index, provider := range company.ProvidersToSearch {
+		if finder.limitingProviders[provider] {
+			searches[index] = providerSearch{provider: provider, failure: jobboards.ErrRateLimited}
+			continue
+		}
+		group.Go(func() { searches[index] = finder.searchProvider(ctx, company, provider) })
+	}
+	group.Wait()
+
 	var answered []string
 	var failure error
-	for _, provider := range company.ProvidersToSearch {
-		isAnswered := !finder.limitingProviders[provider]
-		if !isAnswered {
-			failure = jobboards.ErrRateLimited
-		}
-		for _, boardToken := range getBoardTokenCandidates(company) {
-			if !isAnswered {
-				break
-			}
-			if err := finder.waitBeforeRequest(ctx, provider); err != nil {
-				return store.FoundJobBoardInput{}, false, answered, err
-			}
-			postings, err := finder.fetcher.FetchPostings(ctx, provider, boardToken)
-			switch {
-			case errors.Is(err, jobboards.ErrPostingAPIOff):
-				continue
-			case errors.Is(err, jobboards.ErrRateLimited):
-				finder.limitingProviders[provider] = true
-				isAnswered, failure = false, err
-				continue
-			case err != nil:
-				isAnswered, failure = false, err
-				continue
-			}
-			if hasAnyTitle(postings, company.Titles) {
-				return store.FoundJobBoardInput{
-					CompanyName: company.Name, Provider: provider, BoardToken: boardToken,
-					BoardURL: jobboards.GetBoardURL(provider, boardToken), OpenPostingCount: len(postings),
-				}, true, answered, nil
-			}
-		}
-		if isAnswered {
-			answered = append(answered, provider)
+	for _, search := range searches {
+		if search.found {
+			return store.FoundJobBoardInput{
+				CompanyName: company.Name, Provider: search.provider, BoardToken: search.boardToken,
+				BoardURL: jobboards.GetBoardURL(search.provider, search.boardToken), OpenPostingCount: search.openPostingCount,
+			}, true, answered, nil
 		}
 	}
+	for _, search := range searches {
+		if errors.Is(search.failure, jobboards.ErrRateLimited) {
+			finder.limitingProviders[search.provider] = true
+		}
+		if search.failure != nil {
+			failure = search.failure
+			continue
+		}
+		answered = append(answered, search.provider)
+	}
 	return store.FoundJobBoardInput{}, false, answered, failure
+}
+
+// providerSearch is what one provider answered for a company.
+type providerSearch struct {
+	provider         string
+	found            bool
+	boardToken       string
+	openPostingCount int
+	// failure is set when the provider couldn't answer for every token.
+	failure error
+}
+
+// searchProvider asks one provider for each board token the company may use,
+// one request at a time, and stops at the board that lists one of its titles.
+func (finder *Finder) searchProvider(ctx context.Context, company FeedCompany, provider string) providerSearch {
+	search := providerSearch{provider: provider}
+	for _, boardToken := range getBoardTokenCandidates(company) {
+		if err := finder.waitBeforeRequest(ctx, provider); err != nil {
+			search.failure = err
+			return search
+		}
+		titles, err := finder.boards.ListPostingTitles(ctx, provider, boardToken)
+		switch {
+		case errors.Is(err, jobboards.ErrPostingAPIOff):
+			continue
+		case errors.Is(err, jobboards.ErrRateLimited):
+			search.failure = err
+			return search
+		case err != nil:
+			search.failure = err
+			continue
+		}
+		if hasAnyTitle(titles, company.Titles) {
+			search.found, search.boardToken, search.openPostingCount = true, boardToken, len(titles)
+			return search
+		}
+	}
+	return search
 }
 
 func (finder *Finder) waitBeforeRequest(ctx context.Context, provider string) error {
@@ -323,10 +360,12 @@ func getBoardTokenCandidates(company FeedCompany) []string {
 	return candidates
 }
 
-func hasAnyTitle(postings []store.JobPosting, titles []string) bool {
+// hasAnyTitle reports whether a board's titles include one of the company's
+// feed titles.
+func hasAnyTitle(boardTitles, feedTitles []string) bool {
 	wanted := map[string]bool{}
-	for _, title := range titles {
+	for _, title := range feedTitles {
 		wanted[wordmatch.Normalize(title)] = true
 	}
-	return slices.ContainsFunc(postings, func(posting store.JobPosting) bool { return wanted[wordmatch.Normalize(posting.Title)] })
+	return slices.ContainsFunc(boardTitles, func(title string) bool { return wanted[wordmatch.Normalize(title)] })
 }

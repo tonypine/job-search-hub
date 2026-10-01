@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 )
 
@@ -52,6 +53,14 @@ type Verifier struct {
 	HimalayasAPIBase  string
 	// EightfoldAPIBase is empty for each tenant's own site; tests set it.
 	EightfoldAPIBase string
+	// SmartRecruitersAPIBase serves every company's postings; the others are
+	// empty for each board's own site, as acme.recruitee.com, and tests set
+	// them.
+	SmartRecruitersAPIBase string
+	RecruiteeAPIBase       string
+	BambooHRAPIBase        string
+	PersonioAPIBase        string
+	PinpointAPIBase        string
 	// SearchTerms are what a large employer's board is searched by, rather
 	// than read whole: the owner's criteria.
 	SearchTerms           func(ctx context.Context) []string
@@ -60,13 +69,14 @@ type Verifier struct {
 
 func NewVerifier() *Verifier {
 	return &Verifier{
-		HTTPClient:        &http.Client{Timeout: requestTimeout},
-		GreenhouseAPIBase: "https://boards-api.greenhouse.io",
-		LeverAPIBase:      "https://api.lever.co",
-		AshbyAPIBase:      "https://api.ashbyhq.com",
-		AshbyBoardBase:    "https://jobs.ashbyhq.com",
-		WorkableAPIBase:   "https://apply.workable.com",
-		HimalayasAPIBase:  "https://himalayas.app",
+		HTTPClient:             &http.Client{Timeout: requestTimeout},
+		GreenhouseAPIBase:      "https://boards-api.greenhouse.io",
+		LeverAPIBase:           "https://api.lever.co",
+		AshbyAPIBase:           "https://api.ashbyhq.com",
+		AshbyBoardBase:         "https://jobs.ashbyhq.com",
+		WorkableAPIBase:        "https://apply.workable.com",
+		HimalayasAPIBase:       "https://himalayas.app",
+		SmartRecruitersAPIBase: "https://api.smartrecruiters.com",
 	}
 }
 
@@ -87,6 +97,8 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken
 	case Eightfold:
 		return verifier.verifyEightfold(ctx, boardToken)
+	case Recruitee, BambooHR, SmartRecruiters, Personio, Pinpoint:
+		return verifier.verifyByPostings(ctx, provider, boardToken)
 	default:
 		return Verification{}, ErrUnsupportedProvider
 	}
@@ -108,8 +120,8 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 	return Verification{Verified: true, OpenPostingCount: &count, BoardURL: boardURL}, nil
 }
 
-// GetBoardURL returns the board's public page on Greenhouse, Lever, Ashby or
-// Workable, and "" for any other provider.
+// GetBoardURL returns the board's public page, or "" for a provider without
+// one per board.
 func GetBoardURL(provider, boardToken string) string {
 	escapedToken := url.PathEscape(boardToken)
 	switch provider {
@@ -121,8 +133,38 @@ func GetBoardURL(provider, boardToken string) string {
 		return "https://jobs.ashbyhq.com/" + escapedToken
 	case Workable:
 		return "https://apply.workable.com/" + escapedToken + "/"
+	case SmartRecruiters:
+		return "https://jobs.smartrecruiters.com/" + escapedToken
+	}
+	if !tenantName.MatchString(boardToken) {
+		return ""
+	}
+	switch provider {
+	case Recruitee:
+		return "https://" + boardToken + ".recruitee.com/"
+	case BambooHR:
+		return "https://" + boardToken + ".bamboohr.com/careers"
+	case Personio:
+		return "https://" + boardToken + ".jobs.personio.com/"
+	case Pinpoint:
+		return "https://" + boardToken + ".pinpointhq.com/"
 	}
 	return ""
+}
+
+// verifyByPostings confirms a board by reading its postings. SmartRecruiters
+// lists nothing for a company it doesn't know, so an empty list there
+// confirms nothing.
+func (verifier *Verifier) verifyByPostings(ctx context.Context, provider, boardToken string) (Verification, error) {
+	postings, err := verifier.FetchPostings(ctx, provider, boardToken)
+	if errors.Is(err, ErrPostingAPIOff) || err == nil && provider == SmartRecruiters && len(postings) == 0 {
+		return Verification{}, nil
+	}
+	if err != nil {
+		return Verification{}, err
+	}
+	count := len(postings)
+	return Verification{Verified: true, OpenPostingCount: &count, BoardURL: GetBoardURL(provider, boardToken)}, nil
 }
 
 // verifyAshbyBoardPage covers Ashby customers who turn the posting API off.
@@ -144,7 +186,12 @@ func (verifier *Verifier) verifyAshbyBoardPage(ctx context.Context, boardToken, 
 	return Verification{Verified: true, BoardURL: boardURL}, nil
 }
 
-// fetch returns the body of a 200, or found=false for a 404.
+// redirectingProviders send a name they don't know to their own site, so a
+// redirect there means no board.
+var redirectingProviders = []string{BambooHR, Personio}
+
+// fetch returns the body of a 200, or found=false for a 404 or, on a
+// redirecting provider, a redirect.
 func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) ([]byte, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
@@ -152,19 +199,25 @@ func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) 
 	}
 	request.Header.Set("User-Agent", userAgent)
 
-	response, err := verifier.HTTPClient.Do(request)
+	client := verifier.HTTPClient
+	if slices.Contains(redirectingProviders, provider) {
+		withoutRedirects := *verifier.HTTPClient
+		withoutRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &withoutRedirects
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, false, fmt.Errorf("reach %s: %w", provider, err)
 	}
 	defer response.Body.Close()
 
-	switch response.StatusCode {
-	case http.StatusOK:
+	switch {
+	case response.StatusCode == http.StatusOK:
 		body, err := io.ReadAll(response.Body)
 		return body, err == nil, err
-	case http.StatusNotFound:
+	case response.StatusCode == http.StatusNotFound, response.StatusCode >= 300 && response.StatusCode < 400:
 		return nil, false, nil
-	case http.StatusTooManyRequests:
+	case response.StatusCode == http.StatusTooManyRequests:
 		return nil, false, fmt.Errorf("%w: %s answered 429", ErrRateLimited, provider)
 	default:
 		return nil, false, fmt.Errorf("%s answered %d", provider, response.StatusCode)

@@ -19,6 +19,10 @@ import (
 // postings, as with Ashby customers who turn the posting API off.
 var ErrPostingAPIOff = errors.New("the board's posting API is off")
 
+// maximumDetailedPostings bounds the postings read one by one from a board
+// whose list has no text, as on BambooHR and SmartRecruiters.
+const maximumDetailedPostings = 100
+
 // FetchPostings lists the board's open postings through its provider's
 // public API.
 func (verifier *Verifier) FetchPostings(ctx context.Context, provider, boardToken string) ([]store.JobPosting, error) {
@@ -35,6 +39,16 @@ func (verifier *Verifier) FetchPostings(ctx context.Context, provider, boardToke
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken + "?details=true"
 	case Eightfold:
 		return verifier.fetchEightfoldPostings(ctx, boardToken)
+	case Recruitee:
+		return verifier.fetchRecruiteePostings(ctx, boardToken)
+	case BambooHR:
+		return verifier.fetchBambooHRPostings(ctx, boardToken)
+	case SmartRecruiters:
+		return verifier.fetchSmartRecruitersPostings(ctx, boardToken)
+	case Personio:
+		return verifier.fetchPersonioPostings(ctx, boardToken)
+	case Pinpoint:
+		return verifier.fetchPinpointPostings(ctx, boardToken)
 	default:
 		return nil, ErrUnsupportedProvider
 	}
