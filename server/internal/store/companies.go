@@ -223,10 +223,14 @@ func NormalizeDomain(raw string) (string, error) {
 	return host, nil
 }
 
-// matchCompanyNames ties the connections and the jobs that name a company to
-// the hub company of that name, as when a company is added or renamed.
+// matchCompanyNames ties the connections, the found job boards and the jobs
+// that name a company to the hub company of that name, as when a company is
+// added or renamed.
 func matchCompanyNames(ctx context.Context, tx pgx.Tx) error {
 	if _, err := matchConnectionsToCompanies(ctx, tx); err != nil {
+		return err
+	}
+	if err := tieJobBoardsToCompanies(ctx, tx); err != nil {
 		return err
 	}
 	_, err := tieJobsToCompanies(ctx, tx)

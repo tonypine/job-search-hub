@@ -78,7 +78,7 @@ func TestParseEnvironmentReadsTheBoardPollInterval(t *testing.T) {
 func TestJobFactsReadingIsOffWithoutAModelURLAndDefaultsOtherwise(t *testing.T) {
 	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
 	if err != nil || parsed.jobFactsModelURL != "" || parsed.jobFactsModel != defaultJobFactsModel || parsed.jobFactsInterval != defaultJobFactsInterval ||
-		parsed.feedPollInterval != time.Hour {
+		parsed.feedPollInterval != time.Hour || parsed.boardSearchInterval != defaultBoardSearchInterval {
 		t.Fatalf("defaults = %+v, %v", parsed, err)
 	}
 

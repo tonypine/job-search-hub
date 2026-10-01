@@ -18,8 +18,11 @@ var ErrJobBoardTaken = errors.New("this job board is already stored for another 
 var JobBoardProviders = []string{"greenhouse", "lever", "ashby", "workable", "recruitee", "personio", "smartrecruiters", "eightfold", "other"}
 
 type JobBoard struct {
-	ID               uuid.UUID  `json:"id"`
-	CompanyID        uuid.UUID  `json:"company_id"`
+	ID uuid.UUID `json:"id"`
+	// CompanyID is nil for a board found for a company the hub keeps no
+	// record of; CompanyName names that company.
+	CompanyID        *uuid.UUID `json:"company_id,omitempty"`
+	CompanyName      string     `json:"company_name,omitempty"`
 	Provider         string     `json:"provider"`
 	BoardToken       string     `json:"board_token"`
 	BoardURL         string     `json:"board_url,omitempty"`
@@ -27,11 +30,12 @@ type JobBoard struct {
 	OpenPostingCount *int       `json:"open_posting_count,omitempty"`
 }
 
-const jobBoardColumns = `id, company_id, provider, board_token, board_url, verified_at, open_posting_count`
+const jobBoardColumns = `id, company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count`
 
 func scanJobBoard(row pgx.Row) (JobBoard, error) {
 	var board JobBoard
-	err := row.Scan(&board.ID, &board.CompanyID, &board.Provider, &board.BoardToken, &board.BoardURL, &board.VerifiedAt, &board.OpenPostingCount)
+	err := row.Scan(&board.ID, &board.CompanyID, &board.CompanyName, &board.Provider, &board.BoardToken, &board.BoardURL, &board.VerifiedAt,
+		&board.OpenPostingCount)
 	return board, err
 }
 
@@ -48,7 +52,8 @@ type JobBoardInput struct {
 }
 
 // SetJobBoard stores a company's job board, or refreshes it when the company
-// already has this board.
+// already has this board. A found board that belongs to no company of the
+// hub's becomes this company's.
 func (s *Store) SetJobBoard(ctx context.Context, actor Actor, input JobBoardInput) (JobBoard, error) {
 	if !slices.Contains(JobBoardProviders, input.Provider) {
 		return JobBoard{}, fmt.Errorf("provider must be one of %s", strings.Join(JobBoardProviders, ", "))
@@ -86,16 +91,22 @@ func (s *Store) SetJobBoard(ctx context.Context, actor Actor, input JobBoardInpu
 			})
 		case err != nil:
 			return err
-		case existing.CompanyID != input.CompanyID:
+		case existing.CompanyID != nil && *existing.CompanyID != input.CompanyID:
 			return ErrJobBoardTaken
 		}
 
 		board, err = scanJobBoard(tx.QueryRow(ctx, `
-			UPDATE job_boards SET board_url = $2, verified_at = $3, open_posting_count = $4, updated_at = now()
+			UPDATE job_boards SET company_id = $5, board_url = $2, verified_at = $3, open_posting_count = $4, updated_at = now()
 			WHERE id = $1
 			RETURNING `+jobBoardColumns,
-			existing.ID, input.BoardURL, verifiedAt, input.OpenPostingCount))
+			existing.ID, input.BoardURL, verifiedAt, input.OpenPostingCount, input.CompanyID))
+		if isForeignKeyViolation(err) {
+			return ErrCompanyNotFound
+		}
 		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE jobs SET company_id = $2 WHERE job_board_id = $1 AND company_id IS NULL`, board.ID, input.CompanyID); err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{

@@ -58,7 +58,9 @@ func (s *Store) ListCompanySummaries(ctx context.Context) ([]CompanySummary, err
 	}
 	boardsByCompany := map[uuid.UUID][]JobBoard{}
 	for _, board := range boards {
-		boardsByCompany[board.CompanyID] = append(boardsByCompany[board.CompanyID], board)
+		if board.CompanyID != nil {
+			boardsByCompany[*board.CompanyID] = append(boardsByCompany[*board.CompanyID], board)
+		}
 	}
 	for index := range summaries {
 		if companyBoards, found := boardsByCompany[summaries[index].Company.ID]; found {

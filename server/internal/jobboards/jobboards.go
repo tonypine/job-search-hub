@@ -17,6 +17,9 @@ import (
 
 var ErrUnsupportedProvider = errors.New("this provider's job boards cannot be verified yet")
 
+// ErrRateLimited means the provider asked for fewer requests, answering 429.
+var ErrRateLimited = errors.New("the provider is limiting requests")
+
 const (
 	Greenhouse = "greenhouse"
 	Lever      = "lever"
@@ -71,20 +74,17 @@ func NewVerifier() *Verifier {
 // A board the provider does not know is unverified, not an error.
 func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken string) (Verification, error) {
 	escapedToken := url.PathEscape(boardToken)
-	var apiURL, boardURL string
+	boardURL := GetBoardURL(provider, boardToken)
+	var apiURL string
 	switch provider {
 	case Greenhouse:
 		apiURL = verifier.GreenhouseAPIBase + "/v1/boards/" + escapedToken + "/jobs"
-		boardURL = "https://job-boards.greenhouse.io/" + escapedToken
 	case Lever:
 		apiURL = verifier.LeverAPIBase + "/v0/postings/" + escapedToken + "?mode=json"
-		boardURL = "https://jobs.lever.co/" + escapedToken
 	case Ashby:
 		apiURL = verifier.AshbyAPIBase + "/posting-api/job-board/" + escapedToken
-		boardURL = "https://jobs.ashbyhq.com/" + escapedToken
 	case Workable:
 		apiURL = verifier.WorkableAPIBase + "/api/v1/widget/accounts/" + escapedToken
-		boardURL = "https://apply.workable.com/" + escapedToken + "/"
 	case Eightfold:
 		return verifier.verifyEightfold(ctx, boardToken)
 	default:
@@ -106,6 +106,23 @@ func (verifier *Verifier) Verify(ctx context.Context, provider, boardToken strin
 		return Verification{}, fmt.Errorf("read the %s board %q: %w", provider, boardToken, err)
 	}
 	return Verification{Verified: true, OpenPostingCount: &count, BoardURL: boardURL}, nil
+}
+
+// GetBoardURL returns the board's public page on Greenhouse, Lever, Ashby or
+// Workable, and "" for any other provider.
+func GetBoardURL(provider, boardToken string) string {
+	escapedToken := url.PathEscape(boardToken)
+	switch provider {
+	case Greenhouse:
+		return "https://job-boards.greenhouse.io/" + escapedToken
+	case Lever:
+		return "https://jobs.lever.co/" + escapedToken
+	case Ashby:
+		return "https://jobs.ashbyhq.com/" + escapedToken
+	case Workable:
+		return "https://apply.workable.com/" + escapedToken + "/"
+	}
+	return ""
 }
 
 // verifyAshbyBoardPage covers Ashby customers who turn the posting API off.
@@ -147,6 +164,8 @@ func (verifier *Verifier) fetch(ctx context.Context, provider, fetchURL string) 
 		return body, err == nil, err
 	case http.StatusNotFound:
 		return nil, false, nil
+	case http.StatusTooManyRequests:
+		return nil, false, fmt.Errorf("%w: %s answered 429", ErrRateLimited, provider)
 	default:
 		return nil, false, fmt.Errorf("%s answered %d", provider, response.StatusCode)
 	}

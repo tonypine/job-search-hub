@@ -153,11 +153,11 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 			if !isKnown {
 				job, err := scanJob(tx.QueryRow(ctx, `
 					INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
-						pay, employment_type, department, other_locations, published_at)
-					VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15)
+						pay, employment_type, department, other_locations, published_at, company_name)
+					VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15, $16)
 					RETURNING `+jobColumns,
-					append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
-						posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...))
+					append(append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+						posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...), board.CompanyName)...))
 				if err != nil {
 					return err
 				}
@@ -305,16 +305,16 @@ func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard,
 		var err error
 		job, err = scanJob(tx.QueryRow(ctx, `
 			INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
-				pay, employment_type, department, other_locations, published_at)
-			VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15)
+				pay, employment_type, department, other_locations, published_at, company_name)
+			VALUES ($1, $2, $3, 'job_board', $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15, $16)
 			ON CONFLICT (job_board_id, external_id) DO UPDATE SET
 				title = EXCLUDED.title, location = EXCLUDED.location, workplace_type = EXCLUDED.workplace_type, url = EXCLUDED.url,
 				description = EXCLUDED.description, raw = EXCLUDED.raw, last_seen_at = EXCLUDED.last_seen_at, closed_at = NULL,
 				pay = EXCLUDED.pay, employment_type = EXCLUDED.employment_type, department = EXCLUDED.department,
 				other_locations = EXCLUDED.other_locations, published_at = EXCLUDED.published_at
 			RETURNING `+jobColumns+`, (xmax = 0)`,
-			append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
-				posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...), &created)
+			append(append([]any{board.CompanyID, board.ID, posting.ExternalID, posting.Title, posting.Location, posting.WorkplaceType,
+				posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...), board.CompanyName)...), &created)
 		if err != nil {
 			return err
 		}
