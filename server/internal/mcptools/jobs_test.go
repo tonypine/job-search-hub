@@ -180,3 +180,34 @@ func TestJobsAreFoundByCompanyTitleAndPhaseByOwnerAndAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestAnAgentCorrectsAJobWithReasonsAndUnknownFieldsAreRefused(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	expiresAt := time.Now().Add(48 * time.Hour)
+	if _, err := hub.store.SyncFeedJobs(ctx, store.Actor{Kind: store.ActorSystem}, store.JobSourceHimalayas, []store.JobPosting{{
+		ExternalID: "7", CompanyName: "Join our winning team!", Title: "Frontend Engineer - Track&Field - São Paulo", URL: "https://indeed.example/7", ExpiresAt: &expiresAt,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, _ := hub.store.ListJobs(ctx, store.JobFilter{})
+	run, agentToken := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	agent := connect(t, hub, agentToken)
+
+	fixed := callTool[store.Job](t, agent, "update_job", map[string]any{
+		"job_id": jobs[0].Job.ID, "title": "Frontend Engineer", "company_name": "Track&Field",
+		"reasons": map[string]any{"title": "the title carries the company and city", "company_name": "the company field holds a slogan"},
+	})
+	if fixed.Title != "Frontend Engineer" {
+		t.Fatalf("fixed = %+v", fixed)
+	}
+	var byRun int
+	if err := hub.pool.QueryRow(ctx, `SELECT count(*) FROM changes WHERE entity_id = $1 AND operation = 'fix' AND agent_run_id = $2`, jobs[0].Job.ID, run.ID).Scan(&byRun); err != nil || byRun != 2 {
+		t.Errorf("fix changes by the run = %d, %v", byRun, err)
+	}
+	if text := callRefusedTool(t, agent, "update_job", map[string]any{
+		"job_id": jobs[0].Job.ID, "salary": "100k", "reasons": map[string]any{"salary": "x"},
+	}); !strings.Contains(text, "salary") {
+		t.Errorf("an unknown field: %s", text)
+	}
+}

@@ -77,9 +77,11 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 			}
 
 			if _, err := tx.Exec(ctx, `
-				UPDATE jobs SET company_name = $2, title = $3, location = $4, workplace_type = $5, url = $6, description = $7, raw = $8,
-					last_seen_at = $9, expires_at = $10, closed_at = NULL,
-					pay = $11, employment_type = $12, department = $13, other_locations = $14, published_at = $15
+				UPDATE jobs SET `+buildPollAssignment(JobFieldCompanyName, "$2")+`, `+buildPollAssignment(JobFieldTitle, "$3")+`,
+					`+buildPollAssignment(JobFieldLocation, "$4")+`, `+buildPollAssignment(JobFieldWorkplaceType, "$5")+`,
+					url = $6, description = $7, raw = $8, last_seen_at = $9, expires_at = $10, closed_at = NULL,
+					`+buildPollAssignment(JobFieldPay, "$11")+`, `+buildPollAssignment(JobFieldEmploymentType, "$12")+`,
+					department = $13, other_locations = $14, published_at = $15
 				WHERE id = $1`,
 				append([]any{existing.id, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType, posting.URL,
 					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...)...); err != nil {

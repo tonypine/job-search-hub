@@ -172,9 +172,11 @@ func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, 
 			}
 
 			if _, err := tx.Exec(ctx, `
-				UPDATE jobs SET title = $2, location = $3, workplace_type = $4, url = $5, description = $6, raw = $7,
+				UPDATE jobs SET `+buildPollAssignment(JobFieldTitle, "$2")+`, `+buildPollAssignment(JobFieldLocation, "$3")+`,
+					`+buildPollAssignment(JobFieldWorkplaceType, "$4")+`, url = $5, description = $6, raw = $7,
 					last_seen_at = $8, closed_at = NULL,
-					pay = $9, employment_type = $10, department = $11, other_locations = $12, published_at = $13
+					`+buildPollAssignment(JobFieldPay, "$9")+`, `+buildPollAssignment(JobFieldEmploymentType, "$10")+`,
+					department = $11, other_locations = $12, published_at = $13
 				WHERE id = $1`,
 				append([]any{existing.id, posting.Title, posting.Location, posting.WorkplaceType, posting.URL, posting.Description, posting.Raw, seenAt},
 					posting.boardFactsArguments()...)...); err != nil {

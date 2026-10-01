@@ -68,6 +68,18 @@ type decideJobInput struct {
 	Reason   string    `json:"reason,omitempty" jsonschema:"why, in the owner's words; a skip keeps it"`
 }
 
+type updateJobInput struct {
+	JobID          uuid.UUID         `json:"job_id"`
+	Title          *string           `json:"title,omitempty" jsonschema:"the role's title alone, without the company or place"`
+	CompanyName    *string           `json:"company_name,omitempty" jsonschema:"the employer's name, for a job not tied to a company in the hub"`
+	CompanyID      *uuid.UUID        `json:"company_id,omitempty" jsonschema:"tie the job to this company in the hub; a board's job keeps its board's company"`
+	Location       *string           `json:"location,omitempty"`
+	WorkplaceType  *string           `json:"workplace_type,omitempty" jsonschema:"Remote, Hybrid or On-site"`
+	EmploymentType *string           `json:"employment_type,omitempty" jsonschema:"such as Full-time, Part-time, Contract"`
+	Pay            *store.Pay        `json:"pay,omitempty" jsonschema:"the published pay ranges"`
+	Reasons        map[string]string `json:"reasons" jsonschema:"why each field is corrected, keyed by the field's name, such as {\"title\": \"the posting's title carries the company and city\"}"`
+}
+
 type jobsOutput struct {
 	Jobs []store.Job `json:"jobs"`
 }
@@ -143,6 +155,22 @@ func addJobTools(server *mcp.Server, hub *store.Store, rates jobfit.RateSource) 
 		}
 		jobs, err := hub.RestoreJobs(ctx, actor, input.JobIDs)
 		return nil, jobsOutput{Jobs: jobs}, err
+	})
+	addTool(server, &mcp.Tool{
+		Name: "update_job",
+		Description: "Correct a job's details where its board or feed got them wrong: title, company_name or the tie to a company (company_id), " +
+			"location, workplace_type, employment_type, pay. Give only the fields to change, each with its reason under reasons. " +
+			"A corrected field stays as fixed when the board or feed lists the job again, and each change is logged with its reason.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input updateJobInput) (*mcp.CallToolResult, store.Job, error) {
+		actor, err := tokens.GetActor(ctx)
+		if err != nil {
+			return nil, store.Job{}, err
+		}
+		job, err := hub.FixJobDetails(ctx, actor, input.JobID, store.JobDetailsFix{
+			Title: input.Title, CompanyName: input.CompanyName, CompanyID: input.CompanyID, Location: input.Location,
+			WorkplaceType: input.WorkplaceType, EmploymentType: input.EmploymentType, Pay: input.Pay, Reasons: input.Reasons,
+		})
+		return nil, job, err
 	})
 	addTool(server, &mcp.Tool{
 		Name: "set_job_company",

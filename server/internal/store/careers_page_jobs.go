@@ -64,8 +64,9 @@ func (s *Store) SyncCareersPageJobs(ctx context.Context, actor Actor, companyID 
 				WITH existing AS (
 					SELECT id, closed_at IS NOT NULL AS was_closed FROM jobs WHERE source = $1 AND external_id = $2 AND job_board_id IS NULL
 				), updated AS (
-					UPDATE jobs SET title = $4, location = $5, workplace_type = $6, url = $2, description = $7, employment_type = $8,
-						company_id = $3, company_name = $9, last_seen_at = $10, closed_at = NULL
+					UPDATE jobs SET `+buildPollAssignment(JobFieldTitle, "$4")+`, `+buildPollAssignment(JobFieldLocation, "$5")+`,
+						`+buildPollAssignment(JobFieldWorkplaceType, "$6")+`, url = $2, description = $7, `+buildPollAssignment(JobFieldEmploymentType, "$8")+`,
+						`+buildPollAssignment(JobFieldCompanyID, "$3")+`, `+buildPollAssignment(JobFieldCompanyName, "$9")+`, last_seen_at = $10, closed_at = NULL
 					WHERE id = (SELECT id FROM existing) RETURNING id
 				), inserted AS (
 					INSERT INTO jobs (company_id, source, external_id, company_name, title, location, workplace_type, url, description,
