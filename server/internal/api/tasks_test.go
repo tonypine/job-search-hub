@@ -74,6 +74,18 @@ func TestAJobFixIsQueuedWithItsJobAndNote(t *testing.T) {
 	if len(updates.Updates) != 1 || updates.Updates[0].Title != "Fix Frontend Engineer - Track&Field: the company is Track&Field" {
 		t.Errorf("updates = %+v", updates.Updates)
 	}
+
+	status, body = send(t, http.MethodPost, service.url+"/v1/tasks", ownerToken, `{"kind":"fix_job","job_id":"`+job.ID.String()+`","note":"x","claim":true}`)
+	var claimed store.TaskRequest
+	if json.Unmarshal(body, &claimed); status != http.StatusCreated || claimed.Status != store.TaskRunning {
+		t.Errorf("a claimed fix: %d %s, want it running", status, body)
+	}
+	if latest, _ := service.hub.ListUpdates(ctx, 1, false); latest.Updates[0].Body != "Running on the Mac." {
+		t.Errorf("a claimed fix's update says %q", latest.Updates[0].Body)
+	}
+	if queued, _ := service.hub.ListTasks(ctx, store.TaskQueued, 10); len(queued) != 1 || queued[0].ID != task.ID {
+		t.Errorf("queued = %+v, want only the unclaimed fix", queued)
+	}
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks", ownerToken, `{"kind":"fix_job","job_id":"`+job.ID.String()+`"}`); status != http.StatusBadRequest {
 		t.Errorf("a fix without a note: %d, want 400", status)
 	}

@@ -36,6 +36,7 @@ struct JobSearchHubApp: App {
                 .environment(jobFinder)
                 .environment(profileSeed)
                 .environment(jobDecisions)
+                .environment(taskRunner)
                 .frame(minWidth: 900, minHeight: 600)
                 .task(id: connection.hubURLText) {
                     if let client = connection.makeClient() {

@@ -37,6 +37,12 @@ struct JobDismissalTarget: Identifiable {
     var id: Set<UUID> { jobIDs }
 }
 
+/// The job whose details the Fix sheet is asked for.
+struct JobFixTarget: Identifiable {
+    let id: UUID
+    let title: String
+}
+
 /// Asks why the jobs are dismissed, which is optional, then dismisses them.
 struct DismissJobsSheet: View {
     let jobCount: Int
@@ -75,6 +81,51 @@ struct DismissJobsSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(isDismissing)
                 .accessibilityLabel("Confirm dismissal")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .padding()
+    }
+}
+
+/// Asks for a job's details to be fixed: a note on what's wrong, which an
+/// agent on the Mac acts on.
+struct FixJobSheet: View {
+    let jobTitle: String
+    let onFix: (String) async -> String?
+    @Environment(\.dismiss) private var closeSheet
+    @State private var note = ""
+    @State private var isSending = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Text("Fix \(jobTitle)").font(.headline)
+            Text("Say what's wrong. An agent reads the job and its posting, corrects the details, and the outcome arrives as an update.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextField("What's wrong", text: $note, prompt: Text("e.g. the company is Track&Field; the title has the city in it"), axis: .vertical)
+                .lineLimit(2...5)
+                .accessibilityLabel("What's wrong")
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                if isSending {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Cancel") { closeSheet() }
+                Button("Fix") {
+                    Task {
+                        isSending = true
+                        errorMessage = await onFix(note)
+                        isSending = false
+                        if errorMessage == nil { closeSheet() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSending || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .formStyle(.grouped)

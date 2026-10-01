@@ -25,6 +25,8 @@ type queueTaskRequest struct {
 	// JobID and Note are a fix_job's job and what's wrong with it.
 	JobID *uuid.UUID `json:"job_id"`
 	Note  string     `json:"note"`
+	// Claim starts a fix_job running for the caller, which runs it itself.
+	Claim bool `json:"claim"`
 }
 
 type finishTaskRequest struct {
@@ -58,7 +60,7 @@ func RegisterTaskRoutes(routes *http.ServeMux, hub *store.Store, updates updateR
 		case request.Kind == store.TaskFixJob && request.JobID == nil:
 			err = errors.New("a fix needs the job")
 		case request.Kind == store.TaskFixJob:
-			task, err = hub.QueueJobFix(r.Context(), owner, *request.JobID, request.Note, deviceID)
+			task, err = hub.QueueJobFix(r.Context(), owner, *request.JobID, request.Note, deviceID, request.Claim)
 		default:
 			task, err = hub.QueueTask(r.Context(), owner, request.Kind, request.CompanyID, request.Company, deviceID)
 		}
@@ -80,8 +82,12 @@ func RegisterTaskRoutes(routes *http.ServeMux, hub *store.Store, updates updateR
 		case store.TaskFixJob:
 			title = "Fix " + getJobTitle(r.Context(), hub, *task.JobID) + ": " + task.Input
 		}
+		body := "Waiting for the Mac to pick it up."
+		if task.Status == store.TaskRunning {
+			body = "Running on the Mac."
+		}
 		if _, err := updates.Record(r.Context(), store.NewUpdate{
-			Kind: "task_queued", Title: title, Body: "Waiting for the Mac to pick it up.", CompanyID: task.CompanyID,
+			Kind: "task_queued", Title: title, Body: body, CompanyID: task.CompanyID,
 		}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return

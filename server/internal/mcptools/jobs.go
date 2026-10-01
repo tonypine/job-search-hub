@@ -170,7 +170,7 @@ func addJobTools(server *mcp.Server, hub *store.Store, rates jobfit.RateSource) 
 		if err != nil {
 			return nil, store.TaskRequest{}, err
 		}
-		task, err := hub.QueueJobFix(ctx, actor, input.JobID, input.Note, nil)
+		task, err := hub.QueueJobFix(ctx, actor, input.JobID, input.Note, nil, false)
 		return nil, task, err
 	})
 	addTool(server, &mcp.Tool{

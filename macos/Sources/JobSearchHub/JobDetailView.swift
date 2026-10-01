@@ -131,6 +131,8 @@ struct JobDetailView: View {
     @Environment(JobDecisions.self) private var decisions
     @State private var model = JobDetailModel()
     @State private var isAskingForDismissal = false
+    @State private var isAskingForFix = false
+    @Environment(RemoteTaskRunner.self) private var taskRunner
     @State private var isPostingShown = false
 
     var body: some View {
@@ -171,7 +173,17 @@ struct JobDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: decisions.revision) { Task { await model.load(jobID, with: client) } }
+        .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
+        .sheet(isPresented: $isAskingForFix) {
+            FixJobSheet(jobTitle: model.details?.job.title ?? "this job") { note in
+                do {
+                    try await taskRunner.fixJob(jobID, note: note, with: client)
+                    return nil
+                } catch {
+                    return String(describing: error)
+                }
+            }
+        }
         .sheet(isPresented: $isAskingForDismissal) {
             DismissJobsSheet(jobCount: 1, actionName: "Skip") { reason in
                 do {
@@ -245,6 +257,13 @@ struct JobDetailView: View {
                 if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
                     Button("Later", systemImage: "clock") { Task { await model.decide(jobID, .later, through: decisions, with: client) } }
                         .help("Leave it for another day")
+                }
+                if taskRunner.fixingJobIDs.contains(jobID) {
+                    ProgressView().controlSize(.small)
+                    Text("Fixing…").foregroundStyle(.secondary)
+                } else {
+                    Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
+                        .help("Say what's wrong with its details, and an agent corrects them")
                 }
             }
             if let decision = details.decision {

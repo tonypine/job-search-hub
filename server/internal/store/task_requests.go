@@ -92,7 +92,9 @@ func (s *Store) QueueTask(ctx context.Context, actor Actor, kind string, company
 
 // QueueJobFix asks the Mac to correct a job's details from the owner's note.
 // The task carries the job's company, so its updates show with the company.
-func (s *Store) QueueJobFix(ctx context.Context, actor Actor, jobID uuid.UUID, note string, deviceID *uuid.UUID) (TaskRequest, error) {
+// A claimed fix starts running at once for the caller, so no other runner
+// takes it: the Mac asking for its own fix runs it itself.
+func (s *Store) QueueJobFix(ctx context.Context, actor Actor, jobID uuid.UUID, note string, deviceID *uuid.UUID, claimed bool) (TaskRequest, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
 		return TaskRequest{}, errors.New("a fix needs a note saying what's wrong")
@@ -101,9 +103,10 @@ func (s *Store) QueueJobFix(ctx context.Context, actor Actor, jobID uuid.UUID, n
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		task, err = scanTask(tx.QueryRow(ctx, `
-			INSERT INTO task_requests (kind, company_id, job_id, input, device_id)
-			SELECT $1, jobs.company_id, jobs.id, $3, $4 FROM jobs WHERE jobs.id = $2 RETURNING `+taskColumns,
-			TaskFixJob, jobID, note, deviceID))
+			INSERT INTO task_requests (kind, company_id, job_id, input, device_id, status, started_at)
+			SELECT $1, jobs.company_id, jobs.id, $3, $4, CASE WHEN $5 THEN 'running' ELSE 'queued' END, CASE WHEN $5 THEN now() END
+			FROM jobs WHERE jobs.id = $2 RETURNING `+taskColumns,
+			TaskFixJob, jobID, note, deviceID, claimed))
 		if errors.Is(err, ErrTaskNotFound) {
 			return ErrJobNotFound
 		}

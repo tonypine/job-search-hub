@@ -111,6 +111,8 @@ struct JobsPage: View {
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
     @State private var dismissal: JobDismissalTarget?
+    @State private var fix: JobFixTarget?
+    @Environment(RemoteTaskRunner.self) private var taskRunner
     @State private var isShowingFilters = false
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
@@ -138,7 +140,7 @@ struct JobsPage: View {
                         try? await Task.sleep(for: .milliseconds(250))
                         await model.load(with: client)
                     }
-                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision, taskRunner.fixRevision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
                         details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
                     }
@@ -149,6 +151,16 @@ struct JobsPage: View {
                     .sheet(item: $dismissal) { target in
                         DismissJobsSheet(jobCount: target.jobIDs.count) { reason in
                             await model.dismiss(target.jobIDs, reason: reason, through: decisions, with: client)
+                        }
+                    }
+                    .sheet(item: $fix) { target in
+                        FixJobSheet(jobTitle: target.title) { note in
+                            do {
+                                try await taskRunner.fixJob(target.id, note: note, with: client)
+                                return nil
+                            } catch {
+                                return String(describing: error)
+                            }
                         }
                     }
                     .sheet(isPresented: $isAddingByURL) {
@@ -236,6 +248,12 @@ struct JobsPage: View {
             Button("Open posting") { open(ids) }
             Button("Pursue") { Task { await model.pursue(ids, through: decisions, with: client) } }
                 .disabled(ids.isEmpty || model.isPursuing)
+            Button("Fix…") {
+                if let id = ids.first, let item = model.items.first(where: { $0.id == id }) {
+                    fix = JobFixTarget(id: id, title: item.job.title)
+                }
+            }
+            .disabled(ids.count != 1)
             Divider()
             if model.status == .dismissed {
                 Button("Restore") { Task { await model.restore(ids, through: decisions, with: client) } }
