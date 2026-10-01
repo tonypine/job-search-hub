@@ -341,12 +341,24 @@ const (
 // JobFilter narrows the jobs list. Query matches the title, location or
 // company name, case-insensitively.
 type JobFilter struct {
+	// Query matches the title, location or company name.
 	Query     string
 	CompanyID *uuid.UUID
-	Status    string
-	Limit     int
-	Offset    int
+	// Title matches the title alone.
+	Title  string
+	Status string
+	// PipelinePhase keeps the jobs whose card is in the phase of that name,
+	// on the pipeline at all (PipelinePhaseAny), or not on it
+	// (PipelinePhaseNone); empty keeps every job.
+	PipelinePhase string
+	Limit         int
+	Offset        int
 }
+
+const (
+	PipelinePhaseAny  = "any"
+	PipelinePhaseNone = "none"
+)
 
 // JobListItem is one row of the jobs list: a job, its company's name, and
 // the facts read from it, which the fit is judged from.
@@ -360,6 +372,8 @@ type JobListItem struct {
 	// Match is its brief's match class, the full brief's over the pre-brief;
 	// absent until briefed.
 	Match *string `json:"match,omitempty"`
+	// PipelinePhase is the phase of the job's card; absent when it has none.
+	PipelinePhase *string `json:"pipeline_phase,omitempty"`
 }
 
 // ListJobs returns one page of jobs, newest first, with the total that match.
@@ -382,26 +396,36 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		       OR strpos(lower(COALESCE(companies.name, jobs.company_name)), $1) > 0)
 		  AND ($2::uuid IS NULL OR jobs.company_id = $2)
 		  AND CASE WHEN $3 = 'dismissed' THEN jobs.dismissed_at IS NOT NULL
-		           ELSE jobs.dismissed_at IS NULL AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL)) END`
+		           ELSE jobs.dismissed_at IS NULL AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL)) END
+		  AND ($4 = '' OR strpos(lower(jobs.title), $4) > 0)
+		  AND CASE $5 WHEN '' THEN true
+		              WHEN 'none' THEN NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id)
+		              WHEN 'any' THEN EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id)
+		              ELSE EXISTS (SELECT 1 FROM applications JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
+		                           WHERE applications.job_id = jobs.id AND lower(pipeline_phases.name) = $5) END`
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	title := strings.ToLower(strings.TrimSpace(filter.Title))
+	phase := strings.ToLower(strings.TrimSpace(filter.PipelinePhase))
 
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) `+matches, query, filter.CompanyID, status).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) `+matches, query, filter.CompanyID, status, title, phase).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), `+jobUnseenUpdates+`,
 		       (SELECT facts FROM job_facts WHERE job_facts.job_id = jobs.id),
-		       (SELECT match FROM job_briefs WHERE job_briefs.job_id = jobs.id ORDER BY tier = 'full' DESC LIMIT 1)
+		       (SELECT match FROM job_briefs WHERE job_briefs.job_id = jobs.id ORDER BY tier = 'full' DESC LIMIT 1),
+		       (SELECT pipeline_phases.name FROM applications JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
+		        WHERE applications.job_id = jobs.id LIMIT 1)
 		`+matches+`
 		ORDER BY jobs.first_seen_at DESC, jobs.title
-		LIMIT $4 OFFSET $5`, query, filter.CompanyID, status, limit, filter.Offset)
+		LIMIT $6 OFFSET $7`, query, filter.CompanyID, status, title, phase, limit, filter.Offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobListItem, error) {
 		var item JobListItem
-		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts, &item.Match)
+		job, err := scanJob(row, &item.CompanyName, &item.UnseenUpdates, &item.Facts, &item.Match, &item.PipelinePhase)
 		item.Job = job
 		item.Facts = FlattenJobFactsToJSON(item.Facts)
 		return item, err

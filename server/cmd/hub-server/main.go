@@ -156,8 +156,8 @@ func run() error {
 	googleClient := makeGoogleClient(settings, hub)
 	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)
 	boardPoller := boardpoller.New(hub, boards)
-	ownerTools := mcptools.NewServer(hub, boards, boardPoller)
-	routes.Handle("/mcp", mcptools.NewHandler(ownerTools, mcptools.NewAgentServer(hub, boards, boardPoller), verifier))
+	ownerTools := mcptools.NewServer(hub, boards, boardPoller, rates)
+	routes.Handle("/mcp", mcptools.NewHandler(ownerTools, mcptools.NewAgentServer(hub, boards, boardPoller, rates), verifier))
 
 	if settings.boardPollInterval > 0 {
 		go boardPoller.Run(ctx, settings.boardPollInterval)

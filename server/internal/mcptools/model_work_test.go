@@ -34,9 +34,9 @@ func TestTheOwnerSeesPausesAndDispatchesModelWork(t *testing.T) {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
 	read := make(chan uuid.UUID, 1)
-	owner := mcptools.NewServer(hub, stubJobBoards{}, recordingSyncer{synced: make(chan store.JobBoard, 1)})
+	owner := mcptools.NewServer(hub, stubJobBoards{}, recordingSyncer{synced: make(chan store.JobBoard, 1)}, noRates{})
 	mcptools.AddModelWorkTools(owner, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(true, modelqueue.Settings{}), Runtime: idleRuntime{}, Facts: factsReader{read: read}})
-	server := httptest.NewServer(mcptools.NewHandler(owner, mcptools.NewAgentServer(hub, stubJobBoards{}, recordingSyncer{}), tokens.NewVerifier(ownerToken, hub)))
+	server := httptest.NewServer(mcptools.NewHandler(owner, mcptools.NewAgentServer(hub, stubJobBoards{}, recordingSyncer{}, noRates{}), tokens.NewVerifier(ownerToken, hub)))
 	t.Cleanup(server.Close)
 	session := connect(t, hubUnderTest{pool: pool, store: hub, url: server.URL}, ownerToken)
 

@@ -34,6 +34,13 @@ type hubUnderTest struct {
 	config cliConfig
 }
 
+// noRates has no exchange rates, which leaves foreign pay unclear.
+type noRates struct{}
+
+func (noRates) GetRates(context.Context, string) (map[string]float64, error) {
+	return nil, nil
+}
+
 // startHub serves the hub's REST routes and MCP endpoint in-process, the way
 // hub-server wires them.
 func startHub(t *testing.T) hubUnderTest {
@@ -46,7 +53,8 @@ func startHub(t *testing.T) hubUnderTest {
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, hubevents.NewBroadcaster()), requireOwner)
 	boards := jobboards.NewVerifier()
-	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards)), mcptools.NewAgentServer(hub, boards, boardpoller.New(hub, boards)), verifier))
+	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards), noRates{}),
+		mcptools.NewAgentServer(hub, boards, boardpoller.New(hub, boards), noRates{}), verifier))
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return hubUnderTest{pool: pool, store: hub, config: cliConfig{HubURL: server.URL, OwnerToken: testOwnerToken}}

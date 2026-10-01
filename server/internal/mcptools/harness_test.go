@@ -34,7 +34,7 @@ func startHub(t *testing.T) hubUnderTest {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
 	syncer := recordingSyncer{synced: make(chan store.JobBoard, 10)}
-	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}, syncer), mcptools.NewAgentServer(hub, stubJobBoards{}, syncer),
+	handler := mcptools.NewHandler(mcptools.NewServer(hub, stubJobBoards{}, syncer, noRates{}), mcptools.NewAgentServer(hub, stubJobBoards{}, syncer, noRates{}),
 		tokens.NewVerifier(ownerToken, hub))
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -51,6 +51,13 @@ func startAgentRun(t *testing.T, hub hubUnderTest, expiresAt time.Time) (store.A
 		t.Fatalf("start agent run: %v", err)
 	}
 	return run, token
+}
+
+// noRates has no exchange rates, which leaves foreign pay unclear.
+type noRates struct{}
+
+func (noRates) GetRates(context.Context, string) (map[string]float64, error) {
+	return nil, nil
 }
 
 // recordingSyncer notes each board it is asked to read.

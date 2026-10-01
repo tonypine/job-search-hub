@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
@@ -29,13 +30,14 @@ var schemaOptions = &jsonschema.ForOptions{
 
 // NewServer registers every hub tool against the store. Job boards are
 // checked through verifier before they are stored, and a verified board's
-// jobs are read through syncer at once.
-func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) *mcp.Server {
+// jobs are read through syncer at once. A job's fit judges foreign pay at
+// the rates the rate source gives.
+func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer, rates jobfit.RateSource) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "job-search-hub", Version: "0.1.0"}, nil)
 	addCompanyTools(server, hub)
 	addWatchListTools(server, hub)
 	addJobBoardTools(server, hub, verifier, syncer)
-	addJobTools(server, hub)
+	addJobTools(server, hub, rates)
 	addPipelineTools(server, hub)
 	addPeopleTools(server, hub)
 	addAgentPromptTools(server, hub)
@@ -56,8 +58,8 @@ var ownerOnlyTools = []string{
 }
 
 // NewAgentServer is NewServer without the owner-only tools, for agent runs.
-func NewAgentServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer) *mcp.Server {
-	server := NewServer(hub, verifier, syncer)
+func NewAgentServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSyncer, rates jobfit.RateSource) *mcp.Server {
+	server := NewServer(hub, verifier, syncer, rates)
 	server.RemoveTools(ownerOnlyTools...)
 	return server
 }
