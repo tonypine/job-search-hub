@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -11,9 +14,17 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-// RegisterCVRoutes adds the owner-only routes for the base CV and for a CV
-// rendered as HTML in the owner's design.
-func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
+type cvDrafter interface {
+	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
+}
+
+// cvDraftTimeout bounds one tailored CV drafted in the background.
+const cvDraftTimeout = 5 * time.Minute
+
+// RegisterCVRoutes adds the owner-only routes for the base CV, a job's
+// tailored CV, and any CV rendered as HTML in the owner's design. A nil
+// drafter answers that drafting is off.
+func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	routes.Handle("GET /v1/cvs/base", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cv, err := hub.GetBaseCV(r.Context())
@@ -31,6 +42,37 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func
 		}
 		cv, err := hub.SaveBaseCV(r.Context(), owner, content)
 		writeCVOrError(w, cv, err)
+	})))
+	routes.Handle("GET /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeCVOrError(w, store.CV{}, store.ErrCVNotFound)
+			return
+		}
+		cv, err := hub.GetJobCV(r.Context(), id)
+		writeCVOrError(w, cv, err)
+	})))
+	routes.Handle("POST /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		if drafter == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: the hub found no Claude CLI"})
+			return
+		}
+		if _, err := hub.GetJobToBrief(r.Context(), id); errors.Is(err, store.ErrJobNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), cvDraftTimeout)
+			defer cancel()
+			if _, err := drafter.DraftCV(ctx, id); err != nil {
+				slog.Warn("CV draft failed", "job", id, "error", err)
+			}
+		}()
+		writeJSON(w, http.StatusAccepted, fullBriefResponse{Queued: true})
 	})))
 	routes.Handle("GET /v1/cvs/{id}/html", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var cv store.CV

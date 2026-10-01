@@ -49,13 +49,15 @@ const (
 	// AgentPromptKindJobBrief writes a job's brief: how well the owner
 	// matches it, from the knowledge base.
 	AgentPromptKindJobBrief = "job_brief"
+	// AgentPromptKindJobCV tailors the base CV to a pursued job.
+	AgentPromptKindJobCV = "job_cv"
 )
 
 var agentPromptKinds = map[string]bool{
 	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
 	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
 	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
-	AgentPromptKindJobBrief: true,
+	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON

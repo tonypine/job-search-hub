@@ -23,6 +23,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/conversationtriage"
+	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
@@ -63,6 +64,9 @@ const (
 	// fullBriefCheckInterval is how often the server checks whether the
 	// night's full briefs are due.
 	fullBriefCheckInterval = 15 * time.Minute
+	// cvDraftInterval picks up jobs pursued since the last pass, to draft
+	// their CVs.
+	cvDraftInterval = 5 * time.Minute
 )
 
 func main() {
@@ -217,6 +221,7 @@ func run() error {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
 	}
 	var fullBriefs *jobbriefs.Writer
+	var cvDrafter *cvdrafts.Drafter
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
 		go briefWriter.Run(ctx, jobBriefInterval)
@@ -225,8 +230,11 @@ func run() error {
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
 			slog.Warn("full briefs off: no folder to run Claude in", "error", err)
 		} else {
-			briefWriter.FullClient = &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun}
+			claude := &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun}
+			briefWriter.FullClient = claude
 			fullBriefs = briefWriter
+			cvDrafter = cvdrafts.NewDrafter(hub, claude)
+			go cvDrafter.Run(ctx, cvDraftInterval)
 			go briefWriter.RunNightly(ctx, fullBriefCheckInterval)
 			slog.Info("full briefs on", "model", settings.fullBriefModel)
 		}
@@ -247,7 +255,12 @@ func run() error {
 	}
 	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
-	api.RegisterCVRoutes(routes, hub, requireOwner)
+	if cvDrafter != nil {
+		api.RegisterCVRoutes(routes, hub, cvDrafter, requireOwner)
+		mcptools.AddCVTools(ownerTools, cvDrafter)
+	} else {
+		api.RegisterCVRoutes(routes, hub, nil, requireOwner)
+	}
 	mcptools.AddModelWorkTools(ownerTools, modelWork)
 
 	var mailBackfiller api.MailBackfiller

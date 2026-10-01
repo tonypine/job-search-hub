@@ -79,3 +79,49 @@ func (s *Store) SaveBaseCV(ctx context.Context, actor Actor, content resume.Resu
 	})
 	return saved, err
 }
+
+// SaveTailoredCV keeps content as the job's tailored CV, replacing the one
+// before, with each bullet's source in citations.
+func (s *Store) SaveTailoredCV(ctx context.Context, actor Actor, jobID uuid.UUID, content resume.Resume, citations map[string]string) (CV, error) {
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return CV{}, err
+	}
+	sources, err := json.Marshal(citations)
+	if err != nil {
+		return CV{}, err
+	}
+	var saved CV
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		saved, err = scanCV(tx.QueryRow(ctx, `
+			INSERT INTO cvs (kind, job_id, content, citations) VALUES ('tailored', $1, $2, $3)
+			ON CONFLICT (job_id) WHERE kind = 'tailored' DO UPDATE SET content = EXCLUDED.content, citations = EXCLUDED.citations, updated_at = now()
+			RETURNING `+cvColumns, jobID, encoded, sources))
+		if isForeignKeyViolation(err) {
+			return ErrJobNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{entityType: "cv", entityID: saved.ID, operation: "draft for job", after: map[string]string{"job_id": jobID.String()}})
+	})
+	return saved, err
+}
+
+// GetJobCV returns the job's tailored CV.
+func (s *Store) GetJobCV(ctx context.Context, jobID uuid.UUID) (CV, error) {
+	return scanCV(s.pool.QueryRow(ctx, `SELECT `+cvColumns+` FROM cvs WHERE kind = 'tailored' AND job_id = $1`, jobID))
+}
+
+// ListJobsAwaitingCV returns the open jobs the owner decided to pursue that
+// have no tailored CV yet, the most recently pursued first.
+func (s *Store) ListJobsAwaitingCV(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT jobs.id FROM jobs JOIN job_decisions ON job_decisions.job_id = jobs.id AND job_decisions.decision = 'pursue'
+		WHERE jobs.closed_at IS NULL AND NOT EXISTS (SELECT 1 FROM cvs WHERE cvs.kind = 'tailored' AND cvs.job_id = jobs.id)
+		ORDER BY job_decisions.decided_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
