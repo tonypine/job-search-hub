@@ -59,14 +59,19 @@ func (poller *Poller) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// PollOnce syncs every verified board. A board that cannot be read is logged
-// and counted, and the others go on.
+// discoveredPollInterval is how often a board discovered in bulk is read:
+// there are thousands, and each lists the owner's roles rarely.
+const discoveredPollInterval = 24 * time.Hour
+
+// PollOnce syncs every verified board, a board discovered in bulk at most
+// daily. A board that cannot be read is logged and counted, and the others
+// go on.
 func (poller *Poller) PollOnce(ctx context.Context) (PollSummary, error) {
 	saved, err := poller.hub.GetJobCriteria(ctx)
 	if err != nil {
 		return PollSummary{}, err
 	}
-	boards, err := poller.hub.ListPolledJobBoards(ctx, jobboards.PostingProviders)
+	boards, err := poller.hub.ListPolledJobBoards(ctx, jobboards.PostingProviders, poller.now().Add(-discoveredPollInterval))
 	if err != nil {
 		return PollSummary{}, err
 	}
@@ -89,6 +94,9 @@ func (poller *Poller) PollOnce(ctx context.Context) (PollSummary, error) {
 		}
 		result, err := poller.hub.SyncBoardJobsStoringNewIf(ctx, store.Actor{Kind: store.ActorSystem}, board.JobBoard, postings, poller.now(), couldFit)
 		if err != nil {
+			return summary, err
+		}
+		if err := poller.hub.MarkJobBoardPolled(ctx, board.ID, poller.now()); err != nil {
 			return summary, err
 		}
 		summary.Totals.Created += result.Created

@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/boarddiscovery"
 	"github.com/tonypine/job-search-hub/server/internal/boardfinder"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
@@ -185,6 +186,9 @@ func run() error {
 	}
 	if settings.boardSearchInterval > 0 {
 		go boardfinder.New(hub, boards, rates).Run(ctx, settings.boardSearchInterval)
+	}
+	if settings.boardDiscoveryInterval > 0 {
+		go boarddiscovery.New(hub, boards).Run(ctx, settings.boardDiscoveryInterval)
 	}
 	// Each kind of task runs on the model it's routed to. The settings' model
 	// server seeds the routes of a fresh database; routes changed since stay.

@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	minimumOwnerTokenLength    = 32
-	defaultBoardPollInterval   = 15 * time.Minute
-	defaultJobFactsModel       = "qwen/qwen3.5-9b"
-	defaultJobFactsInterval    = time.Minute
-	defaultRuntimePort         = 8095
-	defaultRuntimeIdleTimeout  = 10 * time.Minute
-	defaultFeedPollInterval    = time.Hour
-	defaultBoardSearchInterval = 30 * time.Minute
-	defaultPublicURL           = "http://localhost:8090"
+	minimumOwnerTokenLength       = 32
+	defaultBoardPollInterval      = 15 * time.Minute
+	defaultJobFactsModel          = "qwen/qwen3.5-9b"
+	defaultJobFactsInterval       = time.Minute
+	defaultRuntimePort            = 8095
+	defaultRuntimeIdleTimeout     = 10 * time.Minute
+	defaultFeedPollInterval       = time.Hour
+	defaultBoardSearchInterval    = 30 * time.Minute
+	defaultBoardDiscoveryInterval = 6 * time.Hour
+	defaultPublicURL              = "http://localhost:8090"
 )
 
 type config struct {
@@ -31,6 +32,9 @@ type config struct {
 	// boardSearchInterval paces the search for the boards of the employers
 	// behind good and unclear feed jobs.
 	boardSearchInterval time.Duration
+	// boardDiscoveryInterval paces the bulk discovery of boards from
+	// Common Crawl's index.
+	boardDiscoveryInterval time.Duration
 	// jobFactsModelURL and jobFactsModel seed the task routes of a database
 	// that has none: the chat-completions API root and model every routed
 	// task starts on. Empty leaves a fresh database without model work.
@@ -113,6 +117,9 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		return config{}, err
 	}
 	if parsed.boardSearchInterval, err = parseInterval(lookup, "HUB_BOARD_SEARCH_INTERVAL", defaultBoardSearchInterval); err != nil {
+		return config{}, err
+	}
+	if parsed.boardDiscoveryInterval, err = parseInterval(lookup, "HUB_BOARD_DISCOVERY_INTERVAL", defaultBoardDiscoveryInterval); err != nil {
 		return config{}, err
 	}
 	if parsed.jobFactsInterval, err = parseInterval(lookup, "HUB_JOB_FACTS_INTERVAL", defaultJobFactsInterval); err != nil {

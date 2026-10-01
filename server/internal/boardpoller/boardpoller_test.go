@@ -3,6 +3,7 @@ package boardpoller_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
@@ -85,5 +86,39 @@ func TestAPollSyncsEveryVerifiedBoardAndCarriesOnPastFailures(t *testing.T) {
 	again, err := boardpoller.New(hub, boards).PollOnce(context.Background())
 	if err != nil || again.Totals.Created != 0 || again.Totals.Closed != 0 {
 		t.Fatalf("second poll = %+v, %v; want nothing new and nothing closed", again, err)
+	}
+}
+
+func TestADiscoveredBoardIsReadAtMostDaily(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveFoundJobBoard(ctx, owner, store.FoundJobBoardInput{
+		CompanyName: "Working", Provider: "ashby", BoardToken: "working", FoundBy: store.JobBoardFoundByDiscovery,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveFoundJobBoard(ctx, owner, store.FoundJobBoardInput{CompanyName: "Pageonly", Provider: "ashby", BoardToken: "pageonly"}); err != nil {
+		t.Fatal(err)
+	}
+	boards := &fakeBoards{}
+	poller := boardpoller.New(hub, boards)
+
+	if _, err := poller.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(boards.fetched, "working") {
+		t.Fatalf("the first poll read %v; want the discovered board, never read before", boards.fetched)
+	}
+	boards.fetched = nil
+	if _, err := poller.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range boards.fetched {
+		if token == "working" {
+			t.Error("the discovered board was read again within a day")
+		}
+	}
+	if len(boards.fetched) != 1 || boards.fetched[0] != "pageonly" {
+		t.Errorf("second poll read %v; want only the searched board", boards.fetched)
 	}
 }

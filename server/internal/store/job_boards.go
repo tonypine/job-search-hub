@@ -30,14 +30,22 @@ type JobBoard struct {
 	BoardURL         string     `json:"board_url,omitempty"`
 	VerifiedAt       *time.Time `json:"verified_at,omitempty"`
 	OpenPostingCount *int       `json:"open_posting_count,omitempty"`
+	// FoundBy says how a board without the owner's or an agent's hand was
+	// found: by a company's search, or in bulk from an index.
+	FoundBy string `json:"found_by,omitempty"`
 }
 
-const jobBoardColumns = `id, company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count`
+const (
+	JobBoardFoundBySearch    = "search"
+	JobBoardFoundByDiscovery = "discovery"
+)
+
+const jobBoardColumns = `id, company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count, found_by`
 
 func scanJobBoard(row pgx.Row) (JobBoard, error) {
 	var board JobBoard
 	err := row.Scan(&board.ID, &board.CompanyID, &board.CompanyName, &board.Provider, &board.BoardToken, &board.BoardURL, &board.VerifiedAt,
-		&board.OpenPostingCount)
+		&board.OpenPostingCount, &board.FoundBy)
 	return board, err
 }
 
@@ -135,23 +143,31 @@ type PolledJobBoard struct {
 }
 
 // ListPolledJobBoards returns the verified boards on the providers whose
-// postings can be fetched.
-func (s *Store) ListPolledJobBoards(ctx context.Context, providers []string) ([]PolledJobBoard, error) {
+// postings can be fetched, leaving out the boards discovered in bulk that
+// were polled after discoveredPolledAfter.
+func (s *Store) ListPolledJobBoards(ctx context.Context, providers []string, discoveredPolledAfter time.Time) ([]PolledJobBoard, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+jobBoardColumns+`,
 			coalesce(company_id IN (SELECT company_id FROM watch_list_entries WHERE removed_at IS NULL), false)
 		FROM job_boards
 		WHERE verified_at IS NOT NULL AND provider = ANY($1)
-		ORDER BY created_at`, providers)
+		  AND NOT (found_by = 'discovery' AND coalesce(last_polled_at > $2, false))
+		ORDER BY created_at`, providers, discoveredPolledAfter)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PolledJobBoard, error) {
 		var board PolledJobBoard
 		err := row.Scan(&board.ID, &board.CompanyID, &board.CompanyName, &board.Provider, &board.BoardToken, &board.BoardURL, &board.VerifiedAt,
-			&board.OpenPostingCount, &board.IsWatched)
+			&board.OpenPostingCount, &board.FoundBy, &board.IsWatched)
 		return board, err
 	})
+}
+
+// MarkJobBoardPolled records when the board's postings were last read.
+func (s *Store) MarkJobBoardPolled(ctx context.Context, boardID uuid.UUID, polledAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE job_boards SET last_polled_at = $2 WHERE id = $1`, boardID, polledAt)
+	return err
 }
 
 var ErrJobBoardNotFound = errors.New("job board not found")

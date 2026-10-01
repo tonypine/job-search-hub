@@ -20,6 +20,9 @@ type FoundJobBoardInput struct {
 	BoardURL         string
 	OpenPostingCount int
 	SourceURL        string
+	// FoundBy is JobBoardFoundBySearch or JobBoardFoundByDiscovery; empty
+	// means a search.
+	FoundBy string
 }
 
 // SaveFoundJobBoard stores a board found for a company, tied to the hub's
@@ -45,14 +48,18 @@ func (s *Store) SaveFoundJobBoard(ctx context.Context, actor Actor, input FoundJ
 			companyID = &id
 		}
 		openPostingCount := input.OpenPostingCount
+		foundBy := input.FoundBy
+		if foundBy == "" {
+			foundBy = JobBoardFoundBySearch
+		}
 		board, err = scanJobBoard(tx.QueryRow(ctx, `
-			INSERT INTO job_boards (company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count)
-			VALUES ($1, $2, $3, $4, $5, now(), $6)
+			INSERT INTO job_boards (company_id, company_name, provider, board_token, board_url, verified_at, open_posting_count, found_by)
+			VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
 			ON CONFLICT (provider, board_token) DO UPDATE SET verified_at = now(), open_posting_count = EXCLUDED.open_posting_count,
 				updated_at = now()
 				WHERE job_boards.verified_at IS NULL
 			RETURNING `+jobBoardColumns,
-			companyID, companyName, input.Provider, boardToken, input.BoardURL, &openPostingCount))
+			companyID, companyName, input.Provider, boardToken, input.BoardURL, &openPostingCount, foundBy))
 		if errors.Is(err, pgx.ErrNoRows) {
 			board, err = scanJobBoard(tx.QueryRow(ctx, `SELECT `+jobBoardColumns+` FROM job_boards WHERE provider = $1 AND board_token = $2`,
 				input.Provider, boardToken))
