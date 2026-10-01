@@ -36,6 +36,24 @@ class CoreTest {
     }
 }
 
+class JobBriefTest {
+    @Test
+    fun aJobsDetailsCarryItsBriefScreenOutAnswersAndDecision() {
+        val details = hubJson.decodeFromString<JobDetails>(
+            """{"job":{"id":"1","source":"x","title":"Engineer","url":"https://x","first_seen_at":"2026-09-29T10:00:00Z"},"fit":{"level":"good"},
+            "brief":{"tier":"full","model":"claude","match":"strong","reason":"React.","is_stale":true,
+                     "strengths":[{"point":"React","entry_ids":["e1","gone"]}],"cited_entries":[{"id":"e1","title":"Built the platform","organization":"Maple"}]},
+            "screen_out":[{"name":"Hires from Brazil","verdict":"yes","answer":"LATAM","evidence":"Remote in LATAM"},{"name":"Contract","answer":"not stated"}],
+            "decision":{"decision":"later","decided_at":"2026-09-30T21:00:00Z"}}""",
+        )
+        val brief = details.brief!!
+        kotlin.test.assertTrue(brief.isFull && brief.isStale)
+        kotlin.test.assertEquals(listOf("Built the platform · Maple"), brief.entriesOf(brief.strengths.single()).map { it.label })
+        kotlin.test.assertEquals(listOf("yes", null), details.screenOut.map { it.verdict })
+        kotlin.test.assertEquals("later", details.decision?.decision)
+    }
+}
+
 class CompanyBriefTest {
     @Test
     fun aCompanysCardsComeWithTheirPhase() {

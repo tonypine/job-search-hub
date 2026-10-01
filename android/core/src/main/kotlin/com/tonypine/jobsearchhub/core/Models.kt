@@ -82,4 +82,7 @@ data class JobDetails(
     val fit: JobFit,
     val facts: LabelledJobFacts? = null,
     val connections: List<Connection>? = null,
+    val brief: JobBrief? = null,
+    val screenOut: List<ScreenOutAnswer> = emptyList(),
+    val decision: JobDecision? = null,
 )

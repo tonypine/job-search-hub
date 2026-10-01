@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -31,12 +32,13 @@ import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.push.UpdateNotifications
 
+private const val DECIDE = "decide"
 private const val UPDATES = "updates"
 private const val JOBS = "jobs"
-private const val JOB = "job/{id}"
+private const val JOB = "job/{id}?fromQueue={fromQueue}"
 private const val COMPANY = "company/{id}"
 
-/** Pairing first; then Updates and Jobs, and a job's details. */
+/** Pairing first; then Decide, Updates and Jobs, and a job's details. */
 @Composable
 fun HubNavigation(viewModel: HubViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -53,6 +55,10 @@ fun HubNavigation(viewModel: HubViewModel) {
             if (route != JOB && route != COMPANY) {
                 NavigationBar {
                     NavigationBarItem(
+                        selected = route == DECIDE, onClick = { navigation.navigate(DECIDE) { launchSingleTop = true } },
+                        icon = { Icon(Icons.Filled.CheckCircle, contentDescription = null) }, label = { Text("Decide") },
+                    )
+                    NavigationBarItem(
                         selected = route == UPDATES, onClick = { navigation.navigate(UPDATES) { launchSingleTop = true } },
                         icon = { Icon(Icons.Filled.Notifications, contentDescription = null) }, label = { Text("Updates") },
                     )
@@ -64,7 +70,10 @@ fun HubNavigation(viewModel: HubViewModel) {
             }
         },
     ) { padding ->
-        NavHost(navigation, startDestination = UPDATES, modifier = Modifier.padding(padding)) {
+        NavHost(navigation, startDestination = DECIDE, modifier = Modifier.padding(padding)) {
+            composable(DECIDE) {
+                DecideScreen(state, onRefresh = viewModel::refresh, onOpenJob = { navigation.navigate("job/$it?fromQueue=true") })
+            }
             composable(UPDATES) {
                 UpdatesScreen(
                     state, onRefresh = viewModel::refresh, onUnpair = viewModel::unpair,
@@ -81,10 +90,25 @@ fun HubNavigation(viewModel: HubViewModel) {
                     },
                 )
             }
-            composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
+            composable(
+                JOB,
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("fromQueue") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { backStack ->
+                val fromQueue = backStack.arguments?.getBoolean("fromQueue") == true
                 JobScreen(
                     backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
                     onOpenCompany = { navigation.navigate("company/$it") },
+                    onDecided = { next ->
+                        // From the queue, a decision moves on to the next job in it; elsewhere it goes back.
+                        if (fromQueue && next != null) {
+                            navigation.navigate("job/$next?fromQueue=true") { popUpTo(DECIDE) }
+                        } else {
+                            navigation.popBackStack()
+                        }
+                    },
                 )
             }
             composable(COMPANY, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->

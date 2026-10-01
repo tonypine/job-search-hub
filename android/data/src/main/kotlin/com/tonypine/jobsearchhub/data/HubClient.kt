@@ -2,7 +2,9 @@ package com.tonypine.jobsearchhub.data
 
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
-import com.tonypine.jobsearchhub.core.JobDismissalRequest
+import com.tonypine.jobsearchhub.core.DecisionQueueResponse
+import com.tonypine.jobsearchhub.core.JobDecision
+import com.tonypine.jobsearchhub.core.JobDecisionRequest
 import com.tonypine.jobsearchhub.core.JobsResponse
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
@@ -43,10 +45,12 @@ class HubClient(
     /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
     suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
 
-    /** Dismisses a job: it leaves the jobs lists, and stays dismissed when its board lists it again. */
-    suspend fun dismissJob(id: String, reason: String) {
-        fetch("POST", "/v1/jobs/dismiss", hubJson.encodeToString(JobDismissalRequest(listOf(id), reason.trim())))
-    }
+    /** The briefed jobs waiting for a decision, best match first. */
+    suspend fun getDecisionQueue(): DecisionQueueResponse = get("/v1/decision-queue")
+
+    /** Records a decision: pursue puts the job on the pipeline, skip dismisses it with the reason, later only records. */
+    suspend fun decideJob(id: String, decision: String, reason: String = ""): JobDecision =
+        send("/v1/jobs/$id/decision", hubJson.encodeToString(JobDecisionRequest(decision, reason.trim())))
 
     /** Registers the token FCM gave this app, so the hub pushes its updates here. */
     suspend fun setPushToken(token: String) {

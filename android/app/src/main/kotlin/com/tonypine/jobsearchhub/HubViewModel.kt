@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.HubUpdate
+import com.tonypine.jobsearchhub.core.DecisionQueueItem
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.JobListItem
 import com.tonypine.jobsearchhub.core.JobsOrder
@@ -34,6 +35,8 @@ data class HubState(
     val pairing: Pairing? = null,
     val updates: List<HubUpdate> = emptyList(),
     val jobs: List<JobListItem> = emptyList(),
+    /** The briefed jobs waiting for a decision, best match first. */
+    val decisionQueue: List<DecisionQueueItem> = emptyList(),
     /** How many open jobs the hub holds; the list is its newest page. */
     val openJobCount: Int = 0,
     val includesUnclear: Boolean = false,
@@ -122,7 +125,8 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val updates = client.getUpdates().updates
                 val jobs = client.getJobs()
-                mutableState.update { it.copy(updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, isLoading = false) }
+                val queue = client.getDecisionQueue().items
+                mutableState.update { it.copy(updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, isLoading = false) }
             } catch (error: HubException) {
                 mutableState.update { it.copy(isLoading = false, error = error.message) }
             }
@@ -154,13 +158,18 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Dismisses the job, then reads the lists again without it. */
-    suspend fun dismissJob(id: String, reason: String): Result<Unit> {
+    /**
+     * Records the decision on the job, reads the lists again, and returns the
+     * job after it in the decision queue, if any.
+     */
+    suspend fun decideJob(id: String, decision: String, reason: String = ""): Result<String?> {
         val client = client ?: return Result.failure(HubException("Not paired."))
+        val queue = state.value.decisionQueue
+        val next = queue.getOrNull(queue.indexOfFirst { it.job.id == id } + 1)?.job?.id
         return try {
-            client.dismissJob(id, reason)
+            client.decideJob(id, decision, reason)
             refresh()
-            Result.success(Unit)
+            Result.success(next)
         } catch (error: HubException) {
             Result.failure(error)
         }

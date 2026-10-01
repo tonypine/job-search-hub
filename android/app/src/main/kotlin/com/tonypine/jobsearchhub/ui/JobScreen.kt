@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -35,11 +36,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.tonypine.jobsearchhub.HubViewModel
+import com.tonypine.jobsearchhub.core.JobBrief
+import com.tonypine.jobsearchhub.core.JobBriefPoint
 import com.tonypine.jobsearchhub.core.JobDetails
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -49,19 +53,22 @@ import kotlinx.serialization.json.contentOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCompany: (String) -> Unit) {
+fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCompany: (String) -> Unit, onDecided: (String?) -> Unit) {
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var isAskingForDismissal by remember { mutableStateOf(false) }
+    var isAskingForSkip by remember { mutableStateOf(false) }
     var reason by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(id) {
         viewModel.loadJob(id).onSuccess { details = it }.onFailure { error = it.message }
     }
-    if (isAskingForDismissal) {
+    val decide: (String, String) -> Unit = { decision, why ->
+        scope.launch { viewModel.decideJob(id, decision, why).fold({ next -> onDecided(next) }, { error = it.message }) }
+    }
+    if (isAskingForSkip) {
         AlertDialog(
-            onDismissRequest = { isAskingForDismissal = false },
-            title = { Text("Dismiss this job?") },
+            onDismissRequest = { isAskingForSkip = false },
+            title = { Text("Skip this job?") },
             text = {
                 Column {
                     Text("It leaves the jobs list and stays dismissed when its board lists it again. Restore it from the Mac.")
@@ -70,11 +77,11 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
             },
             confirmButton = {
                 TextButton(onClick = {
-                    isAskingForDismissal = false
-                    scope.launch { viewModel.dismissJob(id, reason).fold({ onBack() }, { error = it.message }) }
-                }) { Text("Dismiss") }
+                    isAskingForSkip = false
+                    decide("skip", reason)
+                }) { Text("Skip") }
             },
-            dismissButton = { TextButton(onClick = { isAskingForDismissal = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { isAskingForSkip = false }) { Text("Cancel") } },
         )
     }
     Column(Modifier.fillMaxSize()) {
@@ -83,7 +90,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
         )
         when {
-            details != null -> JobDetailsView(details!!, onOpenCompany, onDismiss = { isAskingForDismissal = true }, error = error)
+            details != null -> JobDetailsView(details!!, onOpenCompany, onSkip = { isAskingForSkip = true }, onDecide = { decide(it, "") }, error = error)
             error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
             else -> CircularProgressIndicator(Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
@@ -91,7 +98,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
 }
 
 @Composable
-private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, onDismiss: () -> Unit, error: String?) {
+private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, onSkip: () -> Unit, onDecide: (String) -> Unit, error: String?) {
     val context = LocalContext.current
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(details.job.title, style = MaterialTheme.typography.titleLarge)
@@ -101,9 +108,43 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit,
             details.job.companyId?.let { companyId ->
                 OutlinedButton(onClick = { onOpenCompany(companyId) }) { Text("Company brief") }
             }
-            OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onDecide("pursue") }) { Text("Pursue") }
+            OutlinedButton(onClick = onSkip) { Text("Skip") }
+            OutlinedButton(onClick = { onDecide("later") }) { Text("Later") }
+        }
+        details.decision?.let { Text(describeDecision(it.decision, it.reason), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        details.brief?.let { brief ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Brief", fontWeight = FontWeight.SemiBold)
+                MatchLabel(brief.match)
+                Text(if (brief.isFull) "by Claude" else "by the local model", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(brief.reason)
+            BriefPoints("Strengths", brief.strengths, brief, Icons.Filled.CheckCircle, Color(0xFF2E9E4F))
+            BriefPoints("Weaknesses", brief.weaknesses, brief, Icons.Filled.Cancel, Color(0xFFD08A00))
+        }
+        if (details.screenOut.isNotEmpty()) {
+            Text("Screen-out checks", fontWeight = FontWeight.SemiBold)
+            details.screenOut.forEach { answer ->
+                Row(verticalAlignment = Alignment.Top) {
+                    val (icon, tint) = when (answer.verdict) {
+                        "yes" -> Icons.Filled.CheckCircle to Color(0xFF2E9E4F)
+                        "no" -> Icons.Filled.Cancel to MaterialTheme.colorScheme.error
+                        null -> Icons.Filled.Info to MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> Icons.Filled.Help to Color(0xFFD08A00)
+                    }
+                    Icon(icon, contentDescription = answer.verdict, tint = tint)
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text("${answer.name}: ${answer.answer}")
+                        answer.evidence?.let { Text("\u201C$it\u201D", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Fit  ", fontWeight = FontWeight.SemiBold)
@@ -149,4 +190,32 @@ private fun describe(value: kotlinx.serialization.json.JsonElement): String? = w
     is JsonPrimitive -> value.contentOrNull?.takeIf { it.isNotBlank() && !it.equals("not stated", ignoreCase = true) }
     is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.filter { it.isNotBlank() }.joinToString(", ").takeIf { it.isNotEmpty() }
     else -> null
+}
+
+@Composable
+private fun BriefPoints(title: String, points: List<JobBriefPoint>, brief: JobBrief, icon: ImageVector, tint: Color) {
+    if (points.isEmpty()) return
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    points.forEach { point ->
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(icon, contentDescription = null, tint = tint)
+            Column(Modifier.padding(start = 8.dp)) {
+                Text(point.point)
+                val entries = brief.entriesOf(point)
+                if (entries.isNotEmpty()) {
+                    Text(entries.joinToString("; ") { it.label }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** The decision as the screen reads it: "Left for later", "Skipped: agency". */
+private fun describeDecision(decision: String, reason: String?): String {
+    val made = when (decision) {
+        "pursue" -> "Pursued"
+        "skip" -> "Skipped"
+        else -> "Left for later"
+    }
+    return if (reason.isNullOrBlank()) made else "$made: $reason"
 }

@@ -54,7 +54,3 @@ data class QueueTaskRequest(val kind: String, val companyId: String? = null, val
 
 @Serializable
 data class SetPushTokenRequest(val token: String)
-
-/** The jobs to dismiss, with the owner's reason, which may be empty. */
-@Serializable
-data class JobDismissalRequest(val jobIds: List<String>, val reason: String)

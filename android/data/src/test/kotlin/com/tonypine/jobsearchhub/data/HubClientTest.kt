@@ -41,16 +41,30 @@ class HubClientTest {
     }
 
     @Test
-    fun aJobIsDismissedWithTheOwnersReason() = runTest {
+    fun aDecisionIsSentWithItsReason() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse.Builder().body("""{"jobs":[]}""").build())
+            server.enqueue(MockResponse.Builder().body("""{"decision":"skip","reason":"agency","decided_at":"2026-09-30T21:00:00Z"}""").build())
             server.start()
-            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).dismissJob("7", "  agency ")
+            val decision = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).decideJob("7", "skip", "  agency ")
 
             val request = server.takeRequest()
             assertEquals("POST", request.method)
-            assertEquals("/v1/jobs/dismiss", request.target)
-            assertEquals("""{"job_ids":["7"],"reason":"agency"}""", request.body?.utf8())
+            assertEquals("/v1/jobs/7/decision", request.target)
+            assertEquals("""{"decision":"skip","reason":"agency"}""", request.body?.utf8())
+            assertEquals("skip", decision.decision)
+        }
+    }
+
+    @Test
+    fun theDecisionQueueIsRead() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("""{"items":[{"job":{"id":"1","source":"x","title":"Engineer","url":"https://x","first_seen_at":"2026-09-29T10:00:00Z"},
+                "company_name":"Acme","match":"strong","reason":"React.","brief_tier":"pre","fit":{"level":"good"}}],"total":1}""").build())
+            server.start()
+            val queue = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).getDecisionQueue()
+
+            assertEquals("strong", queue.items.single().match)
+            assertEquals("/v1/decision-queue", server.takeRequest().target)
         }
     }
 
