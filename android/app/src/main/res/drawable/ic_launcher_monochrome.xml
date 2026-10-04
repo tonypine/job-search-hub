@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The mark for themed icons. Written by macos/Scripts/make-icon.swift: change the mark there and rerun it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="3.24"
+        android:pathData="M54,49.5L54,36.65M59.71,59.38L70.84,65.81M48.29,59.38L37.16,65.81" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M48.67,36.65a5.33,5.33 0,1 1,10.66,0a5.33,5.33 0,1 1,-10.66,0z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M65.51,65.81a5.33,5.33 0,1 1,10.66,0a5.33,5.33 0,1 1,-10.66,0z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M31.83,65.81a5.33,5.33 0,1 1,10.66,0a5.33,5.33 0,1 1,-10.66,0z" />
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M44.78,56.09a9.22,9.22 0,1 1,18.44,0a9.22,9.22 0,1 1,-18.44,0zM50.04,56.09a3.96,3.96 0,1 1,7.92,0a3.96,3.96 0,1 1,-7.92,0z" />
+</vector>
