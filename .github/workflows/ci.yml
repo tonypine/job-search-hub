@@ -1,0 +1,132 @@
+# One workflow with one required check, `ci`. There is deliberately no
+# workflow-level path filter: a workflow skipped that way never reports, so a
+# required check would wait at "Expected" forever. Jobs that only matter for
+# some paths read the flags from `changes` instead, and `ci` treats a skipped
+# job as passing.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.flags.outputs.server }}
+      macos: ${{ steps.flags.outputs.macos }}
+      android: ${{ steps.flags.outputs.android }}
+      ci: ${{ steps.flags.outputs.ci }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          server=false macos=false android=false ci=false all=false
+
+          case "$EVENT" in
+            pull_request) base=$PR_BASE ;;
+            push) base=$PUSH_BEFORE ;;
+            *) base= ;;
+          esac
+
+          # A schedule or manual run, a new branch (all-zero before) or a
+          # force push (before no longer in history) has nothing to diff.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "Event $EVENT has no base to diff against; setting every flag."
+            all=true
+          else
+            echo "Files changed since $base:"
+            git diff --name-only "$base...HEAD" > "$RUNNER_TEMP/changed"
+            sed 's/^/  /' "$RUNNER_TEMP/changed"
+            while IFS= read -r file; do
+              case "$file" in
+                server/*|compose.yaml) server=true ;;
+                macos/*) macos=true ;;
+                android/*) android=true ;;
+                .github/*) all=true ;;
+              esac
+            done < "$RUNNER_TEMP/changed"
+          fi
+
+          if [ "$all" = true ]; then
+            server=true macos=true android=true ci=true
+          fi
+
+          {
+            echo "server=$server"
+            echo "macos=$macos"
+            echo "android=$android"
+            echo "ci=$ci"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  server-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            for file in $unformatted; do
+              echo "::error file=server/$file::not gofmt-formatted"
+            done
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go mod tidy
+        run: go mod tidy -diff
+
+  # The one check branch protection requires. Add every new job to `needs`.
+  ci:
+    if: always()
+    needs: [changes, server-static]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$NEEDS" | jq -e '[.[].result] | any(. == "failure" or . == "cancelled")' > /dev/null; then
+            echo "A needed job failed or was cancelled."
+            exit 1
+          fi
