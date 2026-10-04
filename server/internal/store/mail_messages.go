@@ -121,23 +121,38 @@ func (s *Store) IsMailMessageRecorded(ctx context.Context, gmailMessageID string
 }
 
 // MailFilter narrows a listing to one company's mail, or to mail no rule
-// has matched yet.
+// has matched yet, and can leave some classes out. Messages not classified
+// yet are never left out.
 type MailFilter struct {
-	CompanyID     *uuid.UUID
-	UnmatchedOnly bool
-	Limit         int
+	CompanyID       *uuid.UUID
+	UnmatchedOnly   bool
+	LeaveOutClasses []string
+	Limit           int
 }
 
 // ListMailMessages returns the newest messages first.
 func (s *Store) ListMailMessages(ctx context.Context, filter MailFilter) ([]MailMessage, error) {
+	leaveOut := filter.LeaveOutClasses
+	if leaveOut == nil {
+		leaveOut = []string{}
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+mailMessageColumns+` FROM mail_messages
-		WHERE ($1::uuid IS NULL OR company_id = $1) AND (NOT $2 OR matched_by = '')
-		ORDER BY sent_at DESC LIMIT $3`, filter.CompanyID, filter.UnmatchedOnly, filter.Limit)
+		WHERE ($1::uuid IS NULL OR company_id = $1) AND (NOT $2 OR matched_by = '') AND classification <> ALL($4::text[])
+		ORDER BY sent_at DESC LIMIT $3`, filter.CompanyID, filter.UnmatchedOnly, filter.Limit, leaveOut)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (MailMessage, error) { return scanMailMessage(row) })
+}
+
+// CountCompanyMailOfClasses counts a company's messages in any of the
+// classes, such as the ones its page leaves out.
+func (s *Store) CountCompanyMailOfClasses(ctx context.Context, companyID uuid.UUID, classes []string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM mail_messages WHERE company_id = $1 AND classification = ANY($2::text[])`,
+		companyID, classes).Scan(&count)
+	return count, err
 }
 
 // MailMatch is what a message is about and the rule that said so.

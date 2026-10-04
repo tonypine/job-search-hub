@@ -18,14 +18,20 @@ type companiesResponse struct {
 // shows.
 const companyMailListSize = 20
 
+// companyMailFoldedClasses are the classes a company's page leaves out of its
+// latest mail, so newsletters and alert digests from its domain don't crowd
+// out the threads that matter. It says how many it left out instead.
+var companyMailFoldedClasses = []string{store.MailNoise, store.MailJobAlert}
+
 // companyResponse is the dossier with the threads open at the company: its
 // cards on the board and its latest mail. Only the owner's app gets them;
 // agents read the dossier alone, so mail written by senders never reaches
 // their prompts.
 type companyResponse struct {
 	store.CompanyDossier
-	Applications []store.CompanyApplication `json:"applications"`
-	Mail         []store.MailMessage        `json:"mail"`
+	Applications    []store.CompanyApplication `json:"applications"`
+	Mail            []store.MailMessage        `json:"mail"`
+	FoldedMailCount int                        `json:"folded_mail_count"`
 }
 
 // RegisterCompanyRoutes adds the owner-only routes the app reads companies
@@ -67,9 +73,13 @@ func getCompanyResponse(ctx context.Context, hub *store.Store, id uuid.UUID) (co
 	if err != nil {
 		return companyResponse{}, err
 	}
-	mail, err := hub.ListMailMessages(ctx, store.MailFilter{CompanyID: &id, Limit: companyMailListSize})
+	mail, err := hub.ListMailMessages(ctx, store.MailFilter{CompanyID: &id, LeaveOutClasses: companyMailFoldedClasses, Limit: companyMailListSize})
 	if err != nil {
 		return companyResponse{}, err
 	}
-	return companyResponse{CompanyDossier: dossier, Applications: applications, Mail: mail}, nil
+	folded, err := hub.CountCompanyMailOfClasses(ctx, id, companyMailFoldedClasses)
+	if err != nil {
+		return companyResponse{}, err
+	}
+	return companyResponse{CompanyDossier: dossier, Applications: applications, Mail: mail, FoldedMailCount: folded}, nil
 }

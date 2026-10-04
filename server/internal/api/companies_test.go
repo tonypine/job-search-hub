@@ -149,3 +149,51 @@ func TestACompanysPageHoldsItsApplicationsAndLatestMail(t *testing.T) {
 		t.Fatalf("mail = %+v; want Acme's two messages, newest first", page.Mail)
 	}
 }
+
+func TestACompanysLatestMailLeavesOutNoiseAndJobAlerts(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	acme, _, _ := service.hub.CreateCompany(ctx, store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	now := time.Now()
+	for index, mail := range []struct {
+		subject, class string
+		sentAt         time.Time
+	}{
+		{"Interview with Acme", store.MailInterviewInvite, now.Add(-3 * time.Hour)},
+		{"The Acme newsletter", store.MailNoise, now.Add(-2 * time.Hour)},
+		{"New jobs at Acme", store.MailJobAlert, now.Add(-time.Hour)},
+		{"Not read yet", "", now},
+	} {
+		message, _, err := service.hub.RecordMailMessage(ctx, store.NewMailMessage{
+			GmailMessageID: fmt.Sprintf("message-%d", index), ThreadID: fmt.Sprintf("thread-%d", index), Direction: store.MailReceived,
+			Sender: "news@acme.com", Recipients: "owner@example.com", Subject: mail.subject, SentAt: mail.sentAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.hub.SaveMailMatch(ctx, message.ID, store.MailMatch{CompanyID: acme.ID, MatchedBy: store.MatchedByDomain}); err != nil {
+			t.Fatal(err)
+		}
+		if mail.class == "" {
+			continue
+		}
+		if err := service.hub.SaveMailClassification(ctx, message.ID, store.MailClassification{Class: mail.class, ClassifiedBy: store.ClassifiedByRule, Reason: "test"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/companies/"+acme.ID.String(), ownerToken, "")
+	var page struct {
+		Mail            []store.MailMessage `json:"mail"`
+		FoldedMailCount int                 `json:"folded_mail_count"`
+	}
+	if err := json.Unmarshal(body, &page); status != http.StatusOK || err != nil {
+		t.Fatalf("company: %d %s", status, body)
+	}
+	if len(page.Mail) != 2 || page.Mail[0].Subject != "Not read yet" || page.Mail[1].Subject != "Interview with Acme" {
+		t.Fatalf("mail = %+v; want the unread message and the invite, without the newsletter and the alert", page.Mail)
+	}
+	if page.FoldedMailCount != 2 {
+		t.Fatalf("folded_mail_count = %d, want 2", page.FoldedMailCount)
+	}
+}
