@@ -56,9 +56,9 @@ struct DismissJobsSheet: View {
 
     var body: some View {
         Form {
-            Text(jobCount == 1 ? "\(actionName) this job?" : "\(actionName) \(jobCount) jobs?").font(.headline)
+            Text(jobCount == 1 ? "\(actionName) this job?" : "\(actionName) \(jobCount) jobs?").font(.hubSection)
             Text("Dismissed jobs leave the list and stay dismissed when their board lists them again. Restore them from the Dismissed status.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.hubSecondary).foregroundStyle(.secondary)
             TextField("Reason", text: $reason, prompt: Text("Optional, e.g. agency, US only"))
                 .accessibilityLabel("Dismissal reason")
             if let failure {
@@ -93,9 +93,9 @@ struct FixJobSheet: View {
 
     var body: some View {
         Form {
-            Text("Fix \(jobTitle)").font(.headline)
+            Text("Fix \(jobTitle)").font(.hubSection)
             Text("Say what's wrong. An agent reads the job and its posting, corrects the details, and the outcome arrives as an update.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.hubSecondary).foregroundStyle(.secondary)
             TextField("What's wrong", text: $note, prompt: Text("e.g. the company is Track&Field; the title has the city in it"), axis: .vertical)
                 .lineLimit(2...5)
                 .accessibilityLabel("What's wrong")

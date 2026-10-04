@@ -112,7 +112,7 @@ struct JobPanel: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(8)
+            .padding(Space.s)
             switch side {
             case .details: JobDetailView(jobID: jobID, client: client)
             case .session: ClaudeSessionPane(subject: .job(jobID), client: client, startsOnAppear: opensSession)
@@ -323,7 +323,7 @@ struct JobDetailView: View {
             }
         } trailing: {
             if let brief {
-                Text(brief.isFull ? "by Claude" : "by the local model").foregroundStyle(.secondary)
+                Text(brief.isFull ? "by Claude" : "by the local model").font(.hubCaption).foregroundStyle(.secondary)
             }
         }
     }

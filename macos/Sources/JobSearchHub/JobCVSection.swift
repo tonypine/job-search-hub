@@ -13,7 +13,7 @@ final class JobCVModel {
     private(set) var isPrinting = false
     private(set) var isDrafting = false
     private(set) var notice: String?
-    var error: String?
+    var failure: HubFailure?
     /// The words being edited: the headline, summary and each role's bullets.
     var label = ""
     var summary = ""
@@ -36,11 +36,11 @@ final class JobCVModel {
             base = try await client.getBaseCV()
             show(try await client.getJobCV(jobID))
             screen = try? await client.getCVScreen(jobID)
-            error = nil
+            failure = nil
         } catch HubError.notFound {
             cv = nil
         } catch {
-            self.error = String(describing: error)
+            failure = HubFailure("Couldn't load the CV", error)
         }
     }
 
@@ -57,7 +57,7 @@ final class JobCVModel {
             show(try await client.saveCVEdit(jobID, CVEdit(label: label, summary: summary, roles: roles)))
             notice = "Saved"
         } catch {
-            self.error = String(describing: error)
+            failure = HubFailure("Couldn't save the edits", error)
         }
     }
 
@@ -90,10 +90,10 @@ final class JobCVModel {
                     return
                 }
             }
-            error = "Claude hasn't finished the draft yet; it shows here once it's saved."
+            failure = HubFailure("The draft isn't ready", advice: "Claude hasn't finished the draft yet; it shows here once it's saved.")
         } catch is CancellationError {
         } catch {
-            self.error = String(describing: error)
+            failure = HubFailure("Couldn't ask for a draft", error)
         }
     }
 
@@ -110,7 +110,7 @@ final class JobCVModel {
                 NSWorkspace.shared.open(URL(filePath: path))
             }
         } catch {
-            self.error = String(describing: error)
+            failure = HubFailure("Couldn't print the CV", error)
         }
     }
 
@@ -131,18 +131,7 @@ struct JobCVSection: View {
     @State private var model = JobCVModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("CV").font(.headline)
-                Spacer()
-                if let file = model.cv?.printedFile {
-                    Button("Open CV", systemImage: "doc.richtext") { NSWorkspace.shared.open(file) }
-                        .help(file.path)
-                    Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-                } else if model.cv != nil {
-                    Text("Printing within a few minutes").font(.caption).foregroundStyle(.secondary)
-                }
-            }
+        HubSection("CV") {
             if let comparison = model.comparison {
                 editor(comparison)
             } else if model.isLoading {
@@ -154,32 +143,34 @@ struct JobCVSection: View {
                 draftButton
             }
             if let notice = model.notice {
-                Text(notice).font(.caption).foregroundStyle(.secondary)
+                Text(notice).font(.hubCaption).foregroundStyle(.secondary)
             }
             if let cv = model.cv {
                 CVScreenView(screen: model.screen, cv: cv)
             }
-            if let error = model.error {
-                Text(error).font(.caption).foregroundStyle(.red)
+            if model.failure != nil {
+                HubErrorView($model.failure)
+            }
+        } trailing: {
+            if let file = model.cv?.printedFile {
+                Button("Open CV", systemImage: "doc.richtext") { NSWorkspace.shared.open(file) }
+                    .help(file.path)
+                Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            } else if model.cv != nil {
+                Text("Printing within a few minutes").font(.hubCaption).foregroundStyle(.secondary)
             }
         }
         .task(id: details.cvID) { await model.load(jobID, with: client) }
     }
 
     private var draftButton: some View {
-        HStack(spacing: 8) {
-            Button(model.isDrafting ? "Drafting…" : (model.cv == nil ? "Draft CV" : "Draft again"), systemImage: "doc.text") {
-                Task { await model.draftAgain(jobID, with: client) }
-            }
-            .disabled(model.isDrafting)
-            if model.isDrafting {
-                ProgressView().controlSize(.small)
-            }
+        AsyncButton(model.cv == nil ? "Draft CV" : "Draft again", busyTitle: "Drafting…", systemImage: "doc.text", isBusy: model.isDrafting) {
+            await model.draftAgain(jobID, with: client)
         }
     }
 
     private func editor(_ comparison: CVComparison) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             labelled("Headline", changed: comparison.isLabelChanged) {
                 TextField("Headline", text: $model.label).accessibilityLabel("CV headline")
             }
@@ -188,10 +179,10 @@ struct JobCVSection: View {
             }
             ForEach(comparison.roles) { role in
                 if !role.bullets.isEmpty || !role.leftOut.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(role.position) · \(role.company)").font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text("\(role.position) · \(role.company)").font(.hubSecondary.weight(.semibold))
                         ForEach(Array(role.bullets.enumerated()), id: \.offset) { index, bullet in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                                 statusLabel(bullet.status)
                                 TextField("Bullet", text: bulletBinding(role: role.index, index: index), axis: .vertical)
                                     .accessibilityLabel("Bullet \(role.index)-\(index)")
@@ -200,18 +191,18 @@ struct JobCVSection: View {
                             }
                         }
                         ForEach(role.leftOut, id: \.self) { text in
-                            Text("Left out: \(text)").font(.caption).foregroundStyle(.tertiary)
+                            Text("Left out: \(text)").font(.hubCaption).foregroundStyle(.tertiary)
                         }
                     }
                 }
             }
-            HStack(spacing: 8) {
-                Button("Save edits") { Task { await model.saveEdits(jobID, with: client) } }
-                    .disabled(!model.hasEdits || model.isSaving)
-                Button(model.isPrinting ? "Printing…" : "Print to PDF", systemImage: "printer") {
-                    Task { await model.printPDF(with: client) }
+            HStack(spacing: Space.s) {
+                AsyncButton("Save edits", busyTitle: "Saving…", isBusy: model.isSaving) { await model.saveEdits(jobID, with: client) }
+                    .disabled(!model.hasEdits)
+                AsyncButton("Print to PDF", busyTitle: "Printing…", systemImage: "printer", isBusy: model.isPrinting) {
+                    await model.printPDF(with: client)
                 }
-                .disabled(model.isPrinting || model.hasEdits)
+                .disabled(model.hasEdits)
                 .help(model.hasEdits ? "Save the edits first" : "Print the CV and keep the PDF")
                 draftButton
             }
@@ -220,10 +211,10 @@ struct JobCVSection: View {
 
     private func labelled<Content: View>(_ title: String, changed: Bool, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(title).font(.caption.weight(.semibold))
+            HStack(spacing: Space.s) {
+                Text(title).font(.hubCaption.weight(.semibold))
                 if changed {
-                    Text("tailored").font(.caption2).foregroundStyle(.blue)
+                    ToneChip("tailored", tone: .accent)
                 }
             }
             content()
@@ -233,9 +224,9 @@ struct JobCVSection: View {
     @ViewBuilder
     private func statusLabel(_ status: CVBulletStatus) -> some View {
         switch status {
-        case .kept: Text("kept").font(.caption2).foregroundStyle(.secondary).help("Word for word from your CV")
-        case let .reworded(from): Text("reworded").font(.caption2).foregroundStyle(.blue).help("Your CV says: \(from)")
-        case .fromEntry: Text("new").font(.caption2).foregroundStyle(.green).help("From a confirmed knowledge-base entry")
+        case .kept: ToneChip("kept", tone: .neutral).help("Word for word from your CV")
+        case let .reworded(from): ToneChip("reworded", tone: .accent).help("Your CV says: \(from)")
+        case .fromEntry: ToneChip("new", tone: .positive).help("From a confirmed knowledge-base entry")
         }
     }
 
@@ -245,8 +236,6 @@ struct JobCVSection: View {
             set: { if model.bullets.indices.contains(role) && model.bullets[role].indices.contains(index) { model.bullets[role][index] = $0 } }
         )
     }
-
-    /// "Acme - Senior Engineer", safe as a file name.
 }
 
 /// The recruiter screen of the tailored CV: the verdict, then each issue with
@@ -256,31 +245,34 @@ private struct CVScreenView: View {
     let cv: CV
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Recruiter screen").font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.s) {
+            HStack(spacing: Space.s) {
+                Text("Recruiter screen").font(.hubSecondary.weight(.semibold))
+                if let screen {
+                    ToneChip(screen.screen.verdict.title, tone: screen.screen.verdict.tone, symbol: verdictSymbol(screen.screen.verdict))
+                }
+            }
             if let screen {
-                Label(screen.screen.verdict.title, systemImage: verdictSymbol(screen.screen.verdict))
-                    .foregroundStyle(verdictColor(screen.screen.verdict))
                 Text(screen.screen.summary).foregroundStyle(.secondary)
                 ForEach(Array(screen.screen.issues.enumerated()), id: \.offset) { _, issue in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(issue.issue).fontWeight(.medium)
                         if issue.postingSays != "not stated" {
-                            Text("“\(issue.postingSays)”").font(.caption).italic().foregroundStyle(.secondary)
+                            Evidence(text: issue.postingSays)
                         }
-                        Text(issue.response).font(.callout)
+                        Text(issue.response).font(.hubSecondary)
                     }
-                    .padding(.leading, 8)
+                    .padding(.leading, Space.s)
                 }
                 if screen.isOutdated(for: cv) {
-                    Text("The CV changed since; it's screened again within a few minutes.").font(.caption).foregroundStyle(.secondary)
+                    Text("The CV changed since; it's screened again within a few minutes.").font(.hubCaption).foregroundStyle(.secondary)
                 }
             } else {
                 Text("The local model screens the CV as the job's recruiter would, within a few minutes of drafting it.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.hubSecondary).foregroundStyle(.secondary)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, Space.xs)
     }
 
     private func verdictSymbol(_ verdict: CVScreenVerdict) -> String {
@@ -288,14 +280,6 @@ private struct CVScreenView: View {
         case .likelyPass: "checkmark.circle.fill"
         case .borderline: "questionmark.circle.fill"
         case .likelyReject: "xmark.circle.fill"
-        }
-    }
-
-    private func verdictColor(_ verdict: CVScreenVerdict) -> Color {
-        switch verdict {
-        case .likelyPass: .green
-        case .borderline: .orange
-        case .likelyReject: .red
         }
     }
 }

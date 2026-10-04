@@ -97,9 +97,9 @@ struct HubFailure: Equatable {
         report = ErrorReport(error)
     }
 
-    init(_ title: String, advice: String) {
+    init(_ title: String, advice: String, details: String? = nil) {
         self.title = title
-        report = ErrorReport(advice: advice)
+        report = ErrorReport(advice: advice, details: details)
     }
 }
 

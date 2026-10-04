@@ -33,7 +33,7 @@ struct UnseenDot: View {
 
     var body: some View {
         Circle()
-            .fill(Color.accentColor)
+            .fill(Tone.accent.color)
             .frame(width: 7, height: 7)
             .opacity(count > 0 ? 1 : 0)
             .accessibilityHidden(count == 0)

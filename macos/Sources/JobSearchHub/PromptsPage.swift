@@ -13,7 +13,7 @@ final class PromptsModel {
     var draft = ""
     var note = ""
     private(set) var isSaving = false
-    private(set) var errorMessage: String?
+    var failure: HubFailure?
 
     var selectedSummary: AgentPromptSummary? { summaries.first { $0.kind == selectedKind } }
     var activeVersion: AgentPrompt? { versions.first }
@@ -24,9 +24,9 @@ final class PromptsModel {
     func loadSummaries(with client: HubClient) async {
         do {
             summaries = try await client.get("v1/agent-prompts", as: AgentPromptsResponse.self).prompts
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = "Could not load the prompts: \(error)"
+            failure = HubFailure("Couldn't load the prompts", error)
         }
     }
 
@@ -39,9 +39,9 @@ final class PromptsModel {
         do {
             versions = try await client.get("v1/agent-prompts/\(kind)/versions", as: AgentPromptVersionsResponse.self).versions
             show(versions.first?.version)
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = "Could not load the prompt's versions: \(error)"
+            failure = HubFailure("Couldn't load the prompt's versions", error)
         }
     }
 
@@ -63,7 +63,7 @@ final class PromptsModel {
             await select(kind, with: client)
             shownVersion = saved.version
         } catch {
-            errorMessage = "Could not save the prompt: \(error)"
+            failure = HubFailure("Couldn't save the prompt", error)
         }
     }
 }
@@ -100,7 +100,7 @@ struct PromptsPage: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(summary.title)
                         Text(summary.version.map { "Version \($0)" } ?? "No version yet")
-                            .font(.caption)
+                            .font(.hubCaption)
                             .foregroundStyle(.secondary)
                     }
                     .tag(Optional(summary.kind))
@@ -125,19 +125,19 @@ struct PromptsPage: View {
     @ViewBuilder
     private func editor(client: HubClient) -> some View {
         if let summary = model.selectedSummary {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(summary.title).font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: Space.m) {
+                Text(summary.title).font(.hubEntity)
                 Text(summary.description).foregroundStyle(.secondary)
                 if !summary.placeholders.isEmpty {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Space.s) {
                         Text("The hub fills").foregroundStyle(.secondary)
                         ForEach(summary.placeholders, id: \.self) { placeholder in
-                            Text(placeholder).font(.callout.monospaced()).textSelection(.enabled)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(.quinary, in: RoundedRectangle(cornerRadius: 4))
+                            Text(placeholder).font(.hubSecondary.monospaced()).textSelection(.enabled)
+                                .padding(.horizontal, Space.s).padding(.vertical, 2)
+                                .background(.quinary, in: RoundedRectangle(cornerRadius: Radius.control))
                         }
                     }
-                    .font(.callout)
+                    .font(.hubSecondary)
                 }
                 Picker("Version", selection: Binding(get: { model.shownVersion }, set: { model.show($0) })) {
                     ForEach(model.versions) { version in
@@ -148,32 +148,33 @@ struct PromptsPage: View {
                 TextEditor(text: $model.draft)
                     .font(.body.monospaced())
                     .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(Space.s)
+                    .background(.quinary, in: RoundedRectangle(cornerRadius: Radius.card))
                     .disabled(model.isSaving)
-                if let errorMessage = model.errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                if model.failure != nil {
+                    HubErrorView($model.failure)
                 }
                 HStack {
                     TextField("What this version changes", text: $model.note)
                         .textFieldStyle(.roundedBorder)
-                    if model.isSaving {
-                        ProgressView().controlSize(.small)
-                    }
                     Button("Discard changes") { model.show(model.activeVersion?.version) }
                         .disabled(!model.hasChanges || model.isSaving)
-                    Button("Save as version \((model.activeVersion?.version ?? 0) + 1)") { Task { await model.save(with: client) } }
-                        .keyboardShortcut("s")
-                        .disabled(!model.hasChanges || model.isSaving)
+                    AsyncButton("Save as version \((model.activeVersion?.version ?? 0) + 1)", busyTitle: "Saving…", isBusy: model.isSaving) {
+                        await model.save(with: client)
+                    }
+                    .keyboardShortcut("s")
+                    .disabled(!model.hasChanges)
                 }
                 if let shown = model.shownVersion, let active = model.activeVersion?.version, shown != active {
                     Text("Showing version \(shown). Saving it makes it the active prompt again, as version \(active + 1).")
-                        .font(.callout)
+                        .font(.hubSecondary)
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(20)
+            .padding(Space.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let failure = model.failure {
+            HubErrorView(failure, style: .page) { Task { await model.loadSummaries(with: client) } }
         } else {
             ContentUnavailableView("Pick a prompt", systemImage: "text.bubble")
         }

@@ -18,7 +18,7 @@ struct HubSection<Content: View, Trailing: View>: View {
             HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                 Text(title).font(.hubSection).accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
-                trailing.font(.hubCaption)
+                trailing
             }
             content
         }

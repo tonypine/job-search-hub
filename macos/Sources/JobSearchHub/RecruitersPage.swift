@@ -8,7 +8,7 @@ final class RecruitersModel {
     private(set) var recruiters: [RecruiterConversation] = []
     private(set) var messages: [LinkedInMessage] = []
     private(set) var isLoading = false
-    private(set) var loadError: String?
+    private(set) var loadError: HubFailure?
     var filter = RecruiterFilter()
     var selectedID: UUID?
 
@@ -22,7 +22,7 @@ final class RecruitersModel {
             recruiters = try await client.get("v1/recruiters", as: RecruitersResponse.self).recruiters
             loadError = nil
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the recruiters", error)
         }
     }
 
@@ -79,18 +79,17 @@ struct RecruitersPage: View {
                 Text(recruiter.startedByName).help(recruiter.starterPosition ?? "")
             }
             TableColumn("Company") { recruiter in
-                HStack(spacing: 6) {
+                HStack(spacing: Space.s) {
                     Text(recruiter.hiringCompany ?? "–")
                     if recruiter.isAgency {
-                        Text("Agency").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quinary, in: Capsule())
+                        ToneChip("Agency", tone: .neutral)
                     }
                 }
             }
             TableColumn("Role") { recruiter in Text(recruiter.role ?? "").help(recruiter.role ?? "") }
             TableColumn("Openings") { recruiter in
                 Text(recruiter.openingsText).fontWeight(recruiter.fittingJobs > 0 ? .semibold : .regular)
-                    .foregroundStyle(recruiter.fittingJobs > 0 ? AnyShapeStyle(.green) : AnyShapeStyle(.primary))
+                    .foregroundStyle(recruiter.fittingJobs > 0 ? AnyShapeStyle(Tone.positive.color) : AnyShapeStyle(.primary))
             }
             .width(110)
             TableColumn("Answered") { recruiter in Text(recruiter.ownerWrote ? "Yes" : "No").foregroundStyle(recruiter.ownerWrote ? .secondary : .primary) }
@@ -102,7 +101,7 @@ struct RecruitersPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                ContentUnavailableView("Could not load recruiters", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await reload() } }
             } else if model.recruiters.isEmpty && !model.isLoading {
                 ContentUnavailableView(
                     "No recruiters yet", systemImage: "person.crop.rectangle.stack",
@@ -110,6 +109,10 @@ struct RecruitersPage: View {
                 )
             }
         }
+    }
+
+    private func reload() async {
+        if let client = connection.makeClient() { await model.load(with: client) }
     }
 
     private func describeCounts() -> String {
@@ -128,89 +131,80 @@ struct RecruiterDetail: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recruiter.startedByName).font(.title2.weight(.semibold))
-                    if let position = recruiter.starterPosition {
-                        Text([position, recruiter.starterCompany].compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: Space.l) {
+                EntityHeader(eyebrow: "Recruiter", title: recruiter.startedByName) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        if let position = recruiter.starterPosition {
+                            Text([position, recruiter.starterCompany].compactMap { $0 }.joined(separator: " · "))
+                        }
+                        HStack(spacing: Space.m) {
+                            if let profile = URL(string: recruiter.startedByURL) {
+                                Link("LinkedIn profile", destination: profile)
+                            }
+                            if let companyID = recruiter.companyID {
+                                Button("Open company") { onOpenCompany(companyID) }.buttonStyle(.link)
+                            }
+                        }
+                        .tint(.hubAccent)
                     }
-                    HStack(spacing: 12) {
-                        if let profile = URL(string: recruiter.startedByURL) {
-                            Link("LinkedIn profile", destination: profile)
-                        }
-                        if let companyID = recruiter.companyID {
-                            Button("Open company") { onOpenCompany(companyID) }.buttonStyle(.link)
-                        }
+                } chips: {
+                    if recruiter.isAgency {
+                        ToneChip("Agency", tone: .neutral)
+                    }
+                    if !recruiter.ownerWrote {
+                        ToneChip("Unanswered", tone: .caution)
                     }
                 }
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                    row("Company", (recruiter.hiringCompany ?? "–") + (recruiter.isAgency ? " (agency)" : ""))
-                    row("Role", recruiter.role ?? "–")
-                    row("Openings", recruiter.openingsText.isEmpty ? "None in the feed now" : recruiter.openingsText)
-                    row("Answered", recruiter.ownerWrote ? "Yes" : "No")
-                    if let reason = recruiter.classificationReason {
-                        row("Why", reason)
-                    }
+                FactGrid {
+                    FactRow("Company", text: (recruiter.hiringCompany ?? "–") + (recruiter.isAgency ? " (agency)" : ""))
+                    FactRow("Role", text: recruiter.role ?? "–")
+                    FactRow("Openings", text: recruiter.openingsText.isEmpty ? "None in the feed now" : recruiter.openingsText)
+                    FactRow("Answered", text: recruiter.ownerWrote ? "Yes" : "No")
+                    FactRow("Why", text: recruiter.classificationReason)
                 }
                 reply
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Conversation").font(.headline)
+                HubSection("Conversation") {
                     ForEach(Array(messages.enumerated()), id: \.offset) { entry in
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
                             HStack {
                                 Text(entry.element.senderName).fontWeight(.medium)
                                 Spacer()
-                                Text(entry.element.sentAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                                Text(entry.element.sentAt.formatted(date: .abbreviated, time: .shortened)).font(.hubCaption).foregroundStyle(.secondary)
                             }
                             Text(entry.element.content).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         }
-                        .padding(10)
-                        .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                        .hubWell()
                     }
                 }
             }
-            .padding(20)
+            .padding(Space.l)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     /// The draft of a reply, when it is about this recruiter's conversation.
     private var reply: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Reply").font(.headline)
+        HubSection("Reply") {
             let state = replyDraft.conversationID == recruiter.id ? replyDraft.state : .idle
             switch state {
-            case .idle:
-                Button("Draft a reply", systemImage: "square.and.pencil") {
-                    Task { await replyDraft.draft(conversationID: recruiter.id, client: client) }
+            case .idle, .drafting:
+                AsyncButton("Draft a reply", busyTitle: "Drafting…", systemImage: "square.and.pencil", isBusy: state == .drafting) {
+                    await replyDraft.draft(conversationID: recruiter.id, client: client)
                 }
                 Text("Claude drafts a message that picks up from this conversation and names the roles that fit you at their company. You send it yourself.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .drafting:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Drafting…").foregroundStyle(.secondary)
-                }
+                    .font(.hubCaption).foregroundStyle(.secondary)
             case let .drafted(text):
                 Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                    .hubWell()
                 HStack {
                     Button("Copy", systemImage: "doc.on.doc") { replyDraft.copyDraft() }
-                    Button("Draft again") { Task { await replyDraft.draft(conversationID: recruiter.id, client: client) } }
+                    AsyncButton("Draft again", busyTitle: "Drafting…") { await replyDraft.draft(conversationID: recruiter.id, client: client) }
                 }
             case let .failed(reason):
-                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Button("Try again") { Task { await replyDraft.draft(conversationID: recruiter.id, client: client) } }
+                HubErrorView(HubFailure("Couldn't draft the reply", advice: reason)) {
+                    Task { await replyDraft.draft(conversationID: recruiter.id, client: client) }
+                }
             }
-        }
-    }
-
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-            Text(value).textSelection(.enabled)
         }
     }
 }

@@ -7,13 +7,13 @@ import SwiftUI
 final class ClaudeSessionPaneModel {
     private(set) var sessions: [ClaudeSession] = []
     private(set) var isStarting = false
-    var errorMessage: String?
+    var failure: HubFailure?
 
     func load(_ subject: ClaudeSessionSubject, with client: HubClient) async {
         do {
             sessions = try await client.get("v1/claude-sessions", query: subject.queryItems, as: ClaudeSessionsResponse.self).sessions
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't load the sessions", error)
         }
     }
 
@@ -38,7 +38,7 @@ final class ClaudeSessionPaneModel {
         do {
             request = try await client.get("v1/agent-prompts/outreach_draft", as: AgentPrompt.self).body.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't read the outreach prompt", error)
             return
         }
         if let running = sessions.first(where: { host.isRunning($0.id) }) {
@@ -55,9 +55,9 @@ final class ClaudeSessionPaneModel {
         defer { isStarting = false }
         do {
             try await work()
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = error.localizedDescription
+            failure = HubFailure("Couldn't start the session", error)
         }
     }
 }
@@ -90,7 +90,10 @@ struct ClaudeSessionPane: View {
                         }
                         Button("Stop", systemImage: "stop.fill") { host.stop(running.id) }
                     }
-                    .padding(8)
+                    .padding(Space.s)
+                    if model.failure != nil {
+                        HubErrorView($model.failure).padding(.horizontal, Space.s)
+                    }
                     Divider()
                     TerminalHostView(terminal: terminal)
                 }
@@ -116,16 +119,16 @@ struct ClaudeSessionPane: View {
     }
 
     private var startOptions: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Space.m) {
             Image(systemName: "terminal").font(.largeTitle).foregroundStyle(.secondary)
             if let latest = model.sessions.first {
-                Text(latest.name).font(.headline)
+                Text(latest.name).font(.hubSection)
                 Text("Last active \(latest.lastActiveAt.formatted(.relative(presentation: .named)))").foregroundStyle(.secondary)
                 Button("Resume session", systemImage: "play.fill") { Task { await model.resume(latest, with: client, host: host, firstMessage: openingMessage) } }
                     .keyboardShortcut(.defaultAction)
                 Button("Start a new session") { Task { await model.startNew(subject, with: client, host: host, firstMessage: openingMessage) } }
             } else {
-                Text("No session yet").font(.headline)
+                Text("No session yet").font(.hubSection)
                 Text("A Claude session here starts knowing your profile and everything the hub has on this.")
                     .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("Start session", systemImage: "play.fill") { Task { await model.startNew(subject, with: client, host: host, firstMessage: openingMessage) } }
@@ -138,12 +141,12 @@ struct ClaudeSessionPane: View {
             if model.isStarting {
                 ProgressView().controlSize(.small)
             }
-            if let errorMessage = model.errorMessage {
-                Text(errorMessage).foregroundStyle(.red).multilineTextAlignment(.center)
+            if model.failure != nil {
+                HubErrorView($model.failure)
             }
         }
         .disabled(model.isStarting)
-        .padding()
+        .padding(Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -42,7 +42,7 @@ struct ProfileEditorTests {
         let sent = try JSONDecoder().decode([String: String].self, from: try #require(recording.lastBody))
         #expect(sent == ["body": "# Draft"])
         #expect(editor.profile?.body == "# Saved by the hub")
-        #expect(!editor.isEditing && !editor.isSaving && editor.errorMessage == nil)
+        #expect(!editor.isEditing && !editor.isSaving && editor.error == nil)
     }
 
     @Test func aFailedSaveKeepsTheEditAndSaysWhy() async {
@@ -57,7 +57,7 @@ struct ProfileEditorTests {
 
         #expect(editor.isEditing)
         #expect(editor.draft == "# Draft")
-        #expect(editor.errorMessage?.contains("database down") == true)
+        #expect(editor.error?.details?.contains("database down") == true)
     }
 }
 
