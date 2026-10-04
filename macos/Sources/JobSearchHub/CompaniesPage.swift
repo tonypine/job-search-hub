@@ -285,6 +285,9 @@ struct DossierPane: View {
                                 .bold()
                             Text(application.phaseName).foregroundStyle(.secondary)
                         }
+                        if let contactedAt = application.card.application.contactedAt {
+                            HeardBackLabel(contactedAt: contactedAt)
+                        }
                         if application.phaseIsClosed, let closedReason = application.card.application.closedReason, !closedReason.isEmpty {
                             Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         } else if let status = application.card.getFollowUpStatus(now: .now) {
