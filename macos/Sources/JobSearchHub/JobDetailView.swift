@@ -130,7 +130,7 @@ struct JobDetailView: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
     @State private var model = JobDetailModel()
-    @State private var isAskingForDismissal = false
+    @State private var isAskingToSkip = false
     @State private var isAskingForFix = false
     @Environment(RemoteTaskRunner.self) private var taskRunner
     @State private var isPostingShown = false
@@ -155,13 +155,12 @@ struct JobDetailView: View {
                         if details.decision?.decision == .pursue {
                             InterviewPackSection(jobID: jobID, client: client)
                         }
-                        screenOutAnswers(details.screenOut ?? [])
+                        screen(details)
                         if let connections = details.connections, !connections.isEmpty {
                             HubSection("People you know at \(details.companyName ?? "this company")") {
                                 ConnectionList(connections: connections)
                             }
                         }
-                        fitChecks(details.fit)
                         boardFacts(details.job)
                         readFacts(details.facts)
                         if let description = details.job.description, !description.isEmpty {
@@ -193,8 +192,8 @@ struct JobDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $isAskingForDismissal) {
-            DismissJobsSheet(jobCount: 1, actionName: "Skip") { reason in
+        .sheet(isPresented: $isAskingToSkip) {
+            SkipJobsSheet(jobCount: 1) { reason in
                 do {
                     _ = try await decisions.decide(jobID, .skip, reason: reason, with: client)
                     return nil
@@ -212,16 +211,16 @@ struct JobDetailView: View {
     }
 
     /// The job's kind and company, its title and location, and up to three
-    /// chips: the brief's match, the fit, and where the job stands.
+    /// chips: the brief's match, the screen, and where the job stands.
     private func header(_ details: JobDetails) -> some View {
         EntityHeader(eyebrow: ["Job", details.companyName].compactMap { $0 }.joined(separator: " · "), title: details.job.title, facts: [details.job.location]) {
             if let brief = details.brief {
                 ToneChip(brief.match)
             }
-            ToneChip(details.fit.level)
+            ToneChip(screen: details.fit.level)
             if details.job.dismissedAt != nil {
-                ToneChip("Dismissed", tone: SetAside.dismissed.tone, symbol: SetAside.dismissed.symbolName)
-                    .help(details.job.dismissalReason.map { "Dismissed: \($0)" } ?? "Dismissed")
+                ToneChip("Skipped", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
+                    .help(details.job.dismissalReason.map { "Skipped: \($0)" } ?? "Skipped")
             } else if let phase = details.phase {
                 ToneChip("In \(phase.name)", tone: .accent, symbol: "rectangle.split.3x1")
             } else if details.decision?.decision == .later {
@@ -231,7 +230,7 @@ struct JobDetailView: View {
     }
 
     /// The decision to make: Pursue, the one primary action, then Later and
-    /// Skip, with the posting and Fix in the overflow. A dismissed job's next
+    /// Skip, with the posting and Fix in the overflow. A skipped job's next
     /// step is Restore, and a pursued one's is its posting.
     private func actions(_ details: JobDetails) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
@@ -254,8 +253,8 @@ struct JobDetailView: View {
                     .help("Leave it for another day")
                 }
                 if details.job.dismissedAt == nil {
-                    Button("Skip…", systemImage: "eye.slash") { isAskingForDismissal = true }
-                        .help("Dismiss it, with a reason")
+                    Button("Skip…", systemImage: "eye.slash") { isAskingToSkip = true }
+                        .help("Take it out as not for you, with a reason")
                 }
             } overflow: {
                 if details.phase == nil {
@@ -313,7 +312,7 @@ struct JobDetailView: View {
                 briefPoints("Strengths", brief.strengths, in: brief, symbol: "plus.circle.fill", tone: .positive)
                 briefPoints("Weaknesses", brief.weaknesses, in: brief, symbol: "minus.circle.fill", tone: .caution)
             } else {
-                Text("Not briefed yet. The local model briefs good and unclear jobs once their facts are read.").foregroundStyle(.secondary)
+                Text("Not briefed yet. The local model briefs the jobs that don't fail the screen once their facts are read.").foregroundStyle(.secondary)
             }
             if brief?.isFull != true {
                 AsyncButton("Write full brief", busyTitle: "Writing…", systemImage: "sparkles", isBusy: model.isWritingFullBrief) {
@@ -341,25 +340,20 @@ struct JobDetailView: View {
         }
     }
 
-    /// What could screen you out at once, answered from the posting's words.
+    /// Whether a rule rules you out: the screen-out answers from the
+    /// posting's words, then the criteria checks they don't repeat.
     @ViewBuilder
-    private func screenOutAnswers(_ answers: [ScreenOutAnswer]) -> some View {
-        if !answers.isEmpty {
-            HubSection("Screen-out checks") {
-                ForEach(answers) { answer in
-                    VerdictRow(answer.verdict, name: answer.name, reason: answer.answer, evidence: answer.evidence)
+    private func screen(_ details: JobDetails) -> some View {
+        let rows = details.screenRows
+        if !rows.isEmpty {
+            HubSection("Screen") {
+                // A screen-out answer and a criteria check can share a name.
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    VerdictRow(row.verdict, name: row.name, reason: row.reason, evidence: row.evidence)
                 }
+            } trailing: {
+                ToneChip(details.fit.level)
             }
-        }
-    }
-
-    private func fitChecks(_ fit: JobFit) -> some View {
-        HubSection("Fit") {
-            ForEach(fit.checks) { check in
-                VerdictRow(check.verdict, name: check.name, reason: check.reason)
-            }
-        } trailing: {
-            ToneChip(fit.level)
         }
     }
 

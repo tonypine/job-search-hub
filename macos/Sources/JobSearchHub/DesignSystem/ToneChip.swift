@@ -39,9 +39,15 @@ extension ToneChip {
         self.init(match.title, tone: match.tone)
     }
 
-    /// A job's fit for the criteria: Good, Unclear or Poor.
-    init(_ fit: FitLevel) {
-        self.init(fit.title, tone: fit.tone)
+    /// A job's screen, where the column or section names it: Passes, Unclear
+    /// or Fails.
+    init(_ screen: FitLevel) {
+        self.init(screen.title, tone: screen.tone)
+    }
+
+    /// A job's screen among other chips: "Passes screen".
+    init(screen: FitLevel) {
+        self.init(screen.label, tone: screen.tone)
     }
 
     /// When a card's follow-up falls due.

@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The skills good fits keep asking for that the knowledge base never names,
-/// with how many ask and the plan to close each. The hub refreshes them daily.
+/// The skills the jobs that pass the screen keep asking for that the
+/// knowledge base never names, with how many ask and the plan to close each. The hub refreshes them daily.
 struct MarketGapsSection: View {
     let client: HubClient
     @State private var gaps: [MarketGap] = []
@@ -10,12 +10,12 @@ struct MarketGapsSection: View {
 
     var body: some View {
         HubSection("Market gaps") {
-            Text("Technologies good fits keep asking for that your knowledge base never names. A skill you have but never wrote down closes by adding it there.")
+            Text("Technologies the jobs that pass the screen keep asking for that your knowledge base never names. A skill you have but never wrote down closes by adding it there.")
                 .font(.hubSecondary).foregroundStyle(.secondary)
             if let failure {
                 HubErrorView(failure)
             } else if gaps.isEmpty {
-                Text("The hub lists the gaps once a day, from the good fits' facts.").foregroundStyle(.secondary)
+                Text("The hub lists the gaps once a day, from the facts of the jobs that pass the screen.").foregroundStyle(.secondary)
             } else {
                 ForEach(gaps) { gap in
                     VStack(alignment: .leading, spacing: Space.xs) {

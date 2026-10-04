@@ -153,11 +153,12 @@ public struct AddJobResponse: Codable, Equatable, Sendable {
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
-    /// All is every job that isn't dismissed; dismissed ones only show under Dismissed.
+    /// All is every job that isn't skipped; skipped ones only show under
+    /// Skipped. The hub calls them dismissed.
     case open, closed, all, dismissed
 
     public var id: String { rawValue }
-    public var title: String { rawValue.capitalized }
+    public var title: String { self == .dismissed ? "Skipped" : rawValue.capitalized }
 }
 
 public enum JobsQuery {

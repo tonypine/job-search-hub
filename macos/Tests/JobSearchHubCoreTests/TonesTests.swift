@@ -13,6 +13,11 @@ import Testing
     #expect([FitVerdict.yes, .unclear, .no].map(\.tone) == [.positive, .caution, .negative])
 }
 
+@Test func theScreenReadsPassesUnclearOrFails() {
+    #expect([FitLevel.good, .unclear, .poor].map(\.title) == ["Passes", "Unclear", "Fails"])
+    #expect([FitLevel.good, .unclear, .poor].map(\.label) == ["Passes screen", "Screen unclear", "Fails screen"])
+}
+
 @Test func eachScreenVerdictHasItsOwnSymbol() {
     let symbols = [FitVerdict.yes, .unclear, .no].map(\.symbolName)
     #expect(Set(symbols).count == 3)
