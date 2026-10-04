@@ -55,10 +55,44 @@ func TestWhereTheyHire(t *testing.T) {
 		{"another country only", store.Job{Location: "United States (Remote)"}, "not stated", jobfit.VerdictNo},
 		{"nothing said", store.Job{Location: "Remote"}, "not stated", jobfit.VerdictUnclear},
 		{"a term inside another word", store.Job{Location: "Remote"}, "Across the Americas; our focus only matters", jobfit.VerdictYes},
+		{"a list of regions", store.Job{Location: "Remote (US/Canada/EU)"}, "not stated", jobfit.VerdictNo},
+		{"a preferred region", store.Job{Location: "Remote, North America preferred"}, "not stated", jobfit.VerdictUnclear},
+		{"a preference read from the text", store.Job{Location: "Remote"}, "US or Canada, preferably", jobfit.VerdictUnclear},
+		{"a preference in Portuguese", store.Job{Location: "Remoto, de preferência nos EUA"}, "", jobfit.VerdictUnclear},
+		{"only working hours", store.Job{Location: "Remote (US time zones)"}, "not stated", jobfit.VerdictUnclear},
+		{"an offset from UTC", store.Job{Location: "Remote"}, "UTC-5 to UTC+1", jobfit.VerdictUnclear},
+		{"a rule beside a preference", store.Job{Location: "Remote"}, "Must be in the US; EST preferred", jobfit.VerdictNo},
+		{"residents beside working hours", store.Job{Location: "Remote (US residents, EST hours)"}, "not stated", jobfit.VerdictNo},
 	} {
 		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != test.want {
 			t.Errorf("%s: %+v, want %s", test.name, check, test.want)
+		}
+	}
+}
+
+func TestAPreferenceOrATimeZoneSaysSoWithThePostingsWords(t *testing.T) {
+	for location, want := range map[string]string{
+		"Remote, North America preferred": `only a preference: "Remote, North America preferred"`,
+		"Remote (US time zones)":          `only a time zone: "Remote (US time zones)"`,
+		"Remote (US/Canada/EU)":           `names only "Remote (US/Canada/EU)"`,
+	} {
+		if check := findCheck(t, jobfit.Judge(store.Job{Location: location}, nil, criteria, rates), "Where they hire"); check.Reason != want {
+			t.Errorf("%s: %q, want %q", location, check.Reason, want)
+		}
+	}
+}
+
+func TestCouldFitKeepsPostingsThatOnlyPreferARegion(t *testing.T) {
+	for location, want := range map[string]bool{
+		"Remote, North America preferred": true,
+		"Remote (US time zones)":          true,
+		"Remote (US/Canada/EU)":           false,
+		"Berlin, must be based in the EU": false,
+	} {
+		posting := store.JobPosting{Title: "Senior React Engineer", Location: location}
+		if got := jobfit.CouldFit(posting, criteria); got != want {
+			t.Errorf("%s: could fit = %v, want %v", location, got, want)
 		}
 	}
 }

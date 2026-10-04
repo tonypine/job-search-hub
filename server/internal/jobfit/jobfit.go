@@ -210,8 +210,38 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if named == "" {
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
 	}
+	if !hasAnyTerm([]string{named}, residencyRuleWords...) {
+		if hasAnyTerm([]string{named}, preferenceWords...) {
+			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only a preference: %q", named)}
+		}
+		if hasAnyTerm([]string{named}, timeZoneWords...) {
+			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only a time zone: %q", named)}
+		}
+	}
 	return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("names only %q", named)}
 }
+
+// A place a posting names reads as a residency rule, unless it is only
+// preferred, as in "Remote, North America preferred", or only sets working
+// hours, as in "Remote (US time zones)": those postings may still hire in
+// Brazil. Any word that requires keeps it a rule.
+var (
+	residencyRuleWords = []string{
+		"must", "only", "required", "requires", "require", "requirement", "mandatory", "need to", "needs to",
+		"resident", "residents", "residency", "reside", "residing", "based in", "located in", "living in", "live in",
+		"citizen", "citizens", "citizenship", "authorized", "authorization", "eligible", "eligibility", "right to work",
+		"apenas", "somente", "obrigatorio", "obrigatoria", "obrigatoriamente", "requisito", "residir", "residente", "residentes", "morar",
+		"solo", "solamente", "unicamente", "excluyente",
+	}
+	preferenceWords = []string{
+		"preferred", "preferably", "prefer", "prefers", "preference", "ideally", "nice to have", "a plus", "bonus",
+		"preferencialmente", "preferencia", "preferible", "preferiblemente", "desejavel", "deseable", "diferencial",
+	}
+	timeZoneWords = []string{
+		"time zone", "time zones", "timezone", "timezones", "hours", "overlap",
+		"utc", "gmt", "est", "edt", "pst", "pdt", "cst", "cdt", "mst", "mdt", "cet", "cest", "brt", "fuso horario", "horario",
+	}
+)
 
 // isOnlyRemote reports whether a location says nothing about where, such as
 // "Remote".
