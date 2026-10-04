@@ -35,3 +35,5 @@ func Contains(text, words string) bool {
 func isWordCharacter(character byte) bool {
 	return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
 }
+
+// CI check (TP-399): a server-only change; this PR is closed unmerged.
