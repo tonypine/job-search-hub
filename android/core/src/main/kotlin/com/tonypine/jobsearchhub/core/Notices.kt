@@ -63,6 +63,9 @@ enum class NoticeAction(val id: String, val title: String) {
 
         /** Why Followed up found nothing to record. */
         const val NO_CARD = "The pipeline has no card for it anymore."
+
+        /** Why a button found no hub to tell: the phone was unpaired since the notification came. */
+        const val NOT_PAIRED = "This phone isn't paired with a hub anymore."
     }
 }
 

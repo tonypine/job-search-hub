@@ -87,6 +87,7 @@ object UpdateNotifications {
     }
 
     /** Counts the kind's notifications again after the user swiped one away. */
+    @Synchronized
     fun forget(context: Context, intent: Intent) {
         val (channel, id) = intent.notification() ?: return
         summarize(context, channel, gone = id)
@@ -100,6 +101,7 @@ object UpdateNotifications {
         return if (hasExtra(NOTIFICATION_ID)) channel to getIntExtra(NOTIFICATION_ID, 0) else null
     }
 
+    @Synchronized
     private fun cancel(context: Context, channel: NoticeChannel, id: Int) {
         NotificationManagerCompat.from(context).cancel(id)
         summarize(context, channel, gone = id)
@@ -117,6 +119,8 @@ object UpdateNotifications {
         return PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    /** Posts a notification and recounts its kind's summary, one at a time, as pushes, buttons and work post from their own threads. */
+    @Synchronized
     private fun post(
         context: Context,
         channel: NoticeChannel,

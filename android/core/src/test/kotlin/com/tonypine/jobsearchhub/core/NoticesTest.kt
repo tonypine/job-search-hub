@@ -70,5 +70,9 @@ class NoticesTest {
             NoticeAction.FOLLOWED_UP.failure(update("follow_up_due"), NoticeAction.NO_CARD),
         )
         assertEquals("Couldn't mark the reply as read", NoticeAction.MARK_AS_READ.failure(update("human_reply"), "The hub answered 500.").title)
+        assertEquals(
+            Notice("Couldn't mark the reply as read", "Follow up with Acme: ${NoticeAction.NOT_PAIRED}"),
+            NoticeAction.MARK_AS_READ.failure(update("human_reply"), NoticeAction.NOT_PAIRED),
+        )
     }
 }

@@ -78,8 +78,12 @@ class HubActionWorker(context: Context, parameters: WorkerParameters) : Coroutin
         val update = PushedUpdate.parse(inputData.readUpdate()) ?: return Result.failure()
         val action = NoticeAction.of(inputData.getString(ACTION)) ?: return Result.failure()
         val app = applicationContext as HubApp
-        // An unpaired phone has no hub to tell.
-        val pairing = app.pairingStore.load() ?: return Result.success()
+        val pairing = app.pairingStore.load()
+        if (pairing == null) {
+            // Unpairing leaves the shade as it was, so a button can outlive the hub it would tell.
+            UpdateNotifications.showFailure(app, update, action, NoticeAction.NOT_PAIRED)
+            return Result.success()
+        }
         val client = HubClient(pairing)
         try {
             when (action) {
