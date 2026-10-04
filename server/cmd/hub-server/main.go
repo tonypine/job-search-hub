@@ -165,6 +165,7 @@ func run() error {
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	api.RegisterRecruiterRoutes(routes, hub, rates, requireOwner)
+	api.RegisterPeopleRoutes(routes, hub, rates, requireOwner)
 	api.RegisterCompanySuggestionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterLinkedInProfileRoutes(routes, hub, rates, requireOwner)
 	api.RegisterArtifactRoutes(routes, hub, requireOwner)
