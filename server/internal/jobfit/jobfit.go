@@ -210,12 +210,9 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if named == "" {
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
 	}
-	if !hasAnyTerm([]string{named}, residencyRuleWords...) {
-		if hasAnyTerm([]string{named}, preferenceWords...) {
-			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only a preference: %q", named)}
-		}
-		if hasAnyTerm([]string{named}, timeZoneWords...) {
-			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only a time zone: %q", named)}
+	if !hasAnyTerm(texts, residencyRuleWords...) {
+		if softener := getSoftener(named); softener != "" {
+			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only %s: %q", softener, named)}
 		}
 	}
 	return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("names only %q", named)}
@@ -241,13 +238,102 @@ var (
 		"time zone", "time zones", "timezone", "timezones", "hours", "overlap",
 		"utc", "gmt", "est", "edt", "pst", "pdt", "cst", "cdt", "mst", "mdt", "cet", "cest", "brt", "fuso horario", "horario",
 	}
+	softeningWords = append(append([]string{}, preferenceWords...), timeZoneWords...)
 )
+
+// getSoftener returns "a preference" or "a time zone" when every place a
+// posting names comes with one, and "" when any place stands on its own:
+// "Remote (US, EST preferred)" and "Austin, TX (CST)" still name only the
+// US.
+func getSoftener(named string) string {
+	var places []string
+	for _, part := range strings.FieldsFunc(named, isPartSeparator) {
+		switch {
+		case isOnlyRemote(part):
+		case len(places) > 0 && isOnlyWordsOf(part, preferenceWords):
+			// A bare "preferably" softens the place before it, as in "US or
+			// Canada, preferably".
+			places[len(places)-1] += ", " + part
+		default:
+			places = append(places, part)
+		}
+	}
+	if len(places) == 0 {
+		return ""
+	}
+	for _, place := range places {
+		if !isSoftened(place) {
+			return ""
+		}
+	}
+	if hasAnyTerm([]string{named}, preferenceWords...) {
+		return "a preference"
+	}
+	return "a time zone"
+}
+
+func isPartSeparator(character rune) bool {
+	return strings.ContainsRune(",;()", character)
+}
+
+// isSoftened reports whether a place comes with a preference or a time zone.
+// Places joined by slashes share the one after the last of them, as in
+// "US/Canada time zones", unless it stands alone, as in "US/EST".
+func isSoftened(place string) bool {
+	alternatives := strings.Split(place, "/")
+	last := alternatives[len(alternatives)-1]
+	if !hasAnyTerm([]string{last}, softeningWords...) {
+		return false
+	}
+	if !isOnlyWordsOf(last, softeningWords) {
+		return true
+	}
+	for _, alternative := range alternatives {
+		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, softeningWords...) {
+			return false
+		}
+	}
+	return true
+}
+
+// isOnlyWordsOf reports whether every word of a text, other than numbers,
+// belongs to one of the terms, as "preferably" and "EST" do.
+func isOnlyWordsOf(text string, terms []string) bool {
+	known := map[string]bool{}
+	for _, term := range terms {
+		for _, word := range getWords(term) {
+			known[word] = true
+		}
+	}
+	for _, word := range getWords(text) {
+		if !known[word] && strings.Trim(word, "0123456789") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// remoteWords say a job is remote without saying where, as in "Fully
+// remote", "100% remoto" or "Trabalho remoto".
+var remoteWords = map[string]bool{"remote": true, "remoto": true, "remota": true, "fully": true, "100": true, "trabalho": true}
 
 // isOnlyRemote reports whether a location says nothing about where, such as
 // "Remote".
 func isOnlyRemote(location string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(location))
-	return trimmed == "" || trimmed == "remote"
+	for _, word := range getWords(location) {
+		if !remoteWords[word] {
+			return false
+		}
+	}
+	return true
+}
+
+// getWords returns the normalized words of a text: "100% Remoto" has "100"
+// and "remoto".
+func getWords(text string) []string {
+	return strings.FieldsFunc(wordmatch.Normalize(text), func(character rune) bool {
+		return (character < 'a' || character > 'z') && (character < '0' || character > '9')
+	})
 }
 
 func checkStack(job store.Job, facts readFacts, criteria store.JobCriteria) Check {
