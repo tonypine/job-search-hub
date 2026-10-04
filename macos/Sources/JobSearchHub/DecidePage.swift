@@ -7,7 +7,7 @@ final class DecideModel {
     private(set) var items: [DecisionQueueItem] = []
     private(set) var signals: DecisionSignals?
     private(set) var isLoading = false
-    private(set) var loadError: String?
+    private(set) var loadError: HubFailure?
     var selectedID: UUID?
     private var hasLoaded = false
 
@@ -26,7 +26,7 @@ final class DecideModel {
             signals = loadedSignals
             loadError = nil
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the queue", error)
             return
         }
         let isFirstLoad = !hasLoaded
@@ -75,10 +75,14 @@ struct DecidePage: View {
         .navigationSubtitle(model.items.count == 1 ? "1 job to decide" : "\(model.items.count) jobs to decide")
     }
 
+    private func reload() async {
+        if let client = connection.makeClient() { await model.load(with: client) }
+    }
+
     private var queue: some View {
         List(selection: $model.selectedID) {
             if let signals = model.signals {
-                Text(signals.summary).font(.caption).foregroundStyle(.secondary)
+                Text(signals.summary).font(.hubCaption).foregroundStyle(.secondary)
                     .selectionDisabled()
             }
             ForEach(model.items) { item in
@@ -87,7 +91,7 @@ struct DecidePage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                ContentUnavailableView("Could not load the queue", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await reload() } }
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("Nothing to decide", systemImage: "checkmark.circle",
                                        description: Text("Briefed jobs wait here until you pursue, skip or leave them for later."))
@@ -101,19 +105,19 @@ struct DecisionQueueRow: View {
     let item: DecisionQueueItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                MatchLabel(match: item.match)
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(spacing: Space.s) {
+                ToneChip(item.match)
                 Text(item.job.title).fontWeight(.medium).lineLimit(1)
                 if item.decision != nil {
-                    Text("Later").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    ToneChip("Later", tone: .neutral, symbol: "clock")
                 }
             }
             if let company = item.companyName {
-                Text(company).font(.callout).foregroundStyle(.secondary)
+                Text(company).font(.hubSecondary).foregroundStyle(.secondary)
             }
-            Text(item.reason).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            Text(item.reason).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
     }
 }

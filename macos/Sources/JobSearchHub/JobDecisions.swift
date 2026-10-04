@@ -48,11 +48,11 @@ struct DismissJobsSheet: View {
     let jobCount: Int
     /// The action as the sheet names it: "Dismiss", or "Skip" from a brief.
     var actionName = "Dismiss"
-    let onDismiss: (String) async -> String?
+    /// Dismisses the jobs, or says what failed.
+    let onDismiss: (String) async -> HubFailure?
     @Environment(\.dismiss) private var closeSheet
     @State private var reason = ""
-    @State private var isDismissing = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
@@ -61,25 +61,17 @@ struct DismissJobsSheet: View {
                 .font(.callout).foregroundStyle(.secondary)
             TextField("Reason", text: $reason, prompt: Text("Optional, e.g. agency, US only"))
                 .accessibilityLabel("Dismissal reason")
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if let failure {
+                HubErrorView(failure)
             }
             HStack {
                 Spacer()
-                if isDismissing {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Cancel") { closeSheet() }
-                Button(actionName) {
-                    Task {
-                        isDismissing = true
-                        errorMessage = await onDismiss(reason)
-                        isDismissing = false
-                        if errorMessage == nil { closeSheet() }
-                    }
+                AsyncButton(actionName, busyTitle: "\(actionName == "Skip" ? "Skipping" : "Dismissing")…") {
+                    failure = await onDismiss(reason)
+                    if failure == nil { closeSheet() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isDismissing)
                 .accessibilityLabel("Confirm dismissal")
             }
         }
@@ -93,11 +85,11 @@ struct DismissJobsSheet: View {
 /// agent on the Mac acts on.
 struct FixJobSheet: View {
     let jobTitle: String
-    let onFix: (String) async -> String?
+    /// Sends the note, or says what failed.
+    let onFix: (String) async -> HubFailure?
     @Environment(\.dismiss) private var closeSheet
     @State private var note = ""
-    @State private var isSending = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
@@ -107,25 +99,18 @@ struct FixJobSheet: View {
             TextField("What's wrong", text: $note, prompt: Text("e.g. the company is Track&Field; the title has the city in it"), axis: .vertical)
                 .lineLimit(2...5)
                 .accessibilityLabel("What's wrong")
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if let failure {
+                HubErrorView(failure)
             }
             HStack {
                 Spacer()
-                if isSending {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Cancel") { closeSheet() }
-                Button("Fix") {
-                    Task {
-                        isSending = true
-                        errorMessage = await onFix(note)
-                        isSending = false
-                        if errorMessage == nil { closeSheet() }
-                    }
+                AsyncButton("Fix", busyTitle: "Sending…") {
+                    failure = await onFix(note)
+                    if failure == nil { closeSheet() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isSending || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .formStyle(.grouped)

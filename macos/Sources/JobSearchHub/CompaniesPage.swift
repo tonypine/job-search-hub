@@ -7,7 +7,7 @@ final class CompaniesModel {
     private(set) var summaries: [CompanySummary] = []
     private(set) var dossier: CompanyDossier?
     private(set) var isLoading = false
-    private(set) var loadError: String?
+    private(set) var loadError: HubFailure?
     var selectedID: UUID?
 
     func load(with client: HubClient) async {
@@ -20,7 +20,7 @@ final class CompaniesModel {
                 selectedID = summaries.first?.id
             }
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the companies", error)
         }
     }
 
@@ -32,7 +32,7 @@ final class CompaniesModel {
         do {
             dossier = try await client.get("v1/companies/\(selectedID.uuidString)", as: CompanyDossier.self)
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the company", error)
         }
     }
 }
@@ -91,7 +91,7 @@ struct CompaniesPage: View {
                         Button {
                             isAddingCompany = true
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: Space.s) {
                                 ProgressView().controlSize(.small)
                                 Text("Researching \(research.company)")
                             }
@@ -118,7 +118,7 @@ struct CompaniesPage: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(8)
+            .padding(Space.s)
             .disabled(model.selectedID == nil)
             if side == .session, let companyID = model.selectedID {
                 ClaudeSessionPane(subject: .company(companyID), client: client, startsOnAppear: opensSession)
@@ -128,10 +128,14 @@ struct CompaniesPage: View {
         }
     }
 
+    private func reload() async {
+        if let client = connection.makeClient() { await model.load(with: client) }
+    }
+
     private var companyTable: some View {
         Table(model.summaries, selection: $model.selectedID) {
             TableColumn("Company") { summary in
-                HStack(spacing: 6) {
+                HStack(spacing: Space.s) {
                     UnseenDot(count: summary.unseenUpdates)
                     Text(summary.company.name)
                 }
@@ -159,7 +163,7 @@ struct CompaniesPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                ContentUnavailableView("Could not load companies", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await reload() } }
             }
         }
     }
@@ -171,10 +175,10 @@ struct DossierPane: View {
     /// Reads the dossier again after a change made from it.
     let onChanged: () -> Void
     @State private var isAddingWarmPath = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
     @State private var isRecordingOutreach = false
     @State private var outreachNote = ""
-    @State private var outreachError: String?
+    @State private var outreachFailure: HubFailure?
     @Environment(CompanyJobFinder.self) private var jobFinder
 
     var body: some View {
@@ -186,19 +190,17 @@ struct DossierPane: View {
     private var content: some View {
         if let dossier {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Space.l) {
                     header(dossier.company)
                     if let summary = dossier.company.summary {
-                        Text(summary)
+                        Text(summary).textSelection(.enabled)
                     }
-                    if let foundVia = dossier.company.foundVia {
-                        LabeledContent("Found via", value: foundVia)
-                    }
-                    if let watchedSince = dossier.watchedSince {
-                        LabeledContent("On the watch list since", value: watchedSince.formatted(date: .abbreviated, time: .omitted))
+                    FactGrid {
+                        FactRow("Found via", text: dossier.company.foundVia)
+                        FactRow("Watched since", text: dossier.watchedSince?.formatted(date: .abbreviated, time: .omitted))
                     }
 
-                    section("Job boards") {
+                    HubSection("Job boards") {
                         if dossier.jobBoards.isEmpty {
                             Text("None stored").foregroundStyle(.secondary)
                         }
@@ -211,33 +213,31 @@ struct DossierPane: View {
                     openThreadsSection(dossier)
 
                     if let connections = dossier.connections, !connections.isEmpty {
-                        section("People you know") {
+                        HubSection("People you know") {
                             ConnectionList(connections: connections)
                         }
                     }
 
                     warmPathsSection(dossier)
 
-                    section("People") {
+                    HubSection("People") {
                         if dossier.people.isEmpty {
                             Text("None stored").foregroundStyle(.secondary)
                         }
                         ForEach(dossier.people) { person in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(person.name).bold()
-                                Text([person.roleTitle, person.relevance.replacingOccurrences(of: "_", with: " ")].compactMap { $0 }.joined(separator: " · "))
-                                    .foregroundStyle(.secondary)
+                            PersonRow(
+                                person.name, relation: .contact,
+                                role: [person.roleTitle, person.relevance.replacingOccurrences(of: "_", with: " ")].compactMap { $0 }.joined(separator: " · ")
+                            ) {
                                 if let email = person.email {
                                     linkOrText(email, url: "mailto:\(email)")
-                                        .font(.caption)
                                 }
                                 linkOrText("Source", url: person.sourceURL)
-                                    .font(.caption)
                             }
                         }
                     }
                 }
-                .padding()
+                .padding(Space.l)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
@@ -248,7 +248,7 @@ struct DossierPane: View {
     /// Starts the job finder on the company, and says how its last run went.
     @ViewBuilder
     private func jobFinderRow(_ company: Company) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Space.s) {
             Button("Find jobs", systemImage: "magnifyingglass") { jobFinder.start(companyID: company.id, client: client) }
                 .disabled(jobFinder.isRunning(company.id))
                 .help("An agent finds the company's open roles: it sets the job board when the hub reads it, or records the roles off the careers page")
@@ -258,11 +258,12 @@ struct DossierPane: View {
                 Text("Finding jobs…").foregroundStyle(.secondary)
             case let .finished(openJobs, jobBoard):
                 Text(describeFoundJobs(openJobs: openJobs, jobBoard: jobBoard)).foregroundStyle(.secondary)
-            case let .failed(reason):
-                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(2)
-            case nil:
+            case .failed, nil:
                 EmptyView()
             }
+        }
+        if case let .failed(reason) = jobFinder.states[company.id] {
+            HubErrorView(HubFailure("Couldn't find the jobs", advice: reason))
         }
     }
 
@@ -277,13 +278,13 @@ struct DossierPane: View {
     @ViewBuilder
     private func openThreadsSection(_ dossier: CompanyDossier) -> some View {
         if dossier.applications != nil || dossier.mail != nil {
-            section("Applications") {
+            HubSection("Applications") {
                 if dossier.applicationsOpenFirst.isEmpty {
                     Text("Not on the board").foregroundStyle(.secondary)
                 }
                 ForEach(dossier.applicationsOpenFirst) { application in
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: Space.s) {
                             linkOrText(application.card.jobTitle ?? "Outreach, no posting", url: application.card.jobURL)
                                 .bold()
                             Text(application.phaseName).foregroundStyle(.secondary)
@@ -292,17 +293,16 @@ struct DossierPane: View {
                             HeardBackLabel(contactedAt: contactedAt)
                         }
                         if application.phaseIsClosed, let closedReason = application.card.application.closedReason, !closedReason.isEmpty {
-                            Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            Label(closedReason, systemImage: SetAside.closed.symbolName)
+                                .font(.hubCaption).foregroundStyle(SetAside.closed.tone.color).lineLimit(2)
                         } else if let status = application.card.getFollowUpStatus(now: .now) {
-                            Text(status.text)
-                                .font(.caption.weight(status.isDue ? .semibold : .regular))
-                                .foregroundStyle(status.isDue ? .orange : .secondary)
+                            ToneChip(status)
                         }
                     }
                     .help(application.card.application.notes ?? "")
                 }
-                if let outreachError {
-                    Label(outreachError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                if outreachFailure != nil {
+                    HubErrorView($outreachFailure)
                 }
                 Button("Messaged someone here…", systemImage: "paperplane") {
                     outreachNote = ""
@@ -319,7 +319,7 @@ struct DossierPane: View {
                 Text("Its follow-up falls due a week from today.")
             }
 
-            section("Latest mail") {
+            HubSection("Latest mail") {
                 if (dossier.mail ?? []).isEmpty {
                     Text("None matched to this company").foregroundStyle(.secondary)
                 }
@@ -327,13 +327,13 @@ struct DossierPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(message.subject.isEmpty ? "(no subject)" : message.subject).lineLimit(1)
                         Text("\(message.fromLine) · \(message.sentAt.formatted(date: .abbreviated, time: .omitted))")
-                            .font(.caption)
+                            .font(.hubCaption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
                 if let foldedMailLine = dossier.foldedMailLine {
-                    Text(foldedMailLine).font(.caption).foregroundStyle(.secondary)
+                    Text(foldedMailLine).font(.hubCaption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -341,20 +341,19 @@ struct DossierPane: View {
 
     /// People who don't work here but can open doors, and a way to add one.
     private func warmPathsSection(_ dossier: CompanyDossier) -> some View {
-        section("Can introduce you") {
+        HubSection("Can introduce you") {
             ForEach(dossier.warmPaths ?? []) { path in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(path.name).bold()
-                    Text([path.note, path.howKnown, path.preferredChannel.map { "prefers \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
-                        .joined(separator: " · "))
-                        .foregroundStyle(.secondary)
-                }
+                PersonRow(
+                    path.name, relation: .introducer,
+                    detail: [path.note, path.howKnown, path.preferredChannel.map { "prefers \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
+                        .joined(separator: " · ")
+                )
                 .contextMenu {
                     Button("Remove from \(dossier.company.name)", role: .destructive) { remove(path, from: dossier.company) }
                 }
             }
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            if failure != nil {
+                HubErrorView($failure)
             }
             Button("Add someone who can introduce you", systemImage: "person.badge.plus") { isAddingWarmPath = true }
                 .buttonStyle(.link)
@@ -363,11 +362,11 @@ struct DossierPane: View {
             WarmPathSheet(companyName: dossier.company.name) { request in
                 do {
                     _ = try await client.send("POST", "v1/companies/\(dossier.company.id)/warm-paths", body: request, as: WarmPath.self)
-                    errorMessage = nil
+                    failure = nil
                     onChanged()
                     return true
                 } catch {
-                    errorMessage = "Could not add them: \(error)"
+                    failure = HubFailure("Couldn't add them", error)
                     return false
                 }
             }
@@ -379,10 +378,10 @@ struct DossierPane: View {
         Task {
             do {
                 _ = try await client.recordOutreach(companyID: company.id, note: note)
-                outreachError = nil
+                outreachFailure = nil
                 onChanged()
             } catch {
-                outreachError = "Could not record the message: \(error)"
+                outreachFailure = HubFailure("Couldn't record the message", error)
             }
         }
     }
@@ -391,36 +390,29 @@ struct DossierPane: View {
         Task {
             do {
                 try await client.delete("v1/companies/\(company.id)/warm-paths/\(path.contactID)")
-                errorMessage = nil
+                failure = nil
                 onChanged()
             } catch {
-                errorMessage = "Could not remove them: \(error)"
+                failure = HubFailure("Couldn't remove them", error)
             }
         }
     }
 
     private func header(_ company: Company) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(company.name).font(.title2).bold()
-            HStack(spacing: 12) {
+        EntityHeader(eyebrow: "Company", title: company.name) {
+            HStack(spacing: Space.m) {
                 linkOrText(company.domain, url: company.websiteURL)
                 if let careersURL = company.careersURL {
                     linkOrText("Careers", url: careersURL)
                 }
                 if let country = company.headquartersCountry {
-                    Text(country).foregroundStyle(.secondary)
+                    Text(country)
                 }
                 if let size = company.employeeCountRange {
-                    Text("\(size) people").foregroundStyle(.secondary)
+                    Text("\(size) people")
                 }
             }
-        }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            content()
+            .tint(.hubAccent)
         }
     }
 
@@ -443,11 +435,10 @@ struct WarmPathSheet: View {
     @State private var howKnown = ""
     @State private var preferredChannel = ""
     @State private var note = ""
-    @State private var isAdding = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Someone who can introduce you at \(companyName)").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("Someone who can introduce you at \(companyName)").font(.hubSection)
             TextField("Name", text: $name, prompt: Text("As you call them; the same name links them to other companies"))
             TextField("How you know them", text: $howKnown, prompt: Text("e.g. a former colleague"))
             TextField("Where to reach them", text: $preferredChannel, prompt: Text("e.g. LinkedIn, WhatsApp"))
@@ -455,19 +446,15 @@ struct WarmPathSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Add") {
-                    isAdding = true
-                    Task {
-                        let added = await onAdd(AddWarmPathRequest(name: name, howKnown: howKnown, preferredChannel: preferredChannel, note: note))
-                        isAdding = false
-                        if added { dismiss() }
-                    }
+                AsyncButton("Add", busyTitle: "Adding…") {
+                    let added = await onAdd(AddWarmPathRequest(name: name, howKnown: howKnown, preferredChannel: preferredChannel, note: note))
+                    if added { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isAdding)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 480)
     }
 }

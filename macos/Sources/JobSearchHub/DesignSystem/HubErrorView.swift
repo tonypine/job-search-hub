@@ -86,11 +86,31 @@ struct HubErrorView: View {
     }
 }
 
+/// Something that failed: what it was, and what to do about it.
+struct HubFailure: Equatable {
+    /// What failed: "Couldn't load the jobs".
+    let title: String
+    let report: ErrorReport
+
+    init(_ title: String, _ error: any Error) {
+        self.title = title
+        report = ErrorReport(error)
+    }
+
+    init(_ title: String, advice: String) {
+        self.title = title
+        report = ErrorReport(advice: advice)
+    }
+}
+
 extension HubErrorView {
-    /// An error the owner reads and dismisses, bound to where it's kept.
-    init(_ title: String, report: Binding<ErrorReport?>, retry: (() -> Void)? = nil) {
-        self.init(title: title, report: report.wrappedValue ?? ErrorReport(advice: ""), retry: retry) {
-            report.wrappedValue = nil
-        }
+    init(_ failure: HubFailure, style: Style = .inline, retry: (() -> Void)? = nil, dismiss: (() -> Void)? = nil) {
+        self.init(title: failure.title, report: failure.report, style: style, retry: retry, dismiss: dismiss)
+    }
+
+    /// A failure the owner reads and dismisses, which clears it.
+    init(_ failure: Binding<HubFailure?>, retry: (() -> Void)? = nil) {
+        let shown = failure.wrappedValue ?? HubFailure("", advice: "")
+        self.init(shown, retry: retry) { failure.wrappedValue = nil }
     }
 }
