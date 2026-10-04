@@ -4,15 +4,17 @@ import JobSearchHubCore
 import SwiftUI
 
 /// The phones paired with the hub: pair one through a QR code, and revoke
-/// one that is lost.
+/// one that is lost, once the owner confirms.
 struct PhonesSection: View {
     let client: HubClient
     @State private var devices: [Device] = []
     @State private var failure: HubFailure?
     @State private var isPairing = false
+    @State private var confirmingRevoke: Device?
+    @State private var revokingID: Device.ID?
 
     var body: some View {
-        Section("Phones") {
+        Section("Paired phones") {
             ForEach(devices) { device in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -21,7 +23,9 @@ struct PhonesSection: View {
                     }
                     Spacer()
                     if device.revokedAt == nil {
-                        AsyncButton("Revoke", busyTitle: "Revoking…") { await revoke(device) }
+                        AsyncButton("Revoke…", busyTitle: "Revoking…", role: .destructive, isBusy: revokingID == device.id) {
+                            confirmingRevoke = device
+                        }
                     }
                 }
             }
@@ -31,6 +35,15 @@ struct PhonesSection: View {
             Button("Pair a phone", systemImage: "qrcode") { isPairing = true }
         }
         .task { await load() }
+        .confirmationDialog(
+            "Revoke \(confirmingRevoke?.name ?? "this phone")?",
+            isPresented: Binding(get: { confirmingRevoke != nil }, set: { if !$0 { confirmingRevoke = nil } }),
+            presenting: confirmingRevoke
+        ) { device in
+            Button("Revoke", role: .destructive) { Task { await revoke(device) } }
+        } message: { _ in
+            Text("The phone loses the hub at once. To use it again, pair it again with a new QR code.")
+        }
         .sheet(isPresented: $isPairing, onDismiss: { Task { await load() } }) {
             PairPhoneSheet(client: client)
         }
@@ -56,6 +69,8 @@ struct PhonesSection: View {
     }
 
     private func revoke(_ device: Device) async {
+        revokingID = device.id
+        defer { revokingID = nil }
         do {
             try await client.delete("v1/devices/\(device.id)")
             await load()

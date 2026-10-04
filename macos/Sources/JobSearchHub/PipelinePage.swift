@@ -132,8 +132,6 @@ struct PipelinePage: View {
                     .onChange(of: details.getSubject(on: .pipeline)) {
                         if details.getSubject(on: .pipeline) == nil { selectedCardID = nil }
                     }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Pipeline")
@@ -182,8 +180,6 @@ struct PipelinePage: View {
                 .help("Show only the cards whose follow-up is due")
             Toggle("Skipped", systemImage: SetAside.skipped.symbolName, isOn: $model.showsSkipped)
                 .help("Show the skipped cards, where they can be restored")
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                .disabled(model.isLoading)
         }
         .alert("Followed up", isPresented: Binding(get: { followUpCardID != nil }, set: { if !$0 { followUpCardID = nil } })) {
             TextField("What you did", text: $followUpNote)

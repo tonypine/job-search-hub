@@ -67,7 +67,7 @@ cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app
 open build/JobSearchHub.app
 ```
 
-In Settings, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a

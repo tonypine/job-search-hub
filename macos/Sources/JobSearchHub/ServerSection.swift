@@ -56,9 +56,10 @@ final class ServerControl {
 }
 
 /// Settings' control panel for the server: its state, start, stop, restart
-/// and log, and pausing the hub's background model work.
+/// and log, and pausing the hub's background model work. Starting needs no
+/// connection, so it works while the hub is down.
 struct ServerSection: View {
-    let client: HubClient
+    let client: HubClient?
     @State private var control = ServerControl()
     @State private var modelWork = ModelWorkModel()
     @State private var isConfirmingStop = false
@@ -84,12 +85,12 @@ struct ServerSection: View {
                     HubErrorView($control.failure)
                 }
             }
-            if let work = modelWork.work {
+            if client != nil, let work = modelWork.work {
                 HStack {
                     Text(work.paused ? "Model work is paused" : "Model work is running")
                     Spacer()
                     AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…") {
-                        await modelWork.setPaused(!work.paused, with: client)
+                        if let client { await modelWork.setPaused(!work.paused, with: client) }
                     }
                 }
                 if modelWork.failure != nil {
@@ -98,7 +99,9 @@ struct ServerSection: View {
             }
         }
         .task { await control.watch() }
-        .task { await modelWork.watch(with: client) }
+        .task(id: client == nil) {
+            if let client { await modelWork.watch(with: client) }
+        }
         .confirmationDialog("Stop the hub?", isPresented: $isConfirmingStop) {
             Button("Stop", role: .destructive) { Task { await control.perform(.stop) } }
         } message: {

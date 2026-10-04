@@ -80,7 +80,7 @@ struct ApplicationAnswersSection: View {
                 HubErrorView($model.failure)
             }
             if model.answers.isEmpty {
-                Text("No answers yet. Import your LinkedIn export's saved answers from the Settings page, or add common questions to fill in.")
+                Text("No answers yet. Import your LinkedIn export's saved answers in Settings › Accounts, or add common questions to fill in.")
                     .foregroundStyle(.secondary)
             }
             ForEach(model.answers) { answer in

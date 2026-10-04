@@ -63,12 +63,6 @@ struct DecidePage: View {
                     .onChange(of: details.getSubject(on: .decide)) {
                         if details.getSubject(on: .decide) == nil { model.selectedID = nil }
                     }
-                    .toolbar {
-                        Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                            .disabled(model.isLoading)
-                    }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Decide")

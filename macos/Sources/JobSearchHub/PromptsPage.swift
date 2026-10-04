@@ -86,8 +86,6 @@ struct PromptsPage: View {
                             await model.select(model.summaries.first?.kind, with: client)
                         }
                     }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Prompts")

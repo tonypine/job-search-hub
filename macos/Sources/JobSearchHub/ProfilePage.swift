@@ -1,8 +1,33 @@
 import JobSearchHubCore
 import SwiftUI
 
+/// The Profile page's tabs: the profile document agents read, and what
+/// sits beside it.
+enum ProfileTab: String, CaseIterable, Identifiable {
+    case profile
+    case knowledgeBase
+    case gaps
+    case linkedIn
+    case answers
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .profile: "Profile"
+        case .knowledgeBase: "Knowledge base"
+        case .gaps: "Gaps"
+        case .linkedIn: "LinkedIn"
+        case .answers: "Answers"
+        }
+    }
+}
+
 struct ProfilePage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
+    @State private var tab = ProfileTab.profile
     @State private var editor = ProfileEditor()
     @State private var linkedIn: LinkedInProfileResponse?
     @State private var audit = ProfileAudit()
@@ -13,15 +38,49 @@ struct ProfilePage: View {
                 content(client: client)
                     .task { await editor.load(with: client) }
                     .task { linkedIn = try? await client.get("v1/linkedin/profile", as: LinkedInProfileResponse.self) }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Profile")
     }
 
-    @ViewBuilder
     private func content(client: HubClient) -> some View {
+        Group {
+            switch tab {
+            case .profile: profile(client: client)
+            case .knowledgeBase: scrolling { KnowledgeBaseSection(client: client) }
+            case .gaps: scrolling { MarketGapsSection(client: client) }
+            case .linkedIn: linkedInTab(client: client)
+            case .answers: scrolling { ApplicationAnswersSection(client: client) }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Show", selection: $tab) {
+                    ForEach(ProfileTab.allCases) { tab in Text(tab.title).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(editor.isEditing)
+            }
+            if tab == .profile {
+                ToolbarItemGroup {
+                    if editor.isEditing {
+                        Button("Cancel") { editor.cancelEditing() }
+                            .disabled(editor.isSaving)
+                        AsyncButton("Save", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
+                            .keyboardShortcut("s")
+                    } else {
+                        Button("Edit", systemImage: "pencil") { editor.startEditing() }
+                            .disabled(editor.profile == nil)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func profile(client: HubClient) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let error = editor.error {
                 HubErrorView(title: editor.isEditing ? "Couldn't save the profile" : "Couldn't load the profile", report: error)
@@ -33,34 +92,38 @@ struct ProfilePage: View {
                     .padding(Space.l)
                     .disabled(editor.isSaving)
             } else if let profile = editor.profile {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Space.xxl) {
-                        ProfileDocument(markdown: profile.body)
-                        KnowledgeBaseSection(client: client)
-                        MarketGapsSection(client: client)
-                        if let linkedIn, !linkedIn.profile.isEmpty {
-                            LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
-                        }
-                        ApplicationAnswersSection(client: client)
-                    }
-                    .padding(Space.xl)
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                scrolling { ProfileDocument(markdown: profile.body) }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .toolbar {
-            if editor.isEditing {
-                Button("Cancel") { editor.cancelEditing() }
-                    .disabled(editor.isSaving)
-                AsyncButton("Save", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
-                    .keyboardShortcut("s")
-            } else {
-                Button("Edit", systemImage: "pencil") { editor.startEditing() }
-                    .disabled(editor.profile == nil)
+    }
+
+    @ViewBuilder
+    private func linkedInTab(client: HubClient) -> some View {
+        if let linkedIn, !linkedIn.profile.isEmpty {
+            scrolling { LinkedInProfileSection(response: linkedIn, audit: audit, client: client) }
+        } else {
+            ContentUnavailableView {
+                Label("No LinkedIn profile yet", systemImage: "person.text.rectangle")
+            } description: {
+                Text("Import your LinkedIn data export in Settings › Accounts. Agents read the profile in it beside yours.")
+            } actions: {
+                Button("Open Settings…") {
+                    settingsTab = .accounts
+                    openSettings()
+                }
             }
+        }
+    }
+
+    /// A tab's content in a readable column.
+    private func scrolling<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            content()
+                .padding(Space.xl)
+                .frame(maxWidth: 760, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -118,7 +181,7 @@ struct LinkedInProfileSection: View {
                             Text(difference)
                         }
                     }
-                    Text("Recruiters find you by what LinkedIn says. Edit it there, or the criteria in Settings.")
+                    Text("Recruiters find you by what LinkedIn says. Edit it there, or your criteria on the Criteria page.")
                         .font(.hubCaption).foregroundStyle(.secondary)
                 }
                 .hubWell()
@@ -140,7 +203,7 @@ struct LinkedInProfileSection: View {
                     Text(skills.joined(separator: " · ")).foregroundStyle(.secondary)
                 }
             }
-            Text("Agents read this with your profile above. Import again from Settings › Network to update it.")
+            Text("Agents read this with your profile. Import again from Settings › Accounts to update it.")
                 .font(.hubCaption).foregroundStyle(.secondary)
             auditView
         }

@@ -7,6 +7,8 @@ struct AsyncButton: View {
     /// What shows while it runs: "Writing…", "Reading…".
     let busyTitle: String
     var systemImage: String?
+    /// `.destructive` for work that removes something, such as revoking a phone.
+    var role: ButtonRole?
     /// Busy for a reason the button doesn't run itself, such as the same
     /// work started elsewhere.
     var isBusy = false
@@ -14,18 +16,19 @@ struct AsyncButton: View {
     @State private var isRunning = false
 
     init(
-        _ title: String, busyTitle: String, systemImage: String? = nil, isBusy: Bool = false,
+        _ title: String, busyTitle: String, systemImage: String? = nil, role: ButtonRole? = nil, isBusy: Bool = false,
         action: @escaping @MainActor () async -> Void
     ) {
         self.title = title
         self.busyTitle = busyTitle
         self.systemImage = systemImage
+        self.role = role
         self.isBusy = isBusy
         self.action = action
     }
 
     var body: some View {
-        Button {
+        Button(role: role) {
             isRunning = true
             Task {
                 await action()

@@ -235,3 +235,15 @@ private func makeTallyCalendar() -> Calendar {
     let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
     #expect(sent?["note"] as? String == "LinkedIn message to the engineering lead")
 }
+
+@Test func theDueCountTakesFollowUpsDueTodayOrOverdue() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false, followUpDays: 7)
+    let board = PipelineBoard(phases: [applied], cards: [
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied),
+    ])
+
+    #expect(board.getDueCount(now: tallyNow, calendar: makeTallyCalendar()) == 2)
+}

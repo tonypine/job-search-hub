@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where the app stands with the hub, as the Settings page reports it.
+/// Where the app stands with the hub, as Settings › Connection reports it.
 public enum ConnectionStatus: Equatable, Sendable {
     case unchecked
     case waitingForKeychain

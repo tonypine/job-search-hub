@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The job criteria in Settings: what the feeds search by, and what each
-/// job's fit is judged against.
+/// The job criteria on the Criteria page: what the feeds search by, what
+/// each job's fit is judged against, and the take-home pay it must reach.
 struct JobCriteriaSection: View {
     let client: HubClient
     @State private var editor = JobCriteriaEditor()

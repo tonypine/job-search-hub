@@ -1,4 +1,5 @@
-/// The app's top-level pages, in sidebar order.
+/// The app's top-level pages, in sidebar order. Settings is the app's
+/// Settings window (⌘,), not a page.
 public enum Page: String, CaseIterable, Identifiable, Sendable {
     case decide
     case pipeline
@@ -7,10 +8,10 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     case companies
     case recruiters
     case profile
+    case criteria
+    case activity
     case prompts
-    case compare
-    case runs
-    case settings
+    case modelLab = "model-lab"
 
     public var id: String { rawValue }
 
@@ -23,10 +24,10 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .companies: "Companies"
         case .recruiters: "Recruiters"
         case .profile: "Profile"
+        case .criteria: "Criteria"
+        case .activity: "Activity"
         case .prompts: "Prompts"
-        case .compare: "Compare"
-        case .runs: "Runs"
-        case .settings: "Settings"
+        case .modelLab: "Model lab"
         }
     }
 
@@ -40,10 +41,45 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .companies: "building.2"
         case .recruiters: "person.crop.rectangle.stack"
         case .profile: "person.crop.circle"
+        case .criteria: "slider.horizontal.3"
+        case .activity: "gauge.with.needle"
         case .prompts: "text.bubble"
-        case .compare: "square.split.2x1"
-        case .runs: "gauge.with.needle"
-        case .settings: "gearshape"
+        case .modelLab: "square.split.2x1"
         }
     }
+
+    public var group: SidebarGroup {
+        switch self {
+        case .decide, .pipeline, .updates: .work
+        case .jobs, .companies, .recruiters: .browse
+        case .profile, .criteria: .you
+        case .activity, .prompts, .modelLab: .hub
+        }
+    }
+}
+
+/// The sidebar's groups, by intent: what needs you, what you browse, who you
+/// are, and the hub's own tools.
+public enum SidebarGroup: String, CaseIterable, Identifiable, Sendable {
+    case work
+    case browse
+    case you
+    case hub
+
+    public var id: String { rawValue }
+
+    /// The section's header; the first group has none.
+    public var title: String? {
+        switch self {
+        case .work: nil
+        case .browse: "Browse"
+        case .you: "You"
+        case .hub: "Hub"
+        }
+    }
+
+    /// The hub's maintenance tools start folded away.
+    public var isExpandedByDefault: Bool { self != .hub }
+
+    public var pages: [Page] { Page.allCases.filter { $0.group == self } }
 }
