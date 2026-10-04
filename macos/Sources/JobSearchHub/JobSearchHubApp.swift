@@ -181,10 +181,11 @@ struct ContentView: View {
         } detail: {
             // The banner hangs on a container that always renders: a page
             // without a client renders nothing, which would take it along.
+            // The page stays in the tree without one, so its state outlives
+            // a hub address that is briefly invalid while being edited.
             ZStack {
-                if connection.makeClient() != nil {
-                    page
-                } else if connectionProblem == .notSetUp {
+                page
+                if connectionProblem == .notSetUp {
                     ConnectToHubView()
                         .navigationTitle(selectedPage?.title ?? "Job Search Hub")
                 }
