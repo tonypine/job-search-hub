@@ -20,6 +20,10 @@ cd server && gofmt -l . && go vet ./... && go test ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...   # the version CI pins in .github/workflows/ci.yml
 ```
 
+Store and tool tests each get a fresh database created through `HUB_TEST_DATABASE_URL` and dropped afterwards. Without the variable they fail rather than skip.
+
+The same checks run in CI (`.github/workflows/ci.yml`) on every pull request, and `ci` is the check `main` requires.
+
 Turn on the versioned git hooks once per clone:
 
 ```bash
@@ -27,8 +31,6 @@ git config core.hooksPath .githooks
 ```
 
 `.githooks/pre-push` then runs gofmt on the changed `.go` files and `go vet ./...` in `server/` before every push that changes Go, in a few seconds and without tests. Never push with `git push --no-verify`. When the hook fails, fix what it reports, commit, and push again.
-
-Store and tool tests each get a fresh database created through `HUB_TEST_DATABASE_URL` and dropped afterwards. Without the variable they fail rather than skip.
 
 The macOS app:
 
