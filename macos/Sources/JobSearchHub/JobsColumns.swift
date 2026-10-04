@@ -56,26 +56,11 @@ struct FitCheckCell: View {
             Label {
                 Text(check.reason).help(check.reason)
             } icon: {
-                Image(systemName: symbolName(check.verdict)).foregroundStyle(color(check.verdict))
+                Image(systemName: check.verdict.symbolName).foregroundStyle(check.verdict.tone.color)
             }
+            .accessibilityLabel("\(check.verdict.rawValue): \(check.reason)")
         } else {
             Text("–")
-        }
-    }
-
-    private func symbolName(_ verdict: FitVerdict) -> String {
-        switch verdict {
-        case .yes: "checkmark.circle.fill"
-        case .no: "xmark.circle.fill"
-        case .unclear: "questionmark.circle"
-        }
-    }
-
-    private func color(_ verdict: FitVerdict) -> Color {
-        switch verdict {
-        case .yes: .green
-        case .no: .red
-        case .unclear: .orange
         }
     }
 }

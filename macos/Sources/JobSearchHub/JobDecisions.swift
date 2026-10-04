@@ -48,38 +48,30 @@ struct DismissJobsSheet: View {
     let jobCount: Int
     /// The action as the sheet names it: "Dismiss", or "Skip" from a brief.
     var actionName = "Dismiss"
-    let onDismiss: (String) async -> String?
+    /// Dismisses the jobs, or says what failed.
+    let onDismiss: (String) async -> HubFailure?
     @Environment(\.dismiss) private var closeSheet
     @State private var reason = ""
-    @State private var isDismissing = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
-            Text(jobCount == 1 ? "\(actionName) this job?" : "\(actionName) \(jobCount) jobs?").font(.headline)
+            Text(jobCount == 1 ? "\(actionName) this job?" : "\(actionName) \(jobCount) jobs?").font(.hubSection)
             Text("Dismissed jobs leave the list and stay dismissed when their board lists them again. Restore them from the Dismissed status.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.hubSecondary).foregroundStyle(.secondary)
             TextField("Reason", text: $reason, prompt: Text("Optional, e.g. agency, US only"))
                 .accessibilityLabel("Dismissal reason")
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if let failure {
+                HubErrorView(failure)
             }
             HStack {
                 Spacer()
-                if isDismissing {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Cancel") { closeSheet() }
-                Button(actionName) {
-                    Task {
-                        isDismissing = true
-                        errorMessage = await onDismiss(reason)
-                        isDismissing = false
-                        if errorMessage == nil { closeSheet() }
-                    }
+                AsyncButton(actionName, busyTitle: "\(actionName == "Skip" ? "Skipping" : "Dismissing")…") {
+                    failure = await onDismiss(reason)
+                    if failure == nil { closeSheet() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isDismissing)
                 .accessibilityLabel("Confirm dismissal")
             }
         }
@@ -93,39 +85,32 @@ struct DismissJobsSheet: View {
 /// agent on the Mac acts on.
 struct FixJobSheet: View {
     let jobTitle: String
-    let onFix: (String) async -> String?
+    /// Sends the note, or says what failed.
+    let onFix: (String) async -> HubFailure?
     @Environment(\.dismiss) private var closeSheet
     @State private var note = ""
-    @State private var isSending = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
-            Text("Fix \(jobTitle)").font(.headline)
+            Text("Fix \(jobTitle)").font(.hubSection)
             Text("Say what's wrong. An agent reads the job and its posting, corrects the details, and the outcome arrives as an update.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.hubSecondary).foregroundStyle(.secondary)
             TextField("What's wrong", text: $note, prompt: Text("e.g. the company is Track&Field; the title has the city in it"), axis: .vertical)
                 .lineLimit(2...5)
                 .accessibilityLabel("What's wrong")
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if let failure {
+                HubErrorView(failure)
             }
             HStack {
                 Spacer()
-                if isSending {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Cancel") { closeSheet() }
-                Button("Fix") {
-                    Task {
-                        isSending = true
-                        errorMessage = await onFix(note)
-                        isSending = false
-                        if errorMessage == nil { closeSheet() }
-                    }
+                AsyncButton("Fix", busyTitle: "Sending…") {
+                    failure = await onFix(note)
+                    if failure == nil { closeSheet() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isSending || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .formStyle(.grouped)

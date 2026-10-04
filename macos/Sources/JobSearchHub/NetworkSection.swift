@@ -8,13 +8,13 @@ final class NetworkSectionModel {
     private(set) var summary: ConnectionsSummary?
     private(set) var importLines: [String] = []
     private(set) var isImporting = false
-    var errorMessage: String?
+    var failure: HubFailure?
 
     func load(with client: HubClient) async {
         do {
             summary = try await client.get("v1/connections", as: ConnectionsSummary.self)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't read your connections", error)
         }
     }
 
@@ -34,7 +34,7 @@ final class NetworkSectionModel {
                 imports = [(.connections, picked)]
             }
             guard !imports.isEmpty || !profileFiles.isEmpty else {
-                errorMessage = "No file of a LinkedIn export found there, such as Connections.csv or messages.csv."
+                failure = HubFailure("Nothing to import", advice: "No file of a LinkedIn export found there, such as Connections.csv or messages.csv.")
                 return
             }
             for (kind, file) in imports {
@@ -68,12 +68,12 @@ final class NetworkSectionModel {
                 }
                 importLines.append(try await client.send("POST", "v1/linkedin/profile/import", body: ProfileImportRequest(files: contents), as: ProfileImportResponse.self).summary)
             }
-            errorMessage = nil
+            failure = nil
             await load(with: client)
         } catch HubError.server(_, let message) {
-            errorMessage = message
+            failure = HubFailure("The import stopped", advice: message)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("The import stopped", error)
         }
     }
 
@@ -123,16 +123,12 @@ struct NetworkSection: View {
             ForEach(model.importLines, id: \.self) { line in
                 Text(line).foregroundStyle(.secondary)
             }
+            if model.failure != nil {
+                HubErrorView($model.failure)
+            }
             HStack {
-                if let errorMessage = model.errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
                 Spacer()
-                if model.isImporting {
-                    ProgressView().controlSize(.small)
-                }
-                Button("Import from LinkedIn…") { isPickingFile = true }
-                    .disabled(model.isImporting)
+                AsyncButton("Import from LinkedIn…", busyTitle: "Importing…", isBusy: model.isImporting) { isPickingFile = true }
             }
         } header: {
             Text("Network")
@@ -143,7 +139,7 @@ struct NetworkSection: View {
         .fileImporter(isPresented: $isPickingFile, allowedContentTypes: [.commaSeparatedText, .plainText, .zip, .folder]) { result in
             switch result {
             case let .success(picked): Task { await model.importFromLinkedIn(picked, with: client) }
-            case let .failure(error): model.errorMessage = error.localizedDescription
+            case let .failure(error): model.failure = HubFailure("Couldn't open the export", error)
             }
         }
         .task { await model.load(with: client) }

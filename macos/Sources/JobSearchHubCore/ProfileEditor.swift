@@ -10,28 +10,28 @@ public final class ProfileEditor {
     public var draft = ""
     public private(set) var isEditing = false
     public private(set) var isSaving = false
-    public private(set) var errorMessage: String?
+    public private(set) var error: ErrorReport?
 
     public init() {}
 
     public func load(with client: HubClient) async {
         do {
             profile = try await client.get("v1/profile", as: OwnerProfile.self)
-            errorMessage = nil
+            self.error = nil
         } catch {
-            errorMessage = String(describing: error)
+            self.error = ErrorReport(error)
         }
     }
 
     public func startEditing() {
         draft = profile?.body ?? ""
         isEditing = true
-        errorMessage = nil
+        error = nil
     }
 
     public func cancelEditing() {
         isEditing = false
-        errorMessage = nil
+        error = nil
     }
 
     public func save(with client: HubClient) async {
@@ -40,9 +40,9 @@ public final class ProfileEditor {
         do {
             profile = try await client.send("PUT", "v1/profile", body: ProfileSaveRequest(body: draft), as: OwnerProfile.self)
             isEditing = false
-            errorMessage = nil
+            self.error = nil
         } catch {
-            errorMessage = String(describing: error)
+            self.error = ErrorReport(error)
         }
     }
 }

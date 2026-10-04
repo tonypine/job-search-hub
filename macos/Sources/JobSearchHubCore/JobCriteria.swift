@@ -147,7 +147,7 @@ public final class JobCriteriaEditor {
     public private(set) var saved: SavedJobCriteria?
     public var draft = JobCriteriaDraft(JobCriteria())
     public private(set) var isSaving = false
-    public private(set) var errorMessage: String?
+    public private(set) var error: ErrorReport?
 
     public init() {}
 
@@ -161,9 +161,9 @@ public final class JobCriteriaEditor {
             let loaded = try await client.get("v1/job-criteria", as: SavedJobCriteria.self)
             saved = loaded
             draft = JobCriteriaDraft(loaded.criteria)
-            errorMessage = nil
+            self.error = nil
         } catch {
-            errorMessage = String(describing: error)
+            self.error = ErrorReport(error)
         }
     }
 
@@ -171,7 +171,7 @@ public final class JobCriteriaEditor {
         if let saved {
             draft = JobCriteriaDraft(saved.criteria)
         }
-        errorMessage = nil
+        error = nil
     }
 
     public func save(with client: HubClient) async {
@@ -181,11 +181,9 @@ public final class JobCriteriaEditor {
             let stored = try await client.send("PUT", "v1/job-criteria", body: draft.makeCriteria(), as: SavedJobCriteria.self)
             saved = stored
             draft = JobCriteriaDraft(stored.criteria)
-            errorMessage = nil
-        } catch HubError.server(_, let message) {
-            errorMessage = message
+            self.error = nil
         } catch {
-            errorMessage = String(describing: error)
+            self.error = ErrorReport(error)
         }
     }
 }

@@ -7,7 +7,7 @@ import SwiftUI
 @Observable
 final class KnowledgeBaseModel {
     private(set) var entries: [ProfileEntry] = []
-    private(set) var errorMessage: String?
+    var failure: HubFailure?
     private(set) var isWorking = false
 
     var groups: ProfileEntryGroups { ProfileEntryGroups(entries: entries) }
@@ -55,10 +55,10 @@ final class KnowledgeBaseModel {
         defer { isWorking = false }
         do {
             try await work()
-            errorMessage = nil
+            failure = nil
             return true
         } catch {
-            errorMessage = "Could not \(action): \(error)"
+            failure = HubFailure("Couldn't \(action)", error)
             return false
         }
     }
@@ -83,11 +83,12 @@ struct KnowledgeBaseSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        HubSection("Knowledge base") {
+            Text("Your roles, cases of work and skills, which briefs and CVs draw on. Only confirmed entries speak for you.")
+                .foregroundStyle(.secondary)
             seedStatus
-            if let errorMessage = model.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            if model.failure != nil {
+                HubErrorView($model.failure)
             }
             Text(describeCounts()).foregroundStyle(.secondary)
             let groups = model.groups
@@ -99,6 +100,8 @@ struct KnowledgeBaseSection: View {
                     groupLabel(title: kindGroup.title, subtitle: "", unconfirmedIDs: kindGroup.entries.filter { !$0.isConfirmed }.map(\.id))
                 }
             }
+        } trailing: {
+            actions
         }
         .task(id: seed.revision) { await model.load(with: client) }
         // The interview saves entries turn by turn; show them as it goes.
@@ -117,14 +120,8 @@ struct KnowledgeBaseSection: View {
         }
     }
 
-    private var header: some View {
+    private var actions: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Knowledge base").font(.title3.weight(.semibold))
-                Text("Your roles, cases of work and skills, which briefs and CVs draw on. Only confirmed entries speak for you.")
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
             Button("Enhance profile", systemImage: "bubble.left.and.text.bubble.right") { details.show(.profileInterview, from: .profile) }
                 .help("An interview, in a Claude session beside this page, that turns what you remember into entries; stop anytime")
             Button("Add entry", systemImage: "plus") { editing = EditedEntry(input: ProfileEntryInput(kind: "case", title: "")) }
@@ -139,7 +136,7 @@ struct KnowledgeBaseSection: View {
     private var seedStatus: some View {
         switch seed.state {
         case .building:
-            HStack(spacing: 8) {
+            HStack(spacing: Space.s) {
                 ProgressView().controlSize(.small)
                 Text("Reading your CV and LinkedIn… this takes a few minutes; you can leave this page.")
             }
@@ -148,9 +145,9 @@ struct KnowledgeBaseSection: View {
                 added == 0 && updated == 0 ? "Nothing new in your CV and LinkedIn." : "Added \(added) entries, updated \(updated). Anything to settle is in Updates.",
                 systemImage: "checkmark.circle.fill"
             )
-            .foregroundStyle(.green)
+            .foregroundStyle(Tone.positive.color)
         case let .failed(reason):
-            Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            HubErrorView(HubFailure("Couldn't build the knowledge base", advice: reason))
         case .idle:
             EmptyView()
         }
@@ -174,12 +171,12 @@ struct KnowledgeBaseSection: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).fontWeight(.semibold)
                 if !subtitle.isEmpty {
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                    Text(subtitle).font(.hubSecondary).foregroundStyle(.secondary)
                 }
             }
             Spacer()
             if !unconfirmedIDs.isEmpty {
-                Text("\(unconfirmedIDs.count) to confirm").font(.callout).foregroundStyle(.orange)
+                ToneChip("\(unconfirmedIDs.count) to confirm", tone: .caution)
                 Button("Confirm all") { Task { await model.confirm(unconfirmedIDs, with: client) } }
                     .disabled(model.isWorking)
             }
@@ -187,11 +184,12 @@ struct KnowledgeBaseSection: View {
     }
 
     private func entryRow(_ entry: ProfileEntry) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: Space.s) {
             Image(systemName: entry.isConfirmed ? "checkmark.seal.fill" : "circle.dashed")
-                .foregroundStyle(entry.isConfirmed ? .green : .orange)
+                .foregroundStyle((entry.isConfirmed ? Tone.positive : Tone.caution).color)
                 .help(entry.isConfirmed ? "Confirmed" : "Not confirmed yet")
-            VStack(alignment: .leading, spacing: 3) {
+                .accessibilityLabel(entry.isConfirmed ? "Confirmed" : "Not confirmed yet")
+            VStack(alignment: .leading, spacing: Space.xs) {
                 Text(entry.kind == "role" ? "The role itself" : entry.title).fontWeight(.medium)
                 if !entry.body.isEmpty {
                     Text(entry.body).foregroundStyle(.secondary).lineLimit(4)
@@ -200,9 +198,9 @@ struct KnowledgeBaseSection: View {
                     Text("Outcome: \(entry.outcome)")
                 }
                 if !entry.skills.isEmpty {
-                    Text(entry.skills.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                    Text(entry.skills.joined(separator: ", ")).font(.hubCaption).foregroundStyle(.secondary)
                 }
-                Text(describeSource(entry)).font(.caption).foregroundStyle(.tertiary)
+                Text(describeSource(entry)).font(.hubCaption).foregroundStyle(.tertiary)
             }
             Spacer()
             if !entry.isConfirmed {
@@ -218,7 +216,7 @@ struct KnowledgeBaseSection: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
     }
 
     private func describeSource(_ entry: ProfileEntry) -> String {
@@ -244,11 +242,10 @@ struct ProfileEntrySheet: View {
     let onSave: (ProfileEntryInput) async -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var skillsText = ""
-    @State private var isSaving = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(entryID == nil ? "Add to the knowledge base" : "Edit entry").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text(entryID == nil ? "Add to the knowledge base" : "Edit entry").font(.hubSection)
             Form {
                 Picker("Kind", selection: $input.kind) {
                     ForEach(ProfileEntryGroups.kinds, id: \.self) { kind in Text(Self.getKindName(kind)).tag(kind) }
@@ -277,26 +274,24 @@ struct ProfileEntrySheet: View {
             }
             .formStyle(.grouped)
             if entryID != nil {
-                Text("From \(input.source)\(input.sourceDetail.isEmpty ? "" : " · \(input.sourceDetail)")").font(.caption).foregroundStyle(.secondary)
+                Text("From \(input.source)\(input.sourceDetail.isEmpty ? "" : " · \(input.sourceDetail)")").font(.hubCaption).foregroundStyle(.secondary)
             } else {
-                Text("What you add yourself counts as confirmed.").font(.caption).foregroundStyle(.secondary)
+                Text("What you add yourself counts as confirmed.").font(.hubCaption).foregroundStyle(.secondary)
             }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button(entryID == nil ? "Add" : "Save") { Task { await save() } }
+                AsyncButton(entryID == nil ? "Add" : "Save", busyTitle: "Saving…") { await save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isSaving || input.title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(input.title.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 560)
         .onAppear { skillsText = input.skills.joined(separator: ", ") }
     }
 
     private func save() async {
-        isSaving = true
-        defer { isSaving = false }
         input.skills = skillsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if !["case", "skill", "project"].contains(input.kind) {
             input.roleID = nil

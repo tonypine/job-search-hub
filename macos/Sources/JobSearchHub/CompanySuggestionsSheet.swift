@@ -10,22 +10,21 @@ struct CompanySuggestionsSheet: View {
     @Environment(CompanyResearch.self) private var research
     @Environment(\.dismiss) private var dismiss
     @State private var suggestions: [CompanySuggestion] = []
-    @State private var loadError: String?
+    @State private var loadError: HubFailure?
     @State private var isLoading = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Suggestions").font(.title3.weight(.semibold))
-            Text("Companies you follow on LinkedIn, and remote ones on startups.gallery with a fitting job open, ranked by the fitting jobs they have open and the people you know there. Researching one costs an agent run, so pick the ones worth watching.")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("Suggestions").font(.hubSection)
             List(suggestions) { suggestion in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(suggestion.organization).fontWeight(.medium)
                         if !suggestion.reason.isEmpty {
-                            Text(suggestion.reason).font(.caption).foregroundStyle(suggestion.fittingJobs > 0 ? .green : .secondary)
+                            Text(suggestion.reason).font(.hubCaption)
+                                .foregroundStyle(suggestion.fittingJobs > 0 ? AnyShapeStyle(Tone.positive.color) : AnyShapeStyle(.secondary))
                         }
-                        Text(suggestion.origin).font(.caption).foregroundStyle(.secondary)
+                        Text(suggestion.origin).font(.hubCaption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Research") { onResearch(suggestion) }
@@ -36,7 +35,7 @@ struct CompanySuggestionsSheet: View {
             .frame(height: 380)
             .overlay {
                 if let loadError {
-                    ContentUnavailableView("Could not load suggestions", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                    HubErrorView(loadError, style: .page)
                 } else if suggestions.isEmpty && !isLoading {
                     ContentUnavailableView(
                         "No suggestions", systemImage: "sparkles",
@@ -44,19 +43,21 @@ struct CompanySuggestionsSheet: View {
                     )
                 }
             }
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Ranked by the fitting jobs they have open and the people you know there. Researching one costs an agent run.")
+                    .font(.hubCaption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 560)
         .task {
             defer { isLoading = false }
             do {
                 suggestions = try await client.get("v1/company-suggestions", as: CompanySuggestionsResponse.self).suggestions
             } catch {
-                loadError = String(describing: error)
+                loadError = HubFailure("Couldn't load the suggestions", error)
             }
         }
     }

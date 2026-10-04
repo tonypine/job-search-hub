@@ -7,7 +7,7 @@ struct ModelsSection: View {
     let client: HubClient
     @State private var providers: [ModelProvider] = []
     @State private var routes: [String: TaskRoute] = [:]
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
     @State private var editedProvider: ProviderSheetTarget?
 
     var body: some View {
@@ -16,7 +16,7 @@ struct ModelsSection: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(provider.name)
-                        Text(describe(provider)).font(.caption).foregroundStyle(.secondary)
+                        Text(describe(provider)).font(.hubCaption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Edit") { editedProvider = .edit(provider) }
@@ -29,8 +29,8 @@ struct ModelsSection: View {
                     routes[saved.kind] = saved
                 }
             }
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            if let failure {
+                HubErrorView(failure) { Task { await load() } }
             }
         }
         .task { await load() }
@@ -53,9 +53,9 @@ struct ModelsSection: View {
             let (providerList, routeList) = try await (loadedProviders, loadedRoutes)
             providers = providerList.providers
             routes = Dictionary(uniqueKeysWithValues: routeList.routes.map { ($0.kind, $0) })
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't load the models", error)
         }
     }
 }
@@ -86,16 +86,15 @@ struct TaskRouteRow: View {
     @State private var fallbackProviderID: UUID?
     @State private var fallbackModel = ""
     @State private var modelsByProvider: [UUID: [String]] = [:]
-    @State private var errorMessage: String?
-    @State private var isSaving = false
+    @State private var failure: HubFailure?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.s) {
             HStack {
                 Text(kind.title).fontWeight(.medium)
                 Spacer()
-                Button("Save") { Task { await save() } }
-                    .disabled(!hasChanges || isSaving || providerID == nil || model.isEmpty)
+                AsyncButton("Save", busyTitle: "Saving…") { await save() }
+                    .disabled(!hasChanges || providerID == nil || model.isEmpty)
                     .accessibilityLabel("Save \(kind.title)")
             }
             HStack {
@@ -112,11 +111,11 @@ struct TaskRouteRow: View {
                         .accessibilityLabel("\(kind.title) fallback model")
                 }
             }
-            if let errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.orange)
+            if failure != nil {
+                HubErrorView($failure)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
         .task(id: route?.model) { resetToRoute() }
         .task(id: providerID) { await loadModels(for: providerID) }
         .task(id: fallbackProviderID) { await loadModels(for: fallbackProviderID) }
@@ -164,24 +163,22 @@ struct TaskRouteRow: View {
             modelsByProvider[providerID] = try await client.get("v1/model-providers/\(providerID.uuidString)/models", as: ProviderModelsResponse.self).models
         } catch {
             modelsByProvider[providerID] = []
-            errorMessage = "Couldn't list the models: \(error)"
+            failure = HubFailure("Couldn't list the models", error)
         }
     }
 
     private func save() async {
         guard let providerID else { return }
-        isSaving = true
-        defer { isSaving = false }
         let input = TaskRouteInput(
             providerID: providerID, model: model,
             fallbackProviderID: fallbackProviderID, fallbackModel: fallbackProviderID == nil ? nil : fallbackModel
         )
         do {
             let saved = try await client.send("PUT", "v1/task-routes/\(kind.rawValue)", body: input, as: TaskRoute.self)
-            errorMessage = nil
+            failure = nil
             onSaved(saved)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't save the route", error)
         }
     }
 }
@@ -198,7 +195,7 @@ struct ProviderSheet: View {
     @State private var key = ""
     @State private var enforcesSchema = true
     @State private var hasSavedKey = false
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
@@ -216,13 +213,13 @@ struct ProviderSheet: View {
                     .accessibilityLabel("Provider key")
             }
             Toggle("Enforces a JSON schema", isOn: $enforcesSchema)
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if let failure {
+                HubErrorView(failure)
             }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
-                Button("Save") { Task { await save() } }
+                AsyncButton("Save", busyTitle: "Saving…") { await save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityLabel("Save provider")
@@ -253,7 +250,7 @@ struct ProviderSheet: View {
             }
             dismiss()
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't save the provider", error)
         }
     }
 }

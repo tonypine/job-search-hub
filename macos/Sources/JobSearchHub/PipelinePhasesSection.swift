@@ -6,7 +6,7 @@ import SwiftUI
 final class PipelinePhasesModel {
     private(set) var phases: [PipelinePhase] = []
     private(set) var isSaving = false
-    var errorMessage: String?
+    var failure: HubFailure?
 
     func load(with client: HubClient) async {
         await perform {
@@ -66,12 +66,10 @@ final class PipelinePhasesModel {
         defer { isSaving = false }
         do {
             try await request()
-            errorMessage = nil
+            failure = nil
             return true
-        } catch HubError.server(_, let message) {
-            errorMessage = message
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't change the phases", error)
         }
         return false
     }
@@ -100,8 +98,8 @@ struct PipelinePhasesSection: View {
                 Button("Add", action: add)
                     .disabled(newPhaseName.trimmingCharacters(in: .whitespaces).isEmpty || model.isSaving)
             }
-            if let errorMessage = model.errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+            if model.failure != nil {
+                HubErrorView($model.failure)
             }
         } header: {
             HStack {
@@ -150,7 +148,7 @@ struct PipelinePhaseRow: View {
                     Task { draftName = await onRename(name) }
                 }
             if phase.isClosed {
-                Text("Closed").font(.caption).foregroundStyle(.secondary)
+                Text("Closed").font(.hubCaption).foregroundStyle(.secondary)
             }
             TextField("Follow up after", value: $draftFollowUpDays, format: .number, prompt: Text("–"))
                 .labelsHidden()
@@ -160,7 +158,7 @@ struct PipelinePhaseRow: View {
                     if draftFollowUpDays != phase.followUpDays { onSetFollowUpDays(draftFollowUpDays) }
                 }
                 .help("Days before a card here is due for a follow-up; empty for none")
-            Text("days").font(.caption).foregroundStyle(.secondary)
+            Text("days").font(.hubCaption).foregroundStyle(.secondary)
             Button("Move up", systemImage: "chevron.up") { onMove(-1) }
                 .disabled(isFirst || isSaving)
             Button("Move down", systemImage: "chevron.down") { onMove(1) }

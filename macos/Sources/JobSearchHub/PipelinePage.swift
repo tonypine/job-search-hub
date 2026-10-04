@@ -7,10 +7,10 @@ import SwiftUI
 final class PipelineModel {
     private(set) var board = PipelineBoard()
     private(set) var isLoading = false
-    private(set) var loadError: String?
+    private(set) var loadError: HubFailure?
     private(set) var movingCardID: UUID?
     /// Why the last change to a card failed: a move, a follow-up, a dismissal.
-    var actionError: String?
+    var actionError: HubFailure?
     var showsOnlyDue = false
     /// Shows the cards dismissed as not a good fit instead of the board.
     var showsDismissed = false
@@ -28,7 +28,7 @@ final class PipelineModel {
             _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
             await load(with: client)
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't record the follow-up", error)
         }
     }
 
@@ -38,7 +38,7 @@ final class PipelineModel {
             _ = try await client.dismissApplication(cardID, note: note)
             await load(with: client)
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't dismiss the card", error)
         }
     }
 
@@ -48,7 +48,7 @@ final class PipelineModel {
             _ = try await client.restoreApplication(cardID)
             await load(with: client)
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't restore the card", error)
         }
     }
 
@@ -59,7 +59,7 @@ final class PipelineModel {
             board = PipelineBoard(try await showsDismissed ? client.getDismissedPipeline() : client.getPipeline())
             loadError = nil
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the pipeline", error)
         }
     }
 
@@ -76,7 +76,7 @@ final class PipelineModel {
             )
             board.replaceApplication(response.application)
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't move the card", error)
         }
     }
 }
@@ -88,8 +88,8 @@ private struct PendingClose {
 }
 
 struct PipelinePage: View {
-    private static let columnSpacing: CGFloat = 12
-    private static let boardPadding: CGFloat = 16
+    private static let columnSpacing = Space.m
+    private static let boardPadding = Space.l
     private static let columnWidthRange: ClosedRange<CGFloat> = 180...320
 
     @Environment(HubConnection.self) private var connection
@@ -196,13 +196,15 @@ struct PipelinePage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                ContentUnavailableView("Could not load the pipeline", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
             }
         }
-        .alert("Could not update the card", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(model.actionError ?? "")
+        .overlay(alignment: .bottom) {
+            if model.actionError != nil {
+                HubErrorView($model.actionError)
+                    .frame(maxWidth: 560)
+                    .padding(Space.l)
+            }
         }
         .alert("Not a good fit", isPresented: Binding(get: { dismissingCardID != nil }, set: { if !$0 { dismissingCardID = nil } })) {
             TextField("Note (optional)", text: $dismissalNote)
@@ -227,9 +229,6 @@ struct PipelinePage: View {
         }
     }
 
-    /// A card's job panel. A card for a company alone has no panel, so
-    /// selecting it is what marks the company's updates seen.
-    @ViewBuilder
     /// The selected card's details: its job's, or its company's for a card
     /// without one.
     private var selectedCardSubject: DetailsInspector.Subject? {
@@ -272,14 +271,14 @@ struct PipelineColumn: View {
     @State private var isTargeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             HStack {
-                Text(phase.name).font(.headline)
+                Text(phase.name).font(.hubSection)
                 Spacer()
                 Text("\(cards.count)").monospacedDigit().foregroundStyle(.secondary)
             }
             ScrollView(.vertical) {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: Space.s) {
                     ForEach(cards) { card in
                         PipelineCardView(card: card, isMoving: card.id == movingCardID, isSelected: card.id == selectedCardID)
                             .onTapGesture { selectedCardID = card.id }
@@ -306,10 +305,10 @@ struct PipelineColumn: View {
                 }
             }
         }
-        .padding(10)
+        .padding(Space.s)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(isTargeted ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: 10))
+        .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
         .dropDestination(for: String.self) { items, _ in
             guard let cardID = items.first.flatMap(UUID.init(uuidString:)) else { return false }
             onMove(cardID, phase)
@@ -325,7 +324,7 @@ struct PipelineCardView: View {
     let isSelected: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
             HStack(alignment: .firstTextBaseline) {
                 Text(card.title).fontWeight(.medium).lineLimit(2)
                 Spacer(minLength: 0)
@@ -340,15 +339,15 @@ struct PipelineCardView: View {
                 HeardBackLabel(contactedAt: contactedAt)
             }
             if let status = card.getFollowUpStatus(now: .now) {
-                Text(status.text)
-                    .font(.caption.weight(status.isDue ? .semibold : .regular))
-                    .foregroundStyle(followUpColor(status))
+                ToneChip(status)
             }
             if let closedReason = card.application.closedReason {
-                Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Label(closedReason, systemImage: SetAside.closed.symbolName)
+                    .font(.hubCaption).foregroundStyle(SetAside.closed.tone.color).lineLimit(2)
             }
             if let dismissalReason = card.dismissalReason, !dismissalReason.isEmpty {
-                Label(dismissalReason, systemImage: "eye.slash").font(.caption).foregroundStyle(.orange).lineLimit(2)
+                Label(dismissalReason, systemImage: SetAside.dismissed.symbolName)
+                    .font(.hubCaption).foregroundStyle(SetAside.dismissed.tone.color).lineLimit(2)
             }
             HStack {
                 Text(getTimeInPhaseText(days: card.getDaysInPhase(now: .now)))
@@ -357,23 +356,15 @@ struct PipelineCardView: View {
                     ProgressView().controlSize(.small)
                 }
             }
-            .font(.caption)
+            .font(.hubCaption)
             .foregroundStyle(.secondary)
         }
-        .padding(10)
+        .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator), lineWidth: isSelected ? 2 : 1))
+        .background(.background, in: RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(isSelected ? AnyShapeStyle(Tone.accent.color) : AnyShapeStyle(.separator), lineWidth: isSelected ? 2 : 1))
         .opacity(isMoving ? 0.6 : 1)
         .help(card.application.notes ?? "")
-    }
-
-    private func followUpColor(_ status: FollowUpStatus) -> Color {
-        switch status {
-        case .overdue: .red
-        case .dueToday: .orange
-        case .dueIn: .secondary
-        }
     }
 
     private func getTimeInPhaseText(days: Int) -> String {
@@ -391,7 +382,7 @@ struct HeardBackLabel: View {
 
     var body: some View {
         Label("Heard back \(contactedAt.formatted(date: .abbreviated, time: .omitted))", systemImage: "arrowshape.turn.up.left")
-            .font(.caption)
-            .foregroundStyle(.green)
+            .font(.hubCaption)
+            .foregroundStyle(Tone.positive.color)
     }
 }

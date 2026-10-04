@@ -55,7 +55,7 @@ private let savedJSON = #"""
     #expect(sent["technologies"] as? [String] == ["TypeScript", "React"])
     let takeHome = try #require(sent["take_home"] as? [String: Any])
     #expect(Set(takeHome.keys) == ["currency", "minimum_monthly", "target_monthly", "clt", "pj", "foreign_contractor"])
-    #expect(editor.errorMessage == nil)
+    #expect(editor.error == nil)
 }
 
 @MainActor @Test func aRefusedSaveKeepsTheEditAndShowsTheServersReason() async throws {
@@ -69,6 +69,6 @@ private let savedJSON = #"""
 
     await editor.save(with: client)
 
-    #expect(editor.errorMessage == "the take-home minimum and target cannot be negative")
+    #expect(editor.error?.advice == "The hub turned it down: the take-home minimum and target cannot be negative")
     #expect(editor.draft.takeHome.minimumMonthly == -1)
 }

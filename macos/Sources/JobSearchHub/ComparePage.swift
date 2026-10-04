@@ -6,7 +6,7 @@ import SwiftUI
 final class CompareModel {
     private(set) var comparisons: [Comparison] = []
     private(set) var record: ComparisonRecord?
-    private(set) var errorMessage: String?
+    var failure: HubFailure?
     private(set) var isSavingVerdict = false
     var selectedID: UUID?
     var postingIndex = 0
@@ -26,12 +26,12 @@ final class CompareModel {
     func loadList(with client: HubClient) async {
         do {
             comparisons = try await client.getComparisons()
-            errorMessage = nil
+            failure = nil
             if selectedID == nil || !comparisons.contains(where: { $0.id == selectedID }) {
                 selectedID = comparisons.first?.id
             }
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't load the comparisons", error)
         }
     }
 
@@ -50,7 +50,7 @@ final class CompareModel {
             do {
                 let loaded = try await client.getComparison(selectedID)
                 record = loaded
-                errorMessage = nil
+                failure = nil
                 if !loaded.comparison.isRunning {
                     if let index = comparisons.firstIndex(where: { $0.id == loaded.comparison.id }) {
                         comparisons[index] = loaded.comparison
@@ -58,7 +58,7 @@ final class CompareModel {
                     return
                 }
             } catch {
-                errorMessage = String(describing: error)
+                failure = HubFailure("Couldn't load the comparison", error)
                 return
             }
             try? await Task.sleep(for: .seconds(5))
@@ -76,7 +76,7 @@ final class CompareModel {
                 [ComparisonVerdict(stackID: stackID, jobID: jobID, field: field, verdict: verdict)], comparisonID: comparisonID
             )
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't save the verdict", error)
         }
     }
 
@@ -121,7 +121,7 @@ struct ComparePage: View {
             List(model.comparisons, selection: $model.selectedID) { comparison in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(comparison.title).lineLimit(2)
-                    Text(describeComparison(comparison)).font(.caption).foregroundStyle(.secondary)
+                    Text(describeComparison(comparison)).font(.hubCaption).foregroundStyle(.secondary)
                 }
                 .tag(comparison.id)
             }
@@ -138,8 +138,10 @@ struct ComparePage: View {
             .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
         .overlay(alignment: .bottom) {
-            if let errorMessage = model.errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red).padding(8)
+            if model.failure != nil {
+                HubErrorView($model.failure)
+                    .frame(maxWidth: 560)
+                    .padding(Space.l)
             }
         }
     }
@@ -165,11 +167,11 @@ private struct ComparisonView: View {
     @State private var tab = ComparisonTab.summary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Space.m) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(record.comparison.title).font(.title3.bold())
-                    Text(describeProgress()).font(.callout).foregroundStyle(.secondary)
+                    Text(record.comparison.title).font(.hubEntity)
+                    Text(describeProgress()).font(.hubSecondary).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Picker("View", selection: $tab) {
@@ -184,7 +186,7 @@ private struct ComparisonView: View {
             case .postings: ComparisonPostingsView(record: record, model: model, client: client)
             }
         }
-        .padding()
+        .padding(Space.l)
     }
 
     private func describeProgress() -> String {
@@ -205,13 +207,13 @@ private struct ComparisonSummaryGrid: View {
 
     var body: some View {
         ScrollView {
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+            Grid(alignment: .leading, horizontalSpacing: Space.l, verticalSpacing: Space.s) {
                 GridRow {
-                    Text("Field").font(.headline)
+                    Text("Field").font(.hubSection)
                     ForEach(record.comparison.stacks) { stack in
                         VStack(alignment: .leading) {
-                            Text(stack.label).font(.headline)
-                            Text(describeAnswers(stack)).font(.caption).foregroundStyle(.secondary)
+                            Text(stack.label).font(.hubSection)
+                            Text(describeAnswers(stack)).font(.hubCaption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -237,18 +239,20 @@ private struct ComparisonSummaryGrid: View {
 
     @ViewBuilder
     private func scoreCell(_ score: ComparisonFieldScore?, isReference: Bool) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Space.s) {
             Text(isReference ? "reference" : score?.agreementText ?? "—")
                 .foregroundStyle(isReference ? .secondary : .primary)
                 .monospacedDigit()
             if let score, score.right > 0 {
-                Label("\(score.right)", systemImage: "checkmark").foregroundStyle(.green).labelStyle(.titleAndIcon)
+                ToneChip("\(score.right)", tone: ComparisonVerdictKind.right.tone, symbol: "checkmark")
+                    .accessibilityLabel("\(score.right) right")
             }
             if let score, score.wrong > 0 {
-                Label("\(score.wrong)", systemImage: "xmark").foregroundStyle(.red).labelStyle(.titleAndIcon)
+                ToneChip("\(score.wrong)", tone: ComparisonVerdictKind.wrong.tone, symbol: "xmark")
+                    .accessibilityLabel("\(score.wrong) wrong")
             }
         }
-        .font(.callout)
+        .font(.hubSecondary)
     }
 }
 
@@ -267,7 +271,7 @@ private struct ComparisonPostingsView: View {
         } else {
             let index = min(model.postingIndex, record.jobs.count - 1)
             let job = record.jobs[index]
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Space.s) {
                 HStack {
                     Button("Previous posting", systemImage: "chevron.left") { model.postingIndex = index - 1 }
                         .labelStyle(.iconOnly)
@@ -277,9 +281,9 @@ private struct ComparisonPostingsView: View {
                         .labelStyle(.iconOnly)
                         .disabled(index == record.jobs.count - 1)
                     VStack(alignment: .leading) {
-                        Text(job.title).font(.headline).lineLimit(1)
+                        Text(job.title).font(.hubSection).lineLimit(1)
                         if let companyName = job.companyName {
-                            Text(companyName).font(.caption).foregroundStyle(.secondary)
+                            Text(companyName).font(.hubCaption).foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
@@ -301,25 +305,25 @@ private struct ComparisonPostingsView: View {
     }
 
     private func fieldSection(_ field: String, jobID: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(ComparisonSummary.formatFieldTitle(field)).font(.headline)
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text(ComparisonSummary.formatFieldTitle(field)).font(.hubSection)
             ForEach(record.comparison.stacks) { stack in
                 let answer = record.getAnswer(stackID: stack.id, jobID: jobID)
                 let reading = answer?.readings.first { $0.field == field }
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(stack.label).font(.callout).foregroundStyle(.secondary).frame(width: 150, alignment: .leading)
+                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    Text(stack.label).font(.hubSecondary).foregroundStyle(.secondary).frame(width: 150, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         if let error = answer?.error {
-                            Text(error).foregroundStyle(.red)
+                            Label(error, systemImage: "xmark.circle.fill").foregroundStyle(Tone.negative.color)
                         } else if answer == nil {
                             Text("Not answered yet").foregroundStyle(.secondary)
                         } else {
                             Text(reading.map { $0.text.isEmpty ? "—" : $0.text } ?? "—").textSelection(.enabled)
                             if let evidence = reading?.evidence {
-                                Text("“\(evidence)”").font(.caption).italic().foregroundStyle(.secondary).textSelection(.enabled)
+                                Evidence(text: evidence)
                             }
                             if let reason = reading?.reason {
-                                Text(reason).font(.caption).foregroundStyle(.secondary)
+                                Text(reason).font(.hubCaption).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -330,20 +334,20 @@ private struct ComparisonPostingsView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
     }
 
     private func verdictButtons(stackID: UUID, jobID: UUID, field: String) -> some View {
         let verdict = record.getVerdict(stackID: stackID, jobID: jobID, field: field)
-        return HStack(spacing: 4) {
+        return HStack(spacing: Space.xs) {
             Button("Right", systemImage: verdict == .right ? "checkmark.circle.fill" : "checkmark.circle") {
                 Task { await model.setVerdict(.right, stackID: stackID, jobID: jobID, field: field, with: client) }
             }
-            .foregroundStyle(verdict == .right ? .green : .secondary)
+            .foregroundStyle(verdict == .right ? AnyShapeStyle(ComparisonVerdictKind.right.tone.color) : AnyShapeStyle(.secondary))
             Button("Wrong", systemImage: verdict == .wrong ? "xmark.circle.fill" : "xmark.circle") {
                 Task { await model.setVerdict(.wrong, stackID: stackID, jobID: jobID, field: field, with: client) }
             }
-            .foregroundStyle(verdict == .wrong ? .red : .secondary)
+            .foregroundStyle(verdict == .wrong ? AnyShapeStyle(ComparisonVerdictKind.wrong.tone.color) : AnyShapeStyle(.secondary))
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
@@ -370,8 +374,7 @@ private struct NewComparisonSheet: View {
     @State private var stacks = [StackDraft(providerID: nil, model: "sonnet", label: "Sonnet")]
     @State private var providers: [ModelProvider] = []
     @State private var modelsByProvider: [UUID: [String]] = [:]
-    @State private var errorMessage: String?
-    @State private var isStarting = false
+    @State private var failure: HubFailure?
 
     var body: some View {
         Form {
@@ -401,8 +404,8 @@ private struct NewComparisonSheet: View {
                     Task { await loadModels(for: providers.first?.id) }
                 }
             }
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.caption)
+            if let failure {
+                HubErrorView(failure)
             }
         }
         .formStyle(.grouped)
@@ -410,8 +413,8 @@ private struct NewComparisonSheet: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Start") { Task { await submit() } }
-                    .disabled(!canStart || isStarting)
+                AsyncButton("Start", busyTitle: "Starting…") { await submit() }
+                    .disabled(!canStart)
             }
         }
         .task { await loadProviders() }
@@ -455,7 +458,7 @@ private struct NewComparisonSheet: View {
                 await loadModels(for: local.id)
             }
         } catch {
-            errorMessage = "Couldn't list the providers: \(error)"
+            failure = HubFailure("Couldn't list the providers", error)
         }
     }
 
@@ -468,7 +471,7 @@ private struct NewComparisonSheet: View {
                 modelsByProvider[providerID] = try await client.get("v1/model-providers/\(providerID.uuidString)/models", as: ProviderModelsResponse.self).models
             } catch {
                 modelsByProvider[providerID] = []
-                errorMessage = "Couldn't list the models: \(error)"
+                failure = HubFailure("Couldn't list the models", error)
             }
         }
         guard let firstModel = modelsByProvider[providerID]?.first else { return }
@@ -479,8 +482,6 @@ private struct NewComparisonSheet: View {
     }
 
     private func submit() async {
-        isStarting = true
-        defer { isStarting = false }
         let newStacks = stacks.map { stack in
             NewComparisonStack(
                 label: stack.label.isEmpty ? Self.makeLabel(stack.model) : stack.label,
@@ -493,7 +494,7 @@ private struct NewComparisonSheet: View {
             try await start(NewComparison(title: comparisonTitle, freshJobs: freshJobs, stacks: newStacks))
             dismiss()
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't start the comparison", error)
         }
     }
 }
