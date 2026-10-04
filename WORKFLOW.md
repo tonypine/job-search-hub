@@ -4,6 +4,7 @@
 # Preview the assembled prompt with `symphony workflow preview --file WORKFLOW.md --agent claude`.
 hooks:
   after_create: |
+    git config core.hooksPath .githooks
     cd server && go mod download
 prompts:
   pr: |
@@ -66,6 +67,11 @@ skip without it. Agent sessions do not get the repo's `.env`, so that variable i
 - Never read, copy, or create `.env` files.
 
 For `macos/` changes: `cd macos && swift build && swift test`.
+
+Every push runs `.githooks/pre-push`, which `after_create` turns on with `core.hooksPath`. When a
+push changes Go under `server/`, the hook fails on a changed `.go` file that `gofmt -l` lists, or
+on a `go vet ./...` finding. Never push with `git push --no-verify`. When the hook fails, fix what
+it reports, commit, and push again.
 
 There is no CI on this repository yet, so the local commands above are the whole gate.
 
