@@ -14,10 +14,6 @@ final class DecideModel {
     var selectedID: UUID?
     private var hasLoaded = false
 
-    var selectedItem: DecisionQueueItem? {
-        items.first { $0.id == selectedID }
-    }
-
     /// Reads the queue and the signals. The first read selects the best job;
     /// later reads keep the selection's place in the queue, so after a
     /// decision takes a job out, the next one is selected.
@@ -89,7 +85,12 @@ struct DecidePage: View {
                         details.show(model.selectedID.map(InspectorSubject.job), from: .decide)
                     }
                     .onChange(of: details.getEntry(on: .decide)) {
-                        if details.getEntry(on: .decide) == nil { model.selectedID = nil }
+                        // ⌘K can open another queued job; the list then selects it too.
+                        if details.getEntry(on: .decide) == nil {
+                            model.selectedID = nil
+                        } else if let openItem {
+                            model.selectedID = openItem.id
+                        }
                     }
                     .onPageRequest(.decide) { request in
                         if request == .focusList { isQueueFocused = true }
@@ -103,6 +104,11 @@ struct DecidePage: View {
         }
         .navigationTitle("Decide")
         .navigationSubtitle(model.items.count == 1 ? "1 job to decide" : "\(model.items.count) jobs to decide")
+    }
+
+    /// The queued job the inspector shows, the one P, L and S decide.
+    private var openItem: DecisionQueueItem? {
+        model.items.first { details.getEntry(on: .decide)?.subject == .job($0.id) }
     }
 
     private func reload() async {
@@ -138,7 +144,7 @@ struct DecidePage: View {
         .onKeyPress(characters: .letters, phases: .down) { press in
             guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
                   let decision = press.characters.first.flatMap(KeyboardDecision.getDecision(for:)),
-                  let item = model.selectedItem
+                  let item = openItem
             else { return .ignored }
             decide(item, decision, with: client)
             return .handled
