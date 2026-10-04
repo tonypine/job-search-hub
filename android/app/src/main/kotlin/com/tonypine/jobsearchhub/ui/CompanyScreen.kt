@@ -53,10 +53,10 @@ import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 import kotlinx.coroutines.launch
 
-/** A company's brief, for before an interview. */
+/** A company's brief, for before an interview. Beside the list it has no back arrow ([onBack] is null). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenJob: (String) -> Unit) {
+fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenJob: (String) -> Unit) {
     val context = LocalContext.current
     var brief by remember { mutableStateOf<CompanyBrief?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -70,7 +70,7 @@ fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpe
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = {},
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } },
+            navigationIcon = { onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } } },
             actions = {
                 brief?.dossier?.company?.careersUrl?.let { url ->
                     OverflowMenu(

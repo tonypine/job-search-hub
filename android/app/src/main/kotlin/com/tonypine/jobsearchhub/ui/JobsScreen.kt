@@ -30,7 +30,14 @@ import com.tonypine.jobsearchhub.ui.design.ToneChip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobsScreen(state: HubState, onRefresh: () -> Unit, onIncludeUnclear: (Boolean) -> Unit, onOpenJob: (String) -> Unit, menu: List<HubAction>) {
+fun JobsScreen(
+    state: HubState,
+    onRefresh: () -> Unit,
+    onIncludeUnclear: (Boolean) -> Unit,
+    onOpenJob: (String) -> Unit,
+    menu: List<HubAction>,
+    selected: Detail? = null,
+) {
     Column {
         TopAppBar(title = { Text("Jobs") }, actions = {
             FilterChip(selected = state.includesUnclear, onClick = { onIncludeUnclear(!state.includesUnclear) }, label = { Text("Unclear too") })
@@ -46,7 +53,7 @@ fun JobsScreen(state: HubState, onRefresh: () -> Unit, onIncludeUnclear: (Boolea
                     )
                 }
                 items(state.shownJobs, key = { it.job.id }) { item ->
-                    JobRow(item) { onOpenJob(item.job.id) }
+                    JobRow(item, isSelected = Detail.job(item.job.id).isSameItem(selected)) { onOpenJob(item.job.id) }
                     HorizontalDivider()
                 }
             }
@@ -55,8 +62,8 @@ fun JobsScreen(state: HubState, onRefresh: () -> Unit, onIncludeUnclear: (Boolea
 }
 
 @Composable
-private fun JobRow(item: JobListItem, onOpen: () -> Unit) {
-    Row(Modifier.clickable(onClick = onOpen).padding(horizontal = Spacing.l, vertical = Spacing.m), verticalAlignment = Alignment.CenterVertically) {
+private fun JobRow(item: JobListItem, isSelected: Boolean, onOpen: () -> Unit) {
+    Row(Modifier.selectedBackground(isSelected, MaterialTheme.colorScheme.primaryContainer).clickable(onClick = onOpen).padding(horizontal = Spacing.l, vertical = Spacing.m), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(item.job.title, maxLines = 2)
             Text(

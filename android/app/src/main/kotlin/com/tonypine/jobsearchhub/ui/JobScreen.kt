@@ -80,11 +80,12 @@ import kotlinx.serialization.json.contentOrNull
  * A job: its header, then Overview (Brief, Screen), People and Posting as tabs,
  * the same split as the Mac's inspector. The decision is docked at the bottom,
  * with Pursue the primary. Open posting is in the app bar, Fix… and Share in
- * the overflow.
+ * the overflow. Beside the list it has no back arrow ([onBack] is null), and
+ * back returns to the list all the same.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCompany: (String) -> Unit, onDecided: (String?) -> Unit) {
+fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenCompany: (String) -> Unit, onDecided: (String?) -> Unit) {
     val context = LocalContext.current
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -153,7 +154,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = {},
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } },
+            navigationIcon = { onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } } },
             actions = {
                 details?.let { shown ->
                     IconButton(onClick = { openPosting(context, shown) }) {

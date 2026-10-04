@@ -53,6 +53,8 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material3.adaptive.navigation.suite)
+    implementation(libs.compose.material3.adaptive.layout)
     implementation(libs.compose.material.icons)
     implementation(libs.navigation.compose)
     implementation(libs.work.runtime.ktx)
