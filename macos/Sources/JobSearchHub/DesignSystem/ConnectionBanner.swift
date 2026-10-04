@@ -65,3 +65,23 @@ struct ConnectionBanner: View {
         }
     }
 }
+
+/// What the window shows in place of a page before the app has a hub
+/// address and owner token, under the banner that says the same.
+struct ConnectToHubView: View {
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Connect to your hub", systemImage: "network.slash")
+        } description: {
+            Text("Set the hub's address and owner token in Settings, under Connection.")
+        } actions: {
+            Button("Settings…") {
+                settingsTab = .connection
+                openSettings()
+            }
+        }
+    }
+}

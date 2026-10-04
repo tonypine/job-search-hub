@@ -179,12 +179,22 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
-            page
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if let connectionProblem {
-                        ConnectionBanner(problem: connectionProblem)
-                    }
+            // The banner hangs on a container that always renders: a page
+            // without a client renders nothing, which would take it along.
+            ZStack {
+                if connection.makeClient() != nil {
+                    page
+                } else if connectionProblem == .notSetUp {
+                    ConnectToHubView()
+                        .navigationTitle(selectedPage?.title ?? "Job Search Hub")
                 }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let connectionProblem {
+                    ConnectionBanner(problem: connectionProblem)
+                }
+            }
         }
         .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
