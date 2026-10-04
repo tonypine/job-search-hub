@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -11,6 +12,20 @@ import (
 
 type companiesResponse struct {
 	Companies []store.CompanySummary `json:"companies"`
+}
+
+// companyMailListSize is how many of a company's latest messages its page
+// shows.
+const companyMailListSize = 20
+
+// companyResponse is the dossier with the threads open at the company: its
+// cards on the board and its latest mail. Only the owner's app gets them;
+// agents read the dossier alone, so mail written by senders never reaches
+// their prompts.
+type companyResponse struct {
+	store.CompanyDossier
+	Applications []store.CompanyApplication `json:"applications"`
+	Mail         []store.MailMessage        `json:"mail"`
 }
 
 // RegisterCompanyRoutes adds the owner-only routes the app reads companies
@@ -31,14 +46,30 @@ func RegisterCompanyRoutes(routes *http.ServeMux, hub *store.Store, requireOwner
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: store.ErrCompanyNotFound.Error()})
 			return
 		}
-		dossier, err := hub.GetCompanyDossier(r.Context(), id)
+		response, err := getCompanyResponse(r.Context(), hub, id)
 		switch {
 		case errors.Is(err, store.ErrCompanyNotFound):
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
 		case err != nil:
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		default:
-			writeJSON(w, http.StatusOK, dossier)
+			writeJSON(w, http.StatusOK, response)
 		}
 	})))
+}
+
+func getCompanyResponse(ctx context.Context, hub *store.Store, id uuid.UUID) (companyResponse, error) {
+	dossier, err := hub.GetCompanyDossier(ctx, id)
+	if err != nil {
+		return companyResponse{}, err
+	}
+	applications, err := hub.ListCompanyApplications(ctx, id)
+	if err != nil {
+		return companyResponse{}, err
+	}
+	mail, err := hub.ListMailMessages(ctx, store.MailFilter{CompanyID: &id, Limit: companyMailListSize})
+	if err != nil {
+		return companyResponse{}, err
+	}
+	return companyResponse{CompanyDossier: dossier, Applications: applications, Mail: mail}, nil
 }

@@ -205,6 +205,8 @@ struct DossierPane: View {
                         jobFinderRow(dossier.company)
                     }
 
+                    openThreadsSection(dossier)
+
                     if let connections = dossier.connections, !connections.isEmpty {
                         section("People you know") {
                             ConnectionList(connections: connections)
@@ -264,6 +266,52 @@ struct DossierPane: View {
     private func describeFoundJobs(openJobs: Int?, jobBoard: String?) -> String {
         let count = openJobs.map { $0 == 1 ? "1 open job" : "\($0) open jobs" } ?? "Done"
         return jobBoard.map { "\(count), read from \($0)" } ?? count
+    }
+
+    /// What is going on with the company: its cards on the board and its
+    /// latest mail, so its state isn't pieced together from the board and
+    /// the inbox. Left out when the hub doesn't send them.
+    @ViewBuilder
+    private func openThreadsSection(_ dossier: CompanyDossier) -> some View {
+        if dossier.applications != nil || dossier.mail != nil {
+            section("Applications") {
+                if dossier.applicationsOpenFirst.isEmpty {
+                    Text("Not on the board").foregroundStyle(.secondary)
+                }
+                ForEach(dossier.applicationsOpenFirst) { application in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            linkOrText(application.card.jobTitle ?? "Outreach, no posting", url: application.card.jobURL)
+                                .bold()
+                            Text(application.phaseName).foregroundStyle(.secondary)
+                        }
+                        if application.phaseIsClosed, let closedReason = application.card.application.closedReason, !closedReason.isEmpty {
+                            Text(closedReason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        } else if let status = application.card.getFollowUpStatus(now: .now) {
+                            Text(status.text)
+                                .font(.caption.weight(status.isDue ? .semibold : .regular))
+                                .foregroundStyle(status.isDue ? .orange : .secondary)
+                        }
+                    }
+                    .help(application.card.application.notes ?? "")
+                }
+            }
+
+            section("Latest mail") {
+                if (dossier.mail ?? []).isEmpty {
+                    Text("None matched to this company").foregroundStyle(.secondary)
+                }
+                ForEach(dossier.mail ?? []) { message in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(message.subject.isEmpty ? "(no subject)" : message.subject).lineLimit(1)
+                        Text("\(message.fromLine) · \(message.sentAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
     }
 
     /// People who don't work here but can open doors, and a way to add one.
