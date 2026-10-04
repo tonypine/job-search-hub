@@ -154,6 +154,12 @@ struct ContentView: View {
         .filter { !$0.isExpandedByDefault }.map(\.rawValue).joined(separator: ",")
     @State private var details = DetailsInspector()
     @State private var replyDraft = RecruiterReplyDraft()
+    @State private var requests = PageRequests()
+    @State private var palette = PaletteModel()
+    @State private var isShowingPalette = false
+    /// What an action run from the palette did, or why it failed.
+    @State private var toast: ToastMessage?
+    @State private var actionError: HubFailure?
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -185,6 +191,14 @@ struct ContentView: View {
                         ConnectionBanner(problem: connectionProblem)
                     }
                 }
+                .overlay(alignment: .bottom) {
+                    if actionError != nil {
+                        HubErrorView($actionError)
+                            .frame(maxWidth: 560)
+                            .padding(Space.l)
+                    }
+                }
+                .toast($toast)
         }
         .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
@@ -193,8 +207,32 @@ struct ContentView: View {
                     .toolbar { InspectorToolbar(details: details) }
             }
         }
+        .overlay(alignment: .top) {
+            if isShowingPalette {
+                ZStack(alignment: .top) {
+                    // A click outside the palette closes it.
+                    Color.black.opacity(0.06)
+                        .ignoresSafeArea()
+                        .onTapGesture { isShowingPalette = false }
+                    CommandPalette(
+                        model: palette, actions: PaletteAction.getAvailable(isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count),
+                        choose: choose
+                    ) {
+                        isShowingPalette = false
+                    }
+                    .padding(.top, Space.xxl)
+                }
+            }
+        }
+        .task(id: isShowingPalette) {
+            if isShowingPalette, let client = connection.makeClient() {
+                await palette.load(with: client)
+            }
+        }
+        .focusedSceneValue(\.paletteToggle, PaletteToggleAction { isShowingPalette.toggle() })
         .environment(details)
         .environment(replyDraft)
+        .environment(requests)
         .task(id: HubWorkKey(revision: events.revision, hasToken: connection.hasToken)) {
             if let client = connection.makeClient() {
                 await unseen.refresh(with: client)
@@ -260,6 +298,68 @@ struct ContentView: View {
 
     private var shownEntry: InspectorEntry? {
         selectedPage.flatMap { details.getEntry(on: $0) }
+    }
+
+    /// Does what the palette's row says: opens a job, company or person in
+    /// the inspector over the page shown, switches the page, or runs the
+    /// action.
+    private func choose(_ item: PaletteItem) {
+        isShowingPalette = false
+        switch item.target {
+        case let .open(subject):
+            details.show(subject, from: selectedPage ?? .today)
+            if selectedPage == nil { selectedPage = .today }
+        case let .page(page):
+            selectedPage = page
+            requests.ask(.focusList, on: page)
+        case let .action(action):
+            run(action)
+        }
+    }
+
+    private func run(_ action: PaletteAction) {
+        switch action {
+        case .addCompany:
+            selectedPage = .companies
+            requests.ask(.addCompany, on: .companies)
+        case .addCompanyFromSuggestions:
+            selectedPage = .companies
+            requests.ask(.addCompanyFromSuggestions, on: .companies)
+        case .addJobByURL:
+            selectedPage = .jobs
+            requests.ask(.addJobByURL, on: .jobs)
+        case .generateMissingCVs:
+            guard let client = connection.makeClient() else { return }
+            Task {
+                do {
+                    let queued = try await client.generateMissingCVs()
+                    toast = queued == 0
+                        ? ToastMessage(text: "No CVs are missing, or the hub is already making them.", tone: .neutral, symbol: "info.circle")
+                        : ToastMessage(text: "Generating \(queued) \(queued == 1 ? "CV" : "CVs") in the background. Each appears in its job's details once printed.")
+                } catch {
+                    actionError = HubFailure("Couldn't start the missing CVs", error)
+                }
+            }
+        case .pauseLocalModels, .resumeLocalModels:
+            guard let client = connection.makeClient() else { return }
+            let pausing = action == .pauseLocalModels
+            Task {
+                do {
+                    _ = try await client.send("POST", pausing ? "v1/model-work/pause" : "v1/model-work/resume", body: EmptyBody(), as: ModelWork.self)
+                    toast = pausing
+                        ? ToastMessage(text: "Paused the local models. Background work waits until you resume it.", tone: .caution, symbol: "pause.circle.fill")
+                        : ToastMessage(text: "Resumed the local models.", symbol: "play.circle.fill")
+                } catch {
+                    actionError = HubFailure(pausing ? "Couldn't pause the local models" : "Couldn't resume the local models", error)
+                }
+            }
+        case .markAllUpdatesSeen:
+            guard let client = connection.makeClient() else { return }
+            Task {
+                await unseen.markSeen(UpdateSelection(all: true), with: client)
+                if unseen.count == 0 { toast = ToastMessage(text: "Marked all updates seen") }
+            }
+        }
     }
 
     /// Opens a session's job or company on its Session tab over the page
