@@ -112,6 +112,24 @@ func (s *Store) FinishAgentRun(ctx context.Context, id uuid.UUID, outcome AgentR
 	return run, err
 }
 
+// AgentRunAbandoned is the error of a run closed because it never reported
+// an end before its token expired.
+const AgentRunAbandoned = "abandoned"
+
+// CloseAbandonedAgentRuns fails the runs still running after their token
+// expired: their process died without reporting, and an expired token can't
+// make any more calls. It returns the runs it closed.
+func (s *Store) CloseAbandonedAgentRuns(ctx context.Context) ([]AgentRun, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE agent_runs SET status = 'failed', error = $1, finished_at = now()
+		WHERE status = 'running' AND token_expires_at < now()
+		RETURNING `+agentRunColumns, AgentRunAbandoned)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AgentRun, error) { return scanAgentRun(row) })
+}
+
 func (s *Store) GetAgentRun(ctx context.Context, id uuid.UUID) (AgentRun, error) {
 	return scanAgentRun(s.pool.QueryRow(ctx, `SELECT `+agentRunColumns+` FROM agent_runs WHERE id = $1`, id))
 }

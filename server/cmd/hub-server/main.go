@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/tonypine/job-search-hub/server/internal/abandonedruns"
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/boarddiscovery"
 	"github.com/tonypine/job-search-hub/server/internal/boardfinder"
@@ -95,6 +96,9 @@ const (
 	// freshMatchInterval is how often the server checks for jobs briefed a
 	// strong match while still fresh, as briefs are written every few minutes.
 	freshMatchInterval = 5 * time.Minute
+	// abandonedRunInterval is how often the server closes the agent runs
+	// whose token expired before they reported an end.
+	abandonedRunInterval = 5 * time.Minute
 )
 
 func main() {
@@ -146,6 +150,7 @@ func run() error {
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
