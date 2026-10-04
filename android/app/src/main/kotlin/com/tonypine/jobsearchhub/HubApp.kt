@@ -21,6 +21,6 @@ class HubApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        UpdateNotifications.createChannel(this)
+        UpdateNotifications.createChannels(this)
     }
 }
