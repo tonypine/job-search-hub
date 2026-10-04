@@ -100,7 +100,7 @@ Revisit this if the PC turns out to run the local models well. If it does, move 
 
 `.github/workflows/ci.yml` runs on every pull request and push to `main`. Jobs that only matter for one part of the repo skip when a change doesn't touch it, and one job, `ci`, passes when nothing it needs failed. `ci` is the only check `main` requires, so a skipped job never leaves a PR waiting.
 
-`main` is protected by `.github/rulesets/main.json`: changes land through a pull request with no required approvals, since Symphony opens PRs under the owner's account and the approval is moving the Linear ticket to `Merging`. `ci` from GitHub Actions has to pass, but the branch doesn't have to be up to date with `main`; the push run on `main` catches the rare conflict. Force pushes and deleting `main` are blocked, and only repository admins can bypass the rules.
+`main` is protected by `.github/rulesets/main.json`: changes land through a pull request with no required approvals, since Symphony opens PRs under the owner's account and the approval is moving the Linear ticket to `Merging`. `ci` from GitHub Actions has to pass, but the branch doesn't have to be up to date with `main`; the push run on `main` catches the rare conflict. Force pushes and deleting `main` are blocked, and nobody can bypass the rules, admins included: in an emergency, turn the ruleset off in Settings › Rules first.
 
 The ruleset and these settings need a repository admin, once:
 
