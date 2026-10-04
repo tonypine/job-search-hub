@@ -191,13 +191,16 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
 private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, message: String?, modifier: Modifier = Modifier) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val people = details.connections.orEmpty()
+    // A board job not yet linked to a company still names it, as plain text in the facts.
+    val company = details.companyName?.takeIf { it.isNotBlank() }
+    val companyId = details.job.companyId
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = Spacing.l)) {
         EntityHeader(
             title = details.job.title,
-            parent = details.companyName?.let { name ->
-                details.job.companyId?.let { companyId -> ParentLink(name) { onOpenCompany(companyId) } }
-            },
-            facts = listOfNotNull(details.job.location, details.job.workplaceType, formatWhen(details.job.firstSeenAt)).joinToString(" · "),
+            parent = company?.let { name -> companyId?.let { ParentLink(name) { onOpenCompany(it) } } },
+            facts = listOfNotNull(
+                company.takeIf { companyId == null }, details.job.location, details.job.workplaceType, formatWhen(details.job.firstSeenAt),
+            ).joinToString(" · "),
             chips = {
                 details.brief?.let { brief ->
                     val match = Match.of(brief.match)
