@@ -33,6 +33,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/followupreminders"
+	"github.com/tonypine/job-search-hub/server/internal/freshmatches"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hiringthread"
@@ -91,6 +92,9 @@ const (
 	// followUpReminderInterval is how often the server checks for follow-ups
 	// fallen due since the last pass.
 	followUpReminderInterval = 15 * time.Minute
+	// freshMatchInterval is how often the server checks for jobs briefed a
+	// strong match while still fresh, as briefs are written every few minutes.
+	freshMatchInterval = 5 * time.Minute
 )
 
 func main() {
@@ -167,6 +171,7 @@ func run() error {
 		go push.NewNotifier(hub, sender, broadcaster).Run(ctx)
 	}
 	go followupreminders.NewReminder(hub, updateRecorder).Run(ctx, followUpReminderInterval)
+	go freshmatches.NewTeller(hub, updateRecorder).Run(ctx, freshMatchInterval)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	boards.SearchTerms = func(ctx context.Context) []string {
