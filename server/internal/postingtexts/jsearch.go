@@ -26,6 +26,11 @@ const DefaultJSearchURL = "https://jsearch.p.rapidapi.com"
 // spent: no search can succeed until the owner acts.
 var ErrSearchRefused = errors.New("JSearch refused the search")
 
+// ErrSearchUnreachable is a search that never reached JSearch: no network,
+// as after the Mac wakes, or an address that isn't JSearch's, which answers
+// 404. It says nothing of the job searched for.
+var ErrSearchUnreachable = errors.New("JSearch could not be reached")
+
 // Posting is one posting Google for Jobs lists, as JSearch gives it.
 type Posting struct {
 	Title        string `json:"job_title"`
@@ -65,13 +70,15 @@ func (search *JSearch) Search(ctx context.Context, query, country string) ([]Pos
 	}
 	response, err := search.HTTPClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("reach JSearch: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrSearchUnreachable, err)
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
 		return nil, fmt.Errorf("%w: it answered %d", ErrSearchRefused, response.StatusCode)
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("%w: %s answered 404", ErrSearchUnreachable, search.BaseURL)
 	default:
 		return nil, fmt.Errorf("JSearch answered %d", response.StatusCode)
 	}

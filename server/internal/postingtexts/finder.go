@@ -95,9 +95,9 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 // FindOnce goes over the open alert jobs with no more than a snippet,
 // newest first. Each one past its board's wait is searched on Google for
 // Jobs once, while the month's searches last; every other one is given the
-// reason it has no text yet. A refused search stops the pass, and the next
-// one tries again; any other failed search counts toward the month's, and
-// its job isn't searched again.
+// reason it has no text yet. A refused search, or one that never reaches
+// JSearch, stops the pass, and the next one tries again; any other failed
+// search counts toward the month's, and its job isn't searched again.
 func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 	saved, err := finder.hub.GetJobCriteria(ctx)
 	if err != nil {
@@ -139,7 +139,7 @@ func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 		default:
 			searches++
 			posting, found, err := finder.searchText(ctx, awaiting)
-			if err != nil && (errors.Is(err, ErrSearchRefused) || ctx.Err() != nil) {
+			if err != nil && (errors.Is(err, ErrSearchRefused) || errors.Is(err, ErrSearchUnreachable) || ctx.Err() != nil) {
 				return summary, err
 			}
 			used++

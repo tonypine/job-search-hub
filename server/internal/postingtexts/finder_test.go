@@ -197,6 +197,27 @@ func TestARefusedSearchStopsThePassWithoutCountingIt(t *testing.T) {
 	}
 }
 
+func TestASearchThatNeverReachesJSearchStopsThePassWithoutCountingIt(t *testing.T) {
+	first, second := alertJob("Senior Frontend Engineer", "Acme", 2*24*time.Hour), alertJob("Senior Frontend Engineer", "Globex", 2*24*time.Hour)
+	hub := newFakeHub(99, first, second)
+	search := &fakeSearch{failures: []error{fmt.Errorf("%w: dial tcp: lookup jsearch.p.rapidapi.com: no such host", ErrSearchUnreachable)}}
+	finder := newFinder(hub, search)
+
+	if _, err := finder.FindOnce(context.Background()); !errors.Is(err, ErrSearchUnreachable) {
+		t.Fatalf("err = %v, want the unreachable search reported", err)
+	}
+	if len(search.queries) != 1 || hub.searched[first.Job.ID] || hub.failed[first.Job.ID] || hub.reasons[first.Job.ID] != "" {
+		t.Errorf("queries %q, searched %v, failed %v, reason %q", search.queries, hub.searched[first.Job.ID], hub.failed[first.Job.ID], hub.reasons[first.Job.ID])
+	}
+
+	// Nothing was recorded, so the month's last search is left for the next pass, which tries the job again.
+	summary, err := finder.FindOnce(context.Background())
+
+	if err != nil || summary != (PassSummary{NotFound: 1}) || !hub.searched[first.Job.ID] {
+		t.Fatalf("next pass: summary %+v, searched %v, err %v", summary, hub.searched[first.Job.ID], err)
+	}
+}
+
 func TestAFailedSearchCountsAndThePassGoesOn(t *testing.T) {
 	first, second := alertJob("Senior Frontend Engineer", "Acme", 2*24*time.Hour), alertJob("Senior Frontend Engineer", "Globex", 2*24*time.Hour)
 	third := alertJob("Senior Frontend Engineer", "Initech", 2*24*time.Hour)

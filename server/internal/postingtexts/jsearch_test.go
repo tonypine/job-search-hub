@@ -51,3 +51,17 @@ func TestJSearchSaysWhenItRefusesTheKeyOrTheQuota(t *testing.T) {
 		}
 	}
 }
+
+func TestJSearchSaysWhenItCannotBeReached(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	_, err := postingtexts.NewJSearch(server.URL, "test-key").Search(context.Background(), "Engineer", "")
+	if !errors.Is(err, postingtexts.ErrSearchUnreachable) {
+		t.Errorf("404: err = %v, want an unreachable search", err)
+	}
+	server.Close()
+
+	_, err = postingtexts.NewJSearch(server.URL, "test-key").Search(context.Background(), "Engineer", "")
+	if !errors.Is(err, postingtexts.ErrSearchUnreachable) {
+		t.Errorf("closed server: err = %v, want an unreachable search", err)
+	}
+}
