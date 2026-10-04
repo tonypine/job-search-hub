@@ -472,7 +472,7 @@ struct DecideRow: View {
 struct TodayPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Toolbar(title: "Today", subtitle: "Saturday, 4 October")
+            Toolbar(title: "Today", subtitle: "Sunday, 4 October")
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: Space.l) {
                     HStack(spacing: Space.s) {

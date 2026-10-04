@@ -376,7 +376,8 @@ toolbars, and it gives "better access to information" in one place.
 ## Rollout
 
 Each step ships on its own and keeps the app working. The order lowers risk: the shared pieces
-land first, then the structure, then the new pages. Tickets are filed as sub-issues of TP-440.
+land first, then the structure, then the new pages. Once the proposal is approved, each row
+becomes a sub-issue of TP-440.
 
 | # | Ticket | Depends on |
 |---|---|---|
