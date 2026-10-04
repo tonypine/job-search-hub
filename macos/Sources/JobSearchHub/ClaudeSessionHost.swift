@@ -28,6 +28,9 @@ final class ClaudeSessionHost {
     private(set) var activities: [UUID: SessionActivity] = [:]
     /// The sessions a pane is showing; they raise no notifications.
     var shownSessionIDs: Set<UUID> = []
+    /// The subjects whose session is open in a window of its own; the
+    /// inspector leaves their terminal to that window.
+    var windowedSubjects: Set<ClaudeSessionSubject> = []
     @ObservationIgnored private var terminals: [UUID: LocalProcessTerminalView] = [:]
     @ObservationIgnored private var watchers: [UUID: ProcessEndWatcher] = [:]
     @ObservationIgnored private var names: [UUID: String] = [:]

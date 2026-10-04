@@ -27,14 +27,13 @@ final class UpdatesModel {
 }
 
 /// Every update, newest first by day. Clicking one marks it seen and opens
-/// its job or company.
+/// its job or company in the inspector, over this page.
 struct UpdatesPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(DetailsInspector.self) private var details
     @State private var model = UpdatesModel()
-    let onOpenJob: (UUID) -> Void
-    let onOpenCompany: (UUID) -> Void
 
     var body: some View {
         Group {
@@ -88,9 +87,9 @@ struct UpdatesPage: View {
             Task { await unseen.markSeen(UpdateSelection(ids: [update.id]), with: client) }
         }
         if let jobID = update.jobID {
-            onOpenJob(jobID)
+            details.show(.job(jobID), from: .updates)
         } else if let companyID = update.companyID {
-            onOpenCompany(companyID)
+            details.show(.company(companyID), from: .updates)
         }
     }
 

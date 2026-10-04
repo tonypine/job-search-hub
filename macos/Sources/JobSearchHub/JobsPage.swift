@@ -148,11 +148,16 @@ struct JobsPage: View {
                     }
                     .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision, taskRunner.fixRevision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
-                        details.show(model.selectedID.map { .job($0, opensSession: opensSession && $0 == initialJobID) }, from: .jobs)
+                        // `--session` opens the launch job on its Session tab, once.
+                        if opensSession, let jobID = model.selectedID, jobID == initialJobID, details.getEntry(on: .jobs) == nil {
+                            details.openSession(.job(jobID), from: .jobs)
+                        } else {
+                            details.show(model.selectedID.map(InspectorSubject.job), from: .jobs)
+                        }
                     }
-                    .onChange(of: details.getSubject(on: .jobs)) {
+                    .onChange(of: details.getEntry(on: .jobs)) {
                         // Closing the details of one job deselects it; several selected jobs show no details at all.
-                        if details.getSubject(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                        if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
                     }
                     .sheet(item: $skipping) { target in
                         SkipJobsSheet(jobCount: target.jobIDs.count) { reason in
