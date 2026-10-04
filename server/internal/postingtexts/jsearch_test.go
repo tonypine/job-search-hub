@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 )
@@ -63,5 +64,22 @@ func TestJSearchSaysWhenItCannotBeReached(t *testing.T) {
 	_, err = postingtexts.NewJSearch(server.URL, "test-key").Search(context.Background(), "Engineer", "")
 	if !errors.Is(err, postingtexts.ErrSearchUnreachable) {
 		t.Errorf("closed server: err = %v, want an unreachable search", err)
+	}
+}
+
+func TestJSearchTimingOutAfterTheRequestWasSentIsAnOrdinaryFailure(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	search := postingtexts.NewJSearch(server.URL, "test-key")
+	search.HTTPClient.Timeout = 50 * time.Millisecond
+
+	_, err := search.Search(context.Background(), "Engineer", "")
+
+	if err == nil || errors.Is(err, postingtexts.ErrSearchUnreachable) {
+		t.Errorf("err = %v, want a failure that may have reached JSearch", err)
 	}
 }

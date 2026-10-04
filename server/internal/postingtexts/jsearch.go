@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,8 +70,11 @@ func (search *JSearch) Search(ctx context.Context, query, country string) ([]Pos
 		request.Header.Set("X-API-Key", search.APIKey)
 	}
 	response, err := search.HTTPClient.Do(request)
-	if err != nil {
+	if err != nil && neverSent(err) {
 		return nil, fmt.Errorf("%w: %w", ErrSearchUnreachable, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
@@ -93,4 +97,13 @@ func (search *JSearch) Search(ctx context.Context, query, country string) ([]Pos
 		return nil, fmt.Errorf("JSearch answered status %q", page.Status)
 	}
 	return page.Data, nil
+}
+
+// neverSent is whether a request failed before it left: its host's address
+// wasn't found, or no connection to it was made. A request that timed out
+// after it was sent may have reached JSearch, and been counted there.
+func neverSent(err error) bool {
+	var dnsError *net.DNSError
+	var opError *net.OpError
+	return errors.As(err, &dnsError) || errors.As(err, &opError) && opError.Op == "dial"
 }
