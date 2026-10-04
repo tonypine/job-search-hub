@@ -4,7 +4,7 @@ import SwiftUI
 struct SettingsPage: View {
     @Environment(HubConnection.self) private var connection
     @State private var tokenField = ""
-    @State private var saveError: String?
+    @State private var saveFailure: HubFailure?
 
     var body: some View {
         @Bindable var connection = connection
@@ -19,19 +19,15 @@ struct SettingsPage: View {
                 HStack {
                     Button("Save") { save() }
                         .keyboardShortcut(.defaultAction)
-                    Button("Test connection") { Task { await connection.check() } }
-                        .disabled(connection.isChecking)
-                    if connection.isChecking {
-                        ProgressView().controlSize(.small)
-                    }
+                    AsyncButton("Test connection", busyTitle: "Testing…", isBusy: connection.isChecking) { await connection.check() }
                 }
-                if let saveError {
-                    Text(saveError).foregroundStyle(.red)
+                if saveFailure != nil {
+                    HubErrorView($saveFailure)
                 }
             }
             Section("Status") {
                 Label(connection.status.message, systemImage: statusSymbol)
-                    .foregroundStyle(statusColor)
+                    .foregroundStyle(connection.status.tone.color)
             }
             if let client = connection.makeClient() {
                 ServerSection(client: client)
@@ -53,10 +49,10 @@ struct SettingsPage: View {
         do {
             try connection.save(newToken: tokenField)
             tokenField = ""
-            saveError = nil
+            saveFailure = nil
             Task { await connection.check() }
         } catch {
-            saveError = String(describing: error)
+            saveFailure = HubFailure("Couldn't save the token", error)
         }
     }
 
@@ -74,14 +70,6 @@ struct SettingsPage: View {
         case .unchecked: "circle.dashed"
         case .waitingForKeychain: "lock"
         default: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var statusColor: Color {
-        switch connection.status {
-        case .connected: .green
-        case .unchecked, .waitingForKeychain: .secondary
-        default: .orange
         }
     }
 }

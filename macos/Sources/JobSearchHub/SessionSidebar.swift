@@ -46,12 +46,12 @@ struct SessionSidebarSection: View {
 
     private func row(_ session: ClaudeSession) -> some View {
         let isRunning = host.isRunning(session.id)
-        return HStack(spacing: 8) {
+        return HStack(spacing: Space.s) {
             SessionLamp(isRunning: isRunning, activity: host.activities[session.id])
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.name).lineLimit(1)
                 Text(isRunning ? SessionLamp.describe(host.activities[session.id]) : session.lastActiveAt.formatted(.relative(presentation: .named)))
-                    .font(.caption)
+                    .font(.hubCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -60,8 +60,9 @@ struct SessionSidebarSection: View {
     }
 }
 
-/// A session's state at a glance: blue while working, orange while waiting
-/// for the owner, green when its turn is done, an empty ring when not running.
+/// A session's state at a glance, in its tone: accent while working, caution
+/// while waiting for the owner, positive when its turn is done, an empty ring
+/// when not running.
 struct SessionLamp: View {
     let isRunning: Bool
     let activity: SessionActivity?
@@ -74,11 +75,7 @@ struct SessionLamp: View {
     }
 
     private var color: Color {
-        switch activity {
-        case .working: .blue
-        case .blocked: .orange
-        case .idle, nil: .green
-        }
+        (activity ?? .idle).tone.color
     }
 
     static func describe(_ activity: SessionActivity?) -> String {

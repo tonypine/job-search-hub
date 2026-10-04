@@ -9,7 +9,7 @@ import SwiftUI
 final class ServerControl {
     private(set) var state: ServerLaunchAgent.State?
     private(set) var isWorking = false
-    private(set) var errorMessage: String?
+    var failure: HubFailure?
     @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
 
     var plistURL: URL { ServerLaunchAgent.makePlistURL(home: home) }
@@ -33,8 +33,20 @@ final class ServerControl {
         isWorking = true
         defer { isWorking = false }
         let finished = await runLaunchctl(action)
-        errorMessage = finished.status == 0 ? nil : "launchctl: \(finished.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+        failure = finished.status == 0 ? nil : HubFailure(
+            "Couldn't \(describe(action)) the server", advice: "launchd turned it down. The log may say why.",
+            details: "launchctl: \(finished.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+        )
         await readState()
+    }
+
+    private func describe(_ action: ServerLaunchAgent.Action) -> String {
+        switch action {
+        case .readState: "read"
+        case .start: "start"
+        case .stop: "stop"
+        case .restart: "restart"
+        }
     }
 
     private func runLaunchctl(_ action: ServerLaunchAgent.Action) async -> (output: String, status: Int32) {
@@ -57,30 +69,31 @@ struct ServerSection: View {
                 Text("The server isn't installed here. Run server/scripts/install-native-server.sh from the repository.")
                     .foregroundStyle(.secondary)
             } else {
-                Label(describeState(), systemImage: stateSymbol).foregroundStyle(stateColor)
+                Label(describeState(), systemImage: stateSymbol).foregroundStyle(control.state?.tone.color ?? Tone.neutral.color)
                 HStack {
                     if control.state == .stopped {
-                        Button("Start") { Task { await control.perform(.start) } }
+                        AsyncButton("Start", busyTitle: "Starting…") { await control.perform(.start) }
                     } else {
-                        Button("Restart") { Task { await control.perform(.restart) } }
+                        AsyncButton("Restart", busyTitle: "Restarting…") { await control.perform(.restart) }
                         Button("Stop") { isConfirmingStop = true }
+                            .disabled(control.isWorking)
                     }
                     Button("Show log") { NSWorkspace.shared.open(control.logURL) }
-                    if control.isWorking {
-                        ProgressView().controlSize(.small)
-                    }
                 }
-                .disabled(control.isWorking)
-                if let errorMessage = control.errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
+                if control.failure != nil {
+                    HubErrorView($control.failure)
                 }
             }
             if let work = modelWork.work {
                 HStack {
                     Text(work.paused ? "Model work is paused" : "Model work is running")
                     Spacer()
-                    Button(work.paused ? "Resume" : "Pause") { Task { await modelWork.setPaused(!work.paused, with: client) } }
-                        .disabled(modelWork.isChangingPause)
+                    AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…") {
+                        await modelWork.setPaused(!work.paused, with: client)
+                    }
+                }
+                if modelWork.failure != nil {
+                    HubErrorView($modelWork.failure)
                 }
             }
         }
@@ -108,14 +121,6 @@ struct ServerSection: View {
         case .waiting: "arrow.clockwise.circle"
         case .stopped: "stop.circle"
         case nil: "circle.dotted"
-        }
-    }
-
-    private var stateColor: Color {
-        switch control.state {
-        case .running: .green
-        case .waiting: .orange
-        case .stopped, nil: .secondary
         }
     }
 }

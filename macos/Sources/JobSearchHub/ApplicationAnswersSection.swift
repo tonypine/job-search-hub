@@ -5,7 +5,7 @@ import SwiftUI
 @Observable
 final class ApplicationAnswersModel {
     private(set) var answers: [ApplicationAnswer] = []
-    private(set) var errorMessage: String?
+    var failure: HubFailure?
     private(set) var isWorking = false
 
     var missingCommonQuestions: [String] { CommonApplicationQuestions.findMissing(in: answers) }
@@ -13,9 +13,9 @@ final class ApplicationAnswersModel {
     func load(with client: HubClient) async {
         do {
             answers = try await client.get("v1/application-answers", as: ApplicationAnswersResponse.self).answers
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = "Could not load the answers: \(error)"
+            failure = HubFailure("Couldn't load the answers", error)
         }
     }
 
@@ -33,7 +33,7 @@ final class ApplicationAnswersModel {
             await load(with: client)
             return true
         } catch {
-            errorMessage = "Could not save the answer: \(error)"
+            failure = HubFailure("Couldn't save the answer", error)
             return false
         }
     }
@@ -43,7 +43,7 @@ final class ApplicationAnswersModel {
             try await client.delete("v1/application-answers/\(id)")
             await load(with: client)
         } catch {
-            errorMessage = "Could not delete the answer: \(error)"
+            failure = HubFailure("Couldn't delete the answer", error)
         }
     }
 
@@ -73,22 +73,11 @@ struct ApplicationAnswersSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Answers for application forms").font(.title3.weight(.semibold))
-                    Text("Agents helping with an application answer from these, the same way every time.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !model.missingCommonQuestions.isEmpty {
-                    Button("Add common questions (\(model.missingCommonQuestions.count))") { Task { await model.addCommonQuestions(with: client) } }
-                        .disabled(model.isWorking)
-                }
-                Button("Add answer", systemImage: "plus") { editing = EditedAnswer(question: "", answer: "") }
-            }
-            if let errorMessage = model.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        HubSection("Answers for application forms") {
+            Text("Agents helping with an application answer from these, the same way every time.")
+                .foregroundStyle(.secondary)
+            if model.failure != nil {
+                HubErrorView($model.failure)
             }
             if model.answers.isEmpty {
                 Text("No answers yet. Import your LinkedIn export's saved answers from the Settings page, or add common questions to fill in.")
@@ -98,23 +87,30 @@ struct ApplicationAnswersSection: View {
                 Button {
                     editing = EditedAnswer(answerID: answer.id, question: answer.question, answer: answer.answer)
                 } label: {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
                         Text(answer.question).fontWeight(.medium)
                         if answer.answer.isEmpty {
-                            Text("Not answered yet").italic().foregroundStyle(.orange)
+                            ToneChip("Not answered yet", tone: .caution)
                         } else {
                             Text(answer.answer).foregroundStyle(.secondary).lineLimit(3)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                    .hubWell()
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
                     Button("Delete", role: .destructive) { Task { await model.delete(answer.id, with: client) } }
                 }
+            }
+        } trailing: {
+            HStack {
+                if !model.missingCommonQuestions.isEmpty {
+                    AsyncButton("Add common questions (\(model.missingCommonQuestions.count))", busyTitle: "Adding…", isBusy: model.isWorking) {
+                        await model.addCommonQuestions(with: client)
+                    }
+                }
+                Button("Add answer", systemImage: "plus") { editing = EditedAnswer(question: "", answer: "") }
             }
         }
         .task { await model.load(with: client) }
@@ -135,27 +131,25 @@ struct AnswerEditor: View {
     @State private var answer = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(edited.answerID == nil ? "Add an answer" : "Edit the answer").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text(edited.answerID == nil ? "Add an answer" : "Edit the answer").font(.hubSection)
             TextField("Question", text: $question, prompt: Text("As forms ask it, e.g. Notice period"))
             TextEditor(text: $answer)
                 .font(.body)
                 .frame(minHeight: 120)
-                .padding(4)
-                .background(.quinary, in: RoundedRectangle(cornerRadius: 6))
+                .padding(Space.xs)
+                .background(.quinary, in: RoundedRectangle(cornerRadius: Radius.control))
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Save") {
-                    Task {
-                        if await onSave(question, answer) { dismiss() }
-                    }
+                AsyncButton("Save", busyTitle: "Saving…", isBusy: isSaving) {
+                    if await onSave(question, answer) { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+                .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 520)
         .onAppear {
             question = edited.question

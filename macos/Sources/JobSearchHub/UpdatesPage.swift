@@ -9,7 +9,7 @@ final class UpdatesModel {
 
     private(set) var days: [UpdateDay] = []
     private(set) var isLoading = false
-    private(set) var loadError: String?
+    private(set) var loadError: HubFailure?
 
     func load(with client: HubClient) async {
         isLoading = true
@@ -21,7 +21,7 @@ final class UpdatesModel {
             days = UpdateDay.makeDays(from: list.updates)
             loadError = nil
         } catch {
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the updates", error)
         }
     }
 }
@@ -78,7 +78,7 @@ struct UpdatesPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                ContentUnavailableView("Could not load updates", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
             } else if model.days.isEmpty && !model.isLoading {
                 ContentUnavailableView("No updates", systemImage: "bell", description: Text("Replies, confirmations and other news about applications appear here."))
             }
@@ -108,14 +108,14 @@ struct UpdateRow: View {
     let update: HubUpdate
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
             UnseenDot(count: update.isUnseen ? 1 : 0)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(update.title).fontWeight(update.isUnseen ? .semibold : .regular)
                     Spacer()
                     Text(update.createdAt.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
+                        .font(.hubCaption)
                         .foregroundStyle(.secondary)
                 }
                 if let subject = update.subject {
@@ -126,6 +126,6 @@ struct UpdateRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
     }
 }

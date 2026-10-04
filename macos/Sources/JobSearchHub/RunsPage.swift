@@ -8,7 +8,7 @@ final class RunsModel {
 
     private(set) var taskRuns: [TaskRun] = []
     private(set) var agentRuns: [AgentRun] = []
-    private(set) var errorMessage: String?
+    private(set) var failure: HubFailure?
 
     func load(with client: HubClient) async {
         do {
@@ -16,9 +16,9 @@ final class RunsModel {
             async let tasks = client.get("v1/task-runs", query: limit, as: TaskRunsResponse.self)
             async let agents = client.get("v1/agent-runs", query: limit, as: AgentRunsResponse.self)
             (taskRuns, agentRuns) = try await (tasks.runs, agents.runs)
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't load the runs", error)
         }
     }
 }
@@ -28,15 +28,14 @@ final class RunsModel {
 @Observable
 final class ModelWorkModel {
     private(set) var work: ModelWork?
-    private(set) var errorMessage: String?
-    private(set) var isChangingPause = false
+    var failure: HubFailure?
 
     func load(with client: HubClient) async {
         do {
             work = try await client.get("v1/model-work", as: ModelWork.self)
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't read the local models' work", error)
         }
     }
 
@@ -48,12 +47,10 @@ final class ModelWorkModel {
     }
 
     func setPaused(_ paused: Bool, with client: HubClient) async {
-        isChangingPause = true
-        defer { isChangingPause = false }
         do {
             work = try await client.send("POST", paused ? "v1/model-work/pause" : "v1/model-work/resume", body: EmptyBody(), as: ModelWork.self)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure(paused ? "Couldn't pause the local models" : "Couldn't resume the local models", error)
         }
     }
 }
@@ -86,16 +83,16 @@ struct RunsPage: View {
 
     private func content(_ client: HubClient) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let errorMessage = model.errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: Space.xl) {
+                if let failure = model.failure {
+                    HubErrorView(failure) { Task { await model.load(with: client) } }
                 }
                 localModels(client)
                 let running = model.agentRuns.filter(\.isRunning)
                 if !running.isEmpty {
-                    section("Running now") {
+                    HubSection("Running now") {
                         ForEach(running) { run in
-                            HStack(spacing: 8) {
+                            HStack(spacing: Space.s) {
                                 ProgressView().controlSize(.small)
                                 Text(RunsSummary.getKindTitle(run.kind)).fontWeight(.medium)
                                 Text(run.input).foregroundStyle(.secondary).lineLimit(1)
@@ -105,48 +102,43 @@ struct RunsPage: View {
                         }
                     }
                 }
-                section("By kind") {
+                HubSection("By kind") {
                     let summaries = RunsSummary.summarize(taskRuns: model.taskRuns, agentRuns: model.agentRuns)
                     if summaries.isEmpty {
                         Text("No runs recorded yet.").foregroundStyle(.secondary)
                     }
-                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    Grid(alignment: .leading, horizontalSpacing: Space.l, verticalSpacing: Space.s) {
                         ForEach(summaries) { summary in
                             GridRow {
                                 Text(summary.title).fontWeight(.medium)
                                 Text("\(summary.runCount) runs")
-                                Text(describeProblems(summary)).foregroundStyle(summary.failedCount + summary.invalidCount > 0 ? .orange : .secondary)
+                                Text(describeProblems(summary))
+                                    .foregroundStyle(summary.failedCount + summary.invalidCount > 0 ? AnyShapeStyle(Tone.negative.color) : AnyShapeStyle(.secondary))
                                 Text(summary.models.map { "\($0.model): \(describeSeconds($0.averageSeconds)) average (\($0.runCount))" }.joined(separator: " · "))
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
                 }
-                section("Latest") {
+                HubSection("Latest") {
                     ForEach(getLatestRows().prefix(80)) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: row.symbolName).foregroundStyle(row.color)
+                        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                            Image(systemName: row.symbolName).foregroundStyle(Tone.ofRunOutcome(row.outcome).color)
+                                .accessibilityLabel(row.outcome)
                             Text(RunsSummary.getKindTitle(row.kind)).fontWeight(.medium).frame(width: 190, alignment: .leading)
                             Text(row.detail).foregroundStyle(.secondary).lineLimit(1)
                             Spacer()
                             Text(row.startedAt.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(.secondary)
                         }
                         if let error = row.error, !error.isEmpty {
-                            Text(error).font(.caption).foregroundStyle(.orange).lineLimit(2).padding(.leading, 28)
+                            Text(error).font(.hubCaption).foregroundStyle(Tone.negative.color).lineLimit(2).padding(.leading, Space.xl)
                         }
                     }
                 }
             }
-            .padding(24)
+            .padding(Space.xl)
             .frame(maxWidth: 1000, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title3.weight(.semibold))
-            content()
         }
     }
 
@@ -154,30 +146,26 @@ struct RunsPage: View {
     /// waits, and the pause.
     @ViewBuilder
     private func localModels(_ client: HubClient) -> some View {
-        section("Local models") {
+        HubSection("Local models") {
             if let work = modelWork.work {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Label(work.paused ? "Paused" : "Working", systemImage: work.paused ? "pause.circle.fill" : "play.circle.fill")
-                        .foregroundStyle(work.paused ? .orange : .green)
-                        .fontWeight(.medium)
+                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    ToneChip(work.paused ? "Paused" : "Working", tone: work.paused ? .caution : .positive, symbol: work.paused ? "pause.fill" : "play.fill")
                     if work.paused {
                         Text("Only runs you start go ahead.").foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(work.paused ? "Resume" : "Pause", systemImage: work.paused ? "play.fill" : "pause.fill") {
-                        Task { await modelWork.setPaused(!work.paused, with: client) }
+                    AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…", systemImage: work.paused ? "play.fill" : "pause.fill") {
+                        await modelWork.setPaused(!work.paused, with: client)
                     }
-                    .disabled(modelWork.isChangingPause)
                 }
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Model").foregroundStyle(.secondary)
-                        Text(describeRuntime(work.runtime))
-                    }
-                    GridRow {
-                        Text("Running").foregroundStyle(.secondary)
+                if modelWork.failure != nil {
+                    HubErrorView($modelWork.failure)
+                }
+                FactGrid {
+                    FactRow("Model", text: describeRuntime(work.runtime))
+                    FactRow("Running") {
                         if let running = work.running {
-                            HStack(spacing: 6) {
+                            HStack(spacing: Space.s) {
                                 ProgressView().controlSize(.small)
                                 Text("\(RunsSummary.getKindTitle(running.kind)) on \(running.model), \(running.priority), started \(running.since.formatted(.relative(presentation: .named)))")
                             }
@@ -185,18 +173,14 @@ struct RunsPage: View {
                             Text("Nothing").foregroundStyle(.secondary)
                         }
                     }
-                    GridRow {
-                        Text("Waiting").foregroundStyle(.secondary)
+                    FactRow("Waiting") {
                         Text(work.waiting.isEmpty ? "Nothing" : work.waitingCountsByKind.map { "\($0.title): \($0.count)" }.joined(separator: ", "))
                             .foregroundStyle(work.waiting.isEmpty ? .secondary : .primary)
                     }
-                    GridRow {
-                        Text("Job facts").foregroundStyle(.secondary)
-                        Text(work.jobsAwaitingFacts == 1 ? "1 job waits to be read" : "\(work.jobsAwaitingFacts) jobs wait to be read")
-                    }
+                    FactRow("Job facts", text: work.jobsAwaitingFacts == 1 ? "1 job waits to be read" : "\(work.jobsAwaitingFacts) jobs wait to be read")
                 }
-            } else if let errorMessage = modelWork.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            } else if let failure = modelWork.failure {
+                HubErrorView(failure) { Task { await modelWork.load(with: client) } }
             } else {
                 ProgressView().controlSize(.small)
             }
@@ -235,14 +219,6 @@ struct RunsPage: View {
             case "running": "clock"
             case "invalid": "questionmark.circle.fill"
             default: "xmark.circle.fill"
-            }
-        }
-
-        var color: Color {
-            switch outcome {
-            case "succeeded": .green
-            case "running": .blue
-            default: .orange
             }
         }
     }

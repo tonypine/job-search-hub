@@ -38,18 +38,15 @@ struct JobCriteriaSection: View {
                 hiringRow("PJ", hiring: $editor.draft.takeHome.pj)
                 hiringRow("Contractor abroad", hiring: $editor.draft.takeHome.foreignContractor)
             }
+            if let error = editor.error {
+                HubErrorView(title: "Couldn't load or save the criteria", report: error)
+            }
             HStack {
-                if let errorMessage = editor.errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
                 Spacer()
-                if editor.isSaving {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Revert") { editor.revert() }
                     .disabled(!editor.hasChanges || editor.isSaving)
-                Button("Save criteria") { Task { await editor.save(with: client) } }
-                    .disabled(!editor.hasChanges || editor.isSaving)
+                AsyncButton("Save criteria", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
+                    .disabled(!editor.hasChanges)
             }
         } header: {
             Text("Take-home pay")

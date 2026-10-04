@@ -20,7 +20,7 @@ struct SessionFilesSection: View {
                 }
             }
             Text("Sessions can attach files from this folder, like your CV, to an application form. Keep it to your job-search documents. It applies to sessions started or resumed after a change.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.hubCaption).foregroundStyle(.secondary)
         }
     }
 

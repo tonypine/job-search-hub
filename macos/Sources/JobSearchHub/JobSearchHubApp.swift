@@ -38,6 +38,8 @@ struct JobSearchHubApp: App {
                 .environment(jobDecisions)
                 .environment(taskRunner)
                 .frame(minWidth: 900, minHeight: 600)
+                // Hub Indigo marks you and your actions: selection, links, the primary button.
+                .tint(.hubAccent)
                 // The stream holds its client, so it starts again with a new
                 // URL or token, and once the token arrives from the Keychain.
                 .task(id: [connection.hubURLText, connection.token.value]) {
