@@ -120,7 +120,7 @@ func (extractor *Extractor) readJobFacts(ctx context.Context, job store.JobAwait
 		return err
 	}
 	facts := store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object}
-	if doubt := FindDoubt(job.Job, answer.Object); doubt != "" {
+	if doubt := FindDoubt(answer.Object); doubt != "" {
 		request.SchemaName = store.TaskKindJobFactsSecondReading
 		second, err := extractor.client.CompleteJSON(ctx, request)
 		switch {
