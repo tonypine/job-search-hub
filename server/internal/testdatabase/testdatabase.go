@@ -24,14 +24,14 @@ import (
 var agentPrompts embed.FS
 
 // New creates the database through HUB_TEST_DATABASE_URL, which points at the
-// compose Postgres's maintenance database.
+// maintenance database of the test Postgres in compose.test.yaml.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 
 	adminURL := os.Getenv("HUB_TEST_DATABASE_URL")
 	if adminURL == "" {
-		t.Fatal("HUB_TEST_DATABASE_URL is not set; point it at the compose Postgres, e.g. postgres://hub:<password>@localhost:5434/postgres")
+		t.Fatal("HUB_TEST_DATABASE_URL is not set; start the test Postgres with docker compose -f compose.test.yaml up -d --wait and set it to postgres://hub:hub-test@localhost:5435/postgres")
 	}
 	admin, err := pgx.Connect(ctx, adminURL)
 	if err != nil {

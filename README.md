@@ -89,6 +89,7 @@ The prompts live only in the database; none are in this repo. A fresh database t
 
 ```
 compose.yaml              Postgres and hub-server
+compose.test.yaml         a throwaway Postgres for the tests
 server/cmd/hub-server     the server
 server/cmd/hub            the CLI
 server/internal/…         store, MCP tools, REST API, prompts, stream parsing
