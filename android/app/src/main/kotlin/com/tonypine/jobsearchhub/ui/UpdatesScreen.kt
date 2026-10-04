@@ -9,7 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,7 +31,8 @@ import com.tonypine.jobsearchhub.ui.design.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, onOpenJob: (String) -> Unit, onOpenCompany: (String) -> Unit) {
+/** Every update, newest first: the history behind Today's Updates. */
+fun UpdatesScreen(state: HubState, onBack: () -> Unit, onRefresh: () -> Unit, onSeen: (HubUpdate) -> Unit, onOpenJob: (String) -> Unit, onOpenCompany: (String) -> Unit) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     // A keyed list keeps its first row in place, which would leave newer updates just above the top.
@@ -41,7 +42,7 @@ fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, 
     Column {
         TopAppBar(
             title = { Text("Updates") },
-            actions = { IconButton(onClick = onUnpair) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Unpair") } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } },
         )
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
@@ -51,6 +52,7 @@ fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, 
                 }
                 items(state.updates, key = { it.id }) { update ->
                     UpdateRow(update) {
+                        onSeen(update)
                         when {
                             update.jobId != null -> onOpenJob(update.jobId!!)
                             update.companyId != null -> onOpenCompany(update.companyId!!)

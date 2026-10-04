@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.tonypine.jobsearchhub.core.HubUpdate
 import com.tonypine.jobsearchhub.push.UpdateNotifications
 import com.tonypine.jobsearchhub.ui.design.HubTheme
 import com.tonypine.jobsearchhub.ui.HubNavigation
@@ -38,7 +39,10 @@ class MainActivity : ComponentActivity() {
     private fun openNotificationFrom(intent: Intent?) {
         intent ?: return
         viewModel.openNotification(
-            NotificationTarget(intent.getStringExtra(UpdateNotifications.JOB_ID), intent.getStringExtra(UpdateNotifications.COMPANY_ID)),
+            NotificationTarget(
+                intent.getStringExtra(UpdateNotifications.JOB_ID), intent.getStringExtra(UpdateNotifications.COMPANY_ID),
+                isFollowUp = intent.getStringExtra(UpdateNotifications.KIND) == HubUpdate.FOLLOW_UP_DUE,
+            ),
         )
     }
 

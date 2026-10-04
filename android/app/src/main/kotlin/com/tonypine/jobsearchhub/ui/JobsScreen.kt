@@ -9,14 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -24,60 +17,28 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.tonypine.jobsearchhub.HubState
 import com.tonypine.jobsearchhub.core.JobListItem
 import com.tonypine.jobsearchhub.core.Screen
+import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubErrorView
+import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobsScreen(
-    state: HubState, onRefresh: () -> Unit, onIncludeUnclear: (Boolean) -> Unit, onOpenJob: (String) -> Unit,
-    onResearch: suspend (String) -> String?,
-) {
-    var isAsking by remember { mutableStateOf(false) }
-    var company by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    if (isAsking) {
-        AlertDialog(
-            onDismissRequest = { isAsking = false },
-            title = { Text("Research a company") },
-            text = {
-                Column {
-                    Text("The Mac researches it, puts it on the watch list and finds its jobs.")
-                    OutlinedTextField(company, { company = it }, label = { Text("Name or link") })
-                }
-            },
-            confirmButton = {
-                TextButton(enabled = company.isNotBlank(), onClick = {
-                    isAsking = false
-                    scope.launch { message = onResearch(company.trim()); company = "" }
-                }) { Text("Ask the Mac") }
-            },
-            dismissButton = { TextButton(onClick = { isAsking = false }) { Text("Cancel") } },
-        )
-    }
+fun JobsScreen(state: HubState, onRefresh: () -> Unit, onIncludeUnclear: (Boolean) -> Unit, onOpenJob: (String) -> Unit, menu: List<HubAction>) {
     Column {
         TopAppBar(title = { Text("Jobs") }, actions = {
-            IconButton(onClick = { isAsking = true }) { Icon(Icons.Filled.Add, contentDescription = "Research a company") }
             FilterChip(selected = state.includesUnclear, onClick = { onIncludeUnclear(!state.includesUnclear) }, label = { Text("Unclear too") })
-            Spacer(Modifier.width(Spacing.s))
+            OverflowMenu(menu)
         })
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize()) {
                 state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
-                message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = Spacing.l)) } }
                 item {
                     Text(
                         "${state.shownJobs.size} of ${state.openJobCount} open jobs",

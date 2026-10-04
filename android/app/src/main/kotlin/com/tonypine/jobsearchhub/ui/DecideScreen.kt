@@ -23,16 +23,18 @@ import com.tonypine.jobsearchhub.HubState
 import com.tonypine.jobsearchhub.core.DecisionQueueItem
 import com.tonypine.jobsearchhub.core.Match
 import com.tonypine.jobsearchhub.core.Tone
+import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubErrorView
+import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 
 /** The briefed jobs waiting for a decision, best match first; a job opens on its brief. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> Unit) {
+fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> Unit, menu: List<HubAction>) {
     Column {
-        TopAppBar(title = { Text("Decide") })
+        TopAppBar(title = { Text("Decide") }, actions = { OverflowMenu(menu) })
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize()) {
                 state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
