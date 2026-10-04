@@ -105,7 +105,7 @@ struct CompaniesPage: View {
                         .disabled(model.isLoading)
                 }
             } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
+                NotConnectedView()
             }
         }
         .navigationTitle("Companies")
@@ -331,6 +331,9 @@ struct DossierPane: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                }
+                if let foldedMailLine = dossier.foldedMailLine {
+                    Text(foldedMailLine).font(.caption).foregroundStyle(.secondary)
                 }
             }
         }

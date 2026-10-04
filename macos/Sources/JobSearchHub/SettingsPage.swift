@@ -14,7 +14,7 @@ struct SettingsPage: View {
                 SecureField(
                     "Owner token",
                     text: $tokenField,
-                    prompt: Text(connection.hasToken ? "Saved in the Keychain; enter a new one to replace it" : "HUB_OWNER_TOKEN from the hub's .env")
+                    prompt: Text(tokenPrompt)
                 )
                 HStack {
                     Button("Save") { save() }
@@ -60,10 +60,19 @@ struct SettingsPage: View {
         }
     }
 
+    private var tokenPrompt: String {
+        switch connection.token {
+        case .reading: "Waiting for Keychain access"
+        case .present: "Saved in the Keychain; enter a new one to replace it"
+        case .missing: "HUB_OWNER_TOKEN from the hub's .env"
+        }
+    }
+
     private var statusSymbol: String {
         switch connection.status {
         case .connected: "checkmark.circle.fill"
         case .unchecked: "circle.dashed"
+        case .waitingForKeychain: "lock"
         default: "exclamationmark.triangle.fill"
         }
     }
@@ -71,7 +80,7 @@ struct SettingsPage: View {
     private var statusColor: Color {
         switch connection.status {
         case .connected: .green
-        case .unchecked: .secondary
+        case .unchecked, .waitingForKeychain: .secondary
         default: .orange
         }
     }

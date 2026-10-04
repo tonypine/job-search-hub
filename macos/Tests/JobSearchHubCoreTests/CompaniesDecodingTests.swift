@@ -88,7 +88,8 @@ private let companyPageJSON = ##"""
    {"id":"1ee55565-58d2-4247-ba01-cba65060a316","gmail_message_id":"m1","thread_id":"t1","direction":"sent",
     "sender":"owner@example.com","recipients":"jobs@acme.com","subject":"Following up",
     "sent_at":"2026-10-01T09:00:00Z","label_ids":["SENT"],"recorded_at":"2026-10-01T09:01:00Z",
-    "company_id":"0aa55565-58d2-4247-ba01-cba65060a316","matched_by":"thread"}]}
+    "company_id":"0aa55565-58d2-4247-ba01-cba65060a316","matched_by":"thread"}],
+ "folded_mail_count":3}
 """##
 
 @Test func aCompanyPageDecodesWithItsApplicationsAndMail() throws {
@@ -103,11 +104,12 @@ private let companyPageJSON = ##"""
     #expect(mail.map(\.subject) == ["Interview with Acme", "Following up"])
     #expect(mail[0].fromLine == "jobs@acme.com · interview invite")
     #expect(mail[1].fromLine == "You wrote")
+    #expect(dossier.foldedMailLine == "3 newsletters and job alerts left out")
 }
 
 @Test func aDossierFromAHubWithoutThreadsHasNone() throws {
     let dossier = try HubJSON.makeDecoder().decode(CompanyDossier.self, from: Data(dossierJSON.utf8))
 
-    #expect(dossier.applications == nil && dossier.mail == nil)
+    #expect(dossier.applications == nil && dossier.mail == nil && dossier.foldedMailLine == nil)
     #expect(dossier.applicationsOpenFirst.isEmpty)
 }
