@@ -63,20 +63,22 @@ private func makeQueue(_ titles: [String]) throws -> [DecisionQueueItem] {
 
 @Test func recruitersWaitWhenUnansweredWithJobsThatFit() throws {
     let json = #"""
-    {"recruiters":[
-      {"id":"aaaaaaaa-0000-0000-0000-000000000001","started_by_name":"Older","started_by_url":"https://www.linkedin.com/in/older-example",
-       "owner_wrote":false,"message_count":1,"last_message_at":"2026-08-01T10:00:00Z","is_agency":false,"open_jobs":3,"fitting_jobs":1},
-      {"id":"aaaaaaaa-0000-0000-0000-000000000002","started_by_name":"Answered","started_by_url":"https://www.linkedin.com/in/answered-example",
-       "owner_wrote":true,"message_count":4,"last_message_at":"2026-09-01T10:00:00Z","is_agency":false,"open_jobs":2,"fitting_jobs":2},
-      {"id":"aaaaaaaa-0000-0000-0000-000000000003","started_by_name":"Nothing fits","started_by_url":"https://www.linkedin.com/in/nothing-example",
-       "owner_wrote":false,"message_count":1,"last_message_at":"2026-09-02T10:00:00Z","is_agency":true,"open_jobs":2,"fitting_jobs":0},
-      {"id":"aaaaaaaa-0000-0000-0000-000000000004","started_by_name":"Newer","started_by_url":"https://www.linkedin.com/in/newer-example",
-       "owner_wrote":false,"message_count":2,"last_message_at":"2026-09-03T10:00:00Z","is_agency":true,"open_jobs":4,"fitting_jobs":2}
+    {"people":[
+      {"key":"recruiter:aaaaaaaa-0000-0000-0000-000000000001","relation":"recruiter","id":"aaaaaaaa-0000-0000-0000-000000000001",
+       "name":"Older","is_agency":false,"last_contact_at":"2026-08-01T10:00:00Z","answered":false,"open_jobs":3,"fitting_jobs":1},
+      {"key":"recruiter:aaaaaaaa-0000-0000-0000-000000000002","relation":"recruiter","id":"aaaaaaaa-0000-0000-0000-000000000002",
+       "name":"Answered","is_agency":false,"last_contact_at":"2026-09-01T10:00:00Z","answered":true,"open_jobs":2,"fitting_jobs":2},
+      {"key":"recruiter:aaaaaaaa-0000-0000-0000-000000000003","relation":"recruiter","id":"aaaaaaaa-0000-0000-0000-000000000003",
+       "name":"Nothing fits","is_agency":true,"last_contact_at":"2026-09-02T10:00:00Z","answered":false,"open_jobs":2,"fitting_jobs":0},
+      {"key":"recruiter:aaaaaaaa-0000-0000-0000-000000000004","relation":"recruiter","id":"aaaaaaaa-0000-0000-0000-000000000004",
+       "name":"Newer","is_agency":true,"last_contact_at":"2026-09-03T10:00:00Z","answered":false,"open_jobs":4,"fitting_jobs":2},
+      {"key":"connection:dddddddd-0000-0000-0000-000000000001","relation":"connection","id":"dddddddd-0000-0000-0000-000000000001",
+       "name":"A connection","is_agency":false,"open_jobs":1,"fitting_jobs":1}
     ]}
     """#
-    let recruiters = try HubJSON.makeDecoder().decode(RecruitersResponse.self, from: Data(json.utf8)).recruiters
+    let people = try HubJSON.makeDecoder().decode(PeopleResponse.self, from: Data(json.utf8)).people
 
-    #expect(Today.getWaitingRecruiters(recruiters).map(\.startedByName) == ["Newer", "Older"])
+    #expect(Today.getWaitingRecruiters(people).map(\.name) == ["Newer", "Older"])
 }
 
 @Test func theChipsSumTodayUp() {

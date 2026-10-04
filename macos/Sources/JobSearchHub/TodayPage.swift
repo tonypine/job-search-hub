@@ -11,7 +11,8 @@ final class TodayModel {
     private(set) var queue: [DecisionQueueItem] = []
     private(set) var board = PipelineBoard()
     private(set) var updates: [HubUpdate] = []
-    private(set) var recruiters: [RecruiterConversation] = []
+    /// Everyone who can get the owner in; Today lists the recruiters waiting.
+    private(set) var people: [RelatedPerson] = []
     private(set) var hasLoaded = false
     private(set) var loadError: HubFailure?
     /// Why the last action on an item failed: a decision, a follow-up.
@@ -27,12 +28,12 @@ final class TodayModel {
             "v1/updates", query: [URLQueryItem(name: "unseen", value: "true"), URLQueryItem(name: "limit", value: String(Self.updatesLimit))],
             as: HubUpdateList.self
         )
-        async let recruiters = client.get("v1/recruiters", as: RecruitersResponse.self)
+        async let people = client.get("v1/people", as: PeopleResponse.self)
         var failure: (any Error)?
         do { self.queue = try await queue.items } catch { failure = failure ?? error }
         do { board = PipelineBoard(try await pipeline) } catch { failure = failure ?? error }
         do { self.updates = try await updates.updates } catch { failure = failure ?? error }
-        do { self.recruiters = try await recruiters.recruiters } catch { failure = failure ?? error }
+        do { self.people = try await people.people } catch { failure = failure ?? error }
         loadError = failure.map { HubFailure("Couldn't load everything for Today", $0) }
         hasLoaded = true
     }
@@ -137,7 +138,7 @@ struct TodayPage: View {
         let followUps = Today.getDueFollowUps(model.board, now: .now)
         return TodayItems(
             decisions: Today.getTopDecisions(model.queue), followUps: followUps, news: Today.getUnseenNews(model.updates),
-            recruiters: Today.getWaitingRecruiters(model.recruiters),
+            recruiters: Today.getWaitingRecruiters(model.people),
             chips: Today.getChips(toDecide: model.queue.count, followUps: followUps, updates: model.updates)
         )
     }
@@ -307,33 +308,35 @@ struct TodayPage: View {
         }
     }
 
-    private func recruitersCard(_ recruiters: [RecruiterConversation], client: HubClient) -> some View {
+    private func recruitersCard(_ recruiters: [RelatedPerson], client: HubClient) -> some View {
         let shown = recruiters.prefix(Self.shownCount)
-        return TodayCard("Recruiters waiting", link: recruiters.count > shown.count ? "All \(recruiters.count)" : "Recruiters") {
-            openPage(.recruiters)
+        return TodayCard("Recruiters waiting", link: recruiters.count > shown.count ? "All \(recruiters.count)" : "People") {
+            openPage(.people)
         } rows: {
             ForEach(shown) { recruiter in
                 HStack(alignment: .center, spacing: Space.m) {
-                    TodayItemButton(isOpen: isOpen(.person(recruiter.id))) {
-                        open(.person(recruiter.id))
+                    TodayItemButton(isOpen: isOpen(.person(recruiter.reference))) {
+                        open(.person(recruiter.reference))
                     } label: {
                         VStack(alignment: .leading, spacing: Space.xs) {
                             HStack(spacing: Space.s) {
-                                Text(recruiter.startedByName).fontWeight(.semibold)
-                                ToneChip(recruiter.isAgency ? "Agency" : "Recruiter", tone: .neutral)
+                                Text(recruiter.name).fontWeight(.semibold)
+                                ToneChip(recruiter.relationTitle, tone: .neutral)
                             }
                             Text(describe(recruiter)).font(.hubSecondary).foregroundStyle(.secondary)
                         }
                     }
-                    let isDrafting = replyDraft.conversationID == recruiter.id && replyDraft.state == .drafting
-                    AsyncButton("Draft reply", busyTitle: "Drafting…", systemImage: "square.and.pencil", isBusy: isDrafting) {
-                        details.show(.person(recruiter.id), tab: .conversation, from: .today)
-                        await replyDraft.draft(conversationID: recruiter.id, client: client)
+                    if let conversationID = recruiter.conversationID {
+                        let isDrafting = replyDraft.conversationID == conversationID && replyDraft.state == .drafting
+                        AsyncButton("Draft reply", busyTitle: "Drafting…", systemImage: "square.and.pencil", isBusy: isDrafting) {
+                            details.show(.person(recruiter.reference), tab: .conversation, from: .today)
+                            await replyDraft.draft(conversationID: conversationID, client: client)
+                        }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .help("Claude drafts a message that picks up from this conversation and names the roles that fit you at their company")
+                        .accessibilityLabel("Draft a reply to \(recruiter.name)")
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .help("Claude drafts a message that picks up from this conversation and names the roles that fit you at their company")
-                    .accessibilityLabel("Draft a reply to \(recruiter.startedByName)")
                 }
                 if recruiter.id != shown.last?.id { Divider() }
             }
@@ -379,10 +382,14 @@ struct TodayPage: View {
         return [company, phase].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// "Talent at Initech · 2 fitting jobs open".
-    private func describe(_ recruiter: RecruiterConversation) -> String {
+    /// "Talent Partner at Initech · 2 fitting jobs open".
+    private func describe(_ recruiter: RelatedPerson) -> String {
         let fitting = recruiter.fittingJobs == 1 ? "1 fitting job open" : "\(recruiter.fittingJobs) fitting jobs open"
-        return [recruiter.hiringCompany ?? recruiter.starterCompany, fitting].compactMap { $0 }.joined(separator: " · ")
+        let role: String? = switch (recruiter.role, recruiter.companyName) {
+        case let (role?, company?): "\(role) at \(company)"
+        case let (role, company): role ?? company
+        }
+        return [role, fitting].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// The update's first line of text, or what it's about.
@@ -405,7 +412,7 @@ private struct TodayItems {
     let decisions: [DecisionQueueItem]
     let followUps: [DueFollowUp]
     let news: [HubUpdate]
-    let recruiters: [RecruiterConversation]
+    let recruiters: [RelatedPerson]
     let chips: [TodayChip]
 
     /// No card has anything; the Hub card's lines are read apart.

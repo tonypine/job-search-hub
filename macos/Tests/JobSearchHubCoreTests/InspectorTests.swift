@@ -4,7 +4,7 @@ import Testing
 
 private let job = InspectorSubject.job(UUID())
 private let company = InspectorSubject.company(UUID())
-private let person = InspectorSubject.person(UUID())
+private let person = InspectorSubject.person(PersonReference(key: "recruiter:\(UUID())"))
 
 @Test func anEmptyHistoryShowsNothingAndGoesNowhere() {
     var history = InspectorHistory()
@@ -101,7 +101,7 @@ private let person = InspectorSubject.person(UUID())
     #expect(InspectorSubject(.job(id)) == .job(id) && InspectorSubject(.company(id)) == .company(id))
     #expect(InspectorSubject(.profile) == .profileInterview)
     #expect(InspectorSubject.company(id).sessionSubject == .company(id))
-    #expect(InspectorSubject.person(id).sessionSubject == nil)
+    #expect(InspectorSubject.person(PersonReference(key: "contact:\(id)", companyID: id)).sessionSubject == nil)
 }
 
 @Test func aSessionSubjectRoundTripsForItsWindow() throws {

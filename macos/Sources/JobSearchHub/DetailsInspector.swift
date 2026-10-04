@@ -82,8 +82,8 @@ struct DetailsInspectorContent: View {
                 JobDetailView(jobID: jobID, client: client, tab: tab)
             case let .company(companyID):
                 CompanyInspector(companyID: companyID, client: client, tab: tab)
-            case let .person(conversationID):
-                PersonInspector(conversationID: conversationID, client: client, tab: tab)
+            case let .person(reference):
+                PersonInspector(reference: reference, client: client, tab: tab)
             case .profileInterview:
                 ClaudeSessionPane(subject: .profile, client: client, startsOnAppear: true, openingMessage: "Let's work on my knowledge base.")
             }

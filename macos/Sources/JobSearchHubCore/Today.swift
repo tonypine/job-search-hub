@@ -2,7 +2,8 @@ import Foundation
 
 /// What Today, the page that answers "what should I do now?", takes from the
 /// hub's lists: the decision queue, the pipeline, the unseen updates and the
-/// recruiters. Android's `Today` reads them the same way.
+/// people, for the recruiters among them. Android's `Today` reads them the
+/// same way.
 public enum Today {
     /// How many jobs to decide Today shows, the best first.
     public static let decisionCount = 3
@@ -36,10 +37,11 @@ public enum Today {
         updates.filter { $0.isUnseen && newsKinds.contains($0.kind) }
     }
 
-    /// The recruiters worth a reply now, the latest message first.
-    public static func getWaitingRecruiters(_ recruiters: [RecruiterConversation]) -> [RecruiterConversation] {
-        recruiters.filter(\.isWaiting)
-            .sorted { ($0.lastMessageAt ?? .distantPast) > ($1.lastMessageAt ?? .distantPast) }
+    /// The recruiters worth a reply now: unanswered, at a company with jobs
+    /// that fit, the latest message first.
+    public static func getWaitingRecruiters(_ people: [RelatedPerson]) -> [RelatedPerson] {
+        people.filter { $0.relation == .recruiter && $0.isUnanswered && $0.fittingJobs > 0 }
+            .sorted { ($0.lastContactAt ?? .distantPast) > ($1.lastContactAt ?? .distantPast) }
     }
 
     /// The chips that sum Today up: "7 to decide · 1 overdue · 1 due today ·
@@ -78,11 +80,6 @@ public struct TodayChip: Equatable, Identifiable, Sendable {
     public var symbol: String?
 
     public var id: String { text }
-}
-
-public extension RecruiterConversation {
-    /// Unanswered, at a company with jobs that fit: worth a reply.
-    var isWaiting: Bool { !ownerWrote && fittingJobs > 0 }
 }
 
 /// What the hub's agents and local models are doing now, for Today's Hub
