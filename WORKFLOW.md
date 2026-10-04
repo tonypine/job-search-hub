@@ -3,7 +3,12 @@
 # command, workspace root) live in the operator's symphony.yml, not here.
 # Preview the assembled prompt with `symphony workflow preview --file WORKFLOW.md --agent claude`.
 hooks:
+  # The throwaway test Postgres (compose.test.yaml) is shared by every
+  # workspace and restarts with Docker. A Docker that isn't running only
+  # leaves the database-backed tests unverified.
   after_create: |
+    docker compose -f compose.test.yaml up -d --wait ||
+      echo "the test Postgres did not start; database-backed tests will fail" >&2
     cd server && go mod download
 prompts:
   pr: |
@@ -47,27 +52,34 @@ native macOS client (`macos/`, Swift). Read `CLAUDE.md` and `README.md` before p
 
 ## Validation commands
 
-The sandbox can write only to the workspace and `/tmp`, so point the Go build cache there:
+The sandbox can write only to the workspace and its temp folder, so point the Go build cache there:
 
 ```bash
 cd server
-export GOCACHE=/private/tmp/job-search-hub-go-build
+export GOCACHE="${TMPDIR:-/tmp}/job-search-hub-go-build"
+export HUB_TEST_DATABASE_URL=postgres://hub:hub-test@localhost:5435/postgres
 gofmt -l .        # must print nothing
 go vet ./...
 go test ./...
 ```
 
-Store and tool tests need a fresh database through `HUB_TEST_DATABASE_URL`, and fail rather than
-skip without it. Agent sessions do not get the repo's `.env`, so that variable is normally unset:
+Store and tool tests each create a fresh database through `HUB_TEST_DATABASE_URL`. The URL above
+points at the throwaway test Postgres from `compose.test.yaml`, which the workspace hook starts. It
+holds nothing but test databases, so the URL is no secret, and the whole suite runs in every session:
 
-- Run `go test` on the packages you changed. When a package needs the database, record it as
-  `not verified: needs HUB_TEST_DATABASE_URL` in the workpad `Validation` section and in the PR's
-  testing evidence. Do not fake, stub out, or delete those tests to get a green run.
-- Never read, copy, or create `.env` files.
+- Run the full `go test ./...` before handoff, not only the packages you changed.
+- If tests fail with `connect to the test Postgres`, the test Postgres is not running and you cannot
+  start it from the sandbox. Record the database-backed packages as
+  `not verified: test Postgres on localhost:5435 is not running` in the workpad `Validation` section
+  and in the PR's testing evidence. CI still runs them. Do not fake, stub out, or delete those tests
+  to get a green run.
+- Never read, copy, or create `.env` files, and never point the tests at the hub's own database on
+  port 5434.
 
 For `macos/` changes: `cd macos && swift build && swift test`.
 
-There is no CI on this repository yet, so the local commands above are the whole gate.
+CI (`.github/workflows/server.yml`) runs the same `gofmt`, `go vet` and `go test` against its own
+throwaway Postgres on every pull request. Its `server` check must be green before `In Review`.
 
 ## Related skills
 
