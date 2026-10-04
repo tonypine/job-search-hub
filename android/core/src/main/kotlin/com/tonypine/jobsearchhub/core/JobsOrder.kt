@@ -9,3 +9,5 @@ object JobsOrder {
             .filter { it.fit.level == "good" || (includeUnclear && it.fit.level == "unclear") }
             .sortedWith(compareBy<JobListItem> { rank[it.fit.level] ?: 3 }.thenByDescending { it.job.firstSeenAt })
 }
+
+// CI check (TP-399): an Android-only change; this PR is closed unmerged.
