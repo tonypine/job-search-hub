@@ -5,8 +5,9 @@ import Foundation
 public enum InspectorSubject: Hashable, Sendable {
     case job(UUID)
     case company(UUID)
-    /// A recruiter, by the LinkedIn conversation they started.
-    case person(UUID)
+    /// Someone who can get you in: a contact, connection, introducer or
+    /// recruiter.
+    case person(PersonReference)
     case profileInterview
 
     /// The subject's Claude session, for the kinds that have one.

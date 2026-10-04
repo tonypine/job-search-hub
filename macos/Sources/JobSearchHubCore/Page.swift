@@ -6,7 +6,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     case updates
     case jobs
     case companies
-    case recruiters
+    case people
     case profile
     case criteria
     case activity
@@ -22,7 +22,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .updates: "Updates"
         case .jobs: "Jobs"
         case .companies: "Companies"
-        case .recruiters: "Recruiters"
+        case .people: "People"
         case .profile: "Profile"
         case .criteria: "Criteria"
         case .activity: "Activity"
@@ -39,7 +39,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
         case .updates: "bell"
         case .jobs: "briefcase"
         case .companies: "building.2"
-        case .recruiters: "person.crop.rectangle.stack"
+        case .people: "person.2"
         case .profile: "person.crop.circle"
         case .criteria: "slider.horizontal.3"
         case .activity: "gauge.with.needle"
@@ -51,7 +51,7 @@ public enum Page: String, CaseIterable, Identifiable, Sendable {
     public var group: SidebarGroup {
         switch self {
         case .decide, .pipeline, .updates: .work
-        case .jobs, .companies, .recruiters: .browse
+        case .jobs, .companies, .people: .browse
         case .profile, .criteria: .you
         case .activity, .prompts, .modelLab: .hub
         }
