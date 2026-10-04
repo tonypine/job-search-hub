@@ -32,6 +32,9 @@ data class HubUpdate(
     companion object {
         /** A pipeline card's follow-up fell due. */
         const val FOLLOW_UP_DUE = "follow_up_due"
+
+        /** A fresh job is a strong match. */
+        const val FRESH_MATCH = "fresh_match"
     }
 }
 

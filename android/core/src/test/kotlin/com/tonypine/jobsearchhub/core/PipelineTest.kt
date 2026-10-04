@@ -4,7 +4,9 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PipelineTest {
     private val zone = ZoneId.of("America/Sao_Paulo")
@@ -86,6 +88,18 @@ class PipelineTest {
         assertEquals("elsewhere", board.findCard("gone", "c2")?.id)
         assertNull(board.findCard(null, "c3"))
         assertNull(board.findCard(null, null))
+    }
+
+    @Test
+    fun aSnoozedReminderWantsAFollowUpOnlyWhileItsCardIsDue() {
+        val board = PipelineBoard(
+            phases = listOf(PipelinePhase("applied", "Applied")),
+            cards = listOf(card("overdue", jobId = "j1", due = "2026-10-02T12:00:00Z"), card("followed", jobId = "j2", due = "2026-10-11T12:00:00Z"), card("never", jobId = "j3")),
+        )
+        assertTrue(board.wantsFollowUp("j1", null, now, zone))
+        assertFalse(board.wantsFollowUp("j2", null, now, zone))
+        assertFalse(board.wantsFollowUp("j3", null, now, zone))
+        assertFalse(board.wantsFollowUp("gone", null, now, zone))
     }
 
     @Test

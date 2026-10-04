@@ -107,6 +107,14 @@ data class PipelineBoard(val phases: List<PipelinePhase>, val cards: List<Pipeli
         companyId ?: return null
         return cards.filter { it.application.companyId == companyId }.minByOrNull { if (it.application.jobId == null) 0 else 1 }
     }
+
+    /**
+     * Whether a reminder about the job or company still asks for a follow-up:
+     * false once its card is gone, or followed up so the next one isn't due.
+     * A snoozed reminder that no longer does stays away.
+     */
+    fun wantsFollowUp(jobId: String?, companyId: String?, now: Instant, zone: ZoneId): Boolean =
+        findCard(jobId, companyId)?.followUpStatus(now, zone)?.isDue == true
 }
 
 /** Moves an application to a phase; a closed phase keeps the reason it ended. */

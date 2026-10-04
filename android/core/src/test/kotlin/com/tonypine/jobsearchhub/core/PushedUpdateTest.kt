@@ -26,4 +26,13 @@ class PushedUpdateTest {
         assertNull(PushedUpdate.parse(mapOf("title" to "Acme replied")))
         assertNull(PushedUpdate.parse(mapOf("update_id" to "u1", "title" to " ")))
     }
+
+    @Test
+    fun anUpdateCarriedAsDataReadsBackTheSame() {
+        val update = PushedUpdate("u1", "Follow up with Acme", "In Applied since Sep 25.", jobId = "j1", companyId = "c1", kind = "follow_up_due")
+        assertEquals(update, PushedUpdate.parse(update.toData()))
+        val bare = PushedUpdate("u2", "The Mac finished your request", body = null, jobId = null, companyId = null)
+        assertEquals(mapOf("update_id" to "u2", "title" to "The Mac finished your request"), bare.toData())
+        assertEquals(bare, PushedUpdate.parse(bare.toData()))
+    }
 }
