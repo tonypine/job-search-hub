@@ -55,10 +55,89 @@ func TestWhereTheyHire(t *testing.T) {
 		{"another country only", store.Job{Location: "United States (Remote)"}, "not stated", jobfit.VerdictNo},
 		{"nothing said", store.Job{Location: "Remote"}, "not stated", jobfit.VerdictUnclear},
 		{"a term inside another word", store.Job{Location: "Remote"}, "Across the Americas; our focus only matters", jobfit.VerdictYes},
+		{"a list of regions", store.Job{Location: "Remote (US/Canada/EU)"}, "not stated", jobfit.VerdictNo},
+		{"a preferred region", store.Job{Location: "Remote, North America preferred"}, "not stated", jobfit.VerdictUnclear},
+		{"a preference read from the text", store.Job{Location: "Remote"}, "US or Canada, preferably", jobfit.VerdictUnclear},
+		{"a preference in Portuguese", store.Job{Location: "Remoto, de preferência nos EUA"}, "", jobfit.VerdictUnclear},
+		{"only working hours", store.Job{Location: "Remote (US time zones)"}, "not stated", jobfit.VerdictUnclear},
+		{"an offset from UTC", store.Job{Location: "Remote"}, "UTC-5 to UTC+1", jobfit.VerdictUnclear},
+		{"a rule beside a preference", store.Job{Location: "Remote"}, "Must be in the US; EST preferred", jobfit.VerdictNo},
+		{"residents beside working hours", store.Job{Location: "Remote (US residents, EST hours)"}, "not stated", jobfit.VerdictNo},
+		{"a rule in the location beside a preference read from the text", store.Job{Location: "Remote (US residents)"}, "North America preferred", jobfit.VerdictNo},
+		{"a rule in the location beside working hours read from the text", store.Job{Location: "Remote (must be US-based)"}, "US time zones", jobfit.VerdictNo},
+		{"a country beside a preferred time zone", store.Job{Location: "Remote (US, EST preferred)"}, "not stated", jobfit.VerdictNo},
+		{"countries beside an overlap", store.Job{Location: "Remote (US/Canada), PST overlap"}, "not stated", jobfit.VerdictNo},
+		{"a country beside its time zone", store.Job{Location: "United States (Remote, EST)"}, "not stated", jobfit.VerdictNo},
+		{"a city beside its time zone", store.Job{Location: "Austin, TX (CST)"}, "not stated", jobfit.VerdictNo},
+		{"a country and a time zone joined by a slash", store.Job{Location: "Remote, US/EST"}, "not stated", jobfit.VerdictNo},
+		{"working hours shared by a list of countries", store.Job{Location: "Remote (US/Canada time zones)"}, "not stated", jobfit.VerdictUnclear},
+		{"a preference shared by a list of countries", store.Job{Location: "Remote (US/Canada), preferably"}, "not stated", jobfit.VerdictUnclear},
+		{"working hours beside a longer word for remote", store.Job{Location: "Fully remote, US time zones"}, "not stated", jobfit.VerdictUnclear},
+		{"remote in Portuguese only", store.Job{Location: "Trabalho remoto"}, "not stated", jobfit.VerdictUnclear},
+		{"a country and a time zone joined by a dash", store.Job{Location: "Remote, US - EST"}, "not stated", jobfit.VerdictNo},
+		{"a country and a time zone joined by a bar", store.Job{Location: "Remote (US | EST)"}, "not stated", jobfit.VerdictNo},
+		{"a preference after a dash", store.Job{Location: "Remote – North America preferred"}, "not stated", jobfit.VerdictUnclear},
+		{"a preference before a list of countries", store.Job{Location: "Remote, preferably US/Canada"}, "not stated", jobfit.VerdictUnclear},
+		{"working hours as a range", store.Job{Location: "Remote (9:00 - 17:00 EST)"}, "not stated", jobfit.VerdictUnclear},
+		{"a time zone spelled out", store.Job{Location: "Remote (Eastern Time)"}, "not stated", jobfit.VerdictUnclear},
+		{"a country beside a time zone spelled out", store.Job{Location: "Remote (US, Eastern Time)"}, "not stated", jobfit.VerdictNo},
+		{"a country in the location beside a preference read from the text", store.Job{Location: "United States (Remote)"}, "North America preferred", jobfit.VerdictNo},
+		{"working hours in the location beside a preference read from the text", store.Job{Location: "Remote (US time zones)"}, "North America preferred", jobfit.VerdictUnclear},
+		{"a country and a time zone joined by a space", store.Job{Location: "Remote (US EST)"}, "not stated", jobfit.VerdictNo},
+		{"a country and a time zone with no punctuation", store.Job{Location: "Remote US EST"}, "not stated", jobfit.VerdictNo},
+		{"a city and a time zone joined by a space", store.Job{Location: "Austin TX CST"}, "not stated", jobfit.VerdictNo},
+		{"a city beside a US time zone", store.Job{Location: "New York EST"}, "not stated", jobfit.VerdictNo},
+		{"a city beside GMT", store.Job{Location: "London GMT"}, "not stated", jobfit.VerdictNo},
+		{"only a time zone", store.Job{Location: "Remote (EST)"}, "not stated", jobfit.VerdictUnclear},
+		{"a time zone with an hours range", store.Job{Location: "Remote, CET ± 3 hours"}, "not stated", jobfit.VerdictUnclear},
 	} {
 		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != test.want {
 			t.Errorf("%s: %+v, want %s", test.name, check, test.want)
+		}
+	}
+}
+
+func TestAPreferenceOrATimeZoneSaysSoWithThePostingsWords(t *testing.T) {
+	for location, want := range map[string]string{
+		"Remote, North America preferred": `only a preference: "Remote, North America preferred"`,
+		"Remote (US time zones)":          `only a time zone: "Remote (US time zones)"`,
+		"Remote (US/Canada/EU)":           `names only "Remote (US/Canada/EU)"`,
+		"Remote (US, EST preferred)":      `names only "Remote (US, EST preferred)"`,
+	} {
+		if check := findCheck(t, jobfit.Judge(store.Job{Location: location}, nil, criteria, rates), "Where they hire"); check.Reason != want {
+			t.Errorf("%s: %q, want %q", location, check.Reason, want)
+		}
+	}
+	job := store.Job{Location: "United States (Remote)"}
+	fit := jobfit.Judge(job, facts(t, map[string]any{"location_restriction": "North America preferred"}), criteria, rates)
+	if check, want := findCheck(t, fit, "Where they hire"), `names only "United States (Remote)"`; check.Reason != want {
+		t.Errorf("a country in the location beside a preference read from the text: %q, want %q", check.Reason, want)
+	}
+}
+
+func TestCouldFitKeepsPostingsThatOnlyPreferARegion(t *testing.T) {
+	for location, want := range map[string]bool{
+		"Remote, North America preferred": true,
+		"Remote (US time zones)":          true,
+		"Remote (US/Canada/EU)":           false,
+		"Berlin, must be based in the EU": false,
+		"Remote (US, EST preferred)":      false,
+		"Remote (US/Canada), PST overlap": false,
+		"United States (Remote, EST)":     false,
+		"Austin, TX (CST)":                false,
+		"Remote, US - EST":                false,
+		"Remote, preferably US/Canada":    true,
+		"Remote (US EST)":                 false,
+		"Remote US EST":                   false,
+		"Austin TX CST":                   false,
+		"New York EST":                    false,
+		"London GMT":                      false,
+		"Remote (EST)":                    true,
+	} {
+		posting := store.JobPosting{Title: "Senior React Engineer", Location: location}
+		if got := jobfit.CouldFit(posting, criteria); got != want {
+			t.Errorf("%s: could fit = %v, want %v", location, got, want)
 		}
 	}
 }
