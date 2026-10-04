@@ -201,6 +201,8 @@ decision flow that brings up the next job.
   color, so it never reads as good or bad.
 - **Icon:** a hub, you, joined to three nodes (a company, a job, a person) on an indigo squircle.
   The same mark on macOS (`.icns` through `iconutil`) and Android (adaptive icon).
+  `macos/Scripts/make-icon.swift` draws it for both: `make-app.sh` runs it on every build, and its
+  header says how to regenerate the Android layers.
 - **Android builds its Material 3 scheme from Hub Indigo** as the seed, so both clients share an
   accent while Android still looks like Android. *Match wallpaper colors* in Settings switches to
   dynamic color for those who want it. See [Android](#android-material-3-expressive-and-one-ui).
