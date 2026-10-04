@@ -86,6 +86,8 @@ jobs:
     defaults:
       run:
         working-directory: server
+    env:
+      STATICCHECK_VERSION: v0.8.1 # staticcheck 2026.2.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,6 +113,27 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      # setup-go only saves its cache when go.sum changes, so it would rarely
+      # hold staticcheck. This cache keeps the binary, in a directory per Go
+      # version, and staticcheck's analysis cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/staticcheck
+            ~/.cache/staticcheck-bin
+          key: staticcheck-${{ runner.os }}-${{ env.STATICCHECK_VERSION }}-${{ hashFiles('server/go.mod', 'server/go.sum') }}
+          restore-keys: staticcheck-${{ runner.os }}-${{ env.STATICCHECK_VERSION }}-
+
+      - name: staticcheck
+        run: |
+          export STATICCHECK_CACHE="$HOME/.cache/staticcheck"
+          bin="$HOME/.cache/staticcheck-bin/$(go env GOVERSION)"
+          if [ ! -x "$bin/staticcheck" ]; then
+            GOBIN="$bin" go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
+          fi
+          "$bin/staticcheck" -version
+          "$bin/staticcheck" ./...
 
       - name: go mod tidy
         run: go mod tidy -diff
@@ -184,6 +207,47 @@ jobs:
       - name: go test
         run: go test -count=1 ./...
 
+  # Runs only when macos/ changes: the Swift tests run against StubHub, not
+  # the server, and macOS minutes cost 10x Linux ones. It never runs
+  # Scripts/make-app.sh, which signs with a Keychain identity CI doesn't have.
+  macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    # Package.swift targets macOS 26. Move both pins together when a newer
+    # image goes GA.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      XCODE_VERSION: "26.6"
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: xcode
+        name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app"
+          xcodebuild -version
+          swift --version
+          echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: macos/.build
+          key: swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-${{ hashFiles('macos/Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
+
   android:
     needs: changes
     if: needs.changes.outputs.android == 'true'
@@ -221,7 +285,7 @@ jobs:
   # The one check branch protection requires. Add every new job to `needs`.
   ci:
     if: always()
-    needs: [changes, server-static, server-test, android]
+    needs: [changes, server-static, server-test, macos, android]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
