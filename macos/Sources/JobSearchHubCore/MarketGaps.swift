@@ -1,7 +1,8 @@
 import Foundation
 
-/// A technology good fits keep asking for that the knowledge base never
-/// names, and the plan to close it: learn it, or show it in a portfolio piece.
+/// A technology the jobs that pass the screen keep asking for that the
+/// knowledge base never names, and the plan to close it: learn it, or show it
+/// in a portfolio piece.
 public struct MarketGap: Decodable, Equatable, Identifiable, Sendable {
     public var technology: String
     public var jobCount: Int
@@ -12,9 +13,9 @@ public struct MarketGap: Decodable, Equatable, Identifiable, Sendable {
 
     public var id: String { technology }
 
-    /// "Asked for by 14 of 43 good fits".
+    /// "Asked for by 14 of 43 jobs that pass the screen".
     public var demandText: String {
-        "Asked for by \(jobCount) of \(goodFits) good fits"
+        "Asked for by \(jobCount) of \(goodFits) jobs that pass the screen"
     }
 
     /// "Learn" or "Show it", the plan's kind as the page names it.

@@ -44,10 +44,10 @@ struct HubErrorView: View {
                     .buttonBorderShape(.capsule)
             }
             if let dismiss {
-                Button("Dismiss", systemImage: "xmark", action: dismiss)
+                Button("Hide", systemImage: "xmark", action: dismiss)
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
-                    .help("Dismiss")
+                    .help("Hide")
             }
         }
         .padding(Space.m)

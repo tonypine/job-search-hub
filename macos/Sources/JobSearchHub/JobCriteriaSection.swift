@@ -24,7 +24,7 @@ struct JobCriteriaSection: View {
         } header: {
             Text("Job criteria")
         } footer: {
-            Text("Separate items with commas. Feeds search by the search terms from the home country; each job's fit is judged against the rest.")
+            Text("Separate items with commas. Feeds search by the search terms from the home country; each job is screened against the rest.")
                 .foregroundStyle(.secondary)
         }
 
@@ -51,7 +51,7 @@ struct JobCriteriaSection: View {
         } header: {
             Text("Take-home pay")
         } footer: {
-            Text("A job's published pay is converted at the day's rate and reduced by the share of each way you could be hired. Pay under the minimum marks a job a poor fit. The shares are estimates; tune them to your own numbers.")
+            Text("A job's published pay is converted at the day's rate and reduced by the share of each way you could be hired. Pay under the minimum fails a job's screen. The shares are estimates; tune them to your own numbers.")
                 .foregroundStyle(.secondary)
         }
         .task { await editor.load(with: client) }

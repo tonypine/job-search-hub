@@ -9,11 +9,11 @@ final class PipelineModel {
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
     private(set) var movingCardID: UUID?
-    /// Why the last change to a card failed: a move, a follow-up, a dismissal.
+    /// Why the last change to a card failed: a move, a follow-up, a skip.
     var actionError: HubFailure?
     var showsOnlyDue = false
-    /// Shows the cards dismissed as not a good fit instead of the board.
-    var showsDismissed = false
+    /// Shows the skipped cards instead of the board.
+    var showsSkipped = false
 
     /// The board's cards for a phase, only the due ones when asked.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
@@ -32,17 +32,18 @@ final class PipelineModel {
         }
     }
 
-    /// Takes the card off the board as not a good fit, then reads the board again.
-    func dismiss(_ cardID: UUID, note: String, with client: HubClient) async {
+    /// Skips the card, taking it off the board without closing it, then reads
+    /// the board again.
+    func skip(_ cardID: UUID, note: String, with client: HubClient) async {
         do {
             _ = try await client.dismissApplication(cardID, note: note)
             await load(with: client)
         } catch {
-            actionError = HubFailure("Couldn't dismiss the card", error)
+            actionError = HubFailure("Couldn't skip the card", error)
         }
     }
 
-    /// Puts the card back in the phase it left, then reads the dismissed cards again.
+    /// Puts the card back in the phase it left, then reads the skipped cards again.
     func restore(_ cardID: UUID, with client: HubClient) async {
         do {
             _ = try await client.restoreApplication(cardID)
@@ -56,7 +57,7 @@ final class PipelineModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            board = PipelineBoard(try await showsDismissed ? client.getDismissedPipeline() : client.getPipeline())
+            board = PipelineBoard(try await showsSkipped ? client.getDismissedPipeline() : client.getPipeline())
             loadError = nil
         } catch {
             loadError = HubFailure("Couldn't load the pipeline", error)
@@ -103,8 +104,8 @@ struct PipelinePage: View {
     @State private var selectedCardID: UUID?
     @State private var followUpCardID: UUID?
     @State private var followUpNote = ""
-    @State private var dismissingCardID: UUID?
-    @State private var dismissalNote = ""
+    @State private var skippingCardID: UUID?
+    @State private var skipNote = ""
     /// A job whose card is selected once the board loads.
     let initialJobID: UUID?
 
@@ -123,7 +124,7 @@ struct PipelinePage: View {
                         }
                     }
                     .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                    .onChange(of: model.showsDismissed) {
+                    .onChange(of: model.showsSkipped) {
                         selectedCardID = nil
                         Task { await model.load(with: client) }
                     }
@@ -139,8 +140,8 @@ struct PipelinePage: View {
 
     private func describeCount() -> String {
         let count = model.board.cards.count
-        if model.showsDismissed {
-            return count == 1 ? "1 dismissed" : "\(count) dismissed"
+        if model.showsSkipped {
+            return count == 1 ? "1 skipped" : "\(count) skipped"
         }
         let applications = count == 1 ? "1 application" : "\(count) applications"
         guard let contacts = model.board.getContactTally(now: .now).text else { return applications }
@@ -160,9 +161,9 @@ struct PipelinePage: View {
                                 followUpNote = ""
                                 followUpCardID = cardID
                             },
-                            onDismiss: { cardID in
-                                dismissalNote = ""
-                                dismissingCardID = cardID
+                            onSkip: { cardID in
+                                skipNote = ""
+                                skippingCardID = cardID
                             },
                             onRestore: { cardID in Task { await model.restore(cardID, with: client) } }
                         ) { cardID, target in
@@ -177,8 +178,8 @@ struct PipelinePage: View {
         .toolbar {
             Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
                 .help("Show only the cards whose follow-up is due")
-            Toggle("Dismissed", systemImage: "eye.slash", isOn: $model.showsDismissed)
-                .help("Show the cards dismissed as not a good fit, where they can be restored")
+            Toggle("Skipped", systemImage: SetAside.skipped.symbolName, isOn: $model.showsSkipped)
+                .help("Show the skipped cards, where they can be restored")
         }
         .alert("Followed up", isPresented: Binding(get: { followUpCardID != nil }, set: { if !$0 { followUpCardID = nil } })) {
             TextField("What you did", text: $followUpNote)
@@ -202,15 +203,15 @@ struct PipelinePage: View {
                     .padding(Space.l)
             }
         }
-        .alert("Not a good fit", isPresented: Binding(get: { dismissingCardID != nil }, set: { if !$0 { dismissingCardID = nil } })) {
-            TextField("Note (optional)", text: $dismissalNote)
-            Button("Dismiss") {
-                guard let cardID = dismissingCardID else { return }
-                Task { await model.dismiss(cardID, note: dismissalNote, with: client) }
+        .alert("Skip the application", isPresented: Binding(get: { skippingCardID != nil }, set: { if !$0 { skippingCardID = nil } })) {
+            TextField("Reason (optional)", text: $skipNote)
+            Button("Skip") {
+                guard let cardID = skippingCardID else { return }
+                Task { await model.skip(cardID, note: skipNote, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The card leaves the board without closing, and its job leaves the Jobs list. Restore it from Dismissed.")
+            Text("The card leaves the board without closing, and its job leaves the Jobs list. Restore it from Skipped.")
         }
         .alert("Close the application", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
             TextField("Reason", text: $closedReason)
@@ -261,7 +262,7 @@ struct PipelineColumn: View {
     let width: CGFloat
     @Binding var selectedCardID: UUID?
     let onFollowUp: (UUID) -> Void
-    let onDismiss: (UUID) -> Void
+    let onSkip: (UUID) -> Void
     let onRestore: (UUID) -> Void
     let onMove: (UUID, PipelinePhase) -> Void
     @State private var isTargeted = false
@@ -294,7 +295,12 @@ struct PipelineColumn: View {
                                     }
                                     .disabled(movingCardID != nil)
                                     Divider()
-                                    Button("Not a good fit…") { onDismiss(card.id) }
+                                    // Ends the application with an outcome; Skip takes it out as not for you.
+                                    if let closedPhase = phases.first(where: \.isClosed), closedPhase.id != card.application.phaseID {
+                                        Button("Close…") { onMove(card.id, closedPhase) }
+                                            .disabled(movingCardID != nil)
+                                    }
+                                    Button("Skip…") { onSkip(card.id) }
                                 }
                             }
                     }
@@ -342,8 +348,8 @@ struct PipelineCardView: View {
                     .font(.hubCaption).foregroundStyle(SetAside.closed.tone.color).lineLimit(2)
             }
             if let dismissalReason = card.dismissalReason, !dismissalReason.isEmpty {
-                Label(dismissalReason, systemImage: SetAside.dismissed.symbolName)
-                    .font(.hubCaption).foregroundStyle(SetAside.dismissed.tone.color).lineLimit(2)
+                Label(dismissalReason, systemImage: SetAside.skipped.symbolName)
+                    .font(.hubCaption).foregroundStyle(SetAside.skipped.tone.color).lineLimit(2)
             }
             HStack {
                 Text(getTimeInPhaseText(days: card.getDaysInPhase(now: .now)))

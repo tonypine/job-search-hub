@@ -12,7 +12,7 @@ struct JobsFilterPopover: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.l) {
-                section("Fit") {
+                section("Screen") {
                     ForEach([FitLevel.good, .unclear, .poor], id: \.self) { level in
                         Toggle(describe(level.title, choices.fitLevelCounts[level, default: 0]), isOn: makeShownBinding(level, hiddenIn: \.hiddenFitLevels))
                     }

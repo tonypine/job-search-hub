@@ -1,7 +1,8 @@
 import Foundation
 
-/// How well a job fits the criteria, as the hub judged it. Poor when any
-/// check says no, good when every check says yes, unclear otherwise.
+/// The job's screen: whether a rule of the criteria rules it out, as the hub
+/// judged it. Poor (Fails) when any check says no, good (Passes) when every
+/// check says yes, unclear otherwise. The hub calls it the fit.
 public struct JobFit: Codable, Equatable, Sendable {
     public var level: FitLevel
     public var checks: [FitCheck]
@@ -10,7 +11,23 @@ public struct JobFit: Codable, Equatable, Sendable {
 public enum FitLevel: String, Codable, Comparable, Sendable {
     case good, unclear, poor
 
-    public var title: String { rawValue.capitalized }
+    /// The screen's word: "Passes", "Unclear" or "Fails".
+    public var title: String {
+        switch self {
+        case .good: "Passes"
+        case .unclear: "Unclear"
+        case .poor: "Fails"
+        }
+    }
+
+    /// The screen as a chip on its own reads it: "Passes screen".
+    public var label: String {
+        switch self {
+        case .good: "Passes screen"
+        case .unclear: "Screen unclear"
+        case .poor: "Fails screen"
+        }
+    }
 
     /// Good sorts first, poor last.
     var rank: Int {
@@ -37,7 +54,7 @@ public enum FitVerdict: String, Codable, Sendable {
 }
 
 public enum JobsOrder {
-    /// Best fit first, then newest first.
+    /// Passes the screen first, then newest first.
     public static func sort(_ items: [JobListItem]) -> [JobListItem] {
         items.sorted { left, right in
             if left.fit.level != right.fit.level {

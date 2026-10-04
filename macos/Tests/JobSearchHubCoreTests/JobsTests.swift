@@ -112,7 +112,7 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     #expect(restoreBody?["reason"] == nil)
 }
 
-@Test func dismissedJobsAreAStatusOfTheirOwn() {
+@Test func skippedJobsAreAStatusOfTheirOwnThatTheHubCallsDismissed() {
     #expect(JobsQuery.makeItems(search: "", status: .dismissed, limit: 100).contains(URLQueryItem(name: "status", value: "dismissed")))
-    #expect(JobStatusFilter.dismissed.title == "Dismissed")
+    #expect(JobStatusFilter.dismissed.title == "Skipped")
 }

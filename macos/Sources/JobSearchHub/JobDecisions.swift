@@ -2,13 +2,14 @@ import JobSearchHubCore
 import SwiftUI
 
 /// Records the owner's decisions on jobs for any page or panel: pursue,
-/// skip, later, and the dismissals and restores a skip is. It lives as long
+/// skip, later, and the skips and restores of whole lists, which the hub
+/// calls dismissals. It lives as long
 /// as the app, so the pages showing jobs read again after a decision made
 /// elsewhere.
 @MainActor
 @Observable
 final class JobDecisions {
-    /// Bumps after each decision, dismissal or restore, so the pages showing
+    /// Bumps after each decision, skip or restore, so the pages showing
     /// jobs read again.
     private(set) var revision = 0
 
@@ -31,8 +32,8 @@ final class JobDecisions {
     }
 }
 
-/// The jobs a dismissal sheet is open for.
-struct JobDismissalTarget: Identifiable {
+/// The jobs a Skip sheet is open for.
+struct JobSkipTarget: Identifiable {
     let jobIDs: Set<UUID>
     var id: Set<UUID> { jobIDs }
 }
@@ -43,36 +44,34 @@ struct JobFixTarget: Identifiable {
     let title: String
 }
 
-/// Asks why the jobs are dismissed, which is optional, then dismisses them.
-struct DismissJobsSheet: View {
+/// Asks why the jobs are skipped, which is optional, then skips them.
+struct SkipJobsSheet: View {
     let jobCount: Int
-    /// The action as the sheet names it: "Dismiss", or "Skip" from a brief.
-    var actionName = "Dismiss"
-    /// Dismisses the jobs, or says what failed.
-    let onDismiss: (String) async -> HubFailure?
+    /// Skips the jobs, or says what failed.
+    let onSkip: (String) async -> HubFailure?
     @Environment(\.dismiss) private var closeSheet
     @State private var reason = ""
     @State private var failure: HubFailure?
 
     var body: some View {
         Form {
-            Text(jobCount == 1 ? "\(actionName) this job?" : "\(actionName) \(jobCount) jobs?").font(.hubSection)
-            Text("Dismissed jobs leave the list and stay dismissed when their board lists them again. Restore them from the Dismissed status.")
+            Text(jobCount == 1 ? "Skip this job?" : "Skip \(jobCount) jobs?").font(.hubSection)
+            Text("Skipped jobs leave the list and stay skipped when their board lists them again. Restore them from the Skipped status.")
                 .font(.hubSecondary).foregroundStyle(.secondary)
             TextField("Reason", text: $reason, prompt: Text("Optional, e.g. agency, US only"))
-                .accessibilityLabel("Dismissal reason")
+                .accessibilityLabel("Reason for skipping")
             if let failure {
                 HubErrorView(failure)
             }
             HStack {
                 Spacer()
                 Button("Cancel") { closeSheet() }
-                AsyncButton(actionName, busyTitle: "\(actionName == "Skip" ? "Skipping" : "Dismissing")…") {
-                    failure = await onDismiss(reason)
+                AsyncButton("Skip", busyTitle: "Skipping…") {
+                    failure = await onSkip(reason)
                     if failure == nil { closeSheet() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .accessibilityLabel("Confirm dismissal")
+                .accessibilityLabel("Confirm skipping")
             }
         }
         .formStyle(.grouped)

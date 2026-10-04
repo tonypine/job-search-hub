@@ -27,6 +27,35 @@ private let briefedDetailsJSON = #"""
     #expect(details.decision?.decision == .later && details.decision?.decision.pastTense == "Left for later")
 }
 
+@Test func theScreenListsScreenOutAnswersThenTheFitChecksTheyDoNotRepeat() throws {
+    let json = #"""
+    {"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Frontend Engineer","url":"https://acme.com/1",
+            "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
+     "fit":{"level":"unclear","checks":[{"name":"Where they hire","verdict":"yes","reason":"open to someone in Brazil"},
+                                        {"name":"Stack","verdict":"unclear","reason":"no stack named"}]},
+     "unseen_updates":0,
+     "screen_out":[{"name":"Hires from Brazil","verdict":"yes","answer":"open to someone in Brazil","evidence":"Americas Remote"},
+                   {"name":"Contract","answer":"the posting doesn't say"}]}
+    """#
+    let details = try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(json.utf8))
+
+    #expect(details.screenRows == [
+        ScreenRow(name: "Hires from Brazil", verdict: .yes, reason: "open to someone in Brazil", evidence: "Americas Remote"),
+        ScreenRow(name: "Contract", verdict: nil, reason: "the posting doesn't say"),
+        ScreenRow(name: "Stack", verdict: .unclear, reason: "no stack named"),
+    ])
+}
+
+@Test func withoutScreenOutAnswersTheScreenIsTheFitChecks() throws {
+    let details = try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(#"""
+    {"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Frontend Engineer","url":"https://acme.com/1",
+            "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
+     "fit":{"level":"poor","checks":[{"name":"Level","verdict":"no","reason":"junior"}]},"unseen_updates":0}
+    """#.utf8))
+
+    #expect(details.screenRows == [ScreenRow(name: "Level", verdict: .no, reason: "junior")])
+}
+
 @Test func aDecisionAndAFullBriefAreAskedFor() async throws {
     let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
     let (session, recording) = StubHub.makeSession(answers: [

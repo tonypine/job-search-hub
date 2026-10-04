@@ -14,7 +14,7 @@ import Testing
     """#
     let recruiters = try HubJSON.makeDecoder().decode(RecruitersResponse.self, from: Data(json.utf8)).recruiters
 
-    #expect(recruiters[0].openingsText == "3 open, 1 fit" && recruiters[1].openingsText.isEmpty)
+    #expect(recruiters[0].openingsText == "3 open, 1 passes the screen" && recruiters[1].openingsText.isEmpty)
     #expect(RecruiterFilter(hiringNowOnly: true).apply(to: recruiters).map(\.startedByName) == ["Rita"])
     #expect(RecruiterFilter(unansweredOnly: true).apply(to: recruiters).map(\.startedByName) == ["Rita"])
     #expect(RecruiterFilter().apply(to: recruiters).count == 2)

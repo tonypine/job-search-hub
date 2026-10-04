@@ -26,6 +26,30 @@ public struct JobDetails: Decodable, Equatable, Sendable {
     }
 }
 
+/// One row of a job's Screen: a rule, its verdict, why, and the posting's
+/// words when there are some. A nil verdict is information no rule judges.
+public struct ScreenRow: Equatable, Sendable {
+    public var name: String
+    public var verdict: FitVerdict?
+    public var reason: String
+    public var evidence: String?
+}
+
+public extension JobDetails {
+    /// The job's Screen: the screen-out answers, then the fit checks they
+    /// don't already answer. The hub answers some screen-out checks from a fit
+    /// check under another name, with the check's verdict and reason, so those
+    /// show once.
+    var screenRows: [ScreenRow] {
+        let answers = screenOut ?? []
+        let answerRows = answers.map { ScreenRow(name: $0.name, verdict: $0.verdict, reason: $0.answer, evidence: $0.evidence) }
+        let checkRows = fit.checks
+            .filter { check in !answers.contains { $0.verdict == check.verdict && $0.answer == check.reason } }
+            .map { ScreenRow(name: $0.name, verdict: $0.verdict, reason: $0.reason) }
+        return answerRows + checkRows
+    }
+}
+
 /// A job's facts in the order and with the labels of the prompt version they
 /// were read under.
 public struct LabelledJobFacts: Decodable, Equatable, Sendable {

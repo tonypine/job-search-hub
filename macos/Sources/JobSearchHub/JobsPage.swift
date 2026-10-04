@@ -76,20 +76,20 @@ final class JobsModel {
         toast = ToastMessage(text: ids.count == 1 ? "Pursued 1 job" : "Pursued \(ids.count) jobs")
     }
 
-    /// Dismisses the jobs and reports it, with Undo, or returns why it failed.
-    func dismiss(_ ids: Set<UUID>, reason: String, through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
+    /// Skips the jobs and reports it, with Undo, or returns why it failed.
+    func skip(_ ids: Set<UUID>, reason: String, through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
         do {
             let jobs = try await decisions.dismiss(ids, reason: reason, with: client)
             selectedIDs.subtract(ids)
             toast = ToastMessage(
-                text: jobs.count == 1 ? "Dismissed 1 job" : "Dismissed \(jobs.count) jobs", tone: SetAside.dismissed.tone,
-                symbol: SetAside.dismissed.symbolName
+                text: jobs.count == 1 ? "Skipped 1 job" : "Skipped \(jobs.count) jobs", tone: SetAside.skipped.tone,
+                symbol: SetAside.skipped.symbolName
             ) { [weak self] in
                 Task { await self?.restore(ids, through: decisions, with: client, reports: false) }
             }
             return nil
         } catch {
-            return HubFailure("Couldn't dismiss the jobs", error)
+            return HubFailure("Couldn't skip the jobs", error)
         }
     }
 
@@ -116,7 +116,7 @@ struct JobsPage: View {
     @Environment(JobDecisions.self) private var decisions
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
-    @State private var dismissal: JobDismissalTarget?
+    @State private var skipping: JobSkipTarget?
     @State private var fix: JobFixTarget?
     @Environment(RemoteTaskRunner.self) private var taskRunner
     @State private var isShowingFilters = false
@@ -154,9 +154,9 @@ struct JobsPage: View {
                         // Closing the details of one job deselects it; several selected jobs show no details at all.
                         if details.getSubject(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
                     }
-                    .sheet(item: $dismissal) { target in
-                        DismissJobsSheet(jobCount: target.jobIDs.count) { reason in
-                            await model.dismiss(target.jobIDs, reason: reason, through: decisions, with: client)
+                    .sheet(item: $skipping) { target in
+                        SkipJobsSheet(jobCount: target.jobIDs.count) { reason in
+                            await model.skip(target.jobIDs, reason: reason, through: decisions, with: client)
                         }
                     }
                     .sheet(item: $fix) { target in
@@ -182,8 +182,8 @@ struct JobsPage: View {
         .navigationSubtitle(describeCounts())
     }
 
-    /// Starts the hub generating the CVs good fits and pursued jobs lack,
-    /// and says how many it will make.
+    /// Starts the hub generating the CVs that jobs passing the screen and
+    /// pursued jobs lack, and says how many it will make.
     private func generateMissingCVs(with client: HubClient) async {
         do {
             let queued = try await client.generateMissingCVs()
@@ -195,17 +195,17 @@ struct JobsPage: View {
         }
     }
 
-    /// How many jobs show out of all, and how many of those are good fits.
+    /// How many jobs show out of all, and how many of those pass the screen.
     private func describeCounts() -> String {
         let shownItems = model.getMatchingItems(filter.wrappedValue)
-        let goodCount = shownItems.count { $0.fit.level == .good }
+        let passCount = shownItems.count { $0.fit.level == .good }
         let jobCount = model.total == shownItems.count ? "\(model.total) jobs" : "\(shownItems.count) of \(model.total) jobs"
-        return "\(jobCount) · " + (goodCount == 1 ? "1 good fit" : "\(goodCount) good fits")
+        return "\(jobCount) · " + (passCount == 1 ? "1 passes the screen" : "\(passCount) pass the screen")
     }
 
     private func table(client: HubClient) -> some View {
         Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
-            TableColumn("Fit", sortUsing: JobsSortComparator(.fit)) { item in ToneChip(item.fit.level) }
+            TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in ToneChip(item.fit.level) }
                 .width(70)
                 .customizationID("fit")
             TableColumn("Title", sortUsing: JobsSortComparator(.title)) { item in
@@ -213,7 +213,7 @@ struct JobsPage: View {
                     UnseenDot(count: item.unseenUpdates)
                     Text(item.job.title).help(item.job.title).layoutPriority(1)
                     if let reason = item.job.dismissalReason, !reason.isEmpty {
-                        Text(reason).foregroundStyle(.secondary).help("Dismissed: \(reason)")
+                        Text(reason).foregroundStyle(.secondary).help("Skipped: \(reason)")
                     }
                     if item.isNew(since: model.previousVisit) {
                         ToneChip("New", tone: .accent)
@@ -276,7 +276,7 @@ struct JobsPage: View {
                 Button("Restore") { Task { await model.restore(ids, through: decisions, with: client) } }
                     .disabled(ids.isEmpty)
             } else {
-                Button("Dismiss…") { dismissal = JobDismissalTarget(jobIDs: ids) }
+                Button("Skip…") { skipping = JobSkipTarget(jobIDs: ids) }
                     .disabled(ids.isEmpty)
             }
         } primaryAction: { ids in
@@ -284,7 +284,7 @@ struct JobsPage: View {
         }
         .onDeleteCommand {
             if model.status != .dismissed && !model.selectedIDs.isEmpty {
-                dismissal = JobDismissalTarget(jobIDs: model.selectedIDs)
+                skipping = JobSkipTarget(jobIDs: model.selectedIDs)
             }
         }
         .toolbar {
@@ -309,14 +309,14 @@ struct JobsPage: View {
             }
             .labelStyle(.titleAndIcon)
             .fixedSize()
-            .help("Show open, closed, all or dismissed jobs")
+            .help("Show open, closed, all or skipped jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
             Menu("Add", systemImage: "plus") {
                 Button("Job by URL…") { isAddingByURL = true }
                 Button("Generate missing CVs") { Task { await generateMissingCVs(with: client) } }
-                    .help("Draft and print a CV for every good-fit or pursued job that has none")
+                    .help("Draft and print a CV for every job that passes the screen or is pursued and has none")
             }
-            .help("Add a job by URL (⌘N), or the CVs good fits lack")
+            .help("Add a job by URL (⌘N), or the CVs screened-in jobs lack")
             ToolbarSearchField(text: $model.search, prompt: "Title, location or company")
                 .frame(width: 180)
         }
@@ -324,7 +324,7 @@ struct JobsPage: View {
             if let loadError = model.loadError {
                 HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
             } else if model.items.isEmpty && !model.isLoading && model.status == .dismissed {
-                ContentUnavailableView("No dismissed jobs", systemImage: "tray", description: Text("Jobs dismissed from the list show here, where they can be restored."))
+                ContentUnavailableView("No skipped jobs", systemImage: "tray", description: Text("Jobs skipped from the list show here, where they can be restored."))
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("No jobs", systemImage: "briefcase", description: Text("Jobs from watched companies' boards appear here after the next poll."))
             } else if model.getMatchingItems(filter.wrappedValue).isEmpty && !model.isLoading {
