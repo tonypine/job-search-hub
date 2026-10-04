@@ -23,10 +23,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.tonypine.jobsearchhub.HubState
 import com.tonypine.jobsearchhub.core.HubUpdate
+import com.tonypine.jobsearchhub.ui.design.HubErrorView
+import com.tonypine.jobsearchhub.ui.design.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,9 +45,9 @@ fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, 
         )
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                state.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
+                state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
                 if (state.updates.isEmpty() && !state.isLoading && state.error == null) {
-                    item { Text("No updates yet.", modifier = Modifier.padding(16.dp)) }
+                    item { Text("No updates yet.", modifier = Modifier.padding(Spacing.l)) }
                 }
                 items(state.updates, key = { it.id }) { update ->
                     UpdateRow(update) {
@@ -65,7 +66,7 @@ fun UpdatesScreen(state: HubState, onRefresh: () -> Unit, onUnpair: () -> Unit, 
 
 @Composable
 private fun UpdateRow(update: HubUpdate, onOpen: () -> Unit) {
-    Column(Modifier.clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(Modifier.clickable(onClick = onOpen).padding(horizontal = Spacing.l, vertical = Spacing.m)) {
         Text(update.title, fontWeight = if (update.seenAt == null) FontWeight.Bold else FontWeight.Normal)
         listOfNotNull(update.companyName, update.jobTitle).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)

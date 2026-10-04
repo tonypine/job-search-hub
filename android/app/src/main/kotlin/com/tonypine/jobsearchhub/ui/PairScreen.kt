@@ -20,10 +20,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.tonypine.jobsearchhub.ui.design.Spacing
 
 /** Pairs the phone with the hub through the Mac's QR code, or its link pasted. */
 @Composable
@@ -32,8 +32,8 @@ fun PairScreen(error: String?, onPair: (String) -> Boolean) {
     var link by remember { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, alignment = androidx.compose.ui.Alignment.CenterVertically),
+        modifier = Modifier.fillMaxSize().padding(Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.l, alignment = androidx.compose.ui.Alignment.CenterVertically),
     ) {
         Text("Pair with your hub", style = MaterialTheme.typography.headlineSmall)
         Text(
