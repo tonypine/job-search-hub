@@ -236,12 +236,18 @@ var (
 		"preferred", "preferably", "prefer", "prefers", "preference", "ideally", "nice to have", "a plus", "bonus",
 		"preferencialmente", "preferencia", "preferible", "preferiblemente", "desejavel", "deseable", "diferencial",
 	}
-	timeZoneWords = []string{
-		"time zone", "time zones", "timezone", "timezones", "hours", "overlap",
-		"eastern time", "central time", "mountain time", "pacific time",
-		"utc", "gmt", "est", "edt", "pst", "pdt", "cst", "cdt", "mst", "mdt", "cet", "cest", "brt", "fuso horario", "horario",
+	workingHoursWords = []string{
+		"time zone", "time zones", "timezone", "timezones", "hours", "overlap", "fuso horario", "horario",
 	}
-	softeningWords = slices.Concat(preferenceWords, timeZoneWords)
+	zoneNames = []string{
+		"eastern time", "central time", "mountain time", "pacific time",
+		"utc", "gmt", "est", "edt", "pst", "pdt", "cst", "cdt", "mst", "mdt", "cet", "cest", "brt",
+	}
+	softeningWords = slices.Concat(preferenceWords, workingHoursWords, zoneNames)
+	// qualifierWords soften the place they come with. A zone name alone
+	// doesn't: in "Austin TX CST" it only tags the city.
+	qualifierWords = slices.Concat(preferenceWords, workingHoursWords)
+	zoneOnlyWords  = slices.Concat(zoneNames, []string{"to", "or", "and", "remote"})
 )
 
 // getSoftener returns "a preference" or "a time zone" when every place a
@@ -283,20 +289,21 @@ func isPartSeparator(character rune) bool {
 // it, since "UTC-5" is one time zone.
 var placeJoiners = strings.NewReplacer(" - ", "/", " – ", "/", "—", "/", "|", "/")
 
-// isSoftened reports whether a place comes with a preference or a time zone.
-// Places joined by slashes, spaced dashes or bars share one written before
-// the first or after the last of them, as in "preferably US/Canada" and
-// "US/Canada time zones", unless it stands alone, as in "US/EST" or "US -
-// EST".
+// isSoftened reports whether a place comes with a preference or working
+// hours, or is only a time zone, as "EST" and "UTC-5 to UTC+1" are. A zone
+// name beside a place only tags it, as in "Austin TX CST". Places joined by
+// slashes, spaced dashes or bars share a qualifier written before the first
+// or after the last of them, as in "preferably US/Canada" and "US/Canada
+// time zones", unless it stands alone, as in "US/EST" or "US - EST".
 func isSoftened(place string) bool {
 	alternatives := strings.Split(placeJoiners.Replace(place), "/")
 	for _, edge := range []string{alternatives[0], alternatives[len(alternatives)-1]} {
-		if hasAnyTerm([]string{edge}, softeningWords...) && !isOnlyWordsOf(edge, softeningWords) {
+		if hasAnyTerm([]string{edge}, qualifierWords...) && !isOnlyWordsOf(edge, softeningWords) {
 			return true
 		}
 	}
 	for _, alternative := range alternatives {
-		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, softeningWords...) {
+		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, qualifierWords...) && !isOnlyWordsOf(alternative, zoneOnlyWords) {
 			return false
 		}
 	}

@@ -83,6 +83,13 @@ func TestWhereTheyHire(t *testing.T) {
 		{"a country beside a time zone spelled out", store.Job{Location: "Remote (US, Eastern Time)"}, "not stated", jobfit.VerdictNo},
 		{"a country in the location beside a preference read from the text", store.Job{Location: "United States (Remote)"}, "North America preferred", jobfit.VerdictNo},
 		{"working hours in the location beside a preference read from the text", store.Job{Location: "Remote (US time zones)"}, "North America preferred", jobfit.VerdictUnclear},
+		{"a country and a time zone joined by a space", store.Job{Location: "Remote (US EST)"}, "not stated", jobfit.VerdictNo},
+		{"a country and a time zone with no punctuation", store.Job{Location: "Remote US EST"}, "not stated", jobfit.VerdictNo},
+		{"a city and a time zone joined by a space", store.Job{Location: "Austin TX CST"}, "not stated", jobfit.VerdictNo},
+		{"a city beside a US time zone", store.Job{Location: "New York EST"}, "not stated", jobfit.VerdictNo},
+		{"a city beside GMT", store.Job{Location: "London GMT"}, "not stated", jobfit.VerdictNo},
+		{"only a time zone", store.Job{Location: "Remote (EST)"}, "not stated", jobfit.VerdictUnclear},
+		{"a time zone with an hours range", store.Job{Location: "Remote, CET ± 3 hours"}, "not stated", jobfit.VerdictUnclear},
 	} {
 		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != test.want {
@@ -121,6 +128,12 @@ func TestCouldFitKeepsPostingsThatOnlyPreferARegion(t *testing.T) {
 		"Austin, TX (CST)":                false,
 		"Remote, US - EST":                false,
 		"Remote, preferably US/Canada":    true,
+		"Remote (US EST)":                 false,
+		"Remote US EST":                   false,
+		"Austin TX CST":                   false,
+		"New York EST":                    false,
+		"London GMT":                      false,
+		"Remote (EST)":                    true,
 	} {
 		posting := store.JobPosting{Title: "Senior React Engineer", Location: location}
 		if got := jobfit.CouldFit(posting, criteria); got != want {
