@@ -48,3 +48,50 @@ func TestTheOwnerMovesACardByItsJobAndAnAgentCant(t *testing.T) {
 		t.Errorf("an agent moving a card: %s", text)
 	}
 }
+
+func TestTheOwnerRecordsOutreachAndAFollowUpAndAnAgentCant(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	company, _, err := hub.store.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := connect(t, hub, ownerToken)
+
+	twoDaysAgo := time.Now().AddDate(0, 0, -2).Format(time.DateOnly)
+	type outreachOutput struct {
+		Application store.Application `json:"application"`
+		Created     bool              `json:"created"`
+	}
+	outreach := callTool[outreachOutput](t, session, "record_outreach", map[string]any{
+		"domain": "acme.example", "note": "LinkedIn message to the engineering lead", "sent_on": twoDaysAgo,
+	})
+	card := outreach.Application
+	if !outreach.Created || card.JobID != nil || card.CompanyID == nil || *card.CompanyID != company.ID || card.PhaseEnteredAt.Format(time.DateOnly) != twoDaysAgo {
+		t.Fatalf("outreach = %+v; want a new outreach card in Applied since %s", outreach, twoDaysAgo)
+	}
+
+	followedUp := callTool[store.Application](t, session, "record_follow_up", map[string]any{"application_id": card.ID, "note": "Emailed the recruiter"})
+	if followedUp.ID != card.ID || followedUp.LastFollowedUpAt == nil {
+		t.Fatalf("follow-up = %+v; want the card followed up", followedUp)
+	}
+	var followUps int
+	if err := hub.pool.QueryRow(ctx, `SELECT count(*) FROM changes WHERE entity_id = $1 AND operation = 'follow_up'`, card.ID).Scan(&followUps); err != nil || followUps != 1 {
+		t.Errorf("follow-up changes = %d, %v", followUps, err)
+	}
+
+	if text := callRefusedTool(t, session, "record_outreach", map[string]any{"company_id": company.ID, "sent_on": "last week"}); !strings.Contains(text, "YYYY-MM-DD") {
+		t.Errorf("a day that isn't a date: %s", text)
+	}
+	if text := callRefusedTool(t, session, "record_follow_up", map[string]any{"note": "?"}); !strings.Contains(text, "application_id") {
+		t.Errorf("a follow-up naming no card: %s", text)
+	}
+	_, agentToken := startAgentRun(t, hub, time.Now().Add(time.Hour))
+	agent := connect(t, hub, agentToken)
+	for _, tool := range []string{"record_outreach", "record_follow_up"} {
+		if text := callRefusedTool(t, agent, tool, map[string]any{"company_id": company.ID, "application_id": card.ID}); !strings.Contains(text, "unknown tool") {
+			t.Errorf("an agent calling %s: %s", tool, text)
+		}
+	}
+}
