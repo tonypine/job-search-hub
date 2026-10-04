@@ -2,9 +2,16 @@ import JobSearchHubCore
 import Testing
 
 @Test func theSidebarListsThePagesInOrder() {
-    #expect(Page.allCases.map(\.title) == [
-        "Decide", "Pipeline", "Updates", "Jobs", "Companies", "People", "Profile", "Criteria", "Activity", "Prompts", "Model lab",
+    #expect(SidebarGroup.allCases.flatMap(\.pages).map(\.title) == [
+        "Today", "Decide", "Pipeline", "Jobs", "Companies", "People", "Profile", "Criteria", "Activity", "Prompts", "Model lab",
     ])
+}
+
+@Test func todayReplacesUpdatesInTheSidebar() {
+    #expect(Page.allCases.first == .today)
+    #expect(!Page.updates.isInSidebar)
+    #expect(Page.allCases.filter { !$0.isInSidebar } == [.updates])
+    #expect(Page(rawValue: "updates") == .updates)
 }
 
 @Test func eachPageNamesItsOwnSymbol() {
@@ -13,14 +20,14 @@ import Testing
 
 @Test func theSidebarGroupsPagesByIntent() {
     #expect(SidebarGroup.allCases.map(\.title) == [nil, "Browse", "You", "Hub"])
-    #expect(SidebarGroup.work.pages == [.decide, .pipeline, .updates])
+    #expect(SidebarGroup.work.pages == [.today, .decide, .pipeline])
     #expect(SidebarGroup.browse.pages == [.jobs, .companies, .people])
     #expect(SidebarGroup.you.pages == [.profile, .criteria])
     #expect(SidebarGroup.hub.pages == [.activity, .prompts, .modelLab])
 }
 
 @Test func theGroupsKeepThePagesInSidebarOrder() {
-    #expect(SidebarGroup.allCases.flatMap(\.pages) == Page.allCases)
+    #expect(SidebarGroup.allCases.flatMap(\.pages) == Page.allCases.filter(\.isInSidebar))
 }
 
 @Test func onlyTheHubStartsCollapsed() {
@@ -28,6 +35,7 @@ import Testing
 }
 
 @Test func pagesOpenFromTheirLaunchArgument() {
+    #expect(Page(rawValue: "today") == .today)
     #expect(Page(rawValue: "activity") == .activity)
     #expect(Page(rawValue: "model-lab") == .modelLab)
     #expect(Page(rawValue: "people") == .people)

@@ -1,9 +1,9 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The sidebar's badges besides Updates: the jobs waiting in the Decide
-/// queue, and the Pipeline's follow-ups due today or overdue. A failed read
-/// keeps the last counts.
+/// The sidebar's badges besides Today's unseen updates: the jobs waiting in
+/// the Decide queue, and the Pipeline's follow-ups due today or overdue. A
+/// failed read keeps the last counts.
 @MainActor
 @Observable
 final class SidebarCounts {
@@ -25,7 +25,7 @@ final class SidebarCounts {
         switch page {
         case .decide: toDecide
         case .pipeline: followUpsDue
-        case .updates: unseen
+        case .today: unseen
         default: 0
         }
     }
