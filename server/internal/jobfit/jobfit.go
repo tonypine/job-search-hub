@@ -210,10 +210,11 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if named == "" {
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
 	}
-	if !hasAnyTerm(texts, residencyRuleWords...) {
-		if softener := getSoftener(named); softener != "" {
+	if softener := getSoftener(named); softener != "" && !hasAnyTerm(texts, residencyRuleWords...) {
+		if isOnlyRemote(job.Location) || getSoftener(job.Location) != "" {
 			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only %s: %q", softener, named)}
 		}
+		named = job.Location
 	}
 	return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("names only %q", named)}
 }
@@ -221,7 +222,8 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 // A place a posting names reads as a residency rule, unless it is only
 // preferred, as in "Remote, North America preferred", or only sets working
 // hours, as in "Remote (US time zones)": those postings may still hire in
-// Brazil. Any word that requires keeps it a rule.
+// Brazil. Any word that requires keeps it a rule, and so does a location
+// that names a place on its own, as "United States (Remote)" does.
 var (
 	residencyRuleWords = []string{
 		"must", "only", "required", "requires", "require", "requirement", "mandatory", "need to", "needs to",
@@ -236,9 +238,10 @@ var (
 	}
 	timeZoneWords = []string{
 		"time zone", "time zones", "timezone", "timezones", "hours", "overlap",
+		"eastern time", "central time", "mountain time", "pacific time",
 		"utc", "gmt", "est", "edt", "pst", "pdt", "cst", "cdt", "mst", "mdt", "cet", "cest", "brt", "fuso horario", "horario",
 	}
-	softeningWords = append(append([]string{}, preferenceWords...), timeZoneWords...)
+	softeningWords = slices.Concat(preferenceWords, timeZoneWords)
 )
 
 // getSoftener returns "a preference" or "a time zone" when every place a
@@ -276,17 +279,21 @@ func isPartSeparator(character rune) bool {
 	return strings.ContainsRune(",;()", character)
 }
 
+// placeJoiners are read as slashes. A hyphen joins only with spaces around
+// it, since "UTC-5" is one time zone.
+var placeJoiners = strings.NewReplacer(" - ", "/", " – ", "/", "—", "/", "|", "/")
+
 // isSoftened reports whether a place comes with a preference or a time zone.
-// Places joined by slashes share the one after the last of them, as in
-// "US/Canada time zones", unless it stands alone, as in "US/EST".
+// Places joined by slashes, spaced dashes or bars share one written before
+// the first or after the last of them, as in "preferably US/Canada" and
+// "US/Canada time zones", unless it stands alone, as in "US/EST" or "US -
+// EST".
 func isSoftened(place string) bool {
-	alternatives := strings.Split(place, "/")
-	last := alternatives[len(alternatives)-1]
-	if !hasAnyTerm([]string{last}, softeningWords...) {
-		return false
-	}
-	if !isOnlyWordsOf(last, softeningWords) {
-		return true
+	alternatives := strings.Split(placeJoiners.Replace(place), "/")
+	for _, edge := range []string{alternatives[0], alternatives[len(alternatives)-1]} {
+		if hasAnyTerm([]string{edge}, softeningWords...) && !isOnlyWordsOf(edge, softeningWords) {
+			return true
+		}
 	}
 	for _, alternative := range alternatives {
 		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, softeningWords...) {
@@ -306,7 +313,7 @@ func isOnlyWordsOf(text string, terms []string) bool {
 		}
 	}
 	for _, word := range getWords(text) {
-		if !known[word] && strings.Trim(word, "0123456789") != "" {
+		if !known[word] && !isNumber(word) {
 			return false
 		}
 	}
@@ -315,17 +322,21 @@ func isOnlyWordsOf(text string, terms []string) bool {
 
 // remoteWords say a job is remote without saying where, as in "Fully
 // remote", "100% remoto" or "Trabalho remoto".
-var remoteWords = map[string]bool{"remote": true, "remoto": true, "remota": true, "fully": true, "100": true, "trabalho": true}
+var remoteWords = map[string]bool{"remote": true, "remoto": true, "remota": true, "fully": true, "trabalho": true}
 
 // isOnlyRemote reports whether a location says nothing about where, such as
-// "Remote".
+// "Remote", or the "9:00" of "9:00 - 17:00 EST".
 func isOnlyRemote(location string) bool {
 	for _, word := range getWords(location) {
-		if !remoteWords[word] {
+		if !remoteWords[word] && !isNumber(word) {
 			return false
 		}
 	}
 	return true
+}
+
+func isNumber(word string) bool {
+	return strings.Trim(word, "0123456789") == ""
 }
 
 // getWords returns the normalized words of a text: "100% Remoto" has "100"
