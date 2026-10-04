@@ -25,7 +25,7 @@ struct JobSearchHubApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Job Search Hub") {
+        WindowGroup("Job Search Hub", id: MainWindowOpener.sceneID) {
             ContentView(
                 initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments(),
                 opensSession: ProcessInfo.processInfo.arguments.contains("--session")
@@ -77,7 +77,7 @@ struct JobSearchHubApp: App {
         }
         .defaultSize(width: 1400, height: 860)
         .commands {
-            HubCommands(events: events)
+            HubCommands(events: events, mainWindow: appDelegate.mainWindow)
         }
 
         // A session opened in a window of its own, out of the inspector's width.
