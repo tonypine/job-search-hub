@@ -25,7 +25,9 @@ struct JobSearchHubApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Job Search Hub") {
+        // A stable id keeps the scene's identity, and so its saved window state,
+        // from changing with the content's modifiers.
+        WindowGroup("Job Search Hub", id: "main") {
             ContentView(
                 initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments(),
                 opensSession: ProcessInfo.processInfo.arguments.contains("--session")
