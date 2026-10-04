@@ -1,6 +1,5 @@
 import AppKit
 import JobSearchHubCore
-import SwiftUI
 import UserNotifications
 
 /// Shows the app's notifications as banners even while the app is in front;
@@ -8,7 +7,6 @@ import UserNotifications
 /// Command-F with full screen, and opens the main window when launch ends
 /// without one.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    let mainWindow = MainWindowOpener()
     private var fullScreenShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -20,16 +18,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // done, the app opens the main window itself if none shows.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
-            openMainWindowIfNone()
+            Self.openMainWindowIfNone()
         }
     }
 
-    @MainActor private func openMainWindowIfNone() {
+    /// Opens the main window through SwiftUI's own app delegate, which is
+    /// `NSApp.delegate` and opens a window of the main scene on
+    /// `showNewMainWindow:`. This stays out of the views and the menu
+    /// commands, whose updates feed the toolbar. Should macOS drop that
+    /// action, the public untitled-file call opens the app's initial window.
+    @MainActor private static func openMainWindowIfNone() {
         let windows = NSApp.windows.map {
             LaunchWindow(isVisible: $0.isVisible, isMiniaturized: $0.isMiniaturized, canBecomeMain: $0.canBecomeMain)
         }
-        if LaunchWindows.needsMainWindow(windows, isAppHidden: NSApp.isHidden) {
-            mainWindow.open()
+        guard LaunchWindows.needsMainWindow(windows, isAppHidden: NSApp.isHidden) else { return }
+        if !NSApp.sendAction(Selector(("showNewMainWindow:")), to: nil, from: nil) {
+            _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
         }
     }
 
@@ -49,23 +53,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         else { return event }
         window.toggleFullScreen(nil)
         return nil
-    }
-}
-
-/// Opens the main window from outside SwiftUI's views. The menu commands
-/// hand over SwiftUI's open-window action, which they get even while no
-/// window is open.
-@MainActor final class MainWindowOpener {
-    /// The main `WindowGroup`'s id, which keeps its identity, and so its
-    /// saved window state, from changing with the content's modifiers.
-    static let sceneID = "main"
-    private var openWindow: OpenWindowAction?
-
-    func remember(_ openWindow: OpenWindowAction) {
-        self.openWindow = openWindow
-    }
-
-    func open() {
-        openWindow?(id: Self.sceneID)
     }
 }

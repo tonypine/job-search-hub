@@ -13,16 +13,12 @@ extension FocusedValues {
 }
 
 /// The app's menu commands: the page's Add in the File menu, and Refresh in
-/// the View menu for when the event stream missed something. They also hand
-/// the open-window action to the app delegate, for a launch without a window.
+/// the View menu for when the event stream missed something.
 struct HubCommands: Commands {
     let events: HubEventStream
-    let mainWindow: MainWindowOpener
     @FocusedValue(\.pageAdd) private var pageAdd
-    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
-        let _ = mainWindow.remember(openWindow)
         CommandGroup(replacing: .newItem) {
             Button(pageAdd?.title ?? "Add…") { pageAdd?.perform() }
                 .keyboardShortcut("n")
