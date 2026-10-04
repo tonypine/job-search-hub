@@ -79,7 +79,8 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * A job: its header, then Overview (Brief, Screen), People and Posting as tabs,
  * the same split as the Mac's inspector. The decision is docked at the bottom,
- * with Pursue the primary; Open posting, Fix… and Share are in the overflow.
+ * with Pursue the primary. Open posting is in the app bar, Fix… and Share in
+ * the overflow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,9 +156,11 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } },
             actions = {
                 details?.let { shown ->
+                    IconButton(onClick = { openPosting(context, shown) }) {
+                        Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = "Open posting")
+                    }
                     OverflowMenu(
                         listOf(
-                            HubAction("Open posting", Icons.AutoMirrored.Rounded.OpenInNew) { openPosting(context, shown) },
                             HubAction("Fix…", Icons.Rounded.Build) { isAskingForFix = true },
                             HubAction("Share", Icons.Rounded.Share) { sharePosting(context, shown) },
                         ),
