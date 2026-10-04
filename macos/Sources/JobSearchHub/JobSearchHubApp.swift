@@ -80,6 +80,15 @@ struct JobSearchHubApp: App {
             HubCommands(events: events)
         }
 
+        // A session opened in a window of its own, out of the inspector's width.
+        WindowGroup("Session", id: "session", for: ClaudeSessionSubject.self) { $subject in
+            SessionWindow(subject: subject)
+                .environment(connection)
+                .frame(minWidth: 600, minHeight: 400)
+                .tint(.hubAccent)
+        }
+        .defaultSize(width: 900, height: 700)
+
         Settings {
             SettingsWindow()
                 .environment(connection)
@@ -98,7 +107,7 @@ struct JobSearchHubApp: App {
     }
 
     /// `--job <id>` opens that job's details on the Jobs or Pipeline page;
-    /// with `--session`, the Jobs page opens its session instead.
+    /// with `--session`, the Jobs page opens it on its Session tab.
     private static func jobFromLaunchArguments() -> UUID? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flagIndex = arguments.firstIndex(of: "--job"), flagIndex + 1 < arguments.count else { return nil }
@@ -133,15 +142,6 @@ struct ConnectionCheckKey: Equatable {
     let isStreamConnected: Bool
 }
 
-/// A request to show a job or a company, on its Details side or on its
-/// Session side, where the session is resumed when it has ended. Each request
-/// is new, so asking for the same one twice still opens it.
-struct SubjectFocus: Equatable {
-    let id = UUID()
-    let subject: ClaudeSessionSubject
-    let opensSession: Bool
-}
-
 struct ContentView: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
@@ -152,8 +152,8 @@ struct ContentView: View {
     /// The sidebar groups folded away, by raw value: the Hub's at first.
     @AppStorage("sidebarCollapsedGroups") private var collapsedGroups = SidebarGroup.allCases
         .filter { !$0.isExpandedByDefault }.map(\.rawValue).joined(separator: ",")
-    @State private var focus: SubjectFocus?
     @State private var details = DetailsInspector()
+    @State private var replyDraft = RecruiterReplyDraft()
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -174,7 +174,7 @@ struct ContentView: View {
                     }
                 }
                 if let client = connection.makeClient() {
-                    SessionSidebarSection(client: client) { subject in open(subject, opensSession: true) }
+                    SessionSidebarSection(client: client) { subject in openSession(subject) }
                 }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
@@ -186,14 +186,15 @@ struct ContentView: View {
                     }
                 }
         }
-        .inspector(isPresented: Binding(get: { shownDetails != nil }, set: { if !$0 { details.hide() } })) {
-            if let shownDetails, let client = connection.makeClient() {
-                DetailsInspectorContent(subject: shownDetails, client: client)
+        .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
+            if let shownEntry, let client = connection.makeClient() {
+                DetailsInspectorContent(entry: shownEntry, client: client)
                     .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
-                    .toolbar { HideDetailsButton { details.hide() } }
+                    .toolbar { InspectorToolbar(details: details) }
             }
         }
         .environment(details)
+        .environment(replyDraft)
         .task(id: HubWorkKey(revision: events.revision, hasToken: connection.hasToken)) {
             if let client = connection.makeClient() {
                 await unseen.refresh(with: client)
@@ -214,25 +215,15 @@ struct ContentView: View {
     private var page: some View {
         switch selectedPage {
         case .decide: DecidePage()
-        case .updates:
-            UpdatesPage(
-                onOpenJob: { open(.job($0), opensSession: false) },
-                onOpenCompany: { open(.company($0), opensSession: false) }
-            )
-        case .companies:
-            CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil && focus?.opensSession == true).id(focus?.id)
-        case .recruiters:
-            RecruitersPage(onOpenCompany: { open(.company($0), opensSession: false) })
+        case .updates: UpdatesPage()
+        case .companies: CompaniesPage()
+        case .recruiters: RecruitersPage()
         case .profile: ProfilePage()
         case .criteria: CriteriaPage()
         case .activity: ActivityPage()
         case .prompts: PromptsPage()
         case .modelLab: ModelLabPage()
-        case .jobs:
-            JobsPage(
-                initialJobID: focusedJobID ?? initialJobID,
-                opensSession: focusedJobID == nil ? opensSession : focus?.opensSession == true
-            ).id(focus?.id)
+        case .jobs: JobsPage(initialJobID: initialJobID, opensSession: opensSession)
         case .pipeline: PipelinePage(initialJobID: initialJobID)
         case nil: EmptyView()
         }
@@ -266,30 +257,18 @@ struct ContentView: View {
         )
     }
 
-    private var shownDetails: DetailsInspector.Subject? {
-        selectedPage.flatMap { details.getSubject(on: $0) }
+    private var shownEntry: InspectorEntry? {
+        selectedPage.flatMap { details.getEntry(on: $0) }
     }
 
-    private var focusedJobID: UUID? {
-        if case let .job(id)? = focus?.subject { return id }
-        return nil
-    }
-
-    private var focusedCompanyID: UUID? {
-        if case let .company(id)? = focus?.subject { return id }
-        return nil
-    }
-
-    /// Shows a job or company, on its Session side when asked, or the
-    /// profile interview beside the Profile page.
-    private func open(_ subject: ClaudeSessionSubject, opensSession: Bool) {
-        focus = SubjectFocus(subject: subject, opensSession: opensSession)
-        switch subject {
-        case .job: selectedPage = .jobs
-        case .company: selectedPage = .companies
-        case .profile:
+    /// Opens a session's job or company on its Session tab over the page
+    /// shown, or the profile interview beside the Profile page.
+    private func openSession(_ subject: ClaudeSessionSubject) {
+        if subject == .profile {
             selectedPage = .profile
             details.show(.profileInterview, from: .profile)
+        } else if let selectedPage {
+            details.openSession(InspectorSubject(subject), from: selectedPage)
         }
     }
 }

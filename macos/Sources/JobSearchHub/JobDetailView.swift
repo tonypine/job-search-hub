@@ -66,6 +66,19 @@ extension JobDetailModel {
         }
     }
 
+    /// Counts a follow-up on the job's application, then shows the job as it
+    /// now stands.
+    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, with client: HubClient) async {
+        do {
+            _ = try await client.send(
+                "POST", "v1/applications/\(applicationID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self
+            )
+            await load(jobID, with: client)
+        } catch {
+            actionError = HubFailure("Couldn't record the follow-up", error)
+        }
+    }
+
     /// Asks Claude for the job's full brief, then follows the job until the
     /// full brief replaces the pre-brief, for up to three minutes.
     func writeFullBrief(_ jobID: UUID, with client: HubClient) async {
@@ -88,92 +101,54 @@ extension JobDetailModel {
     }
 }
 
-/// Which side of a job or company panel shows: what the hub knows, or its
-/// Claude session.
-enum PanelSide: String, CaseIterable, Identifiable {
-    case details = "Details"
-    case session = "Session"
-
-    var id: String { rawValue }
-}
-
-/// A job's panel: its details, or its Claude session.
-struct JobPanel: View {
-    let jobID: UUID
-    let client: HubClient
-    /// Opens on the Session side and starts or resumes the session there.
-    var opensSession = false
-    @State private var side: PanelSide = .details
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Show", selection: $side) {
-                ForEach(PanelSide.allCases) { side in Text(side.rawValue).tag(side) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(Space.s)
-            switch side {
-            case .details: JobDetailView(jobID: jobID, client: client)
-            case .session: ClaudeSessionPane(subject: .job(jobID), client: client, startsOnAppear: opensSession)
-            }
-        }
-        .onAppear { if opensSession { side = .session } }
-    }
-}
-
-/// One job's details, read from the hub: the decision and its brief, what the
-/// board publishes, the facts read from the posting, and the posting itself.
+/// One job in the inspector: its header and actions, then Overview (the
+/// brief, the screen, the people), Prep once pursued (the CV and the
+/// interview pack), Posting (the board's facts, the facts read, the posting)
+/// and its Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
+    @Binding var tab: InspectorTab
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
+    @Environment(DetailsInspector.self) private var inspector
     @State private var model = JobDetailModel()
     @State private var isAskingToSkip = false
     @State private var isAskingForFix = false
+    @State private var followingUpApplicationID: UUID?
+    @State private var followUpNote = ""
     @Environment(RemoteTaskRunner.self) private var taskRunner
-    @State private var isPostingShown = false
 
     var body: some View {
         Group {
             if let details = model.details, details.job.id == jobID {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Space.l) {
-                        if model.actionError != nil {
-                            HubErrorView($model.actionError)
-                        }
-                        if model.factsError != nil {
-                            HubErrorView($model.factsError)
-                        }
-                        header(details)
-                        actions(details)
-                        brief(details.brief)
-                        if details.decision?.decision == .pursue || details.cvID != nil {
-                            JobCVSection(jobID: jobID, details: details, client: client)
-                        }
+                EntityInspector(tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab) {
+                    header(details)
+                    actions(details)
+                } content: { tab in
+                    if model.actionError != nil {
+                        HubErrorView($model.actionError)
+                    }
+                    switch tab {
+                    case .prep:
+                        JobCVSection(jobID: jobID, details: details, client: client)
                         if details.decision?.decision == .pursue {
                             InterviewPackSection(jobID: jobID, client: client)
                         }
-                        screen(details)
-                        if let connections = details.connections, !connections.isEmpty {
-                            HubSection("People you know at \(details.companyName ?? "this company")") {
-                                ConnectionList(connections: connections)
-                            }
+                    case .posting:
+                        if model.factsError != nil {
+                            HubErrorView($model.factsError)
                         }
                         boardFacts(details.job)
                         readFacts(details.facts)
-                        if let description = details.job.description, !description.isEmpty {
-                            // With a brief to decide from, the posting folds away.
-                            DisclosureGroup(isExpanded: Binding(get: { isPostingShown || details.brief == nil }, set: { isPostingShown = $0 })) {
-                                Text(description).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).padding(.top, Space.xs)
-                            } label: {
-                                Text("Posting").font(.hubSection)
-                            }
-                        }
+                        posting(details.job)
+                    case .session:
+                        InspectorSessionTab(subject: .job(jobID), client: client)
+                    default:
+                        brief(details.brief)
+                        screen(details)
+                        people(details)
                     }
-                    .padding(Space.l)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if let loadError = model.loadError {
                 HubErrorView(loadError, style: .page) { Task { await model.load(jobID, with: client) } }
@@ -182,6 +157,17 @@ struct JobDetailView: View {
             }
         }
         .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
+        .alert("Followed up", isPresented: Binding(get: { followingUpApplicationID != nil }, set: { if !$0 { followingUpApplicationID = nil } })) {
+            TextField("What you did", text: $followUpNote)
+            Button("Record") {
+                guard let applicationID = followingUpApplicationID else { return }
+                let note = followUpNote
+                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, with: client) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Restarts the count to the next follow-up.")
+        }
         .sheet(isPresented: $isAskingForFix) {
             FixJobSheet(jobTitle: model.details?.job.title ?? "this job") { note in
                 do {
@@ -210,10 +196,18 @@ struct JobDetailView: View {
         }
     }
 
+    /// Prep opens once the job is pursued, or once it has a CV.
+    private func hasPrep(_ details: JobDetails) -> Bool {
+        details.decision?.decision == .pursue || details.cvID != nil
+    }
+
     /// The job's kind and company, its title and location, and up to three
     /// chips: the brief's match, the screen, and where the job stands.
     private func header(_ details: JobDetails) -> some View {
-        EntityHeader(eyebrow: ["Job", details.companyName].compactMap { $0 }.joined(separator: " · "), title: details.job.title, facts: [details.job.location]) {
+        EntityHeader(
+            kind: "Job", parent: details.companyName, openParent: details.job.companyID.map { id -> () -> Void in { inspector.open(.company(id)) } },
+            title: details.job.title, facts: [details.job.location, describePosted(details.job)]
+        ) {
             if let brief = details.brief {
                 ToneChip(brief.match)
             }
@@ -231,12 +225,19 @@ struct JobDetailView: View {
 
     /// The decision to make: Pursue, the one primary action, then Later and
     /// Skip, with the posting and Fix in the overflow. A skipped job's next
-    /// step is Restore, and a pursued one's is its posting.
+    /// step is Restore, one in an open phase of the pipeline is Followed
+    /// up…, and a closed one's is its posting.
     private func actions(_ details: JobDetails) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
             ActionBar {
                 if details.job.dismissedAt != nil {
                     restoreButton
+                } else if let application = details.application, details.phase?.isClosed == false {
+                    Button("Followed up…", systemImage: "arrowshape.turn.up.right") {
+                        followUpNote = ""
+                        followingUpApplicationID = application.id
+                    }
+                    .help("Restarts the count to the next follow-up")
                 } else if details.phase != nil {
                     openPostingButton(details)
                 } else {
@@ -251,6 +252,9 @@ struct JobDetailView: View {
                         await model.decide(jobID, .later, through: decisions, with: client)
                     }
                     .help("Leave it for another day")
+                }
+                if details.phase?.isClosed == false && details.application != nil {
+                    openPostingButton(details)
                 }
                 if details.job.dismissedAt == nil {
                     Button("Skip…", systemImage: "eye.slash") { isAskingToSkip = true }
@@ -271,6 +275,12 @@ struct JobDetailView: View {
                 Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// "Posted 2 days ago", from the board's date or else when the hub first
+    /// saw it.
+    private func describePosted(_ job: Job) -> String {
+        "Posted \((job.publishedAt ?? job.firstSeenAt).formatted(.relative(presentation: .named)))"
     }
 
     private var restoreButton: some View {
@@ -353,6 +363,39 @@ struct JobDetailView: View {
                 }
             } trailing: {
                 ToneChip(details.fit.level)
+            }
+        }
+    }
+
+    /// The people you know at the company, and a link to its People tab.
+    @ViewBuilder
+    private func people(_ details: JobDetails) -> some View {
+        let connections = details.connections ?? []
+        if !connections.isEmpty || details.job.companyID != nil {
+            HubSection("People") {
+                if connections.isEmpty {
+                    Text("No one you know at \(details.companyName ?? "this company") yet.").foregroundStyle(.secondary)
+                }
+                ConnectionList(connections: connections)
+            } trailing: {
+                if let companyID = details.job.companyID {
+                    Button("Company") { inspector.open(.company(companyID), tab: .people) }
+                        .buttonStyle(.link)
+                        .help("Everyone at \(details.companyName ?? "the company")")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func posting(_ job: Job) -> some View {
+        if let description = job.description, !description.isEmpty {
+            HubSection("Posting") {
+                Text(description).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            } trailing: {
+                if let url = URL(string: job.url) {
+                    Link("Open", destination: url)
+                }
             }
         }
     }

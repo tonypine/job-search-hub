@@ -129,8 +129,8 @@ struct PipelinePage: View {
                         Task { await model.load(with: client) }
                     }
                     .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
-                    .onChange(of: details.getSubject(on: .pipeline)) {
-                        if details.getSubject(on: .pipeline) == nil { selectedCardID = nil }
+                    .onChange(of: details.getEntry(on: .pipeline)) {
+                        if details.getEntry(on: .pipeline) == nil { selectedCardID = nil }
                     }
             }
         }
@@ -228,12 +228,12 @@ struct PipelinePage: View {
 
     /// The selected card's details: its job's, or its company's for a card
     /// without one.
-    private var selectedCardSubject: DetailsInspector.Subject? {
+    private var selectedCardSubject: InspectorSubject? {
         guard let application = model.board.cards.first(where: { $0.id == selectedCardID })?.application else { return nil }
         if let jobID = application.jobID {
-            return .job(jobID, opensSession: false)
+            return .job(jobID)
         }
-        return .companyApplication(companyID: application.companyID)
+        return application.companyID.map(InspectorSubject.company)
     }
 
     /// Shares the width among the columns so every phase shows at once, down

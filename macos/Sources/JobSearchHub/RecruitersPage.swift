@@ -1,4 +1,3 @@
-import AppKit
 import JobSearchHubCore
 import SwiftUI
 
@@ -6,14 +5,12 @@ import SwiftUI
 @Observable
 final class RecruitersModel {
     private(set) var recruiters: [RecruiterConversation] = []
-    private(set) var messages: [LinkedInMessage] = []
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
     var filter = RecruiterFilter()
     var selectedID: UUID?
 
     var shownRecruiters: [RecruiterConversation] { filter.apply(to: recruiters) }
-    var selected: RecruiterConversation? { recruiters.first { $0.id == selectedID } }
 
     func load(with client: HubClient) async {
         isLoading = true
@@ -25,24 +22,16 @@ final class RecruitersModel {
             loadError = HubFailure("Couldn't load the recruiters", error)
         }
     }
-
-    func loadMessages(with client: HubClient) async {
-        guard let selectedID else {
-            messages = []
-            return
-        }
-        messages = (try? await client.get("v1/linkedin/conversations/\(selectedID.uuidString)/messages", as: ConversationMessagesResponse.self).messages) ?? []
-    }
 }
 
 /// The recruiters who wrote to the owner on LinkedIn, the latest first,
 /// flagged by what their company has open now and whether the owner answered.
+/// The selected one opens in the window's inspector.
 struct RecruitersPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
+    @Environment(DetailsInspector.self) private var details
     @State private var model = RecruitersModel()
-    @State private var replyDraft = RecruiterReplyDraft()
-    let onOpenCompany: (UUID) -> Void
 
     var body: some View {
         Group {
@@ -50,14 +39,11 @@ struct RecruitersPage: View {
                 table
                     .task { await model.load(with: client) }
                     .onChange(of: events.revision) { Task { await model.load(with: client) } }
-                    .task(id: model.selectedID) { await model.loadMessages(with: client) }
-                    .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
-                        if let recruiter = model.selected {
-                            RecruiterDetail(
-                                recruiter: recruiter, messages: model.messages, replyDraft: replyDraft, client: client, onOpenCompany: onOpenCompany
-                            )
-                                .inspectorColumnWidth(min: 360, ideal: 460, max: 720)
-                        }
+                    .onChange(of: model.selectedID, initial: true) {
+                        details.show(model.selectedID.map(InspectorSubject.person), from: .recruiters)
+                    }
+                    .onChange(of: details.getEntry(on: .recruiters)) {
+                        if details.getEntry(on: .recruiters) == nil { model.selectedID = nil }
                     }
                     .toolbar {
                         Toggle("Hiring now", systemImage: "briefcase", isOn: $model.filter.hiringNowOnly)
@@ -117,92 +103,5 @@ struct RecruitersPage: View {
         let hiring = model.recruiters.filter(\.isHiringNow).count
         let unanswered = model.recruiters.filter { !$0.ownerWrote }.count
         return "\(model.recruiters.count) recruiters · \(hiring) hiring now · \(unanswered) unanswered"
-    }
-}
-
-struct RecruiterDetail: View {
-    let recruiter: RecruiterConversation
-    let messages: [LinkedInMessage]
-    let replyDraft: RecruiterReplyDraft
-    let client: HubClient
-    let onOpenCompany: (UUID) -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.l) {
-                EntityHeader(eyebrow: "Recruiter", title: recruiter.startedByName) {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        if let position = recruiter.starterPosition {
-                            Text([position, recruiter.starterCompany].compactMap { $0 }.joined(separator: " · "))
-                        }
-                        HStack(spacing: Space.m) {
-                            if let profile = URL(string: recruiter.startedByURL) {
-                                Link("LinkedIn profile", destination: profile)
-                            }
-                            if let companyID = recruiter.companyID {
-                                Button("Open company") { onOpenCompany(companyID) }.buttonStyle(.link)
-                            }
-                        }
-                        .tint(.hubAccent)
-                    }
-                } chips: {
-                    if recruiter.isAgency {
-                        ToneChip("Agency", tone: .neutral)
-                    }
-                    if !recruiter.ownerWrote {
-                        ToneChip("Unanswered", tone: .caution)
-                    }
-                }
-                FactGrid {
-                    FactRow("Company", text: (recruiter.hiringCompany ?? "–") + (recruiter.isAgency ? " (agency)" : ""))
-                    FactRow("Role", text: recruiter.role ?? "–")
-                    FactRow("Openings", text: recruiter.openingsText.isEmpty ? "None in the feed now" : recruiter.openingsText)
-                    FactRow("Answered", text: recruiter.ownerWrote ? "Yes" : "No")
-                    FactRow("Why", text: recruiter.classificationReason)
-                }
-                reply
-                HubSection("Conversation") {
-                    ForEach(Array(messages.enumerated()), id: \.offset) { entry in
-                        VStack(alignment: .leading, spacing: Space.xs) {
-                            HStack {
-                                Text(entry.element.senderName).fontWeight(.medium)
-                                Spacer()
-                                Text(entry.element.sentAt.formatted(date: .abbreviated, time: .shortened)).font(.hubCaption).foregroundStyle(.secondary)
-                            }
-                            Text(entry.element.content).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        }
-                        .hubWell()
-                    }
-                }
-            }
-            .padding(Space.l)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// The draft of a reply, when it is about this recruiter's conversation.
-    private var reply: some View {
-        HubSection("Reply") {
-            let state = replyDraft.conversationID == recruiter.id ? replyDraft.state : .idle
-            switch state {
-            case .idle, .drafting:
-                AsyncButton("Draft a reply", busyTitle: "Drafting…", systemImage: "square.and.pencil", isBusy: state == .drafting) {
-                    await replyDraft.draft(conversationID: recruiter.id, client: client)
-                }
-                Text("Claude drafts a message that picks up from this conversation and names the roles that fit you at their company. You send it yourself.")
-                    .font(.hubCaption).foregroundStyle(.secondary)
-            case let .drafted(text):
-                Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    .hubWell()
-                HStack {
-                    Button("Copy", systemImage: "doc.on.doc") { replyDraft.copyDraft() }
-                    AsyncButton("Draft again", busyTitle: "Drafting…") { await replyDraft.draft(conversationID: recruiter.id, client: client) }
-                }
-            case let .failed(reason):
-                HubErrorView(HubFailure("Couldn't draft the reply", advice: reason)) {
-                    Task { await replyDraft.draft(conversationID: recruiter.id, client: client) }
-                }
-            }
-        }
     }
 }

@@ -292,7 +292,7 @@ private struct ComparisonPostingsView: View {
                     Spacer()
                     Toggle("Only differences", isOn: $showsOnlyDifferences)
                     Button("Show posting", systemImage: "doc.text.magnifyingglass") {
-                        details.show(.job(job.id, opensSession: false), from: .modelLab)
+                        details.show(.job(job.id), from: .modelLab)
                     }
                 }
                 let fields = record.summary.fields.filter { !showsOnlyDifferences || !record.isAgreed(jobID: job.id, field: $0) }

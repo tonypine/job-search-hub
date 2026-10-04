@@ -58,10 +58,10 @@ struct DecidePage: View {
                     .task { await model.load(with: client) }
                     .onChange(of: [events.revision, decisions.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: model.selectedID, initial: true) {
-                        details.show(model.selectedID.map { .job($0, opensSession: false) }, from: .decide)
+                        details.show(model.selectedID.map(InspectorSubject.job), from: .decide)
                     }
-                    .onChange(of: details.getSubject(on: .decide)) {
-                        if details.getSubject(on: .decide) == nil { model.selectedID = nil }
+                    .onChange(of: details.getEntry(on: .decide)) {
+                        if details.getEntry(on: .decide) == nil { model.selectedID = nil }
                     }
             }
         }

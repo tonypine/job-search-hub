@@ -62,8 +62,9 @@ final class ClaudeSessionPaneModel {
     }
 }
 
-/// The Session side of a job or company: its running Claude session in a
-/// terminal, or a way to resume the last one or start a new one.
+/// The Session tab of a job or company: its running Claude session in a
+/// terminal, or a way to resume the last one or start a new one. A session
+/// can open in a window of its own, out of the inspector's width.
 struct ClaudeSessionPane: View {
     let subject: ClaudeSessionSubject
     let client: HubClient
@@ -72,12 +73,25 @@ struct ClaudeSessionPane: View {
     /// Typed into a session the pane starts or resumes, for a session whose
     /// prompt has it speak first, like the profile interview.
     var openingMessage: String?
+    /// Told once the pane has resumed or started the session it was asked to.
+    var onStartedOnAppear: (() -> Void)?
+    /// The pane fills a session window, rather than a tab of the inspector.
+    var isInWindow = false
     @State private var model = ClaudeSessionPaneModel()
+    @Environment(\.openWindow) private var openWindow
     private let host = ClaudeSessionHost.shared
 
     var body: some View {
         Group {
-            if let running = model.sessions.first(where: { host.isRunning($0.id) }), let terminal = host.getTerminal(for: running.id) {
+            if !isInWindow && host.windowedSubjects.contains(subject) {
+                ContentUnavailableView {
+                    Label("Open in its own window", systemImage: "macwindow")
+                } description: {
+                    Text("The session runs in a window of its own while it's open.")
+                } actions: {
+                    Button("Show window") { openWindow(value: subject) }
+                }
+            } else if let running = model.sessions.first(where: { host.isRunning($0.id) }), let terminal = host.getTerminal(for: running.id) {
                 VStack(spacing: 0) {
                     HStack {
                         SessionLamp(isRunning: true, activity: host.activities[running.id])
@@ -88,6 +102,7 @@ struct ClaudeSessionPane: View {
                             Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
                                 .help("Ask this session to find who to write to and draft a first message")
                         }
+                        openInWindowButton
                         Button("Stop", systemImage: "stop.fill") { host.stop(running.id) }
                     }
                     .padding(Space.s)
@@ -103,14 +118,18 @@ struct ClaudeSessionPane: View {
                 startOptions
             }
         }
-        .task(id: subject) {
+        // Asked again to start while showing, it starts.
+        .task(id: PaneStart(subject: subject, startsOnAppear: startsOnAppear)) {
             await model.load(subject, with: client)
-            if startsOnAppear, !model.sessions.contains(where: { host.isRunning($0.id) }) {
-                if let latest = model.sessions.first {
-                    await model.resume(latest, with: client, host: host, firstMessage: openingMessage)
-                } else {
-                    await model.startNew(subject, with: client, host: host, firstMessage: openingMessage)
+            if startsOnAppear {
+                if !model.sessions.contains(where: { host.isRunning($0.id) }) {
+                    if let latest = model.sessions.first {
+                        await model.resume(latest, with: client, host: host, firstMessage: openingMessage)
+                    } else {
+                        await model.startNew(subject, with: client, host: host, firstMessage: openingMessage)
+                    }
                 }
+                onStartedOnAppear?()
             }
         }
         .onChange(of: host.runningSessionIDs) {
@@ -138,6 +157,7 @@ struct ClaudeSessionPane: View {
                 Button("Draft outreach", systemImage: "paperplane") { Task { await model.draftOutreach(subject, with: client, host: host) } }
                     .help("Find who to write to and draft a first message; you send it yourself")
             }
+            openInWindowButton
             if model.isStarting {
                 ProgressView().controlSize(.small)
             }
@@ -148,6 +168,44 @@ struct ClaudeSessionPane: View {
         .disabled(model.isStarting)
         .padding(Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct PaneStart: Hashable {
+    let subject: ClaudeSessionSubject
+    let startsOnAppear: Bool
+}
+
+extension ClaudeSessionPane {
+    @ViewBuilder
+    private var openInWindowButton: some View {
+        if !isInWindow {
+            Button("Open in window", systemImage: "macwindow") {
+                // The inspector lets go of the terminal before the window takes it.
+                host.windowedSubjects.insert(subject)
+                openWindow(value: subject)
+            }
+            .help("Move the session to a window of its own")
+        }
+    }
+}
+
+/// A session in a window of its own. While it's open, the inspector leaves
+/// the session's terminal to it.
+struct SessionWindow: View {
+    let subject: ClaudeSessionSubject?
+    @Environment(HubConnection.self) private var connection
+    private let host = ClaudeSessionHost.shared
+
+    var body: some View {
+        if let subject, let client = connection.makeClient() {
+            ClaudeSessionPane(subject: subject, client: client, isInWindow: true)
+                .onAppear { host.windowedSubjects.insert(subject) }
+                .onDisappear { host.windowedSubjects.remove(subject) }
+                .navigationTitle(subject == .profile ? "Profile interview" : "Session")
+        } else {
+            ContentUnavailableView("No session", systemImage: "terminal")
+        }
     }
 }
 

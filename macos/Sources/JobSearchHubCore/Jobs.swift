@@ -232,3 +232,14 @@ public extension HubClient {
         try await send("POST", "v1/jobs/restore", body: JobDismissalRequest(jobIDs: jobIDs), as: JobDismissalResponse.self).jobs
     }
 }
+
+/// A company's open jobs, which its inspector lists.
+public enum CompanyJobs {
+    /// The query for the company's open jobs, one page of them.
+    public static func makeQuery(companyID: UUID) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "company_id", value: companyID.uuidString), URLQueryItem(name: "status", value: JobStatusFilter.open.rawValue),
+            URLQueryItem(name: "limit", value: String(JobsQuery.pageSize)),
+        ]
+    }
+}
