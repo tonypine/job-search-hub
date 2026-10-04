@@ -81,3 +81,36 @@ func TestOnlyRunningUnexpiredRunsAreFoundByTokenHash(t *testing.T) {
 		}
 	}
 }
+
+func TestCloseAbandonedAgentRunsFailsOnlyExpiredRunningRuns(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	abandoned := startRun(t, hub, "abandoned", time.Now().Add(-time.Minute))
+	running := startRun(t, hub, "running", time.Now().Add(time.Hour))
+	finished := startRun(t, hub, "finished", time.Now().Add(-time.Minute))
+	if _, err := hub.FinishAgentRun(ctx, finished.ID, store.AgentRunOutcome{Status: store.AgentRunSucceeded}); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	closed, err := hub.CloseAbandonedAgentRuns(ctx)
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(closed) != 1 || closed[0].ID != abandoned.ID {
+		t.Fatalf("closed = %+v, want only the abandoned run", closed)
+	}
+	if closed[0].Status != store.AgentRunFailed || closed[0].Error != store.AgentRunAbandoned || closed[0].FinishedAt == nil {
+		t.Fatalf("closed run = %+v, want failed as abandoned", closed[0])
+	}
+	if got, err := hub.GetAgentRun(ctx, running.ID); err != nil || got.Status != store.AgentRunRunning || got.FinishedAt != nil {
+		t.Fatalf("running run = %+v, err = %v, want it left running", got, err)
+	}
+	if got, err := hub.GetAgentRun(ctx, finished.ID); err != nil || got.Status != store.AgentRunSucceeded || got.Error != "" {
+		t.Fatalf("finished run = %+v, err = %v, want it left as it ended", got, err)
+	}
+
+	again, err := hub.CloseAbandonedAgentRuns(ctx)
+	if err != nil || len(again) != 0 {
+		t.Fatalf("second pass closed %+v, err = %v, want nothing", again, err)
+	}
+}
