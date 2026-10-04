@@ -345,10 +345,12 @@ struct TodayPage: View {
 
     private var hubCard: some View {
         TodayCard("Hub", link: "Activity") { openPage(.activity) } rows: {
-            ForEach(activity.lines.indices, id: \.self) { index in
+            // The lines' values, not indices into them: a stale index after the
+            // polled list shrinks would trap.
+            ForEach(Array(activity.lines.enumerated()), id: \.offset) { _, line in
                 HStack(spacing: Space.s) {
                     ProgressView().controlSize(.small)
-                    Text(activity.lines[index]).lineLimit(1)
+                    Text(line).lineLimit(1)
                 }
             }
         }
