@@ -216,3 +216,54 @@ func TestAFollowUpFallsDueByPhaseAndRestartsWhenRecorded(t *testing.T) {
 		t.Fatal("zero days was accepted")
 	}
 }
+
+func TestACompanysApplicationsComeWithTheirPhaseAndLeaveOtherCompaniesOut(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	zeta, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.com"})
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &acme.ID, Title: "Engineer", URL: "https://acme.com/jobs/1"})
+	if _, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &job.ID}); err != nil {
+		t.Fatal(err)
+	}
+	outreach, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &acme.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &zeta.ID}); err != nil {
+		t.Fatal(err)
+	}
+	phases, _ := hub.ListPipelinePhases(ctx)
+	closed := phases[len(phases)-1]
+	if _, err := hub.MoveApplication(ctx, owner, outreach.ID, closed.ID, "No answer."); err != nil {
+		t.Fatal(err)
+	}
+
+	applications, err := hub.ListCompanyApplications(ctx, acme.ID)
+	if err != nil || len(applications) != 2 {
+		t.Fatalf("acme's applications = %+v, %v; want 2", applications, err)
+	}
+	byTitle := map[string]store.CompanyApplication{}
+	for _, application := range applications {
+		if application.Application.CompanyID == nil || *application.Application.CompanyID != acme.ID {
+			t.Fatalf("listed another company's card: %+v", application)
+		}
+		title := "outreach"
+		if application.JobTitle != nil {
+			title = *application.JobTitle
+		}
+		byTitle[title] = application
+	}
+	if saved := byTitle["Engineer"]; saved.PhaseName != "Saved" || saved.PhaseIsClosed {
+		t.Fatalf("the job's card = %+v; want it in Saved", saved)
+	}
+	if ended := byTitle["outreach"]; ended.PhaseName != closed.Name || !ended.PhaseIsClosed || ended.Application.ClosedReason != "No answer." {
+		t.Fatalf("the outreach card = %+v; want it closed", ended)
+	}
+
+	none, err := hub.ListCompanyApplications(ctx, uuid.New())
+	if err != nil || len(none) != 0 {
+		t.Fatalf("an unknown company's applications = %+v, %v; want none", none, err)
+	}
+}

@@ -224,16 +224,48 @@ type PipelineCard struct {
 
 // ListPipelineCards returns the cards on the board, leaving dismissed ones out.
 func (s *Store) ListPipelineCards(ctx context.Context) ([]PipelineCard, error) {
-	return s.listPipelineCards(ctx, false)
+	return s.listPipelineCards(ctx, false, nil)
 }
 
 // ListDismissedPipelineCards returns the cards dismissed as not a good fit,
 // in the phases they left.
 func (s *Store) ListDismissedPipelineCards(ctx context.Context) ([]PipelineCard, error) {
-	return s.listPipelineCards(ctx, true)
+	return s.listPipelineCards(ctx, true, nil)
 }
 
-func (s *Store) listPipelineCards(ctx context.Context, dismissed bool) ([]PipelineCard, error) {
+// CompanyApplication is one of a company's cards with the phase it sits in.
+type CompanyApplication struct {
+	PipelineCard
+	PhaseName     string `json:"phase_name"`
+	PhaseIsClosed bool   `json:"phase_is_closed"`
+}
+
+// ListCompanyApplications returns a company's cards on the board, newest in
+// their phase first, leaving dismissed ones out.
+func (s *Store) ListCompanyApplications(ctx context.Context, companyID uuid.UUID) ([]CompanyApplication, error) {
+	cards, err := s.listPipelineCards(ctx, false, &companyID)
+	if err != nil {
+		return nil, err
+	}
+	phases, err := s.ListPipelinePhases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	phasesByID := map[uuid.UUID]PipelinePhase{}
+	for _, phase := range phases {
+		phasesByID[phase.ID] = phase
+	}
+	applications := make([]CompanyApplication, 0, len(cards))
+	for _, card := range cards {
+		phase := phasesByID[card.Application.PhaseID]
+		applications = append(applications, CompanyApplication{PipelineCard: card, PhaseName: phase.Name, PhaseIsClosed: phase.IsClosed})
+	}
+	return applications, nil
+}
+
+// listPipelineCards lists the dismissed cards or the others, all or one
+// company's.
+func (s *Store) listPipelineCards(ctx context.Context, dismissed bool, companyID *uuid.UUID) ([]PipelineCard, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT applications.id, applications.job_id, applications.company_id, applications.phase_id, applications.closed_reason,
 		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.contacted_at, applications.created_at,
@@ -247,8 +279,8 @@ func (s *Store) listPipelineCards(ctx context.Context, dismissed bool) ([]Pipeli
 		JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
 		LEFT JOIN jobs ON jobs.id = applications.job_id
 		LEFT JOIN companies ON companies.id = applications.company_id
-		WHERE (`+cardDismissedAt+` IS NOT NULL) = $1
-		ORDER BY applications.phase_entered_at DESC`, dismissed)
+		WHERE (`+cardDismissedAt+` IS NOT NULL) = $1 AND ($2::uuid IS NULL OR applications.company_id = $2)
+		ORDER BY applications.phase_entered_at DESC`, dismissed, companyID)
 	if err != nil {
 		return nil, err
 	}
