@@ -11,6 +11,29 @@ jobs and people:
 swift docs/design/mockups/render.swift docs/design/mockups
 ```
 
+## Mockups
+
+Every rollout ticket has at least one picture of what it delivers. The before pictures redraw
+today's views from their code (`JobDetailView`, `PipelineCardView`, Android's `JobScreen`), with
+the same sections, buttons and colors.
+
+| Mockup | What it shows | Tickets |
+|---|---|---|
+| [`rollout.png`](mockups/rollout.png) | The ten tickets, their order and blocked-by links, each with its mockup | all |
+| [`design-board.png`](mockups/design-board.png) | Icon, tones, type, space, chips, actions, verdicts, feedback, connection banner | TP-449, TP-457 |
+| [`macos-job-before-after.png`](mockups/macos-job-before-after.png) | Today's job detail beside the proposed inspector, with seven problems and their fixes | TP-449, TP-450, TP-452 |
+| [`macos-vocabulary.png`](mockups/macos-vocabulary.png) | A pipeline card before and after, and the old and new word for each concept | TP-450 |
+| [`ia-map.png`](mockups/ia-map.png) | Where a job, a company and a person open, today and proposed | TP-451, TP-452 |
+| [`macos-sidebar.png`](mockups/macos-sidebar.png) | The sidebar today and grouped by intent | TP-451 |
+| [`macos-settings-criteria.png`](mockups/macos-settings-criteria.png) | The Criteria page, the Settings window, the connection banner, and where each Settings section goes | TP-451 |
+| [`macos-inspector.png`](mockups/macos-inspector.png) | The inspector's anatomy, numbered | TP-452 |
+| [`macos-company-person.png`](mockups/macos-company-person.png) | A company with its new Jobs tab, and a recruiter's conversation, in the same inspector | TP-452 |
+| [`macos-people.png`](mockups/macos-people.png) | The People page with a person open | TP-453 |
+| [`macos-today.png`](mockups/macos-today.png), [`macos-today-dark.png`](mockups/macos-today-dark.png) | The main window on Today, light and dark | TP-454 |
+| [`macos-palette.png`](mockups/macos-palette.png) | ⌘K over Today, and the keyboard decisions | TP-455 |
+| [`android-job-before-after.png`](mockups/android-job-before-after.png) | Today's job screen in wallpaper colors beside the brand theme | TP-456 |
+| [`android.png`](mockups/android.png) | Android Today, Job, Pipeline and Settings | TP-456, TP-458 |
+
 ## Summary
 
 The features are good, and the app grew one feature at a time, which shows. Each feature got its
@@ -80,6 +103,8 @@ The scores run from 1 (poor) to 5 (great) for **polish** (looks finished and con
 | Settings | 2 | 1 | Eleven sections in one form. Job criteria, take-home pay and pipeline phases shape the whole search, and they're buried between the Keychain token and server start and stop. LinkedIn import lives here, but its results show on four other pages. |
 | Android | 3 | 3 | Clean Material 3, but dynamic color takes the wallpaper's palette, so it doesn't look like the Mac app. Follow-up reminders land on a phone with no pipeline. "Research a company" sits on the Jobs bar, and unpair on the Updates bar. |
 
+![Today's job detail beside the proposed inspector](mockups/macos-job-before-after.png)
+
 ### Polish: what's inconsistent
 
 Measured in `macos/Sources/JobSearchHub`:
@@ -99,7 +124,8 @@ Measured in `macos/Sources/JobSearchHub`:
   `.subheadline.weight(.semibold)`. Four pages each define their own private `section()` helper.
 - **Errors are raw and appear five ways.** 45 places show `String(describing: error)`, the Swift
   debug description, as text. They appear as alerts, red text, orange labels, overlays or toasts.
-- **The not-connected state is repeated** in ten pages rather than shown once by the window.
+- **The not-connected state takes over each page.** Ten pages share one `NotConnectedView`, but
+  each one swaps its whole content for it, rather than the window showing one banner.
 - **Refresh buttons on seven pages** even though the hub's event stream already refreshes them.
   The buttons suggest the live updates can't be trusted.
 - **Busy states are hand-made** each time: "Writing…", "Reading…", "Drafting…", "Printing…",
@@ -139,6 +165,8 @@ decision flow that brings up the next job.
    | The hub's work | Runs, agent runs, task runs, model work | Runs page |
 
    Fit and Match are near-synonyms shown next to each other, with different scales and colors.
+
+   ![Vocabulary before and after](mockups/macos-vocabulary.png)
 5. **People are scattered.** Agent-found contacts, LinkedIn connections, introducers (warm paths)
    and recruiters are one concept, "who can get me in", split over four places, and only
    recruiters have a page.
@@ -176,6 +204,8 @@ Every color means one thing. Chips use the tone at 13% behind solid text; icons 
 | Caution | `#B86E00` | `#F2A33A` | Stretch match, unclear, due today, stale brief, waiting for you |
 | Negative | `#D13438` | `#FF6B6B` | Fails a screen, overdue, errors |
 | Neutral | `#6E6E73` | `#98989D` | Mismatch, skipped, closed, relations, metadata |
+
+![Today in dark mode](mockups/macos-today-dark.png)
 
 The mapping from states to tones lives in the shared core (`JobSearchHubCore`, `android/core`),
 where it's unit tested, so the two clients can't drift:
@@ -266,6 +296,8 @@ The server keeps its field and route names (`dismiss`, `dismissed_at`); only the
 
 ## Information architecture
 
+![Where a job, a company and a person open, today and proposed](mockups/ia-map.png)
+
 ### Navigation
 
 ![Sidebar today and proposed](mockups/macos-sidebar.png)
@@ -294,6 +326,8 @@ Sessions         running sessions, then recent ones
 - **Settings becomes the standard Settings window (⌘,)** with tabs: Connection, Server, Accounts
   (Google, LinkedIn import, session folder), Phones, Models.
 - **The app opens on Today**, on both clients.
+
+![The Criteria page, the Settings window and the connection banner](mockups/macos-settings-criteria.png)
 
 ### Today
 
@@ -337,6 +371,8 @@ anatomy:
 The Companies page drops its fixed panel and the Recruiters page its own inspector. Clicking an
 update opens its job or company over the current page.
 
+![A company and a person in the inspector](mockups/macos-company-person.png)
+
 ### People
 
 One page and one model for everyone who can get you in:
@@ -353,15 +389,21 @@ plus filters for relation, *Hiring now* and *Unanswered*. A company's People tab
 filtered to it. This needs a server endpoint, `GET /v1/people`, that lists all four with their
 relation; `GET /v1/connections` and `GET /v1/recruiters` cover only two.
 
+![The People page](mockups/macos-people.png)
+
 ### Jump anywhere (⌘K)
 
 A palette that searches jobs, companies, people and pages, and runs actions such as Add company,
 Add job by URL, Generate missing CVs and Pause local models. It's how rare actions leave the
 toolbars, and it gives "better access to information" in one place.
 
+![The ⌘K palette and the keyboard decisions](mockups/macos-palette.png)
+
 ### Android
 
-![Android Today, Job and Pipeline](mockups/android.png)
+![Android's job screen today and proposed](mockups/android-job-before-after.png)
+
+![Android Today, Job, Pipeline and Settings](mockups/android.png)
 
 - **Bottom bar:** Today, Decide, Pipeline, Jobs. Updates folds into Today, as on the Mac.
 - **Pipeline:** phases as a scrolling chip row and cards below. A card's menu has *Followed up…*
@@ -376,21 +418,23 @@ toolbars, and it gives "better access to information" in one place.
 ## Rollout
 
 Each step ships on its own and keeps the app working. The order lowers risk: the shared pieces
-land first, then the structure, then the new pages. Once the proposal is approved, each row
-becomes a sub-issue of TP-440.
+land first, then the structure, then the new pages. Each row is a sub-issue of TP-440, in Backlog
+until the proposal is approved.
 
-| # | Ticket | Depends on |
-|---|---|---|
-| 1 | macOS: design tokens, tones and shared components, restyled in place | none |
-| 2 | macOS: one vocabulary (Skip, Screen, Match) and Screen merges fit and screen-out | 1 |
-| 3 | macOS: grouped sidebar, Settings window, Criteria page, Profile tabs, connection banner | 1 |
-| 4 | macOS: one inspector for jobs, companies and recruiters, with history and cross-links | 2, 3 |
-| 5 | Server and macOS: People across companies, replacing Recruiters | 4 |
-| 6 | macOS: the Today page, replacing Updates in the sidebar | 4 |
-| 7 | macOS: ⌘K palette and keyboard decisions | 4 |
-| 8 | Android: brand theme, tones, components and vocabulary | none |
-| 9 | Android: Today, Pipeline and Settings | 8 |
-| 10 | Both: the hub icon | none |
+![The rollout, with each ticket's mockup](mockups/rollout.png)
+
+| # | Ticket | Blocked by | Mockups |
+|---|---|---|---|
+| 1 | TP-449 macOS: design tokens, tones and shared components, restyled in place | none | design board, job before/after |
+| 2 | TP-450 macOS: one vocabulary (Skip, Screen, Match) and Screen merges fit and screen-out | TP-449 | vocabulary |
+| 3 | TP-451 macOS: grouped sidebar, Settings window, Criteria page, Profile tabs, connection banner | TP-449 | sidebar, settings and criteria, IA map |
+| 4 | TP-452 macOS: one inspector for jobs, companies and recruiters, with history and cross-links | TP-450, TP-451 | inspector, company and person, IA map |
+| 5 | TP-453 Server and macOS: People across companies, replacing Recruiters | TP-452 | people |
+| 6 | TP-454 macOS: the Today page, replacing Updates in the sidebar | TP-452 | today, today dark |
+| 7 | TP-455 macOS: ⌘K palette and keyboard decisions | TP-452 | palette |
+| 8 | TP-456 Android: brand theme, tones, components and vocabulary | none | Android job before/after |
+| 9 | TP-458 Android: Today, Pipeline and Settings | TP-456 | Android |
+| 10 | TP-457 Both: the hub icon | none | design board |
 
 ## Open questions for review
 
