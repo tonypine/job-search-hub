@@ -97,10 +97,6 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// alertSources are the sources whose jobs come from mail alerts, often with
-// no text to judge them by.
-var alertSources = []string{store.JobSourceIndeed, store.JobSourceLinkedIn, store.JobSourceGlassdoor}
-
 // FeedCompany is a company that good or unclear feed jobs name, or alert
 // jobs without text whose titles don't rule them out.
 type FeedCompany struct {
@@ -238,15 +234,11 @@ func (finder *Finder) listCompaniesToSearch(ctx context.Context) ([]FeedCompany,
 	return companies, nil
 }
 
-// alertSnippetLength is the most text an alert gives of a posting: its
-// snippets ran up to 366 characters, and full postings from 621.
-const alertSnippetLength = 500
-
 // isUnreadAlertJob reports whether a job came from a mail alert with no more
 // of its posting than a snippet, so its fit can't be judged yet, and its
 // title doesn't rule it out: its company's board would give the text.
 func isUnreadAlertJob(job store.Job, criteria store.JobCriteria) bool {
-	return slices.Contains(alertSources, job.Source) && len(strings.TrimSpace(job.Description)) < alertSnippetLength &&
+	return slices.Contains(store.AlertJobSources, job.Source) && len(strings.TrimSpace(job.Description)) < store.AlertSnippetLength &&
 		!jobfit.IsRoleRuledOut(job, criteria)
 }
 

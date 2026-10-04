@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
@@ -176,6 +177,27 @@ func TestAListingWithoutTextSaysSoInsteadOfWaitingForFacts(t *testing.T) {
 	textless := findCheck(t, jobfit.Judge(store.Job{Title: "Engineer"}, nil, criteria, rates), "Stack")
 	if waiting.Reason != "no technologies read yet" || textless.Reason != "the listing has no text to read" {
 		t.Errorf("with text: %q; without: %q", waiting.Reason, textless.Reason)
+	}
+}
+
+func TestAnAlertJobWithoutTextSaysWhyItHasNone(t *testing.T) {
+	reason := "the alert gave no text, and neither a board found nor Google for Jobs has the posting"
+	snippet := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", Description: "Build things.", TextMissingReason: reason}
+	textless := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", TextMissingReason: reason}
+
+	for _, job := range []store.Job{snippet, textless} {
+		if stack := findCheck(t, jobfit.Judge(job, nil, criteria, rates), "Stack"); stack.Verdict != jobfit.VerdictUnclear || stack.Reason != reason {
+			t.Errorf("description %q: stack = %+v, want the reason the text is missing", job.Description, stack)
+		}
+	}
+	read := findCheck(t, jobfit.Judge(snippet, facts(t, map[string]any{"technologies": []string{"React"}}), criteria, rates), "Stack")
+	if read.Verdict != jobfit.VerdictYes {
+		t.Errorf("technologies read from the snippet: stack = %+v, want them judged", read)
+	}
+
+	whole := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", Description: strings.Repeat("Build things. ", 40), TextMissingReason: reason}
+	if stack := findCheck(t, jobfit.Judge(whole, nil, criteria, rates), "Stack"); stack.Reason == reason {
+		t.Errorf("a job with its whole text kept the reason it had none: stack = %+v", stack)
 	}
 }
 

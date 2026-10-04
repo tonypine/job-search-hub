@@ -1,6 +1,7 @@
 // Package jobalerts reads the job alert emails Indeed, LinkedIn and Glassdoor
 // send the owner into the jobs feed. Everything comes from the email itself:
-// the hub never fetches the postings' pages.
+// the hub never fetches the postings' pages. The text a card lacks comes from
+// the company's board (boardfinder) or Google for Jobs (postingtexts).
 package jobalerts
 
 import (

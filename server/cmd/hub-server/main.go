@@ -52,6 +52,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/modelruntime"
 	"github.com/tonypine/job-search-hub/server/internal/modelwork"
+	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -90,6 +91,9 @@ const (
 	// hiringThreadInterval paces the reading of Hacker News' monthly "Who is
 	// hiring?" thread, whose comments keep arriving for days.
 	hiringThreadInterval = 6 * time.Hour
+	// postingTextInterval picks up the jobs alerts listed since the last
+	// pass, and the ones whose wait for their company's board is over.
+	postingTextInterval = 30 * time.Minute
 	// followUpReminderInterval is how often the server checks for follow-ups
 	// fallen due since the last pass.
 	followUpReminderInterval = 15 * time.Minute
@@ -205,6 +209,14 @@ func run() error {
 	if settings.boardDiscoveryInterval > 0 {
 		go boarddiscovery.New(hub, boards).Run(ctx, settings.boardDiscoveryInterval)
 	}
+	// Alert jobs no board gave text to get it from Google for Jobs when a
+	// JSearch key is set; without one they only get the reason they have none.
+	var jsearch *postingtexts.JSearch
+	if settings.jsearchAPIKey != "" {
+		jsearch = postingtexts.NewJSearch(settings.jsearchURL, settings.jsearchAPIKey)
+		slog.Info("Google for Jobs search on", "monthly requests", settings.jsearchMonthlyRequests)
+	}
+	go postingtexts.New(hub, jsearch, settings.jsearchMonthlyRequests).Run(ctx, postingTextInterval)
 	// Each kind of task runs on the model it's routed to. The settings' model
 	// server seeds the routes of a fresh database; routes changed since stay.
 	if err := hub.EnsureDefaultTaskRoutes(ctx, settings.jobFactsModelURL, settings.jobFactsModel, store.RoutedTaskKinds); err != nil {

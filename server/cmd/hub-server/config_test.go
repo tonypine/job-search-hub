@@ -151,3 +151,21 @@ func TestBackupsGoToApplicationSupportWithPgDumpFromThePath(t *testing.T) {
 		t.Fatalf("backups: %q with %q", parsed.backupsDir, parsed.pgDump)
 	}
 }
+
+func TestTheGoogleForJobsSearchIsOffWithoutAKeyAndKeepsToTheFreeQuota(t *testing.T) {
+	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
+	if err != nil || parsed.jsearchAPIKey != "" || parsed.jsearchURL != "https://jsearch.p.rapidapi.com" || parsed.jsearchMonthlyRequests != 100 {
+		t.Fatalf("parsed = %+v, err = %v", parsed, err)
+	}
+
+	environment := maps.Clone(validEnvironment)
+	environment["HUB_JSEARCH_API_KEY"], environment["HUB_JSEARCH_URL"], environment["HUB_JSEARCH_MONTHLY_REQUESTS"] = "test-key", "https://api.example.test/jsearch", "200"
+	parsed, err = parseEnvironment(lookupFrom(environment))
+	if err != nil || parsed.jsearchAPIKey != "test-key" || parsed.jsearchURL != "https://api.example.test/jsearch" || parsed.jsearchMonthlyRequests != 200 {
+		t.Fatalf("parsed = %+v, err = %v", parsed, err)
+	}
+	environment["HUB_JSEARCH_MONTHLY_REQUESTS"] = "-1"
+	if _, err := parseEnvironment(lookupFrom(environment)); err == nil {
+		t.Fatal("a negative request count was accepted")
+	}
+}
