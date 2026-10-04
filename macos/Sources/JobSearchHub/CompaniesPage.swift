@@ -332,6 +332,9 @@ struct DossierPane: View {
                             .lineLimit(1)
                     }
                 }
+                if let foldedMailLine = dossier.foldedMailLine {
+                    Text(foldedMailLine).font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
     }

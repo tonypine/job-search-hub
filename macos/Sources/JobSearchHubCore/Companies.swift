@@ -97,8 +97,21 @@ public struct CompanyDossier: Codable, Equatable, Sendable {
     /// The company's cards on the board. Only the owner's company page gets
     /// them, with the mail below; nil from a hub that doesn't send them.
     public var applications: [CompanyApplication]?
-    /// The company's latest matched mail, newest first.
+    /// The company's latest matched mail, newest first, without newsletters
+    /// and job alerts.
     public var mail: [MailMessage]?
+    /// How many newsletters and job alerts the hub left out of `mail`.
+    public var foldedMailCount: Int?
+
+    /// Says how many newsletters and job alerts were left out of the latest
+    /// mail; nil when none were.
+    public var foldedMailLine: String? {
+        switch foldedMailCount ?? 0 {
+        case 0: nil
+        case 1: "1 newsletter or job alert left out"
+        case let count: "\(count) newsletters and job alerts left out"
+        }
+    }
 
     /// The applications still open, then the closed ones.
     public var applicationsOpenFirst: [CompanyApplication] {
