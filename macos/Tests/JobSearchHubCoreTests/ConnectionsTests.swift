@@ -16,4 +16,14 @@ import Testing
     let quiet = try decoder.decode(CompanySuggestion.self, from: Data(#"{"organization":"Initech","followed_at":"2019-05-01T12:00:00Z","connection_count":0,"open_jobs":0,"fitting_jobs":0}"#.utf8))
     #expect(hiring.reason == "2 fitting jobs open · 1 person you know")
     #expect(quiet.reason == "Followed since 2019")
+    #expect(quiet.origin == "Followed on LinkedIn" && quiet.researchTarget == "Initech")
+}
+
+@Test func aGallerySuggestionSaysWhereItCameFromAndResearchesItsSite() throws {
+    let json = #"{"organization":"Hooli","source":"startups_gallery","website":"https://www.hooli.example/","careers_url":"https://jobs.ashbyhq.com/hooli","connection_count":0,"open_jobs":3,"fitting_jobs":1}"#
+    let suggestion = try HubJSON.makeDecoder().decode(CompanySuggestion.self, from: Data(json.utf8))
+    #expect(suggestion.source == .startupsGallery && suggestion.careersURL == "https://jobs.ashbyhq.com/hooli")
+    #expect(suggestion.reason == "1 fitting job open")
+    #expect(suggestion.origin == "On startups.gallery's remote list")
+    #expect(suggestion.researchTarget == "hooli.example")
 }

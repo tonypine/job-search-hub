@@ -54,6 +54,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 	"github.com/tonypine/job-search-hub/server/internal/push"
+	"github.com/tonypine/job-search-hub/server/internal/startupsgallery"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
@@ -91,6 +92,9 @@ const (
 	// hiringThreadInterval paces the reading of Hacker News' monthly "Who is
 	// hiring?" thread, whose comments keep arriving for days.
 	hiringThreadInterval = 6 * time.Hour
+	// galleryCheckInterval is how often the server checks whether a week
+	// has passed since startups.gallery's remote list was last read.
+	galleryCheckInterval = 6 * time.Hour
 	// postingTextInterval picks up the jobs alerts listed since the last
 	// pass, and the ones whose wait for their company's board is over.
 	postingTextInterval = 30 * time.Minute
@@ -209,6 +213,7 @@ func run() error {
 	if settings.boardDiscoveryInterval > 0 {
 		go boarddiscovery.New(hub, boards).Run(ctx, settings.boardDiscoveryInterval)
 	}
+	go startupsgallery.NewReader(hub, boards).Run(ctx, galleryCheckInterval)
 	// Alert jobs no board gave text to get it from Google for Jobs when a
 	// JSearch key is set; without one they only get the reason they have none.
 	var jsearch *postingtexts.JSearch
