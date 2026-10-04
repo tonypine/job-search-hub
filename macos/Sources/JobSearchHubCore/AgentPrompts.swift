@@ -32,3 +32,5 @@ public struct SaveAgentPromptRequest: Encodable, Sendable {
         self.note = note
     }
 }
+
+// CI check (TP-399): a macOS-only change; this PR is closed unmerged.
