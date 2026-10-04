@@ -38,6 +38,34 @@ func ParsePostingURL(raw string) (PostingReference, bool) {
 	}
 }
 
+// ParseBoardURL recognizes a board's or one of its postings' public URL on
+// Greenhouse, Lever or Ashby, and returns its provider and board token. ok
+// is false for any other URL.
+func ParseBoardURL(raw string) (provider, boardToken string, ok bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", "", false
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	switch strings.ToLower(parsed.Hostname()) {
+	case "job-boards.greenhouse.io", "boards.greenhouse.io":
+		provider = Greenhouse
+		if segments[0] == "embed" {
+			segments[0] = parsed.Query().Get("for")
+		}
+	case "jobs.lever.co":
+		provider = Lever
+	case "jobs.ashbyhq.com":
+		provider = Ashby
+	default:
+		return "", "", false
+	}
+	if segments[0] == "" {
+		return "", "", false
+	}
+	return provider, segments[0], true
+}
+
 // FetchPosting reads one posting from its provider's public API. Ashby serves
 // no single-posting endpoint, so its board is read and the posting found in it.
 func (verifier *Verifier) FetchPosting(ctx context.Context, reference PostingReference) (store.JobPosting, error) {
