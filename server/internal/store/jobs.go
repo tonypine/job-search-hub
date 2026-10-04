@@ -36,6 +36,9 @@ type Job struct {
 	// the jobs list until restored.
 	DismissedAt     *time.Time `json:"dismissed_at,omitempty"`
 	DismissalReason string     `json:"dismissal_reason,omitempty"`
+	// TextMissingReason says why an alert job has no more of its posting
+	// than the alert gave; empty once it has its text.
+	TextMissingReason string `json:"text_missing_reason,omitempty"`
 }
 
 // BoardFacts are what a job board publishes about a posting beyond its text.
@@ -65,13 +68,14 @@ type PayRange struct {
 }
 
 const jobColumns = `id, company_id, job_board_id, external_id, source, title, location, workplace_type, url, description,
-	pay, employment_type, department, other_locations, published_at, first_seen_at, last_seen_at, closed_at, dismissed_at, dismissal_reason`
+	pay, employment_type, department, other_locations, published_at, first_seen_at, last_seen_at, closed_at, dismissed_at, dismissal_reason,
+	text_missing_reason`
 
 // prefixedJobColumns are the jobColumns qualified for queries that join
 // companies, whose id would otherwise be ambiguous.
 const prefixedJobColumns = `jobs.id, jobs.company_id, jobs.job_board_id, jobs.external_id, jobs.source, jobs.title, jobs.location, jobs.workplace_type, jobs.url, jobs.description,
 	jobs.pay, jobs.employment_type, jobs.department, jobs.other_locations, jobs.published_at, jobs.first_seen_at, jobs.last_seen_at, jobs.closed_at,
-	jobs.dismissed_at, jobs.dismissal_reason`
+	jobs.dismissed_at, jobs.dismissal_reason, jobs.text_missing_reason`
 
 // scanJob reads the jobColumns, then any extra columns the query selects
 // after them into extra.
@@ -79,7 +83,7 @@ func scanJob(row pgx.Row, extra ...any) (Job, error) {
 	var job Job
 	destinations := append([]any{&job.ID, &job.CompanyID, &job.JobBoardID, &job.ExternalID, &job.Source, &job.Title, &job.Location,
 		&job.WorkplaceType, &job.URL, &job.Description, &job.Pay, &job.EmploymentType, &job.Department, &job.OtherLocations, &job.PublishedAt,
-		&job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt, &job.DismissedAt, &job.DismissalReason}, extra...)
+		&job.FirstSeenAt, &job.LastSeenAt, &job.ClosedAt, &job.DismissedAt, &job.DismissalReason, &job.TextMissingReason}, extra...)
 	err := row.Scan(destinations...)
 	return job, err
 }
@@ -294,7 +298,7 @@ func adoptFeedCopy(ctx context.Context, tx pgx.Tx, actor Actor, board JobBoard, 
 			`+buildPollAssignment(JobFieldWorkplaceType, "$7")+`, url = $8, description = $9, raw = $10,
 			last_seen_at = $11, expires_at = NULL, closed_at = NULL,
 			`+buildPollAssignment(JobFieldPay, "$12")+`, `+buildPollAssignment(JobFieldEmploymentType, "$13")+`,
-			department = $14, other_locations = $15, published_at = $16
+			department = $14, other_locations = $15, published_at = $16, text_missing_reason = ''
 		WHERE id = $1`,
 		append([]any{jobID, board.ID, posting.ExternalID, board.CompanyID, posting.Title, posting.Location, posting.WorkplaceType,
 			posting.URL, posting.Description, posting.Raw, seenAt}, posting.boardFactsArguments()...)...); err != nil {
