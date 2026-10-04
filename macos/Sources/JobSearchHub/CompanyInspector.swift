@@ -8,8 +8,8 @@ final class CompanyInspectorModel {
     private(set) var dossier: CompanyDossier?
     /// Its open jobs, best screen first; nil until read.
     private(set) var openJobs: [JobListItem]?
-    /// The recruiters who wrote from it.
-    private(set) var recruiters: [RecruiterConversation] = []
+    /// Everyone who can get you in there; nil until read.
+    private(set) var people: [RelatedPerson]?
     private(set) var loadError: HubFailure?
 
     func load(_ companyID: UUID, with client: HubClient) async {
@@ -22,8 +22,8 @@ final class CompanyInspectorModel {
         if let jobs = try? await client.get("v1/jobs", query: CompanyJobs.makeQuery(companyID: companyID), as: JobsResponse.self).jobs {
             openJobs = JobsOrder.sort(jobs)
         }
-        if let all = try? await client.get("v1/recruiters", as: RecruitersResponse.self).recruiters {
-            recruiters = all.filter { $0.companyID == companyID }
+        if let listed = try? await client.get("v1/people", query: PeopleQuery.make(companyID: companyID), as: PeopleResponse.self).people {
+            people = listed
         }
     }
 }
@@ -274,58 +274,27 @@ struct CompanyInspector: View {
 
     // MARK: People
 
-    @ViewBuilder
+    /// The people list narrowed to the company, each opening in the
+    /// inspector, and a way to add someone who can introduce you.
     private func peopleTab(_ dossier: CompanyDossier) -> some View {
-        if !model.recruiters.isEmpty {
-            HubSection("Recruiters") {
-                ForEach(model.recruiters) { recruiter in
-                    InspectorLinkRow(recruiter.startedByName, detail: recruiter.starterPosition) {
-                        ToneChip(recruiter.isAgency ? "Agency" : "Recruiter", tone: .neutral)
-                        if !recruiter.ownerWrote {
-                            ToneChip("Unanswered", tone: .caution)
-                        }
-                    } open: {
-                        inspector.open(.person(recruiter.id))
-                    }
-                }
-            }
-        }
-        if let connections = dossier.connections, !connections.isEmpty {
-            HubSection("People you know") {
-                ConnectionList(connections: connections)
-            }
-        }
-        warmPathsSection(dossier)
         HubSection("People") {
-            if dossier.people.isEmpty {
-                Text("None stored").foregroundStyle(.secondary)
-            }
-            ForEach(dossier.people) { person in
-                PersonRow(
-                    person.name, relation: .contact,
-                    role: [person.roleTitle, person.relevance.replacingOccurrences(of: "_", with: " ")].compactMap { $0 }.joined(separator: " · ")
-                ) {
-                    if let email = person.email {
-                        linkOrText(email, url: "mailto:\(email)")
+            if let people = model.people {
+                if people.isEmpty {
+                    Text("No one yet. Research the company, or add someone who can introduce you.").foregroundStyle(.secondary)
+                }
+                ForEach(people) { person in
+                    PersonLinkRow(person: person)
+                        .contextMenu {
+                            if person.relation == .introducer {
+                                Button("Remove from \(dossier.company.name)", role: .destructive) { remove(person, from: dossier.company) }
+                            }
+                        }
+                    if person.id != people.last?.id {
+                        Divider()
                     }
-                    linkOrText("Source", url: person.sourceURL)
                 }
-            }
-        }
-    }
-
-    /// People who don't work here but can open doors, and a way to add one.
-    private func warmPathsSection(_ dossier: CompanyDossier) -> some View {
-        HubSection("Can introduce you") {
-            ForEach(dossier.warmPaths ?? []) { path in
-                PersonRow(
-                    path.name, relation: .introducer,
-                    detail: [path.note, path.howKnown, path.preferredChannel.map { "prefers \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
-                        .joined(separator: " · ")
-                )
-                .contextMenu {
-                    Button("Remove from \(dossier.company.name)", role: .destructive) { remove(path, from: dossier.company) }
-                }
+            } else {
+                ProgressView().controlSize(.small)
             }
             if failure != nil {
                 HubErrorView($failure)
@@ -348,10 +317,11 @@ struct CompanyInspector: View {
         }
     }
 
-    private func remove(_ path: WarmPath, from company: Company) {
+    /// Unlinks an introducer from the company.
+    private func remove(_ introducer: RelatedPerson, from company: Company) {
         Task {
             do {
-                try await client.delete("v1/companies/\(company.id)/warm-paths/\(path.contactID)")
+                try await client.delete("v1/companies/\(company.id)/warm-paths/\(introducer.personID)")
                 failure = nil
                 await model.load(companyID, with: client)
             } catch {

@@ -3,7 +3,7 @@ import Testing
 
 @Test func theSidebarListsThePagesInOrder() {
     #expect(Page.allCases.map(\.title) == [
-        "Decide", "Pipeline", "Updates", "Jobs", "Companies", "Recruiters", "Profile", "Criteria", "Activity", "Prompts", "Model lab",
+        "Decide", "Pipeline", "Updates", "Jobs", "Companies", "People", "Profile", "Criteria", "Activity", "Prompts", "Model lab",
     ])
 }
 
@@ -14,7 +14,7 @@ import Testing
 @Test func theSidebarGroupsPagesByIntent() {
     #expect(SidebarGroup.allCases.map(\.title) == [nil, "Browse", "You", "Hub"])
     #expect(SidebarGroup.work.pages == [.decide, .pipeline, .updates])
-    #expect(SidebarGroup.browse.pages == [.jobs, .companies, .recruiters])
+    #expect(SidebarGroup.browse.pages == [.jobs, .companies, .people])
     #expect(SidebarGroup.you.pages == [.profile, .criteria])
     #expect(SidebarGroup.hub.pages == [.activity, .prompts, .modelLab])
 }
@@ -30,5 +30,7 @@ import Testing
 @Test func pagesOpenFromTheirLaunchArgument() {
     #expect(Page(rawValue: "activity") == .activity)
     #expect(Page(rawValue: "model-lab") == .modelLab)
+    #expect(Page(rawValue: "people") == .people)
+    #expect(Page(rawValue: "recruiters") == nil)
     #expect(Page(rawValue: "settings") == nil)
 }

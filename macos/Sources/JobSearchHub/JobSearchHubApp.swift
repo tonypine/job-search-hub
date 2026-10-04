@@ -217,7 +217,7 @@ struct ContentView: View {
         case .decide: DecidePage()
         case .updates: UpdatesPage()
         case .companies: CompaniesPage()
-        case .recruiters: RecruitersPage()
+        case .people: PeoplePage()
         case .profile: ProfilePage()
         case .criteria: CriteriaPage()
         case .activity: ActivityPage()
