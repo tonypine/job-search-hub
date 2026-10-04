@@ -97,12 +97,12 @@ struct JobSearchHubApp: App {
     }
 
     /// `--page <name>` opens the app on that page, so a build can be checked
-    /// page by page from the terminal.
+    /// page by page from the terminal. Without it the app opens on Today.
     private static func pageFromLaunchArguments() -> Page {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flagIndex = arguments.firstIndex(of: "--page"), flagIndex + 1 < arguments.count,
               let page = Page(rawValue: arguments[flagIndex + 1])
-        else { return .pipeline }
+        else { return .today }
         return page
     }
 
@@ -214,6 +214,7 @@ struct ContentView: View {
     @ViewBuilder
     private var page: some View {
         switch selectedPage {
+        case .today: TodayPage { selectedPage = $0 }
         case .decide: DecidePage()
         case .updates: UpdatesPage()
         case .companies: CompaniesPage()
