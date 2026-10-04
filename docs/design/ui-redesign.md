@@ -11,6 +11,11 @@ jobs and people:
 swift docs/design/mockups/render.swift docs/design/mockups
 ```
 
+The Android mockups use Roboto and Material Symbols Rounded. Install Roboto, and point
+`MATERIAL_SYMBOLS_FONT` at `MaterialSymbolsRounded[FILL,GRAD,opsz,wght].ttf` from the `variablefont/`
+folder of [google/material-design-icons](https://github.com/google/material-design-icons). Without the
+font file, SF Symbols stand in for the icons.
+
 ## Mockups
 
 Every rollout ticket has at least one picture of what it delivers. The before pictures redraw
@@ -19,7 +24,7 @@ the same sections, buttons and colors.
 
 | Mockup | What it shows | Tickets |
 |---|---|---|
-| [`rollout.png`](mockups/rollout.png) | The ten tickets, their order and blocked-by links, each with its mockup | all |
+| [`rollout.png`](mockups/rollout.png) | The twelve tickets, their order and blocked-by links, each with its mockup | all |
 | [`design-board.png`](mockups/design-board.png) | Icon, tones, type, space, chips, actions, verdicts, feedback, connection banner | TP-449, TP-457 |
 | [`macos-job-before-after.png`](mockups/macos-job-before-after.png) | Today's job detail beside the proposed inspector, with seven problems and their fixes | TP-449, TP-450, TP-452 |
 | [`macos-vocabulary.png`](mockups/macos-vocabulary.png) | A pipeline card before and after, and the old and new word for each concept | TP-450 |
@@ -31,8 +36,11 @@ the same sections, buttons and colors.
 | [`macos-people.png`](mockups/macos-people.png) | The People page with a person open | TP-453 |
 | [`macos-today.png`](mockups/macos-today.png), [`macos-today-dark.png`](mockups/macos-today-dark.png) | The main window on Today, light and dark | TP-454 |
 | [`macos-palette.png`](mockups/macos-palette.png) | ⌘K over Today, and the keyboard decisions | TP-455 |
-| [`android-job-before-after.png`](mockups/android-job-before-after.png) | Today's job screen in wallpaper colors beside the brand theme | TP-456 |
+| [`android-components.png`](mockups/android-components.png) | Each shared component as Material 3 Expressive builds it, and the iOS habit it replaces | TP-456 |
+| [`android-job-before-after.png`](mockups/android-job-before-after.png) | Today's job screen in wallpaper colors beside the Material 3 one | TP-456 |
 | [`android.png`](mockups/android.png) | Android Today, Job, Pipeline and Settings | TP-456, TP-458 |
+| [`android-system.png`](mockups/android-system.png) | Notifications with actions, the *Followed up…* bottom sheet, a snackbar with Undo, predictive back | TP-458, TP-462 |
+| [`android-foldable.png`](mockups/android-foldable.png) | A navigation rail and list-detail panes on an unfolded Galaxy Z Fold, and dark theme | TP-463 |
 
 ## Summary
 
@@ -50,7 +58,9 @@ behaves differently depending on where you meet it. The two worst problems:
 The proposal has three parts:
 
 - **A design system.** One accent, four semantic tones, a type ramp, a 4-point spacing scale,
-  three radii, and about ten shared components, the same on macOS and Android.
+  three radii, and about ten shared components. Both clients share the meaning; each builds it
+  the way its platform does: macOS with AppKit and SwiftUI conventions, Android with Material 3
+  Expressive and Samsung's One UI guidance.
 - **An information architecture.** A Today page, a sidebar grouped by intent, one inspector for
   every entity with history and cross-links, a People page, Criteria out of Settings, and a ⌘K
   palette.
@@ -101,7 +111,7 @@ The scores run from 1 (poor) to 5 (great) for **polish** (looks finished and con
 | Profile | 2 | 2 | Five unrelated things in one scroll: the profile document, knowledge base, market gaps, LinkedIn with its audit, and application answers. Headings use three different styles. |
 | Prompts, Compare, Runs | 3 | 3 | Fine as tools, but they're the hub's own maintenance, and they sit in the main navigation at the same level as Decide. |
 | Settings | 2 | 1 | Eleven sections in one form. Job criteria, take-home pay and pipeline phases shape the whole search, and they're buried between the Keychain token and server start and stop. LinkedIn import lives here, but its results show on four other pages. |
-| Android | 3 | 3 | Clean Material 3, but dynamic color takes the wallpaper's palette, so it doesn't look like the Mac app. Follow-up reminders land on a phone with no pipeline. "Research a company" sits on the Jobs bar, and unpair on the Updates bar. |
+| Android | 3 | 3 | Material 3 components, but no design on top: dynamic color takes the wallpaper's palette and the tones are hard-coded hex, the job screen is one long scroll with five equal buttons at the top, out of thumb reach, and notifications have no actions. Follow-up reminders land on a phone with no pipeline. "Research a company" sits on the Jobs bar, and unpair on the Updates bar. Unfolded on a Fold or a tablet, it stretches one column across the screen. |
 
 ![Today's job detail beside the proposed inspector](mockups/macos-job-before-after.png)
 
@@ -191,7 +201,9 @@ decision flow that brings up the next job.
   color, so it never reads as good or bad.
 - **Icon:** a hub, you, joined to three nodes (a company, a job, a person) on an indigo squircle.
   The same mark on macOS (`.icns` through `iconutil`) and Android (adaptive icon).
-- **Android uses the brand palette**, not dynamic color, so both clients look like one product.
+- **Android builds its Material 3 scheme from Hub Indigo** as the seed, so both clients share an
+  accent while Android still looks like Android. *Match wallpaper colors* in Settings switches to
+  dynamic color for those who want it. See [Android](#android-material-3-expressive-and-one-ui).
 
 ### Tones
 
@@ -224,8 +236,8 @@ SF Pro on the Mac and Roboto on Android, with the same roles:
 
 | Role | macOS | Android | Use |
 |---|---|---|---|
-| Page | navigation title | `titleLarge` | The page's name in the toolbar |
-| Entity | 20 semibold (`.title2.weight(.semibold)`) | `headlineSmall` | A job's, company's or person's name in its inspector |
+| Page | navigation title | `headlineLarge`, `titleLarge` once collapsed | The page's name in the toolbar or app bar |
+| Entity | 20 semibold (`.title2.weight(.semibold)`) | `headlineMedium` | A job's, company's or person's name in its inspector |
 | Section | 13 semibold (`.headline`) | `titleSmall` | Brief, Screen, People |
 | Body | 13 (`.body`) | `bodyMedium` | Text you read |
 | Secondary | 12 secondary (`.callout`) | `bodySmall`, `onSurfaceVariant` | Company, location, reasons |
@@ -237,7 +249,8 @@ SF Pro on the Mac and Roboto on Android, with the same roles:
 - **Spacing:** `xs 4`, `s 8`, `m 12`, `l 16`, `xl 24`, `xxl 32`. Rows within a section use `s`,
   sections are `l` apart, and pages pad by `xl`.
 - **Radii:** `control 6` (fields, small buttons), `card 10` (cards, wells), `panel 14` (sheets,
-  floating panels). Chips and buttons are capsules.
+  floating panels). Chips and buttons are capsules. These are the Mac's; Android uses the Material 3
+  shape scale instead (below).
 - **Surfaces:** the window background, a **card** (background with a separator hairline) for a
   group on a page, and a **well** (`.quinary`) for quoted or generated text like a drafted reply.
   On macOS 26 the sidebar and toolbars keep the system's Liquid Glass; content stays opaque.
@@ -245,7 +258,9 @@ SF Pro on the Mac and Roboto on Android, with the same roles:
 ### Components
 
 Each is built once per client, in `macos/Sources/JobSearchHub/DesignSystem/` and
-`android/app/.../ui/design/`. Today's ad hoc versions are noted in brackets.
+`android/app/.../ui/design/`. The names and meanings are shared; on Android each one wraps a
+Material 3 component (see [Android](#android-material-3-expressive-and-one-ui)). The last column
+lists the ad hoc versions it replaces.
 
 | Component | What it is | Replaces |
 |---|---|---|
@@ -399,27 +414,90 @@ toolbars, and it gives "better access to information" in one place.
 
 ![The ⌘K palette and the keyboard decisions](mockups/macos-palette.png)
 
-### Android
+### Android: Material 3 Expressive and One UI
+
+The Android client shares the Mac's information architecture, words and tone meanings, but not its
+look. It follows [Material 3 Expressive](https://m3.material.io/) and Samsung's
+[One UI](https://developer.samsung.com/one-ui) guidance, so it feels like the other apps on the
+phone. The first draft of these mockups borrowed iOS habits: grouped tables with ALL-CAPS headers,
+chevron rows, a horizontal `…` menu, iOS switches and alerts, capsule chips, SF type. Every one of
+them is replaced below.
+
+![Android components: Material 3, not iOS](mockups/android-components.png)
 
 ![Android's job screen today and proposed](mockups/android-job-before-after.png)
 
 ![Android Today, Job, Pipeline and Settings](mockups/android.png)
 
-- **Bottom bar:** Today, Decide, Pipeline, Jobs. Updates folds into Today, as on the Mac.
-- **Pipeline:** phases as a scrolling chip row and cards below. A card's menu has *Followed up…*
-  and *Move to*, so a follow-up reminder can be acted on where it lands.
-- **Job:** the header and chips, then Pursue as the primary and Later and Skip as tonal buttons.
-  Fix and Open posting go in the overflow, and Brief, Screen, People and Posting are sections.
-- **Overflow menu → Settings:** the paired hub, notifications, and Unpair behind a confirmation.
-  "Research a company" moves to the Today overflow as *Ask the Mac…*.
-- **Theme:** the brand palette and tones in place of dynamic color, the same chips, the same
-  words.
+**Platform rules**
+
+| Area | Rule | Not |
+|---|---|---|
+| Color | A Material 3 scheme generated from the Hub Indigo seed (the fidelity variant keeps `#4B49D6` as `primary`), light and dark. *Settings › Appearance › Match wallpaper colors* turns on dynamic color. The four tones are Material custom colors harmonized to the scheme, each with a container role, so they keep their meaning under either | Mac hex values at 13% on white |
+| Type | The Material 3 type scale in Roboto (the roles in [Type](#type)), sized in `sp` so it follows the font size setting | SF Pro sizes |
+| Shape | The Material 3 shape scale: 4 (snackbar, field), 8 (chips, labels), 12 (menus), 16 to 20 (cards, list groups), 28 (dialogs, sheets), full (buttons, FAB, search bar) | The Mac's 6, 10 and 14 |
+| Icons | Material Symbols Rounded, 24 dp: outlined, filled when selected or for a verdict | SF Symbols |
+| Navigation | A navigation bar with Today, Decide, Pipeline and Jobs (a pill indicator, badges for jobs to decide and follow-ups due). `NavigationSuiteScaffold` turns it into a rail on wide screens | A tab bar of thin icons |
+| Top app bars | Large flexible on top-level pages (title plus a summary subtitle, collapsing on scroll), medium flexible on a job or company, small on Settings. Actions at the end, then the hub avatar, which opens Settings and the connection | Centered titles, text buttons in the bar |
+| Overflow | `⋮` icon button and a Material menu with leading icons | A horizontal `…` |
+| Back | System back and the predictive back gesture (`enableOnBackInvokedCallback`); a back arrow only on screens below the top level | Swipe-only back, close buttons |
+| Lists | List items (leading monogram or icon, headline, supporting text, a status label) in segmented groups: large outer corners, small inner ones, 2 dp apart, as in system Settings. Group headings in `primary`, sentence case | Chevron rows, ALL-CAPS headers |
+| Status | `ToneChip` is a label in the tone's container with 8 dp corners | Capsules at 13% tint |
+| Actions | `ActionBar` is a medium button group docked at the bottom: one filled, one tonal, one outlined. The rest in the `⋮` menu | A row of equal buttons at the top |
+| Filters | Primary tabs for phases and sections; filter chips for filters | Segmented controls |
+| Feedback | `Toast` is a snackbar, with Undo where it can. `AsyncButton` uses the wavy progress or loading indicator. Pull to refresh only where the event stream can't reach | A floating capsule notice |
+| Confirmation | A basic dialog: hero icon, headline, text buttons at the end (the destructive one in `error`) | An alert with stacked buttons |
+| Forms and choices | Modal bottom sheets with a drag handle, outlined text fields, the Material date picker | Popovers, iOS pickers |
+| Edge to edge | Content draws under the status and gesture bars, with insets | Letterboxed bars |
+| Accessibility | 48 dp touch targets, TalkBack labels on every icon button and label, text that scales to 200% | |
+
+**Samsung One UI** asks for the same things in its own words, and the rules above meet them:
+content to read in the top half and controls to touch in the bottom half (the large app bar on top,
+the docked button group and navigation bar at the bottom), rounded grouped containers, and layouts
+that adapt to foldables, pop-up view and split screen.
+
+**Screens**
+
+- **Bottom bar:** Today, Decide, Pipeline, Jobs. Updates folds into Today, as on the Mac. The app
+  opens on Today.
+- **Today:** a large app bar with "7 to decide · 1 overdue · 2 replies", then groups for Decide,
+  Follow up and Updates. A follow-up is done with the tonal check button.
+- **Job:** a medium app bar with Open posting and `⋮` (Fix…, Share, Skip…). The company is an
+  assist chip that opens it. Overview, People and Posting are tabs, the same split as the Mac's
+  inspector. Skip, Later and Pursue are docked at the bottom.
+- **Pipeline:** phases as scrollable tabs, filter chips, and cards as list items. Swipe a card to
+  record the follow-up, or use its `⋮` menu for *Followed up…* and *Move to*. Both open a bottom
+  sheet with the next date.
+- **Settings**, from the hub avatar: the paired hub, notifications, appearance, and *Unpair this
+  phone* behind a dialog. "Research a company" moves to the Today overflow as *Ask the Mac…*.
+
+![Notifications, the Followed up sheet, Undo and predictive back](mockups/android-system.png)
+
+**System surfaces**
+
+- **Notifications:** one channel per kind (Follow-ups, Replies, Matches, Hub), so each can be
+  muted on its own, with actions: *Followed up* and *Snooze a day* on a reminder, *Open* and *Mark
+  as read* on a reply. Several of a kind group under a summary.
+- **Undo:** Skip and Later from a list show a snackbar with Undo, instead of asking first.
+- **Predictive back:** swiping from the edge shows where back goes before you let go.
+
+![A navigation rail and list-detail panes on a Galaxy Z Fold, and dark theme](mockups/android-foldable.png)
+
+**Large screens and dark theme**
+
+- On an unfolded Galaxy Z Fold or a tablet, `NavigationSuiteScaffold` shows a rail, and
+  `ListDetailPaneScaffold` puts the list beside the open job or company, like the Mac's list and
+  inspector. Folding keeps the open item and its scroll position.
+- Dark theme uses the same scheme's dark roles. The tones keep their meaning in their dark
+  containers.
 
 ## Rollout
 
 Each step ships on its own and keeps the app working. The order lowers risk: the shared pieces
 land first, then the structure, then the new pages. Each row is a sub-issue of TP-440, in Backlog
-until the proposal is approved.
+until the proposal is approved. TP-456 and TP-458 were filed before the Android section above was
+rewritten; where their descriptions differ from it (dynamic color, the components), this document
+wins.
 
 ![The rollout, with each ticket's mockup](mockups/rollout.png)
 
@@ -432,12 +510,17 @@ until the proposal is approved.
 | 5 | TP-453 Server and macOS: People across companies, replacing Recruiters | TP-452 | people |
 | 6 | TP-454 macOS: the Today page, replacing Updates in the sidebar | TP-452 | today, today dark |
 | 7 | TP-455 macOS: ⌘K palette and keyboard decisions | TP-452 | palette |
-| 8 | TP-456 Android: brand theme, tones, components and vocabulary | none | Android job before/after |
-| 9 | TP-458 Android: Today, Pipeline and Settings | TP-456 | Android |
-| 10 | TP-457 Both: the hub icon | none | design board |
+| 8 | TP-456 Android: Material 3 theme from Hub Indigo, tones, components and vocabulary | none | Android components, Android job before/after |
+| 9 | TP-458 Android: Today, Pipeline and Settings, with the *Followed up…* sheet, Undo and predictive back | TP-456 | Android, Android system |
+| 10 | TP-462 Android: notification channels and actions | TP-458 | Android system |
+| 11 | TP-463 Android: adaptive layout for foldables and tablets | TP-458 | Android foldable |
+| 12 | TP-457 Both: the hub icon | none | design board |
 
 ## Open questions for review
 
+- **Dynamic color on Android.** The proposal defaults to the Hub Indigo scheme and offers *Match
+  wallpaper colors* as a setting. The alternative is dynamic color by default, with Hub Indigo for
+  phones before Android 12. Either way the tones stay harmonized custom colors.
 - **Indigo as the accent.** The alternative is to keep the system accent and brand only the icon.
   Indigo gives both clients one look, and nothing else in the UI uses it.
 - **Renaming Fit to Screen.** It's the change most likely to feel unfamiliar at first. It's
