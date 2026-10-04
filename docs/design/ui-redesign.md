@@ -204,8 +204,9 @@ decision flow that brings up the next job.
   `macos/Scripts/make-icon.swift` draws it for both: `make-app.sh` runs it on every build, and its
   header says how to regenerate the Android layers.
 - **Android builds its Material 3 scheme from Hub Indigo** as the seed, so both clients share an
-  accent while Android still looks like Android. *Match wallpaper colors* in Settings switches to
-  dynamic color for those who want it. See [Android](#android-material-3-expressive-and-one-ui).
+  accent while Android still looks like Android. It uses brand colors only (decided 2026-10-04):
+  no dynamic color, and no setting to match the wallpaper. See
+  [Android](#android-material-3-expressive-and-one-ui).
 
 ### Tones
 
@@ -435,7 +436,7 @@ them is replaced below.
 
 | Area | Rule | Not |
 |---|---|---|
-| Color | A Material 3 scheme generated from the Hub Indigo seed (the fidelity variant keeps `#4B49D6` as `primary`), light and dark. *Settings › Appearance › Match wallpaper colors* turns on dynamic color. The four tones are Material custom colors harmonized to the scheme, each with a container role, so they keep their meaning under either | Mac hex values at 13% on white |
+| Color | A Material 3 scheme generated from the Hub Indigo seed (the fidelity variant keeps `#4B49D6` as `primary`), light and dark. The scheme is always Hub Indigo: brand colors only, with no dynamic color and no setting for it (decided 2026-10-04). The four tones are Material custom colors harmonized to the scheme, each with a container role, so they keep their meaning in light and dark | Dynamic color, Mac hex values at 13% on white |
 | Type | The Material 3 type scale in Roboto (the roles in [Type](#type)), sized in `sp` so it follows the font size setting | SF Pro sizes |
 | Shape | The Material 3 shape scale: 4 (snackbar, field), 8 (chips, labels), 12 (menus), 16 to 20 (cards, list groups), 28 (dialogs, sheets), full (buttons, FAB, search bar) | The Mac's 6, 10 and 14 |
 | Icons | Material Symbols Rounded, 24 dp: outlined, filled when selected or for a verdict | SF Symbols |
@@ -520,9 +521,6 @@ wins.
 
 ## Open questions for review
 
-- **Dynamic color on Android.** The proposal defaults to the Hub Indigo scheme and offers *Match
-  wallpaper colors* as a setting. The alternative is dynamic color by default, with Hub Indigo for
-  phones before Android 12. Either way the tones stay harmonized custom colors.
 - **Indigo as the accent.** The alternative is to keep the system accent and brand only the icon.
   Indigo gives both clients one look, and nothing else in the UI uses it.
 - **Renaming Fit to Screen.** It's the change most likely to feel unfamiliar at first. It's
