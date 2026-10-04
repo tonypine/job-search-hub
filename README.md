@@ -84,6 +84,17 @@ The prompts live only in the database; none are in this repo. A fresh database t
 
 `android/` holds the phone companion: updates and good-fit jobs, paired with the hub through a QR code from the Mac app's Settings › Phones. See `android/README.md`.
 
+## Where it runs
+
+The hub stays on the Mac rather than moving to an always-on PC (decided October 2026). The reasons:
+
+- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and Postgres restarts with Docker Desktop, so a locked screen doesn't take the hub down.
+- **Downtime loses nothing.** Gmail catches up from the stored history ID, Pub/Sub holds notifications for 7 days, alert emails of the last 30 days are read on the next pass, and board and feed polls pick up where they stopped. Moving would only add gathering while the Mac is shut or away.
+- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. All of that would have to be set up again on a Windows Docker host.
+- **Backups don't depend on the host.** The nightly `pg_dump` (see Setup) covers the database wherever it lives.
+
+Revisit this if the PC turns out to run the local models well. If it does, move the model worker there first and leave the hub where it is.
+
 ## Layout
 
 ```
