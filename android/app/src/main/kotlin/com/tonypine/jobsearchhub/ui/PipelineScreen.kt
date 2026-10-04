@@ -75,6 +75,7 @@ fun PipelineScreen(
     onFollowedUp: (PipelineCard, String) -> Unit,
     onMove: (PipelineCard, PipelinePhase, String) -> Unit,
     menu: List<HubAction>,
+    selected: Detail? = null,
 ) {
     val board = state.pipeline
     var chosenPhaseId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -140,7 +141,7 @@ fun PipelineScreen(
                 }
                 if (board != null) itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
                     PipelineCardRow(
-                        card, board, isHighlighted = card.id == highlightedCardId,
+                        card, board, isHighlighted = card.id == highlightedCardId || card.detail()?.isSameItem(selected) == true,
                         modifier = Modifier.clip(segmentShape(index, cards.size)),
                         onOpen = { onOpenCard(card) },
                         onFollowedUp = { followingUp = card },

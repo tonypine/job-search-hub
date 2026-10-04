@@ -22,6 +22,8 @@ compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-material3-adaptive-navigation-suite = { module = "androidx.compose.material3:material3-adaptive-navigation-suite" }
+compose-material3-adaptive-layout = { module = "androidx.compose.material3.adaptive:adaptive-layout" }
 compose-material-icons = { module = "androidx.compose.material:material-icons-extended" }
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version = "2.10.5" }

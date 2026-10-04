@@ -73,6 +73,7 @@ fun TodayScreen(
     onOpenCompany: (String) -> Unit,
     onAskTheMac: (String) -> Unit,
     menu: List<HubAction>,
+    selected: Detail? = null,
 ) {
     var isAsking by rememberSaveable { mutableStateOf(false) }
     var followingUp by remember { mutableStateOf<PipelineCard?>(null) }
@@ -113,7 +114,10 @@ fun TodayScreen(
                     TodayGroup("Decide · ${state.decisionQueue.size}", onSeeAll = onSeeDecide, rows = state.decisionQueue.take(SHOWN).map { item ->
                         {
                             val match = Match.of(item.match)
-                            TodayRow(item.companyName ?: item.job.title, item.job.title, onOpen = { onOpenDecisionJob(item.job.id) }) {
+                            TodayRow(
+                                item.companyName ?: item.job.title, item.job.title, onOpen = { onOpenDecisionJob(item.job.id) },
+                                isSelected = Detail.job(item.job.id).isSameItem(selected),
+                            ) {
                                 ToneChip(match.word, match.tone)
                                 Supporting(listOfNotNull(item.companyName, item.job.location).joinToString(" · "))
                             }
@@ -125,6 +129,7 @@ fun TodayScreen(
                         {
                             TodayRow(
                                 card.companyName ?: card.title, card.title, onOpen = { onOpenCard(card) },
+                                isSelected = card.detail()?.isSameItem(selected) == true,
                                 trailing = {
                                     FilledTonalIconButton(onClick = { followingUp = card }) {
                                         Icon(Icons.Rounded.Done, contentDescription = "Followed up on ${card.title}…")
@@ -142,6 +147,7 @@ fun TodayScreen(
                         {
                             TodayRow(
                                 update.companyName ?: update.title, update.title, onOpen = { onOpenUpdate(update) },
+                                isSelected = update.detail()?.isSameItem(selected) == true,
                                 trailing = { Supporting(formatWhen(update.createdAt)) },
                             ) {
                                 Supporting(update.body.lineSequence().firstOrNull { it.isNotBlank() } ?: listOfNotNull(update.companyName, update.jobTitle).joinToString(" · "))
@@ -155,6 +161,7 @@ fun TodayScreen(
                             TodayRow(
                                 recruiter.startedByName, recruiter.startedByName.ifBlank { "A recruiter" }, tone = Tone.NEUTRAL,
                                 onOpen = recruiter.companyId?.let { id -> { onOpenCompany(id) } },
+                                isSelected = recruiter.companyId?.let { Detail.company(it).isSameItem(selected) } == true,
                             ) {
                                 if (recruiter.isAgency) ToneChip("Agency", Tone.NEUTRAL)
                                 val fitting = if (recruiter.fittingJobs == 1) "1 fitting job" else "${recruiter.fittingJobs} fitting jobs"
@@ -184,18 +191,19 @@ private fun TodayGroup(title: String, rows: List<@Composable () -> Unit>, onSeeA
     }
 }
 
-/** A list item: a monogram, the headline, a line of chips and supporting text, and an optional trailing element. */
+/** A list item: a monogram, the headline, a line of chips and supporting text, and an optional trailing element. Selected while its item is open beside the list. */
 @Composable
 private fun TodayRow(
     monogram: String,
     headline: String,
     onOpen: (() -> Unit)?,
     tone: Tone = Tone.ACCENT,
+    isSelected: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
     supporting: @Composable RowScope.() -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier).heightIn(min = 72.dp)
+        Modifier.fillMaxWidth().selectedBackground(isSelected, MaterialTheme.colorScheme.primaryContainer).then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier).heightIn(min = 72.dp)
             .padding(horizontal = Spacing.l, vertical = Spacing.m),
         horizontalArrangement = Arrangement.spacedBy(Spacing.l),
         verticalAlignment = Alignment.CenterVertically,

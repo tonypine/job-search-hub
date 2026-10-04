@@ -17,11 +17,10 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ViewKanban
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -57,10 +56,10 @@ private const val PIPELINE = "pipeline"
 private const val JOBS = "jobs"
 private const val UPDATES = "updates"
 private const val SETTINGS = "settings"
-private const val JOB = "job/{id}?fromQueue={fromQueue}"
+private const val JOB = "job/{id}"
 private const val COMPANY = "company/{id}"
 
-/** A page of the navigation bar. */
+/** A page of the navigation bar or rail. */
 private data class TopLevel(val route: String, val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 
 private val topLevels = listOf(
@@ -70,7 +69,11 @@ private val topLevels = listOf(
     TopLevel(JOBS, "Jobs", Icons.Outlined.Work, Icons.Rounded.Work),
 )
 
-/** Pairing first; then Today, Decide, Pipeline and Jobs, a job's or company's details, the updates' history and Settings. */
+/**
+ * Pairing first; then Today, Decide, Pipeline and Jobs, a job's or company's details, the updates' history and Settings.
+ * Under 600 dp a navigation bar switches pages and a job opens over its page; from 600 dp, on an unfolded Fold, a
+ * tablet or a wide split screen, a rail does, and the job opens beside the page's list, a notification's beside Today's.
+ */
 @Composable
 fun HubNavigation(viewModel: HubViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -82,6 +85,12 @@ fun HubNavigation(viewModel: HubViewModel) {
     val navigation = rememberNavController()
     val entry by navigation.currentBackStackEntryAsState()
     val route = entry?.destination?.route
+    // Each page keeps its own open job or company, through rotating and folding.
+    val todayDetails = rememberDetailStack()
+    val decideDetails = rememberDetailStack()
+    val pipelineDetails = rememberDetailStack()
+    val jobsDetails = rememberDetailStack()
+    val isWide = showsTwoPanes()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val say: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
@@ -93,9 +102,6 @@ fun HubNavigation(viewModel: HubViewModel) {
         }
     }
     val menu = listOf(HubAction("Settings", Icons.Rounded.Settings) { navigation.navigate(SETTINGS) { launchSingleTop = true } })
-    val openCard: (PipelineCard) -> Unit = { card ->
-        card.application.jobId?.let { navigation.navigate("job/$it") } ?: card.application.companyId?.let { navigation.navigate("company/$it") }
-    }
     val followedUp: (PipelineCard, String) -> Unit = { card, note ->
         scope.launch {
             viewModel.recordFollowUp(card, note).fold({ say("Followed up on ${card.title}") }, { say(it.message ?: "Couldn't record the follow-up.") })
@@ -106,122 +112,151 @@ fun HubNavigation(viewModel: HubViewModel) {
             viewModel.moveCard(card, phase, reason).fold({ say("Moved ${card.title} to ${phase.name}") }, { say(it.message ?: "Couldn't move the card.") })
         }
     }
+    // A page's open job or company, with a back arrow only when it shows alone.
+    val detailPane: @Composable (DetailStack, Detail, Boolean) -> Unit = { details, detail, isAlone ->
+        val onBack = if (isAlone) details::close else null
+        when (detail.kind) {
+            Detail.Kind.JOB -> JobScreen(
+                detail.id, viewModel, onBack = onBack,
+                onOpenCompany = { details.open(Detail.company(it)) },
+                onDecided = { next ->
+                    // From the queue, a decision moves on to the next job in it; elsewhere it closes the job.
+                    if (detail.fromQueue && next != null) details.replace(Detail.job(next, fromQueue = true)) else details.close()
+                },
+            )
+            Detail.Kind.COMPANY -> CompanyScreen(detail.id, viewModel, onBack = onBack, onOpenJob = { details.open(Detail.job(it)) })
+        }
+    }
+    val page = topLevels.firstOrNull { it.route == route }
+    val pageDetails = when (route) {
+        TODAY -> todayDetails
+        DECIDE -> decideDetails
+        PIPELINE -> pipelineDetails
+        JOBS -> jobsDetails
+        else -> null
+    }
     val dueFollowUps = state.dueFollowUps().size
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            if (topLevels.any { it.route == route }) {
-                NavigationBar {
-                    topLevels.forEach { page ->
-                        val count = when (page.route) {
-                            DECIDE -> state.decisionQueue.size
-                            PIPELINE -> dueFollowUps
-                            else -> 0
-                        }
-                        NavigationBarItem(
-                            selected = route == page.route, onClick = { goTo(page.route) }, label = { Text(page.label) },
-                            icon = {
-                                BadgedBox(badge = { if (count > 0) Badge { Text("$count") } }) {
-                                    Icon(if (route == page.route) page.selectedIcon else page.icon, contentDescription = null)
+    NavigationSuiteScaffold(
+        layoutType = when {
+            page == null -> NavigationSuiteType.None
+            isWide -> NavigationSuiteType.NavigationRail
+            // On a phone a job opens over its page, as before.
+            pageDetails?.current != null -> NavigationSuiteType.None
+            else -> NavigationSuiteType.NavigationBar
+        },
+        navigationSuiteItems = {
+            topLevels.forEach { item ->
+                val count = when (item.route) {
+                    DECIDE -> state.decisionQueue.size
+                    PIPELINE -> dueFollowUps
+                    else -> 0
+                }
+                item(
+                    selected = route == item.route, onClick = { goTo(item.route) }, label = { Text(item.label) },
+                    icon = { Icon(if (route == item.route) item.selectedIcon else item.icon, contentDescription = null) },
+                    badge = if (count > 0) ({ Badge { Text("$count") } }) else null,
+                )
+            }
+        },
+    ) {
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+            NavHost(navigation, startDestination = TODAY, modifier = Modifier.padding(padding)) {
+                composable(TODAY) {
+                    ListDetailPage(todayDetails, "Open a job or a company to see it here.", detail = { detail, isAlone -> detailPane(todayDetails, detail, isAlone) }) {
+                        TodayScreen(
+                            state, onRefresh = viewModel::refresh,
+                            onOpenDecisionJob = { todayDetails.show(Detail.job(it, fromQueue = true)) }, onSeeDecide = { goTo(DECIDE) },
+                            onOpenCard = { card -> card.detail()?.let(todayDetails::show) }, onSeePipeline = { goTo(PIPELINE) },
+                            onFollowedUp = followedUp,
+                            onOpenUpdate = { update ->
+                                viewModel.markSeen(update)
+                                update.detail()?.let(todayDetails::show) ?: navigation.navigate(UPDATES)
+                            },
+                            onSeeUpdates = { navigation.navigate(UPDATES) },
+                            onOpenCompany = { todayDetails.show(Detail.company(it)) },
+                            onAskTheMac = { company ->
+                                scope.launch {
+                                    viewModel.askTheMac(QueueTaskRequest(kind = "research_company", company = company))
+                                        .fold({ say("Sent to the Mac. The result comes as an update.") }, { say(it.message ?: "Couldn't reach the Mac.") })
                                 }
                             },
+                            menu = menu, selected = todayDetails.root,
                         )
                     }
                 }
-            }
-        },
-    ) { padding ->
-        NavHost(navigation, startDestination = TODAY, modifier = Modifier.padding(padding)) {
-            composable(TODAY) {
-                TodayScreen(
-                    state, onRefresh = viewModel::refresh,
-                    onOpenDecisionJob = { navigation.navigate("job/$it?fromQueue=true") }, onSeeDecide = { goTo(DECIDE) },
-                    onOpenCard = openCard, onSeePipeline = { goTo(PIPELINE) }, onFollowedUp = followedUp,
-                    onOpenUpdate = { update ->
-                        viewModel.markSeen(update)
-                        when {
-                            update.jobId != null -> navigation.navigate("job/${update.jobId}")
-                            update.companyId != null -> navigation.navigate("company/${update.companyId}")
-                            else -> navigation.navigate(UPDATES)
-                        }
-                    },
-                    onSeeUpdates = { navigation.navigate(UPDATES) },
-                    onOpenCompany = { navigation.navigate("company/$it") },
-                    onAskTheMac = { company ->
-                        scope.launch {
-                            viewModel.askTheMac(QueueTaskRequest(kind = "research_company", company = company))
-                                .fold({ say("Sent to the Mac. The result comes as an update.") }, { say(it.message ?: "Couldn't reach the Mac.") })
-                        }
-                    },
-                    menu = menu,
-                )
-            }
-            composable(DECIDE) {
-                DecideScreen(state, onRefresh = viewModel::refresh, onOpenJob = { navigation.navigate("job/$it?fromQueue=true") }, menu = menu)
-            }
-            composable(PIPELINE) {
-                val focus by viewModel.pipelineFocus.collectAsStateWithLifecycle()
-                PipelineScreen(
-                    state, focus = focus, onFocusShown = viewModel::clearPipelineFocus, onRefresh = viewModel::refresh,
-                    onOpenCard = openCard, onFollowedUp = followedUp, onMove = move, menu = menu,
-                )
-            }
-            composable(JOBS) {
-                JobsScreen(
-                    state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear,
-                    onOpenJob = { navigation.navigate("job/$it") }, menu = menu,
-                )
-            }
-            composable(UPDATES) {
-                UpdatesScreen(
-                    state, onBack = { navigation.popBackStack() }, onRefresh = viewModel::refresh, onSeen = viewModel::markSeen,
-                    onOpenJob = { navigation.navigate("job/$it") }, onOpenCompany = { navigation.navigate("company/$it") },
-                )
-            }
-            composable(SETTINGS) {
-                SettingsScreen(state, onBack = { navigation.popBackStack() }, onUnpair = viewModel::unpair)
-            }
-            composable(
-                JOB,
-                arguments = listOf(
-                    navArgument("id") { type = NavType.StringType },
-                    navArgument("fromQueue") { type = NavType.BoolType; defaultValue = false },
-                ),
-            ) { backStack ->
-                val fromQueue = backStack.arguments?.getBoolean("fromQueue") == true
-                JobScreen(
-                    backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
-                    onOpenCompany = { navigation.navigate("company/$it") },
-                    onDecided = { next ->
-                        // From the queue, a decision moves on to the next job in it; elsewhere it goes back.
-                        if (fromQueue && next != null) {
-                            navigation.navigate("job/$next?fromQueue=true") { popUpTo(JOB) { inclusive = true } }
-                        } else {
-                            navigation.popBackStack()
-                        }
-                    },
-                )
-            }
-            composable(COMPANY, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
-                CompanyScreen(
-                    backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
-                    onOpenJob = { navigation.navigate("job/$it") },
-                )
-            }
-        }
-        val notificationTarget by viewModel.notificationTarget.collectAsStateWithLifecycle()
-        LaunchedEffect(notificationTarget) {
-            val target = notificationTarget ?: return@LaunchedEffect
-            when {
-                // A follow-up reminder opens its card on Pipeline, where it can be marked followed up.
-                target.isFollowUp -> {
-                    viewModel.focusPipeline(PipelineFocus(target.jobId, target.companyId))
-                    goTo(PIPELINE)
+                composable(DECIDE) {
+                    ListDetailPage(decideDetails, "Open a job to decide on it here.", detail = { detail, isAlone -> detailPane(decideDetails, detail, isAlone) }) {
+                        DecideScreen(
+                            state, onRefresh = viewModel::refresh, onOpenJob = { decideDetails.show(Detail.job(it, fromQueue = true)) },
+                            menu = menu, selected = decideDetails.root,
+                        )
+                    }
                 }
-                target.jobId != null -> navigation.navigate("job/${target.jobId}")
-                target.companyId != null -> navigation.navigate("company/${target.companyId}")
+                composable(PIPELINE) {
+                    ListDetailPage(pipelineDetails, "Open a card to see its job or company here.", detail = { detail, isAlone -> detailPane(pipelineDetails, detail, isAlone) }) {
+                        val focus by viewModel.pipelineFocus.collectAsStateWithLifecycle()
+                        PipelineScreen(
+                            state, focus = focus, onFocusShown = viewModel::clearPipelineFocus, onRefresh = viewModel::refresh,
+                            onOpenCard = { card -> card.detail()?.let(pipelineDetails::show) }, onFollowedUp = followedUp, onMove = move,
+                            menu = menu, selected = pipelineDetails.root,
+                        )
+                    }
+                }
+                composable(JOBS) {
+                    ListDetailPage(jobsDetails, "Open a job to see it here.", detail = { detail, isAlone -> detailPane(jobsDetails, detail, isAlone) }) {
+                        JobsScreen(
+                            state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear,
+                            onOpenJob = { jobsDetails.show(Detail.job(it)) }, menu = menu, selected = jobsDetails.root,
+                        )
+                    }
+                }
+                composable(UPDATES) {
+                    // The history's open item is its own, and goes when the history closes.
+                    val updatesDetails = rememberDetailStack()
+                    ListDetailPage(updatesDetails, "Open an update to see its job or company here.", detail = { detail, isAlone -> detailPane(updatesDetails, detail, isAlone) }) {
+                        UpdatesScreen(
+                            state, onBack = { navigation.popBackStack() }, onRefresh = viewModel::refresh, onSeen = viewModel::markSeen,
+                            onOpenJob = { updatesDetails.show(Detail.job(it)) }, onOpenCompany = { updatesDetails.show(Detail.company(it)) },
+                            selected = updatesDetails.root,
+                        )
+                    }
+                }
+                composable(SETTINGS) {
+                    SettingsScreen(state, onBack = { navigation.popBackStack() }, onUnpair = viewModel::unpair)
+                }
+                // On a phone, a job or company opened from a notification, over the page.
+                composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
+                    JobScreen(
+                        backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
+                        onOpenCompany = { navigation.navigate("company/$it") }, onDecided = { navigation.popBackStack() },
+                    )
+                }
+                composable(COMPANY, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
+                    CompanyScreen(
+                        backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
+                        onOpenJob = { navigation.navigate("job/$it") },
+                    )
+                }
             }
-            viewModel.clearNotificationTarget()
+            val notificationTarget by viewModel.notificationTarget.collectAsStateWithLifecycle()
+            LaunchedEffect(notificationTarget) {
+                val target = notificationTarget ?: return@LaunchedEffect
+                when {
+                    // A follow-up reminder opens its card on Pipeline, where it can be marked followed up.
+                    target.isFollowUp -> {
+                        viewModel.focusPipeline(PipelineFocus(target.jobId, target.companyId))
+                        goTo(PIPELINE)
+                    }
+                    // From 600 dp it opens beside Today's list, with the rail; on a phone, full screen.
+                    isWide -> (target.jobId?.let { Detail.job(it) } ?: target.companyId?.let { Detail.company(it) })?.let { detail ->
+                        goTo(TODAY)
+                        todayDetails.show(detail)
+                    }
+                    target.jobId != null -> navigation.navigate("job/${target.jobId}")
+                    target.companyId != null -> navigation.navigate("company/${target.companyId}")
+                }
+                viewModel.clearNotificationTarget()
+            }
         }
     }
 }

@@ -32,7 +32,7 @@ import com.tonypine.jobsearchhub.ui.design.ToneChip
 /** The briefed jobs waiting for a decision, best match first; a job opens on its brief. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> Unit, menu: List<HubAction>) {
+fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> Unit, menu: List<HubAction>, selected: Detail? = null) {
     Column {
         TopAppBar(title = { Text("Decide") }, actions = { OverflowMenu(menu) })
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
@@ -45,7 +45,7 @@ fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> 
                     )
                 }
                 items(state.decisionQueue, key = { it.job.id }) { item ->
-                    DecisionQueueRow(item) { onOpenJob(item.job.id) }
+                    DecisionQueueRow(item, isSelected = Detail.job(item.job.id).isSameItem(selected)) { onOpenJob(item.job.id) }
                     HorizontalDivider()
                 }
             }
@@ -54,8 +54,8 @@ fun DecideScreen(state: HubState, onRefresh: () -> Unit, onOpenJob: (String) -> 
 }
 
 @Composable
-private fun DecisionQueueRow(item: DecisionQueueItem, onOpen: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = Spacing.l, vertical = Spacing.m), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+private fun DecisionQueueRow(item: DecisionQueueItem, isSelected: Boolean, onOpen: () -> Unit) {
+    Column(Modifier.fillMaxWidth().selectedBackground(isSelected, MaterialTheme.colorScheme.primaryContainer).clickable(onClick = onOpen).padding(horizontal = Spacing.l, vertical = Spacing.m), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
             val match = Match.of(item.match)
             ToneChip(match.word, match.tone)
