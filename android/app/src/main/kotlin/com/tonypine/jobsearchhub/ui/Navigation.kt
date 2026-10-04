@@ -72,7 +72,7 @@ private val topLevels = listOf(
 /**
  * Pairing first; then Today, Decide, Pipeline and Jobs, a job's or company's details, the updates' history and Settings.
  * Under 600 dp a navigation bar switches pages and a job opens over its page; from 600 dp, on an unfolded Fold, a
- * tablet or a wide split screen, a rail does, and the job opens beside the page's list.
+ * tablet or a wide split screen, a rail does, and the job opens beside the page's list, a notification's beside Today's.
  */
 @Composable
 fun HubNavigation(viewModel: HubViewModel) {
@@ -211,15 +211,20 @@ fun HubNavigation(viewModel: HubViewModel) {
                     }
                 }
                 composable(UPDATES) {
-                    UpdatesScreen(
-                        state, onBack = { navigation.popBackStack() }, onRefresh = viewModel::refresh, onSeen = viewModel::markSeen,
-                        onOpenJob = { navigation.navigate("job/$it") }, onOpenCompany = { navigation.navigate("company/$it") },
-                    )
+                    // The history's open item is its own, and goes when the history closes.
+                    val updatesDetails = rememberDetailStack()
+                    ListDetailPage(updatesDetails, "Open an update to see its job or company here.", detail = { detail, isAlone -> detailPane(updatesDetails, detail, isAlone) }) {
+                        UpdatesScreen(
+                            state, onBack = { navigation.popBackStack() }, onRefresh = viewModel::refresh, onSeen = viewModel::markSeen,
+                            onOpenJob = { updatesDetails.show(Detail.job(it)) }, onOpenCompany = { updatesDetails.show(Detail.company(it)) },
+                            selected = updatesDetails.root,
+                        )
+                    }
                 }
                 composable(SETTINGS) {
                     SettingsScreen(state, onBack = { navigation.popBackStack() }, onUnpair = viewModel::unpair)
                 }
-                // A job or company opened from the updates' history or a notification, over the page.
+                // On a phone, a job or company opened from a notification, over the page.
                 composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
                     JobScreen(
                         backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
@@ -241,6 +246,11 @@ fun HubNavigation(viewModel: HubViewModel) {
                     target.isFollowUp -> {
                         viewModel.focusPipeline(PipelineFocus(target.jobId, target.companyId))
                         goTo(PIPELINE)
+                    }
+                    // From 600 dp it opens beside Today's list, with the rail; on a phone, full screen.
+                    isWide -> (target.jobId?.let { Detail.job(it) } ?: target.companyId?.let { Detail.company(it) })?.let { detail ->
+                        goTo(TODAY)
+                        todayDetails.show(detail)
                     }
                     target.jobId != null -> navigation.navigate("job/${target.jobId}")
                     target.companyId != null -> navigation.navigate("company/${target.companyId}")

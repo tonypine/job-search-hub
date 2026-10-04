@@ -25,13 +25,14 @@ import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
 import androidx.compose.material3.adaptive.layout.calculateThreePaneScaffoldValue
 import androidx.compose.material3.adaptive.layout.defaultDragHandleSemantics
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +79,9 @@ class DetailStack(items: List<Detail> = emptyList()) {
 
     /** The item opened from the list, which the list highlights. */
     val root: Detail? get() = items.firstOrNull()
+
+    /** A key for each open item's saved state (its tab, its scroll), told apart by its place in the stack. */
+    val stateKeys: List<String> get() = items.mapIndexed { index, item -> "$index:${item.kind}:${item.id}" }
 
     /** Opens an item from the list, in place of what was open. */
     fun show(detail: Detail) {
@@ -135,6 +139,15 @@ fun ListDetailPage(
         ThreePaneScaffoldDestinationItem(if (current != null) ListDetailPaneScaffoldRole.Detail else ListDetailPaneScaffoldRole.List, current),
     )
     val isAlone = value[ListDetailPaneScaffoldRole.List] != PaneAdaptedValue.Expanded
+    // Each open item keeps its tab and scroll while it's in the stack, so back from a job's company returns to the job as it was.
+    val states = rememberSaveableStateHolder()
+    val keys = details.stateKeys
+    var keptKeys by rememberSaveable { mutableStateOf(keys) }
+    LaunchedEffect(keys) {
+        // An item closed or replaced forgets its state, so opening it again starts at the top.
+        (keptKeys - keys.toSet()).forEach(states::removeState)
+        keptKeys = keys
+    }
     BackHandler(enabled = current != null) { details.close() }
     ListDetailPaneScaffold(
         directive = directive, value = value,
@@ -145,8 +158,7 @@ fun ListDetailPage(
                     // Beside the list, the empty pane says what goes there; on a phone it's only sliding out.
                     if (directive.maxHorizontalPartitions > 1) Placeholder(placeholder)
                 } else {
-                    // Each item gets its own state, so the next one doesn't open at the last one's tab or scroll.
-                    key(details.items.size, current) { detail(current, isAlone) }
+                    states.SaveableStateProvider(keys.last()) { detail(current, isAlone) }
                 }
             }
         },
