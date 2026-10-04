@@ -22,6 +22,8 @@ go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...   # the version CI pins i
 
 Store and tool tests each get a fresh database created through `HUB_TEST_DATABASE_URL` and dropped afterwards. Without the variable they fail rather than skip.
 
+The same checks run in CI (`.github/workflows/ci.yml`) on every pull request, and `ci` is the check `main` requires.
+
 The macOS app:
 
 ```bash
