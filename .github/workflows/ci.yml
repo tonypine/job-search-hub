@@ -115,6 +115,75 @@ jobs:
       - name: go mod tidy
         run: go mod tidy -diff
 
+  # The whole Go suite against a throwaway Postgres 18. Every store and tool
+  # test migrates a brand-new database through testdatabase.New, so a migration
+  # that doesn't apply fails here; there is no separate migration job.
+  server-test:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          # Not a secret: the database lives only as long as the job.
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HUB_TEST_DATABASE_URL: postgres://hub:hub@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # The runner's own client is older, and pg_dump refuses a newer server.
+      # The PATH entry wins over pg_wrapper, which could pick the old one.
+      - name: Install the Postgres 18 client
+        working-directory: .
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $VERSION_CODENAME-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends postgresql-client-18
+          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+
+      - name: Check pg_dump is version 18
+        run: |
+          pg_dump --version
+          pg_dump --version | grep -Eq ' 18(\.|$)'
+
+      # The backup test skips when pg_dump is missing; here it has to run.
+      - name: Backup test runs, not skips
+        run: |
+          go test -count=1 -v -run '^TestADumpIsReadableAndAFailedOneLeavesNoFile$' ./internal/databasebackup \
+            | tee "$RUNNER_TEMP/backup-test.log"
+          grep -q -- '--- PASS: TestADumpIsReadableAndAFailedOneLeavesNoFile' "$RUNNER_TEMP/backup-test.log"
+
+      # -count=1: setup-go restores GOCACHE, and a cached result never touches
+      # the database, so the weekly run would test nothing.
+      - name: go test
+        run: go test -count=1 ./...
+
   # Runs only when macos/ changes: the Swift tests run against StubHub, not
   # the server, and macOS minutes cost 10x Linux ones. It never runs
   # Scripts/make-app.sh, which signs with a Keychain identity CI doesn't have.
@@ -159,7 +228,7 @@ jobs:
   # The one check branch protection requires. Add every new job to `needs`.
   ci:
     if: always()
-    needs: [changes, server-static, macos]
+    needs: [changes, server-static, server-test, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
