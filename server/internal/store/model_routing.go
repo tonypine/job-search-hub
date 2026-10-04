@@ -17,11 +17,23 @@ var (
 	ErrTaskRouteNotFound     = errors.New("no route for that task")
 	// ErrModelProviderInUse refuses deleting a provider a route runs on.
 	ErrModelProviderInUse = errors.New("a task runs on that provider; route it elsewhere first")
+	// ErrTaskRouteRequired refuses removing the route of a task that always
+	// runs.
+	ErrTaskRouteRequired = errors.New("that task always runs on a model; route it elsewhere instead")
 )
 
 // RoutedTaskKinds are the kinds of background task that run on a routed
 // model.
 var RoutedTaskKinds = []string{AgentPromptKindJobFacts, AgentPromptKindJobBrief, AgentPromptKindRecruiterScreen, AgentPromptKindMarketGaps, AgentPromptKindInterviewPrep, AgentPromptKindMailTriage, AgentPromptKindLinkedInConversation, AgentPromptKindHiringThread}
+
+// TaskKindJobFactsSecondReading reads a job's facts again, on a stronger
+// model, when the first reading is doubtful.
+const TaskKindJobFactsSecondReading = "job_facts_second_reading"
+
+// OptionalRoutedTaskKinds run only once the owner routes them: the hub
+// never routes them to its own model server, and their route can be removed
+// to turn them off again.
+var OptionalRoutedTaskKinds = []string{TaskKindJobFactsSecondReading}
 
 // DefaultModelProviderName names the provider the hub creates from its
 // settings, the local model server it used before routes existed.
@@ -193,8 +205,8 @@ func (s *Store) GetTaskRoute(ctx context.Context, kind string) (TaskRoute, error
 // SaveTaskRoute points a kind of task at a provider and model.
 func (s *Store) SaveTaskRoute(ctx context.Context, actor Actor, kind string, input TaskRouteInput) (TaskRoute, error) {
 	input.Model, input.FallbackModel = strings.TrimSpace(input.Model), strings.TrimSpace(input.FallbackModel)
-	if !slices.Contains(RoutedTaskKinds, kind) {
-		return TaskRoute{}, fmt.Errorf("%q isn't a task that runs on a routed model; those are %s", kind, strings.Join(RoutedTaskKinds, ", "))
+	if kinds := slices.Concat(RoutedTaskKinds, OptionalRoutedTaskKinds); !slices.Contains(kinds, kind) {
+		return TaskRoute{}, fmt.Errorf("%q isn't a task that runs on a routed model; those are %s", kind, strings.Join(kinds, ", "))
 	}
 	if input.Model == "" {
 		return TaskRoute{}, errors.New("a route needs a model")
@@ -219,6 +231,22 @@ func (s *Store) SaveTaskRoute(ctx context.Context, actor Actor, kind string, inp
 		return insertChange(ctx, tx, actor, change{entityType: "task_route", entityID: saved.ProviderID, operation: "route " + kind, after: input})
 	})
 	return saved, err
+}
+
+// DeleteTaskRoute removes an optional kind's route, which turns that task
+// off. Every other kind always has a route.
+func (s *Store) DeleteTaskRoute(ctx context.Context, actor Actor, kind string) error {
+	if !slices.Contains(OptionalRoutedTaskKinds, kind) {
+		return ErrTaskRouteRequired
+	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		deleted, err := scanTaskRoute(tx.QueryRow(ctx, `DELETE FROM task_routes WHERE kind = $1 RETURNING `+taskRouteColumns, kind))
+		if err != nil {
+			return err
+		}
+		return insertChange(ctx, tx, actor, change{entityType: "task_route", entityID: deleted.ProviderID, operation: "unroute " + kind,
+			before: map[string]string{"model": deleted.Model}})
+	})
 }
 
 // EnsureDefaultTaskRoutes gives each kind that has no route one to the

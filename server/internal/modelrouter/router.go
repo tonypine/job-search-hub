@@ -54,7 +54,7 @@ func New(hub *store.Store) *Router {
 func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	route, err := router.hub.GetTaskRoute(ctx, request.SchemaName)
 	if errors.Is(err, store.ErrTaskRouteNotFound) {
-		return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s", request.SchemaName)
+		return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s: %w", request.SchemaName, err)
 	}
 	if err != nil {
 		return chatcompletions.Answer{}, err

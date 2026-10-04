@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -41,6 +42,9 @@ func TestDefaultRoutesAreSeededOnceAndNeverOverwriteAChoice(t *testing.T) {
 	providers, _ = hub.ListModelProviders(ctx)
 	if route.ProviderID != hosted.ID || route.Model != "big" || len(providers) != 2 {
 		t.Fatalf("a restart overwrote the chosen route: %+v, providers %d", route, len(providers))
+	}
+	if _, err := hub.GetTaskRoute(ctx, store.TaskKindJobFactsSecondReading); !errors.Is(err, store.ErrTaskRouteNotFound) {
+		t.Fatalf("the second reading was routed by default: %v", err)
 	}
 }
 

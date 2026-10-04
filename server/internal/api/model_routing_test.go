@@ -82,6 +82,34 @@ func TestATaskIsRoutedToAProviderThatThenCannotBeDeleted(t *testing.T) {
 	}
 }
 
+func TestTheSecondReadingIsRoutedAndTurnedOffAgain(t *testing.T) {
+	service := startAPI(t)
+	_, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"name":"Hosted","base_url":"https://example.com/v1","enforces_schema":true}`)
+	var provider store.ModelProvider
+	json.Unmarshal(answer, &provider)
+	route := fmt.Sprintf(`{"provider_id":%q,"model":"claude-sonnet"}`, provider.ID)
+	if status, answer := send(t, http.MethodPut, service.url+"/v1/task-routes/job_facts", ownerToken, route); status != http.StatusOK {
+		t.Fatalf("route job_facts: %d %s", status, answer)
+	}
+	if status, answer := send(t, http.MethodPut, service.url+"/v1/task-routes/job_facts_second_reading", ownerToken, route); status != http.StatusOK {
+		t.Fatalf("route the second reading: %d %s", status, answer)
+	}
+
+	if status, answer := send(t, http.MethodDelete, service.url+"/v1/task-routes/job_facts", ownerToken, ""); status != http.StatusBadRequest {
+		t.Fatalf("turning off a task that always runs: %d %s", status, answer)
+	}
+	if status, answer := send(t, http.MethodDelete, service.url+"/v1/task-routes/job_facts_second_reading", ownerToken, ""); status != http.StatusNoContent {
+		t.Fatalf("turning off the second reading: %d %s", status, answer)
+	}
+	if status, _ := send(t, http.MethodDelete, service.url+"/v1/task-routes/job_facts_second_reading", ownerToken, ""); status != http.StatusNotFound {
+		t.Fatalf("turning it off again: %d", status)
+	}
+	_, answer = send(t, http.MethodGet, service.url+"/v1/task-routes", ownerToken, "")
+	if strings.Contains(string(answer), "job_facts_second_reading") || !strings.Contains(string(answer), `"kind":"job_facts"`) {
+		t.Fatalf("routes after turning it off: %s", answer)
+	}
+}
+
 // makeModelsDir is a models folder with two GGUF files and one other file.
 func makeModelsDir(t *testing.T) string {
 	t.Helper()

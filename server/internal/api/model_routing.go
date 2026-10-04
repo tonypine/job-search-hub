@@ -142,6 +142,19 @@ func RegisterModelRoutingRoutes(routes *http.ServeMux, hub *store.Store, modelsD
 			writeJSON(w, http.StatusOK, saved)
 		}
 	})))
+	routes.Handle("DELETE /v1/task-routes/{kind}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := hub.DeleteTaskRoute(r.Context(), owner, r.PathValue("kind"))
+		switch {
+		case errors.Is(err, store.ErrTaskRouteNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case errors.Is(err, store.ErrTaskRouteRequired):
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		case err != nil:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})))
 }
 
 // listModelFiles names the GGUF files in the models folder.

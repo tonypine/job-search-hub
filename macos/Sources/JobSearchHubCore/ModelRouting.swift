@@ -102,7 +102,11 @@ public enum RoutedTaskKind: String, CaseIterable, Identifiable, Sendable {
     case interviewPrep = "interview_prep"
     case mailTriage = "mail_triage"
     case linkedInConversation = "linkedin_conversation"
+    case jobFactsSecondReading = "job_facts_second_reading"
 
     public var id: String { rawValue }
     public var title: String { RunsSummary.getKindTitle(rawValue) }
+    /// An optional task runs only once routed, and its route can be removed
+    /// to turn it off again.
+    public var isOptional: Bool { self == .jobFactsSecondReading }
 }

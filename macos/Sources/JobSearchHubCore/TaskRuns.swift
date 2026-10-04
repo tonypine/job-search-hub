@@ -80,6 +80,7 @@ public enum RunsSummary {
     public static func getKindTitle(_ kind: String) -> String {
         switch kind {
         case "job_facts": "Job facts"
+        case "job_facts_second_reading": "Job facts, second reading"
         case "job_brief": "Job briefs"
         case "recruiter_screen": "Recruiter screens"
         case "market_gaps": "Market gaps"

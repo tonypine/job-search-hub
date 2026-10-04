@@ -91,8 +91,8 @@ func TestARequestRunsOnTheRoutedProviderAndModel(t *testing.T) {
 		t.Fatalf("records = %+v", records)
 	}
 
-	if _, err := router.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: store.AgentPromptKindMailTriage}); err == nil {
-		t.Fatal("a kind with no route answered")
+	if _, err := router.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: store.AgentPromptKindMailTriage}); !errors.Is(err, store.ErrTaskRouteNotFound) {
+		t.Fatalf("a kind with no route: %v; want it told apart from a failure", err)
 	}
 }
 

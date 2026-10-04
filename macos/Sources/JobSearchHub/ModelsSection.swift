@@ -26,7 +26,7 @@ struct ModelsSection: View {
             Button("Add a provider", systemImage: "plus") { editedProvider = .add }
             ForEach(RoutedTaskKind.allCases) { kind in
                 TaskRouteRow(kind: kind, providers: providers, route: routes[kind.rawValue], client: client) { saved in
-                    routes[saved.kind] = saved
+                    routes[kind.rawValue] = saved
                 }
             }
             if let errorMessage {
@@ -73,13 +73,14 @@ enum ProviderSheetTarget: Identifiable {
 }
 
 /// One kind of task's route: its provider and model, and a fallback for
-/// when that provider can't be reached.
+/// when that provider can't be reached. An optional task can be turned off.
 struct TaskRouteRow: View {
     let kind: RoutedTaskKind
     let providers: [ModelProvider]
     let route: TaskRoute?
     let client: HubClient
-    let onSaved: (TaskRoute) -> Void
+    /// Gets the saved route, or nil once an optional task is turned off.
+    let onSaved: (TaskRoute?) -> Void
 
     @State private var providerID: UUID?
     @State private var model = ""
@@ -95,21 +96,30 @@ struct TaskRouteRow: View {
                 Text(kind.title).fontWeight(.medium)
                 Spacer()
                 Button("Save") { Task { await save() } }
-                    .disabled(!hasChanges || isSaving || providerID == nil || model.isEmpty)
+                    .disabled(!hasChanges || isSaving || !canSave)
                     .accessibilityLabel("Save \(kind.title)")
             }
-            HStack {
-                providerPicker("Runs on", selection: $providerID, allowsNone: false)
-                    .accessibilityLabel("\(kind.title) provider")
-                modelPicker(for: providerID, selection: $model)
-                    .accessibilityLabel("\(kind.title) model")
+            if kind.isOptional {
+                Text("Reads a job's facts again when the first reading is doubtful, such as an unclear answer on Brazil. Off until routed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             HStack {
-                providerPicker("Fallback", selection: $fallbackProviderID, allowsNone: true)
-                    .accessibilityLabel("\(kind.title) fallback provider")
-                if fallbackProviderID != nil {
-                    modelPicker(for: fallbackProviderID, selection: $fallbackModel)
-                        .accessibilityLabel("\(kind.title) fallback model")
+                providerPicker("Runs on", selection: $providerID, allowsNone: kind.isOptional, noneTitle: "Off")
+                    .accessibilityLabel("\(kind.title) provider")
+                if providerID != nil {
+                    modelPicker(for: providerID, selection: $model)
+                        .accessibilityLabel("\(kind.title) model")
+                }
+            }
+            if providerID != nil {
+                HStack {
+                    providerPicker("Fallback", selection: $fallbackProviderID, allowsNone: true)
+                        .accessibilityLabel("\(kind.title) fallback provider")
+                    if fallbackProviderID != nil {
+                        modelPicker(for: fallbackProviderID, selection: $fallbackModel)
+                            .accessibilityLabel("\(kind.title) fallback model")
+                    }
                 }
             }
             if let errorMessage {
@@ -122,15 +132,21 @@ struct TaskRouteRow: View {
         .task(id: fallbackProviderID) { await loadModels(for: fallbackProviderID) }
     }
 
+    /// A route needs a provider and a model; an optional task can also be
+    /// turned off.
+    private var canSave: Bool {
+        providerID == nil ? kind.isOptional && route != nil : !model.isEmpty
+    }
+
     private var hasChanges: Bool {
         providerID != route?.providerID || model != (route?.model ?? "")
             || fallbackProviderID != route?.fallbackProviderID || fallbackModel != (route?.fallbackModel ?? "")
     }
 
-    private func providerPicker(_ title: String, selection: Binding<UUID?>, allowsNone: Bool) -> some View {
+    private func providerPicker(_ title: String, selection: Binding<UUID?>, allowsNone: Bool, noneTitle: String = "None") -> some View {
         Picker(title, selection: selection) {
             if allowsNone {
-                Text("None").tag(UUID?.none)
+                Text(noneTitle).tag(UUID?.none)
             }
             ForEach(providers) { provider in
                 Text(provider.name).tag(UUID?.some(provider.id))
@@ -169,9 +185,18 @@ struct TaskRouteRow: View {
     }
 
     private func save() async {
-        guard let providerID else { return }
         isSaving = true
         defer { isSaving = false }
+        guard let providerID else {
+            do {
+                try await client.delete("v1/task-routes/\(kind.rawValue)")
+                errorMessage = nil
+                onSaved(nil)
+            } catch {
+                errorMessage = String(describing: error)
+            }
+            return
+        }
         let input = TaskRouteInput(
             providerID: providerID, model: model,
             fallbackProviderID: fallbackProviderID, fallbackModel: fallbackProviderID == nil ? nil : fallbackModel
