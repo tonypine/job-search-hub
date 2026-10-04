@@ -115,10 +115,51 @@ jobs:
       - name: go mod tidy
         run: go mod tidy -diff
 
+  # Runs only when macos/ changes: the Swift tests run against StubHub, not
+  # the server, and macOS minutes cost 10x Linux ones. It never runs
+  # Scripts/make-app.sh, which signs with a Keychain identity CI doesn't have.
+  macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    # Package.swift targets macOS 26. Move both pins together when a newer
+    # image goes GA.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      XCODE_VERSION: "26.6"
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: xcode
+        name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app"
+          xcodebuild -version
+          swift --version
+          echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: macos/.build
+          key: swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-${{ hashFiles('macos/Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
+
   # The one check branch protection requires. Add every new job to `needs`.
   ci:
     if: always()
-    needs: [changes, server-static]
+    needs: [changes, server-static, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
