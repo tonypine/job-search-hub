@@ -974,84 +974,703 @@ struct DesignBoard: View {
     }
 }
 
-// MARK: - Android
+// MARK: - Android: Material 3 Expressive
 
-struct Phone<Content: View>: View {
-    let tab: String?
-    var surface = Color(hex: 0xFCFBFF)
+/// Android icons are Material Symbols Rounded, drawn from the variable font at MATERIAL_SYMBOLS_FONT
+/// (`variablefont/` in github.com/google/material-design-icons). Without it, SF Symbols stand in.
+nonisolated(unsafe) var materialSymbolsLoaded = false
+
+func loadMaterialSymbols() {
+    guard let path = ProcessInfo.processInfo.environment["MATERIAL_SYMBOLS_FONT"] else {
+        FileHandle.standardError.write("MATERIAL_SYMBOLS_FONT is unset: Android icons fall back to SF Symbols\n".data(using: .utf8)!)
+        return
+    }
+    materialSymbolsLoaded = CTFontManagerRegisterFontsForURL(URL(filePath: path) as CFURL, .process, nil)
+}
+
+/// A Material Symbol by its name, outlined or filled.
+struct MSymbol: View {
+    let name: String
+    var size: CGFloat = 24
+    var fill = false
+
+    init(_ name: String, size: CGFloat = 24, fill: Bool = false) {
+        self.name = name
+        self.size = size
+        self.fill = fill
+    }
+
+    var body: some View {
+        Group {
+            if materialSymbolsLoaded {
+                Text(name).font(Font(font)).fixedSize()
+            } else {
+                Image(systemName: Self.fallback[name] ?? "circle").font(.system(size: size * 0.75))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    private var font: CTFont {
+        let axes: [Int: CGFloat] = [0x4649_4C4C: fill ? 1 : 0, 0x7767_6874: 400, 0x6F70_737A: min(max(size, 20), 48)]
+        let attributes: [CFString: Any] = [kCTFontNameAttribute: "MaterialSymbolsRounded-Regular", kCTFontVariationAttribute: axes]
+        return CTFontCreateWithFontDescriptor(CTFontDescriptorCreateWithAttributes(attributes as CFDictionary), size, nil)
+    }
+
+    private static let fallback = [
+        "home": "house", "fact_check": "checklist", "view_kanban": "rectangle.split.3x1", "work": "briefcase",
+        "search": "magnifyingglass", "hub": "circle.hexagongrid", "more_vert": "ellipsis", "arrow_back": "arrow.left",
+        "open_in_new": "arrow.up.right.square", "check": "checkmark", "check_circle": "checkmark.circle", "help": "questionmark.circle",
+        "remove_circle": "minus.circle", "cancel": "xmark.circle", "schedule": "clock", "close": "xmark", "notifications": "bell",
+        "computer": "desktopcomputer", "sync": "arrow.triangle.2.circlepath", "link_off": "link", "palette": "paintpalette",
+        "filter_list": "line.3.horizontal.decrease", "expand_more": "chevron.down", "share": "square.and.arrow.up", "build": "wrench",
+        "wifi": "wifi", "signal_cellular_4_bar": "cellularbars", "battery_full": "battery.100", "menu": "line.3.horizontal",
+        "add": "plus", "mail": "envelope", "person": "person", "undo": "arrow.uturn.backward", "dark_mode": "moon",
+        "event": "calendar", "snooze": "moon.zzz", "bluetooth": "dot.radiowaves.left.and.right", "flashlight_on": "flashlight.on.fill",
+        "do_not_disturb_on": "minus.circle", "settings": "gear", "edit_note": "square.and.pencil", "group": "person.2",
+        "drag_handle": "line.3.horizontal", "chevron_right": "chevron.right", "keyboard_arrow_up": "chevron.up",
+    ]
+}
+
+/// Hub Indigo as a Material 3 color scheme: the fidelity variant keeps the seed as primary.
+enum M3 {
+    static var primary: Color { darkMode ? Color(hex: 0xC3C0FF) : Color(hex: 0x4B49D6) }
+    static var onPrimary: Color { darkMode ? Color(hex: 0x1F1A8C) : .white }
+    static var primaryContainer: Color { darkMode ? Color(hex: 0x3533BE) : Color(hex: 0xE2DFFF) }
+    static var onPrimaryContainer: Color { darkMode ? Color(hex: 0xE2DFFF) : Color(hex: 0x100069) }
+    static var secondaryContainer: Color { darkMode ? Color(hex: 0x464559) : Color(hex: 0xE3E0F9) }
+    static var onSecondaryContainer: Color { darkMode ? Color(hex: 0xE3E0F9) : Color(hex: 0x1A1A2C) }
+    static var tertiaryContainer: Color { darkMode ? Color(hex: 0x633B48) : Color(hex: 0xFFD8E4) }
+    /// The page: the surface container lists and cards sit on.
+    static var page: Color { darkMode ? Color(hex: 0x131318) : Color(hex: 0xF0ECF6) }
+    /// A list item, card or group on the page.
+    static var item: Color { darkMode ? Color(hex: 0x2A292F) : .white }
+    static var containerHigh: Color { darkMode ? Color(hex: 0x2A292F) : Color(hex: 0xEAE7F1) }
+    static var containerHighest: Color { darkMode ? Color(hex: 0x35343A) : Color(hex: 0xE4E1EB) }
+    static var containerLow: Color { darkMode ? Color(hex: 0x1B1B21) : Color(hex: 0xF6F2FC) }
+    static var onSurface: Color { darkMode ? Color(hex: 0xE4E1E9) : Color(hex: 0x1B1B21) }
+    static var onSurfaceVariant: Color { darkMode ? Color(hex: 0xC8C5D0) : Color(hex: 0x47464F) }
+    static var outline: Color { darkMode ? Color(hex: 0x928F9A) : Color(hex: 0x787680) }
+    static var outlineVariant: Color { darkMode ? Color(hex: 0x47464F) : Color(hex: 0xC8C5D0) }
+    static var inverseSurface: Color { darkMode ? Color(hex: 0xE4E1E9) : Color(hex: 0x303036) }
+    static var inverseOnSurface: Color { darkMode ? Color(hex: 0x303036) : Color(hex: 0xF3EFF7) }
+    static var inversePrimary: Color { darkMode ? Color(hex: 0x4B49D6) : Color(hex: 0xC3C0FF) }
+    static var error: Color { darkMode ? Color(hex: 0xFFB4AB) : Color(hex: 0xBA1A1A) }
+    static let scrim = Color.black.opacity(0.32)
+}
+
+/// The tones as Material 3 custom colors, harmonized toward the seed, each with a container role.
+extension Tone {
+    var m3: Color {
+        switch self {
+        case .accent: M3.primary
+        case .positive: darkMode ? Color(hex: 0x8DD7A3) : Color(hex: 0x1B6D3F)
+        case .caution: darkMode ? Color(hex: 0xFFB86E) : Color(hex: 0x8A5100)
+        case .negative: M3.error
+        case .neutral: M3.onSurfaceVariant
+        }
+    }
+
+    var m3Container: Color {
+        switch self {
+        case .accent: M3.primaryContainer
+        case .positive: darkMode ? Color(hex: 0x00522D) : Color(hex: 0xB4F1C6)
+        case .caution: darkMode ? Color(hex: 0x693C00) : Color(hex: 0xFFDCBE)
+        case .negative: darkMode ? Color(hex: 0x93000A) : Color(hex: 0xFFDAD6)
+        case .neutral: M3.containerHighest
+        }
+    }
+
+    var m3OnContainer: Color {
+        switch self {
+        case .accent: M3.onPrimaryContainer
+        case .positive: darkMode ? Color(hex: 0xB4F1C6) : Color(hex: 0x00210E)
+        case .caution: darkMode ? Color(hex: 0xFFDCBE) : Color(hex: 0x2C1600)
+        case .negative: darkMode ? Color(hex: 0xFFDAD6) : Color(hex: 0x410002)
+        case .neutral: M3.onSurfaceVariant
+        }
+    }
+}
+
+/// The Material 3 type scale in Roboto.
+enum M3Type {
+    static func roboto(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font { .custom("Roboto", size: size).weight(weight) }
+    static var displaySmall: Font { roboto(36) }
+    static var headlineLarge: Font { roboto(32) }
+    static var headlineMedium: Font { roboto(28) }
+    static var headlineSmall: Font { roboto(24) }
+    static var titleLarge: Font { roboto(22) }
+    static var titleMedium: Font { roboto(16, .medium) }
+    static var titleSmall: Font { roboto(14, .medium) }
+    static var bodyLarge: Font { roboto(16) }
+    static var bodyMedium: Font { roboto(14) }
+    static var bodySmall: Font { roboto(12) }
+    static var labelLarge: Font { roboto(14, .medium) }
+    static var labelMedium: Font { roboto(12, .medium) }
+    static var labelSmall: Font { roboto(11, .medium) }
+}
+
+/// The Material 3 shape scale.
+enum M3Shape {
+    static let extraSmall: CGFloat = 4
+    static let small: CGFloat = 8
+    static let medium: CGFloat = 12
+    static let large: CGFloat = 16
+    static let extraLarge: CGFloat = 28
+}
+
+// MARK: Device
+
+struct AndroidStatusBar: View {
+    var color: Color = M3.onSurface
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("10:24").font(M3Type.roboto(14, .medium))
+            Spacer()
+            MSymbol("wifi", size: 16, fill: true)
+            MSymbol("signal_cellular_4_bar", size: 16, fill: true)
+            MSymbol("battery_full", size: 16, fill: true)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 20)
+        .frame(height: 36)
+        .overlay { Circle().fill(.black).frame(width: 12, height: 12) }
+    }
+}
+
+/// The gesture navigation handle at the bottom of an edge-to-edge screen.
+struct GestureHandle: View {
+    var body: some View {
+        Capsule().fill(M3.onSurface.opacity(0.85)).frame(width: 108, height: 4).frame(maxWidth: .infinity).frame(height: 24)
+    }
+}
+
+/// A phone in the Galaxy and Pixel mould: punch-hole camera, thin even bezel, gesture navigation.
+struct AndroidPhone<Content: View>: View {
+    /// The selected destination in the navigation bar; nil for a screen without one.
+    var nav: String?
+    var background: Color?
+    var width: CGFloat = 360
+    var height: CGFloat = 780
     @ViewBuilder let content: Content
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("9:41").font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Image(systemName: "wifi").font(.system(size: 11))
-                Image(systemName: "battery.75percent").font(.system(size: 13))
-            }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 22).frame(height: 32)
-            VStack(spacing: 0) { content }.frame(maxHeight: .infinity, alignment: .top)
-            if let tab {
-                HStack {
-                    ForEach([("Today", "sun.max"), ("Decide", "checklist"), ("Pipeline", "rectangle.split.3x1"), ("Jobs", "briefcase")], id: \.0) { item in
-                        VStack(spacing: 4) {
-                            Image(systemName: item.1).font(.system(size: 15, weight: .medium))
-                                .frame(width: 56, height: 28)
-                                .background(item.0 == tab ? Tone.accent.color.opacity(0.16) : .clear, in: Capsule())
-                            Text(item.0).font(.system(size: 11, weight: item.0 == tab ? .semibold : .regular))
-                        }
-                        .foregroundStyle(item.0 == tab ? Tone.accent.color : secondaryInk)
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-                .padding(.vertical, 10)
-                .background(Color(hex: 0xF3F2FA))
+            AndroidStatusBar()
+            VStack(spacing: 0) { content }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+            if let nav {
+                M3NavigationBar(selected: nav)
+            } else {
+                GestureHandle()
             }
         }
-        .frame(width: 360, height: 760)
-        .background(surface)
-        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 36, style: .continuous).strokeBorder(Color(hex: 0x2A2A2E), lineWidth: 8))
+        .frame(width: width, height: height)
+        .background(background ?? M3.page)
+        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .padding(6)
+        .background(Color(hex: 0x1F1F22), in: RoundedRectangle(cornerRadius: 40, style: .continuous))
     }
 }
 
-struct AppBar: View {
-    let title: String
-    var back = false
-    var actions: [String] = []
+// MARK: Components
+
+struct M3NavigationBar: View {
+    let selected: String
+    var handle = true
+    static let destinations = [("Today", "home"), ("Decide", "fact_check"), ("Pipeline", "view_kanban"), ("Jobs", "work")]
+
     var body: some View {
-        HStack(spacing: Space.l) {
-            if back { Image(systemName: "arrow.left").font(.system(size: 17)) }
-            Text(title).font(.system(size: 21, weight: back ? .regular : .medium))
-            Spacer()
-            ForEach(actions, id: \.self) { Image(systemName: $0).font(.system(size: 17)) }
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(Self.destinations, id: \.0) { item in
+                    NavigationItem(title: item.0, icon: item.1, selected: item.0 == selected, badge: Self.badge(item.0))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, 12)
+            .padding(.bottom, handle ? 0 : 16)
+            if handle { GestureHandle() }
         }
-        .foregroundStyle(ink)
-        .padding(.horizontal, 18).frame(height: 56)
+        .background(M3.containerLow)
+    }
+
+    static func badge(_ title: String) -> String? {
+        switch title {
+        case "Decide": "7"
+        case "Pipeline": ""
+        default: nil
+        }
     }
 }
 
-struct PhoneCard<Content: View>: View {
+/// A navigation bar or rail destination: the pill indicator around a filled icon when selected.
+struct NavigationItem: View {
     let title: String
+    let icon: String
+    let selected: Bool
+    var badge: String?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            MSymbol(icon, fill: selected)
+                .foregroundStyle(selected ? M3.onSecondaryContainer : M3.onSurfaceVariant)
+                .frame(width: 56, height: 32)
+                .background(selected ? M3.secondaryContainer : .clear, in: Capsule())
+                .overlay(alignment: .topTrailing) {
+                    if let badge { M3Badge(text: badge).offset(x: badge.isEmpty ? -14 : -8, y: badge.isEmpty ? 4 : 0) }
+                }
+            Text(title).font(M3Type.labelMedium).foregroundStyle(selected ? M3.onSurface : M3.onSurfaceVariant)
+        }
+    }
+}
+
+/// A small dot, or a large badge with a count.
+struct M3Badge: View {
+    let text: String
+    var body: some View {
+        if text.isEmpty {
+            Circle().fill(M3.error).frame(width: 6, height: 6)
+        } else {
+            Text(text).font(M3Type.labelSmall).foregroundStyle(darkMode ? Color(hex: 0x690005) : .white)
+                .frame(minWidth: 16, minHeight: 16).padding(.horizontal, 2).background(M3.error, in: Capsule())
+        }
+    }
+}
+
+/// An icon button: 48 touch target, 24 icon.
+struct M3IconButton: View {
+    let icon: String
+    var style: Style = .standard
+    enum Style { case standard, tonal, filled }
+
+    init(_ icon: String, style: Style = .standard) {
+        self.icon = icon
+        self.style = style
+    }
+
+    var body: some View {
+        MSymbol(icon, fill: style == .filled)
+            .foregroundStyle(foreground)
+            .frame(width: 40, height: 40)
+            .background(background, in: Circle())
+            .frame(width: 48, height: 48)
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .standard: M3.onSurfaceVariant
+        case .tonal: M3.onSecondaryContainer
+        case .filled: M3.onPrimary
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .standard: .clear
+        case .tonal: M3.secondaryContainer
+        case .filled: M3.primary
+        }
+    }
+}
+
+/// The hub's connection avatar at the end of a top bar: it opens the hub, Settings and Unpair.
+struct HubAvatar: View {
+    var body: some View {
+        MSymbol("hub", size: 20, fill: true).foregroundStyle(M3.onPrimaryContainer)
+            .frame(width: 32, height: 32).background(M3.primaryContainer, in: Circle())
+            .overlay(alignment: .bottomTrailing) {
+                Circle().fill(Tone.positive.m3).frame(width: 10, height: 10).overlay(Circle().strokeBorder(M3.page, lineWidth: 2))
+            }
+            .frame(width: 48, height: 48)
+    }
+}
+
+/// Small, medium flexible and large flexible top app bars.
+struct M3TopBar<Trailing: View>: View {
+    enum Size { case small, medium, large }
+    let title: String
+    var subtitle: String?
+    var size: Size = .small
+    var back = false
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                if back { M3IconButton("arrow_back").foregroundStyle(M3.onSurface) }
+                if size == .small {
+                    Text(title).font(M3Type.titleLarge).foregroundStyle(M3.onSurface).padding(.leading, back ? 4 : 16).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                trailing
+            }
+            .padding(.horizontal, 4)
+            .frame(height: 64)
+            if size != .small {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(size == .large ? M3Type.headlineLarge : M3Type.headlineMedium).foregroundStyle(M3.onSurface)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let subtitle { Text(subtitle).font(M3Type.titleMedium.weight(.regular)).foregroundStyle(M3.onSurfaceVariant) }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, size == .large ? 24 : 0)
+                .padding(.bottom, 16)
+            }
+        }
+    }
+}
+
+extension M3TopBar where Trailing == EmptyView {
+    init(title: String, subtitle: String? = nil, size: Size = .small, back: Bool = false) {
+        self.init(title: title, subtitle: subtitle, size: size, back: back) { EmptyView() }
+    }
+}
+
+/// A status word as a Material 3 label: the tone's container with 8 dp corners.
+struct M3Label: View {
+    let text: String
+    let tone: Tone
+    var icon: String?
+    var body: some View {
+        HStack(spacing: 4) {
+            if let icon { MSymbol(icon, size: 16, fill: true) }
+            Text(text).font(M3Type.labelMedium).lineLimit(1).fixedSize()
+        }
+        .foregroundStyle(tone.m3OnContainer)
+        .padding(.leading, icon == nil ? 8 : 6).padding(.trailing, 8)
+        .frame(height: 24)
+        .background(tone.m3Container, in: RoundedRectangle(cornerRadius: M3Shape.small))
+    }
+}
+
+/// A company's monogram in a tonal circle, the leading element of a list item.
+struct Monogram: View {
+    let letter: String
+    var tone: Tone = .accent
+    var size: CGFloat = 40
+    var body: some View {
+        Text(letter).font(M3Type.roboto(size * 0.4, .medium)).foregroundStyle(tone.m3OnContainer)
+            .frame(width: size, height: size).background(tone.m3Container, in: Circle())
+    }
+}
+
+/// A list item: leading element, headline, supporting text and a trailing element.
+struct M3ListItem<Leading: View, Trailing: View>: View {
+    let headline: String
+    var supporting: String?
+    var supportingColor: Color = M3.onSurfaceVariant
+    var headlineColor: Color = M3.onSurface
+    /// A status label that leads the supporting line.
+    var label: (String, Tone)?
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 16) {
+            leading
+            VStack(alignment: .leading, spacing: label == nil ? 2 : 4) {
+                Text(headline).font(M3Type.bodyLarge).foregroundStyle(headlineColor).lineLimit(1)
+                HStack(spacing: 8) {
+                    if let label { M3Label(text: label.0, tone: label.1) }
+                    if let supporting { Text(supporting).font(M3Type.bodyMedium).foregroundStyle(supportingColor).lineLimit(1) }
+                }
+            }
+            Spacer(minLength: 0)
+            trailing
+        }
+        .padding(.leading, 16).padding(.trailing, 16)
+        .frame(minHeight: supporting == nil && label == nil ? 56 : (label == nil ? 72 : 76))
+    }
+}
+
+/// Groups list items the Material 3 Expressive way: large outer corners, small inner ones, 2 dp apart.
+struct SegmentedGroup: View {
+    let items: [AnyView]
+    var body: some View {
+        VStack(spacing: 2) {
+            ForEach(items.indices, id: \.self) { index in
+                items[index]
+                    .background(M3.item)
+                    .clipShape(UnevenRoundedRectangle(
+                        topLeadingRadius: index == 0 ? 20 : 4, bottomLeadingRadius: index == items.count - 1 ? 20 : 4,
+                        bottomTrailingRadius: index == items.count - 1 ? 20 : 4, topTrailingRadius: index == 0 ? 20 : 4))
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+}
+
+/// A group's heading: a label in primary, with an optional text button at the end.
+struct GroupHeading: View {
+    let title: String
+    var action: String?
+    var body: some View {
+        HStack {
+            Text(title).font(M3Type.titleSmall).foregroundStyle(M3.primary)
+            Spacer()
+            if let action { Text(action).font(M3Type.labelLarge).foregroundStyle(M3.primary) }
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 40)
+    }
+}
+
+/// Common buttons, at the small (40) or medium (56) size; Expressive buttons are round.
+struct M3Button: View {
+    enum Style { case filled, tonal, outlined, text }
+    let title: String
+    var icon: String?
+    var style: Style = .filled
+    var medium = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let icon { MSymbol(icon, size: medium ? 24 : 18) }
+            Text(title).font(medium ? M3Type.titleMedium : M3Type.labelLarge).lineLimit(1).fixedSize()
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, style == .text ? 12 : (medium ? 24 : 16))
+        .frame(height: medium ? 56 : 40)
+        .background(background, in: Capsule())
+        .overlay { if style == .outlined { Capsule().strokeBorder(M3.outlineVariant) } }
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .filled: M3.onPrimary
+        case .tonal: M3.onSecondaryContainer
+        case .outlined: M3.onSurfaceVariant
+        case .text: M3.primary
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .filled: M3.primary
+        case .tonal: M3.secondaryContainer
+        case .outlined, .text: .clear
+        }
+    }
+}
+
+struct M3Switch: View {
+    let isOn: Bool
+    var body: some View {
+        Capsule().fill(isOn ? M3.primary : M3.containerHighest)
+            .overlay { if !isOn { Capsule().strokeBorder(M3.outline, lineWidth: 2) } }
+            .frame(width: 52, height: 32)
+            .overlay(alignment: isOn ? .trailing : .leading) {
+                if isOn {
+                    Circle().fill(M3.onPrimary).frame(width: 24, height: 24)
+                        .overlay { MSymbol("check", size: 16).foregroundStyle(M3.primary) }
+                        .padding(4)
+                } else {
+                    Circle().fill(M3.outline).frame(width: 16, height: 16).padding(8)
+                }
+            }
+    }
+}
+
+/// A filter chip: 8 dp corners, a check when selected.
+struct M3FilterChip: View {
+    let title: String
+    var selected = false
+    var body: some View {
+        HStack(spacing: 8) {
+            if selected { MSymbol("check", size: 18) }
+            Text(title).font(M3Type.labelLarge).lineLimit(1).fixedSize()
+        }
+        .foregroundStyle(selected ? M3.onSecondaryContainer : M3.onSurfaceVariant)
+        .padding(.leading, selected ? 8 : 16).padding(.trailing, 16)
+        .frame(height: 32)
+        .background(selected ? M3.secondaryContainer : .clear, in: RoundedRectangle(cornerRadius: M3Shape.small))
+        .overlay { if !selected { RoundedRectangle(cornerRadius: M3Shape.small).strokeBorder(M3.outlineVariant) } }
+    }
+}
+
+/// An assist chip with a leading monogram: here, the link from a job to its company.
+struct M3AssistChip: View {
+    let title: String
+    var letter: String?
+    var icon: String?
+    var body: some View {
+        HStack(spacing: 8) {
+            if let letter { Monogram(letter: letter, size: 24) }
+            if let icon { MSymbol(icon, size: 18).foregroundStyle(M3.primary) }
+            Text(title).font(M3Type.labelLarge).foregroundStyle(M3.onSurface).lineLimit(1).fixedSize()
+        }
+        .padding(.leading, letter == nil ? 8 : 4).padding(.trailing, 12)
+        .frame(height: 32)
+        .overlay(RoundedRectangle(cornerRadius: M3Shape.small).strokeBorder(M3.outlineVariant))
+    }
+}
+
+/// Primary tabs: label and a 3 dp indicator under the selected one, over a divider.
+struct M3Tabs: View {
+    let tabs: [String]
+    let selected: String
+    var scrollable = false
+    var body: some View {
+        HStack(spacing: scrollable ? 24 : 0) {
+            ForEach(tabs, id: \.self) { tab in
+                let isSelected = tab == selected
+                Text(tab).font(M3Type.titleSmall).foregroundStyle(isSelected ? M3.primary : M3.onSurfaceVariant)
+                    .lineLimit(1).fixedSize()
+                    .frame(height: 48)
+                    .overlay(alignment: .bottom) {
+                        if isSelected {
+                            UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3).fill(M3.primary).frame(height: 3)
+                        }
+                    }
+                    .frame(maxWidth: scrollable ? nil : .infinity)
+            }
+            if scrollable { Spacer(minLength: 0) }
+        }
+        .padding(.horizontal, scrollable ? 16 : 0)
+        .overlay(alignment: .bottom) { Rectangle().fill(M3.outlineVariant).frame(height: 1) }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+}
+
+struct M3Snackbar: View {
+    let text: String
+    var action: String?
+    var body: some View {
+        HStack {
+            Text(text).font(M3Type.bodyMedium).foregroundStyle(M3.inverseOnSurface).lineLimit(1)
+            Spacer()
+            if let action { Text(action).font(M3Type.labelLarge).foregroundStyle(M3.inversePrimary) }
+        }
+        .padding(.leading, 16).padding(.trailing, 12)
+        .frame(height: 48)
+        .background(M3.inverseSurface, in: RoundedRectangle(cornerRadius: M3Shape.extraSmall))
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+    }
+}
+
+/// A basic dialog: optional hero icon, headline, text, and text buttons at the end.
+struct M3Dialog: View {
+    var icon: String?
+    let headline: String
+    let text: String
+    let dismiss: String
+    let confirm: String
+    var destructive = false
+
+    var body: some View {
+        VStack(alignment: icon == nil ? .leading : .center, spacing: 16) {
+            if let icon { MSymbol(icon).foregroundStyle(destructive ? M3.error : M3.primary) }
+            Text(headline).font(M3Type.headlineSmall).foregroundStyle(M3.onSurface)
+            Text(text).font(M3Type.bodyMedium).foregroundStyle(M3.onSurfaceVariant)
+                .multilineTextAlignment(icon == nil ? .leading : .center).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                M3Button(title: dismiss, style: .text)
+                Text(confirm).font(M3Type.labelLarge).foregroundStyle(destructive ? M3.error : M3.primary).padding(.horizontal, 12).frame(height: 40)
+            }
+            .padding(.top, 8)
+        }
+        .padding(24)
+        .frame(width: 312)
+        .background(M3.containerHigh, in: RoundedRectangle(cornerRadius: M3Shape.extraLarge))
+    }
+}
+
+/// A docked search bar: full corners, a leading search icon and the hub avatar at the end.
+struct M3SearchBar: View {
+    let placeholder: String
+    var body: some View {
+        HStack(spacing: 0) {
+            MSymbol("search").foregroundStyle(M3.onSurface).padding(.leading, 16).padding(.trailing, 12)
+            Text(placeholder).font(M3Type.bodyLarge).foregroundStyle(M3.onSurfaceVariant).lineLimit(1)
+            Spacer(minLength: 0)
+            HubAvatar().padding(.trailing, 4)
+        }
+        .frame(height: 56)
+        .background(M3.containerHigh, in: Capsule())
+    }
+}
+
+/// A menu: 48 dp items with leading icons, on a raised surface.
+struct M3Menu: View {
+    let items: [(String, String)]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items, id: \.0) { item in
+                HStack(spacing: 12) {
+                    MSymbol(item.1).foregroundStyle(M3.onSurfaceVariant)
+                    Text(item.0).font(M3Type.bodyLarge).foregroundStyle(M3.onSurface)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 48)
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(width: 200)
+        .background(M3.containerHigh, in: RoundedRectangle(cornerRadius: M3Shape.large))
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+    }
+}
+
+/// The Expressive wavy progress indicator, for work like writing a brief.
+struct WavyProgress: View {
+    var progress: CGFloat = 0.6
+    var body: some View {
+        Canvas { context, size in
+            let split = size.width * progress
+            var wave = Path()
+            wave.move(to: CGPoint(x: 2, y: size.height / 2))
+            for x in stride(from: CGFloat(2), through: split, by: 1) {
+                wave.addLine(to: CGPoint(x: x, y: size.height / 2 + sin(x / 40 * 2 * .pi) * 3))
+            }
+            context.stroke(wave, with: .color(M3.primary), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+            var track = Path()
+            track.move(to: CGPoint(x: split + 8, y: size.height / 2))
+            track.addLine(to: CGPoint(x: size.width - 2, y: size.height / 2))
+            context.stroke(track, with: .color(M3.secondaryContainer), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+            context.fill(Path(ellipseIn: CGRect(x: size.width - 4, y: size.height / 2 - 2, width: 4, height: 4)), with: .color(M3.primary))
+        }
+        .frame(height: 12)
+    }
+}
+
+/// The modal bottom sheet's surface: 28 dp top corners and a drag handle.
+struct M3BottomSheet<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(secondaryInk)
+        VStack(alignment: .leading, spacing: 0) {
+            Capsule().fill(M3.onSurfaceVariant.opacity(0.4)).frame(width: 32, height: 4).frame(maxWidth: .infinity).padding(.vertical, 22)
             content
+            GestureHandle()
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: 0xF1F0F8), in: RoundedRectangle(cornerRadius: 16))
+        .background(M3.containerLow)
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: M3Shape.extraLarge, topTrailingRadius: M3Shape.extraLarge))
     }
 }
+
+/// A one-line note under an Android mockup, with an icon.
+struct PlatformNote: View {
+    let text: String
+    var icon = "check_circle"
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            MSymbol(icon, size: 16, fill: true).foregroundStyle(Tone.positive.m3).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+            Text(text).font(.system(size: 12)).foregroundStyle(ink).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: Android screens
 
 struct AndroidScreens: View {
     var body: some View {
         HStack(alignment: .top, spacing: 40) {
-            labelled("Today", "What needs you, from every part of the hub") { today }
-            labelled("Job", "One primary action, the rest one tap away") { job }
-            labelled("Pipeline", "New on the phone: follow up where the reminder lands") { pipeline }
-            labelled("Settings", "From the overflow menu; unpairing asks first") { settings }
+            labelled("Today", "Large flexible app bar; list items in groups; the hub avatar opens Settings") { today }
+            labelled("Job", "Tabs like the Mac's inspector; the decision sits in thumb reach") { job }
+            labelled("Pipeline", "Phases as tabs; swipe a card to record the follow-up") { pipeline }
+            labelled("Settings", "Grouped like system Settings; unpairing asks first") { settings }
         }
         .padding(48)
         .background(Color(hex: 0xE8E8EE))
@@ -1060,218 +1679,223 @@ struct AndroidScreens: View {
     func labelled(_ title: String, _ subtitle: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
             Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(ink)
-            Text(subtitle).font(.system(size: 12)).foregroundStyle(secondaryInk)
+            Text(subtitle).font(.system(size: 12)).foregroundStyle(secondaryInk).lineLimit(2)
+                .frame(width: 372, height: 32, alignment: .topLeading)
             content().padding(.top, Space.s)
         }
     }
 
-    private var today: some View {
-        Phone(tab: "Today") {
-            AppBar(title: "Today", actions: ["magnifyingglass", "ellipsis"])
-            VStack(spacing: 12) {
-                PhoneCard(title: "DECIDE · 7") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Chip(text: "Strong", tone: .positive)
-                            Text("Senior Product Engineer").font(.system(size: 14, weight: .medium)).lineLimit(1)
-                        }
-                        Text("Northwind · Remote, Americas").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Chip(text: "Possible", tone: .accent)
-                            Text("Staff Frontend Engineer").font(.system(size: 14, weight: .medium)).lineLimit(1)
-                        }
-                        Text("Globex · Remote, LATAM").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                    }
-                }
-                PhoneCard(title: "FOLLOW UP · 2") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Full-Stack Engineer, Payments").font(.system(size: 14, weight: .medium))
-                            Chip(text: "Overdue 2 days", tone: .negative, symbol: "bell.fill")
-                        }
-                        Spacer()
-                        Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(Tone.accent.color)
-                            .frame(width: 36, height: 36).background(Tone.accent.color.opacity(0.14), in: Circle())
-                    }
-                }
-                PhoneCard(title: "UPDATES") {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        UnseenDot()
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Reply from Umbrella Labs").font(.system(size: 14, weight: .semibold))
-                            Text("“Could you do a call on Tuesday…”").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                        }
-                    }
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        UnseenDot()
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Fresh strong match").font(.system(size: 14, weight: .semibold))
-                            Text("Northwind, posted 2 days ago").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                        }
-                    }
-                }
+    var today: some View {
+        AndroidPhone(nav: "Today") { todayContent(skipped: false) }
+    }
+
+    /// Today's list; `skipped` drops the second job, `selected` marks the first one open beside it.
+    func todayContent(skipped: Bool, selected: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            M3TopBar(title: "Today", subtitle: skipped ? "6 to decide · 1 overdue · 2 replies" : "7 to decide · 1 overdue · 2 replies", size: .large) {
+                M3IconButton("search")
+                HubAvatar()
             }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 14)
+            GroupHeading(title: skipped ? "Decide · 6" : "Decide · 7", action: "See all")
+            SegmentedGroup(items: skipped ? [decideRow("N", .accent, "Senior Product Engineer", "Northwind · Remote", ("Strong", .positive))]
+                : [decideRow("N", .accent, "Senior Product Engineer", "Northwind · Remote", ("Strong", .positive), selected: selected),
+                   decideRow("G", .caution, "Staff Frontend Engineer", "Globex · Remote", ("Possible", .accent))])
+            GroupHeading(title: "Follow up · 1")
+            SegmentedGroup(items: [AnyView(M3ListItem(headline: "Full-Stack Engineer, Payments", supporting: "Initech", label: ("Overdue 2 days", .negative)) {
+                Monogram(letter: "I", tone: .positive)
+            } trailing: {
+                M3IconButton("check", style: .tonal)
+            })])
+            GroupHeading(title: "Updates · 2")
+            SegmentedGroup(items: [
+                AnyView(M3ListItem(headline: "Reply from Umbrella Labs", supporting: "“Could you do a call on Tuesday…”") {
+                    Monogram(letter: "U", tone: .neutral).overlay(alignment: .topTrailing) { M3Badge(text: "").offset(x: -2, y: 2) }
+                } trailing: {
+                    Text("09:12").font(M3Type.labelSmall).foregroundStyle(M3.onSurfaceVariant)
+                }),
+                AnyView(M3ListItem(headline: "Fresh strong match", supporting: "Northwind · posted 2 days ago") {
+                    Monogram(letter: "N").overlay(alignment: .topTrailing) { M3Badge(text: "").offset(x: -2, y: 2) }
+                } trailing: {
+                    Text("08:40").font(M3Type.labelSmall).foregroundStyle(M3.onSurfaceVariant)
+                }),
+            ])
         }
+    }
+
+    private func decideRow(_ letter: String, _ tone: Tone, _ title: String, _ detail: String, _ label: (String, Tone), selected: Bool = false) -> AnyView {
+        AnyView(M3ListItem(headline: title, supporting: detail, label: label) { Monogram(letter: letter, tone: tone) } trailing: { EmptyView() }
+            .background(selected ? M3.secondaryContainer : M3.item))
     }
 
     var job: some View {
-        Phone(tab: nil) {
-            AppBar(title: "Northwind", back: true, actions: ["ellipsis"])
+        AndroidPhone { jobContent }
+    }
+
+    var jobContent: some View { jobContent(back: true) }
+
+    /// The job; without `back` it's the detail pane beside a list.
+    func jobContent(back: Bool) -> some View {
+        VStack(spacing: 0) {
+            M3TopBar(title: "Senior Product Engineer", size: .medium, back: back) {
+                M3IconButton("open_in_new")
+                M3IconButton("more_vert")
+            }
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Senior Product Engineer").font(.system(size: 22, weight: .regular))
-                    Text("Remote, Americas · Posted 2 days ago").font(.system(size: 13)).foregroundStyle(secondaryInk)
-                    HStack(spacing: 6) {
-                        Chip(text: "Strong match", tone: .positive)
-                        Chip(text: "Passes screen", tone: .positive, symbol: "checkmark")
-                    }
+                HStack(spacing: 8) {
+                    M3AssistChip(title: "Northwind", letter: "N")
+                    Text("Remote, Americas · 2 days ago").font(M3Type.bodyMedium).foregroundStyle(M3.onSurfaceVariant).lineLimit(1)
                 }
                 HStack(spacing: 8) {
-                    Text("Pursue").font(.system(size: 14, weight: .medium)).foregroundStyle(.white)
-                        .frame(maxWidth: .infinity).frame(height: 40).background(Tone.accent.color, in: Capsule())
-                    Text("Later").font(.system(size: 14, weight: .medium)).foregroundStyle(Tone.accent.color)
-                        .frame(width: 80, height: 40).background(Tone.accent.color.opacity(0.13), in: Capsule())
-                    Text("Skip").font(.system(size: 14, weight: .medium)).foregroundStyle(Tone.accent.color)
-                        .frame(width: 80, height: 40).background(Tone.accent.color.opacity(0.13), in: Capsule())
+                    M3Label(text: "Strong match", tone: .positive, icon: "thumb_up")
+                    M3Label(text: "Passes screen", tone: .positive, icon: "check_circle")
                 }
-                PhoneCard(title: "BRIEF · BY CLAUDE") {
-                    Text("Your payments cases map onto their checkout rebuild, and the take-home clears your target.")
-                        .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: "minus.circle.fill").font(.system(size: 12)).foregroundStyle(Tone.caution.color)
-                        Text("No production GraphQL federation").font(.system(size: 13))
-                    }
-                }
-                PhoneCard(title: "SCREEN") {
-                    VerdictRow(verdict: .yes, name: "Where they hire", reason: "Americas")
-                    VerdictRow(verdict: .unclear, name: "Years", reason: "Asks 6+")
-                    VerdictRow(verdict: .yes, name: "Pay", reason: "About R$ 31k take-home")
-                }
-                HStack {
-                    Text("People · 2").font(.system(size: 14, weight: .medium))
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                }
-                .padding(.horizontal, 4)
-                HStack {
-                    Text("Posting").font(.system(size: 14, weight: .medium))
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(secondaryInk)
-                }
-                .padding(.horizontal, 4)
             }
-            .foregroundStyle(ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-        }
-    }
-
-    private var pipeline: some View {
-        Phone(tab: "Pipeline") {
-            AppBar(title: "Pipeline", actions: ["bell.badge"])
-            HStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    phase("Applied 4", true)
-                    phase("Screening 2", false)
-                    phase("Interviewing 1", false)
-                    phase("Offer", false)
+            .padding(.bottom, 8)
+            M3Tabs(tabs: ["Overview", "People · 2", "Posting"], selected: "Overview")
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Brief").font(M3Type.titleMedium).foregroundStyle(M3.onSurface)
+                        Spacer()
+                        Text("by Claude · today").font(M3Type.labelMedium).foregroundStyle(M3.onSurfaceVariant)
+                    }
+                    Text("Your payments cases map onto their checkout rebuild, and the take-home clears your target.")
+                        .font(M3Type.bodyMedium).foregroundStyle(M3.onSurface).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        MSymbol("remove_circle", size: 18, fill: true).foregroundStyle(Tone.caution.m3)
+                        Text("No production GraphQL federation").font(M3Type.bodyMedium).foregroundStyle(M3.onSurface)
+                    }
                 }
-                .padding(.horizontal, 14)
+                .padding(16)
+                .background(M3.item, in: RoundedRectangle(cornerRadius: 20))
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                GroupHeading(title: "Screen")
+                SegmentedGroup(items: [
+                    screenRow("check_circle", .positive, "Where they hire", "Americas"),
+                    screenRow("help", .caution, "Years", "Asks 6+; you have 5"),
+                    screenRow("check_circle", .positive, "Pay", "About R$ 31k take-home"),
+                ])
             }
-            .frame(width: 344, alignment: .leading)
+            .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
             .clipped()
-            .padding(.bottom, 10)
-            VStack(spacing: 10) {
-                card("Full-Stack Engineer, Payments", "Initech", ("Overdue 2 days", .negative), "9 days in Applied")
-                card("Outreach", "Acme Robotics", ("Due today", .caution), "7 days in Applied")
-                card("Senior Software Engineer", "Umbrella Labs", ("Heard back 2 Oct", .positive), "3 days in Applied")
-                card("Product Engineer", "Globex", ("Due in 4 days", .neutral), "3 days in Applied")
+            HStack(spacing: 8) {
+                M3Button(title: "Skip", style: .outlined, medium: true)
+                M3Button(title: "Later", style: .tonal, medium: true)
+                M3Button(title: "Pursue", icon: "check", style: .filled, medium: true).frame(maxWidth: .infinity).background(M3.primary, in: Capsule())
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(M3.containerLow)
         }
     }
 
-    private var settings: some View {
-        Phone(tab: nil) {
-            AppBar(title: "Settings", back: true)
-            VStack(alignment: .leading, spacing: 12) {
-                PhoneCard(title: "HUB") {
-                    settingsRow("Paired with", "Your Mac, over Tailscale")
-                    settingsRow("Last update", "Just now")
-                }
-                PhoneCard(title: "NOTIFY ME ABOUT") {
-                    settingsToggle("Fresh strong matches")
-                    settingsToggle("Follow-ups due")
-                    settingsToggle("Replies and confirmations")
-                }
-                Text("Unpair this phone").font(.system(size: 14, weight: .medium)).foregroundStyle(Tone.negative.color)
-                    .padding(.horizontal, 4)
+    private func screenRow(_ icon: String, _ tone: Tone, _ name: String, _ detail: String) -> AnyView {
+        AnyView(M3ListItem(headline: name, supporting: detail) { MSymbol(icon, fill: true).foregroundStyle(tone.m3) } trailing: { EmptyView() })
+    }
+
+    var pipeline: some View {
+        AndroidPhone(nav: "Pipeline") { pipelineContent(swiped: true) }
+    }
+
+    func pipelineContent(swiped: Bool) -> some View {
+        VStack(spacing: 0) {
+            M3TopBar(title: "Pipeline") {
+                M3IconButton("search")
+                HubAvatar()
             }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 14)
+            M3Tabs(tabs: ["Applied 4", "Screening 2", "Interviewing 1", "Offer"], selected: "Applied 4", scrollable: true)
+            HStack(spacing: 8) {
+                M3FilterChip(title: "Follow-up due", selected: true)
+                M3FilterChip(title: "Heard back")
+                M3FilterChip(title: "Agency")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            SegmentedGroup(items: [
+                card("I", .positive, "Full-Stack Engineer, Payments", "Initech · 9 days", ("Overdue 2 days", .negative)),
+                swiped ? swipedCard : card("A", .caution, "Outreach", "Acme Robotics · 7 days", ("Due today", .caution)),
+                card("U", .neutral, "Senior Software Engineer", "Umbrella Labs · 3 days", ("Heard back", .positive)),
+                card("G", .caution, "Product Engineer", "Globex · 3 days", ("Due in 4 days", .neutral)),
+            ])
+        }
+    }
+
+    private func card(_ letter: String, _ tone: Tone, _ title: String, _ detail: String, _ label: (String, Tone)) -> AnyView {
+        AnyView(M3ListItem(headline: title, supporting: detail, label: label) { Monogram(letter: letter, tone: tone) } trailing: { EmptyView() })
+    }
+
+    /// The card mid-swipe: the follow-up action shows under it, as swipe-to-dismiss does.
+    private var swipedCard: AnyView {
+        AnyView(
+            ZStack(alignment: .leading) {
+                HStack(spacing: 8) {
+                    MSymbol("check", fill: true)
+                    Text("Followed up").font(M3Type.labelLarge)
+                }
+                .foregroundStyle(Tone.positive.m3OnContainer)
+                .padding(.leading, 20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .background(Tone.positive.m3Container)
+                M3ListItem(headline: "Outreach", supporting: "Acme Robotics", label: ("Due today", .caution)) { Monogram(letter: "A", tone: .caution) } trailing: { EmptyView() }
+                    .background(M3.item, in: RoundedRectangle(cornerRadius: 12))
+                    .offset(x: 140)
+            }
+            .frame(height: 76)
+        )
+    }
+
+    var settings: some View {
+        AndroidPhone {
+            VStack(spacing: 0) {
+                M3TopBar(title: "Settings", back: true)
+                GroupHeading(title: "Hub")
+                SegmentedGroup(items: [
+                    settingsRow("computer", "Paired with", "Your Mac, over Tailscale"),
+                    settingsRow("sync", "Last update", "Just now"),
+                ])
+                GroupHeading(title: "Notifications")
+                SegmentedGroup(items: [
+                    toggleRow("Fresh strong matches", true),
+                    toggleRow("Follow-ups due", true),
+                    toggleRow("Replies and confirmations", false),
+                    AnyView(M3ListItem(headline: "Sound and vibration", supporting: "Per kind, in system settings") {
+                        MSymbol("notifications").foregroundStyle(M3.onSurfaceVariant)
+                    } trailing: { MSymbol("open_in_new", size: 20).foregroundStyle(M3.onSurfaceVariant) }),
+                ])
+                GroupHeading(title: "Appearance")
+                SegmentedGroup(items: [
+                    AnyView(M3ListItem(headline: "Match wallpaper colors", supporting: "Off: Hub Indigo") {
+                        MSymbol("palette").foregroundStyle(M3.onSurfaceVariant)
+                    } trailing: { M3Switch(isOn: false) }),
+                ])
+                Spacer().frame(height: 12)
+                SegmentedGroup(items: [
+                    AnyView(M3ListItem(headline: "Unpair this phone", headlineColor: M3.error) {
+                        MSymbol("link_off").foregroundStyle(M3.error)
+                    } trailing: { EmptyView() }),
+                ])
+            }
         }
         .overlay {
             ZStack {
-                RoundedRectangle(cornerRadius: 36, style: .continuous).fill(.black.opacity(0.32)).padding(8)
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Unpair this phone?").font(.system(size: 20)).foregroundStyle(ink)
-                    Text("It stops getting updates and reminders until you pair it again from the Mac.")
-                        .font(.system(size: 13)).foregroundStyle(secondaryInk).fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 20) {
-                        Spacer()
-                        Text("Cancel").font(.system(size: 14, weight: .medium)).foregroundStyle(Tone.accent.color)
-                        Text("Unpair").font(.system(size: 14, weight: .medium)).foregroundStyle(Tone.negative.color)
-                    }
-                }
-                .padding(22)
-                .frame(width: 290)
-                .background(Color(hex: 0xF3F2FA), in: RoundedRectangle(cornerRadius: 26))
-                .offset(y: 120)
+                RoundedRectangle(cornerRadius: 34, style: .continuous).fill(M3.scrim).padding(6)
+                M3Dialog(icon: "link_off", headline: "Unpair this phone?",
+                         text: "It stops getting updates and reminders until you pair it again from the Mac.",
+                         dismiss: "Cancel", confirm: "Unpair", destructive: true)
+                    .offset(y: 60)
             }
         }
     }
 
-    private func settingsRow(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.system(size: 14))
-            Text(value).font(.system(size: 12)).foregroundStyle(secondaryInk)
-        }
+    private func settingsRow(_ icon: String, _ title: String, _ detail: String) -> AnyView {
+        AnyView(M3ListItem(headline: title, supporting: detail) { MSymbol(icon).foregroundStyle(M3.onSurfaceVariant) } trailing: { EmptyView() })
     }
 
-    private func settingsToggle(_ label: String) -> some View {
-        HStack {
-            Text(label).font(.system(size: 14))
-            Spacer()
-            Switch(isOn: true)
-        }
-    }
-
-    private func phase(_ title: String, _ selected: Bool) -> some View {
-        Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).fixedSize()
-            .foregroundStyle(selected ? Tone.accent.color : ink)
-            .padding(.horizontal, 12).frame(height: 32)
-            .background(selected ? Tone.accent.color.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? .clear : separator))
-    }
-
-    private func card(_ title: String, _ company: String, _ status: (String, Tone), _ age: String) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(ink)
-                Text(company).font(.system(size: 12)).foregroundStyle(secondaryInk)
-                HStack(spacing: 6) {
-                    Chip(text: status.0, tone: status.1)
-                    Text(age).font(.system(size: 11)).foregroundStyle(tertiaryInk)
-                }
-            }
-            Spacer()
-            Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(secondaryInk).padding(.top, 2)
-        }
-        .padding(14)
-        .background(Color(hex: 0xF1F0F8), in: RoundedRectangle(cornerRadius: 16))
+    private func toggleRow(_ title: String, _ isOn: Bool) -> AnyView {
+        AnyView(M3ListItem(headline: title) { MSymbol(isOn ? "notifications" : "notifications_off").foregroundStyle(M3.onSurfaceVariant) } trailing: { M3Switch(isOn: isOn) })
     }
 }
 
@@ -2701,10 +3325,429 @@ struct SettingsAndCriteria: View {
     ]
 }
 
+// MARK: - Android system surfaces
+
+struct AndroidSystemBoard: View {
+    private let screens = AndroidScreens()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 40) {
+            screens.labelled("Notifications", "A channel per kind; act on a reminder from the shade") { notifications }
+            screens.labelled("Followed up…", "A modal bottom sheet, from the swipe or the card's ⋮ menu") { followUpSheet }
+            screens.labelled("Undo", "Skip from Today; the snackbar takes it back") { undo }
+            screens.labelled("Predictive back", "Swipe from either edge to see where back goes before letting go") { predictiveBack }
+        }
+        .padding(48)
+        .background(Color(hex: 0xE8E8EE))
+    }
+
+    private var notifications: some View {
+        AndroidPhone(background: M3.containerHighest) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .lastTextBaseline) {
+                    Text("10:24").font(M3Type.roboto(44)).foregroundStyle(M3.onSurface)
+                    Spacer()
+                    Text("Sun, 4 Oct").font(M3Type.titleSmall).foregroundStyle(M3.onSurfaceVariant)
+                }
+                HStack(spacing: 8) {
+                    tile("wifi", "Internet", "Home", on: true)
+                    tile("bluetooth", "Bluetooth", "Off", on: false)
+                }
+                HStack(spacing: 8) {
+                    ForEach(["flashlight_on", "do_not_disturb_on", "dark_mode", "settings"], id: \.self) { icon in
+                        MSymbol(icon).foregroundStyle(M3.onSurfaceVariant).frame(maxWidth: .infinity).frame(height: 56)
+                            .background(M3.containerLow, in: Capsule())
+                    }
+                }
+                VStack(spacing: 2) {
+                    notification("Follow-ups", "Follow up with Initech", "Full-Stack Engineer, Payments is 2 days overdue.", actions: ["Followed up", "Snooze a day"], first: true)
+                    notification("Replies", "Reply from Umbrella Labs", "“Could you do a call on Tuesday…”", actions: ["Open", "Mark as read"])
+                    notification("Matches", "2 fresh strong matches", "Northwind and Globex", actions: [], last: true)
+                }
+                HStack {
+                    M3Button(title: "Manage", style: .tonal)
+                    Spacer()
+                    M3Button(title: "Clear all", style: .tonal)
+                }
+            }
+            .frame(width: 336)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+    }
+
+    private func tile(_ icon: String, _ title: String, _ detail: String, on: Bool) -> some View {
+        HStack(spacing: 10) {
+            MSymbol(icon, fill: on)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(M3Type.titleSmall)
+                Text(detail).font(M3Type.bodySmall)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(on ? M3.onPrimary : M3.onSurfaceVariant)
+        .padding(.horizontal, 16)
+        .frame(height: 64)
+        .background(on ? M3.primary : M3.containerLow, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func notification(_ channel: String, _ title: String, _ text: String, actions: [String], first: Bool = false, last: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            MSymbol("hub", size: 20, fill: true).foregroundStyle(M3.onPrimary).frame(width: 32, height: 32).background(M3.primary, in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Job Search Hub · \(channel) · now").font(M3Type.labelMedium).foregroundStyle(M3.onSurfaceVariant)
+                Text(title).font(M3Type.titleSmall).foregroundStyle(M3.onSurface)
+                Text(text).font(M3Type.bodyMedium).foregroundStyle(M3.onSurfaceVariant).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if !actions.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(actions, id: \.self) { action in
+                            Text(action).font(M3Type.labelLarge).foregroundStyle(M3.onSecondaryContainer).lineLimit(1).fixedSize()
+                                .padding(.horizontal, 14).frame(height: 32).background(M3.secondaryContainer, in: Capsule())
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            MSymbol("expand_more", size: 20).foregroundStyle(M3.onSurfaceVariant).frame(width: 28, height: 28).background(M3.containerHigh, in: Circle())
+        }
+        .padding(16)
+        .frame(width: 336)
+        .background(M3.item)
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: first ? 24 : 6, bottomLeadingRadius: last ? 24 : 6,
+                                          bottomTrailingRadius: last ? 24 : 6, topTrailingRadius: first ? 24 : 6))
+    }
+
+    private var followUpSheet: some View {
+        AndroidPhone(nav: "Pipeline") { screens.pipelineContent(swiped: false) }
+            .overlay {
+                ZStack(alignment: .bottom) {
+                    M3.scrim
+                    M3BottomSheet {
+                        VStack(alignment: .leading, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Followed up with Acme Robotics").font(M3Type.titleLarge).foregroundStyle(M3.onSurface)
+                                Text("Outreach · 7 days in Applied").font(M3Type.bodyMedium).foregroundStyle(M3.onSurfaceVariant)
+                            }
+                            Text("Next follow-up").font(M3Type.titleSmall).foregroundStyle(M3.onSurface)
+                            HStack(spacing: 8) {
+                                M3FilterChip(title: "Tomorrow")
+                                M3FilterChip(title: "In 3 days", selected: true)
+                                M3FilterChip(title: "In a week")
+                            }
+                            M3AssistChip(title: "Pick a date", icon: "event")
+                            ZStack(alignment: .topLeading) {
+                                RoundedRectangle(cornerRadius: M3Shape.extraSmall).strokeBorder(M3.outline)
+                                    .frame(height: 56)
+                                    .overlay(alignment: .leading) {
+                                        Text("Sent a short note to the hiring manager").font(M3Type.bodyLarge).foregroundStyle(M3.onSurface).lineLimit(1).padding(.horizontal, 16)
+                                    }
+                                Text("Note").font(M3Type.bodySmall).foregroundStyle(M3.onSurfaceVariant)
+                                    .padding(.horizontal, 4).background(M3.containerLow).offset(x: 12, y: -8)
+                            }
+                            HStack(spacing: 8) {
+                                Spacer()
+                                M3Button(title: "Cancel", style: .text)
+                                M3Button(title: "Save")
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+                .padding(6)
+            }
+    }
+
+    private var undo: some View {
+        AndroidPhone(nav: "Today") { screens.todayContent(skipped: true) }
+            .overlay(alignment: .bottom) {
+                M3Snackbar(text: "Skipped Staff Frontend Engineer", action: "Undo")
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 6 + 100)
+            }
+    }
+
+    private var predictiveBack: some View {
+        AndroidPhone(nav: "Today") { screens.todayContent(skipped: false) }
+            .overlay {
+                ZStack(alignment: .leading) {
+                    Color.black.opacity(0.12)
+                    VStack(spacing: 0) {
+                        AndroidStatusBar()
+                        screens.jobContent
+                        GestureHandle()
+                    }
+                    .frame(width: 360, height: 780)
+                    .background(M3.page)
+                    .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                    .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 6)
+                    .scaleEffect(0.86)
+                    .offset(x: 26)
+                    MSymbol("arrow_back", size: 20).foregroundStyle(M3.onSurface)
+                        .frame(width: 40, height: 40).background(M3.containerHighest.opacity(0.95), in: Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                        .padding(.leading, 4)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+                .padding(6)
+            }
+    }
+}
+
+// MARK: - Android on large screens, and dark
+
+struct AndroidFoldableBoard: View {
+    /// Today on a phone in dark theme, drawn on its own because the board is light.
+    let darkPhone: NSImage
+    private let screens = AndroidScreens()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 48) {
+            VStack(alignment: .leading, spacing: Space.m) {
+                BoardHeading(title: "Unfolded, on a Galaxy Z Fold or a tablet",
+                             subtitle: "The navigation bar becomes a rail, and Today and the job sit side by side: list and detail, like the Mac's list and inspector.")
+                fold
+                VStack(alignment: .leading, spacing: Space.s) {
+                    PlatformNote(text: "NavigationSuiteScaffold picks the bar or the rail from the window size class; ListDetailPaneScaffold shows one pane or two.")
+                    PlatformNote(text: "The handle between the panes resizes them; folding the phone keeps the open job and its scroll position.")
+                    PlatformNote(text: "With no back arrow in the detail pane, back closes the job on a phone and moves focus to the list here.")
+                }
+                .frame(width: 880, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: Space.m) {
+                BoardHeading(title: "Dark theme", subtitle: "The same scheme's dark roles; tones keep their meaning.")
+                Image(nsImage: darkPhone)
+            }
+            .frame(width: 372)
+        }
+        .padding(48)
+        .background(Color(hex: 0xE8E8EE))
+    }
+
+    private var fold: some View {
+        VStack(spacing: 0) {
+            AndroidStatusBar()
+            HStack(alignment: .top, spacing: 0) {
+                rail
+                screens.todayContent(skipped: false, selected: true)
+                    .frame(width: 360, height: 680, alignment: .top).clipped()
+                Capsule().fill(M3.outline).frame(width: 4, height: 48).frame(width: 24, height: 680)
+                screens.jobContent(back: false)
+                    .frame(height: 672)
+                    .background(M3.containerLow)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 8)
+            }
+            .frame(height: 740 - 36 - 24, alignment: .top)
+            .clipped()
+            GestureHandle()
+        }
+        .frame(width: 880, height: 740)
+        .background(M3.page)
+        .overlay {
+            LinearGradient(colors: [.clear, .black.opacity(0.05), .clear], startPoint: .leading, endPoint: .trailing).frame(width: 24)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .padding(6)
+        .background(Color(hex: 0x1F1F22), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+
+    private var rail: some View {
+        VStack(spacing: 12) {
+            M3IconButton("menu").foregroundStyle(M3.onSurfaceVariant).padding(.top, 8)
+            ForEach(M3NavigationBar.destinations, id: \.0) { item in
+                NavigationItem(title: item.0, icon: item.1, selected: item.0 == "Today", badge: M3NavigationBar.badge(item.0))
+            }
+            Spacer()
+        }
+        .frame(width: 96)
+    }
+}
+
+// MARK: - Android components
+
+struct AndroidComponentsBoard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xl) {
+            BoardHeading(title: "Android: Material 3 Expressive components, not iOS ones",
+                         subtitle: "Each shared component as Android builds it, and the iOS habit it replaces. The scheme comes from the Hub Indigo seed; type is Roboto; icons are Material Symbols Rounded.")
+            HStack(alignment: .top, spacing: 20) {
+                cell("Color", "Scheme from the seed", not: "Hub tones at 13% on white") { colors }
+                cell("Type", "Material 3 type scale", not: "SF Pro sizes") { type }
+                cell("Shape", "Material 3 shape scale", not: "Mac radii of 6, 10 and 14") { shapes }
+                cell("Icons", "Material Symbols Rounded", not: "SF Symbols") { icons }
+            }
+            HStack(alignment: .top, spacing: 20) {
+                cell("ToneChip", "Label in a tone container", not: "capsules at 13% tint") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) { M3Label(text: "Strong match", tone: .positive, icon: "thumb_up"); M3Label(text: "Possible", tone: .accent) }
+                        HStack(spacing: 8) { M3Label(text: "Stretch", tone: .caution); M3Label(text: "Overdue 2 days", tone: .negative); M3Label(text: "Skipped", tone: .neutral) }
+                    }
+                }
+                cell("ActionBar", "Button group, docked at the bottom", not: "rows of equal buttons at the top") {
+                    HStack(spacing: 8) {
+                        M3Button(title: "Skip", style: .outlined, medium: true)
+                        M3Button(title: "Later", style: .tonal, medium: true)
+                        M3Button(title: "Pursue", icon: "check", medium: true)
+                    }
+                }
+                cell("Overflow", "⋮ icon button and a menu", not: "a horizontal … button") {
+                    HStack(alignment: .top, spacing: 8) {
+                        M3IconButton("more_vert").background(M3.secondaryContainer.opacity(0.6), in: Circle())
+                        M3Menu(items: [("Open posting", "open_in_new"), ("Fix…", "build"), ("Share", "share"), ("Skip…", "close")])
+                    }
+                }
+                cell("Lists", "List items in segmented groups", not: "chevron rows under ALL-CAPS headers") {
+                    VStack(spacing: 0) {
+                        GroupHeading(title: "Screen").padding(.horizontal, -12)
+                        SegmentedGroup(items: [
+                            AnyView(M3ListItem(headline: "Where they hire", supporting: "Americas") { MSymbol("check_circle", fill: true).foregroundStyle(Tone.positive.m3) } trailing: { EmptyView() }),
+                            AnyView(M3ListItem(headline: "Years", supporting: "Asks 6+; you have 5") { MSymbol("help", fill: true).foregroundStyle(Tone.caution.m3) } trailing: { EmptyView() }),
+                        ])
+                        .padding(.horizontal, -12)
+                    }
+                }
+            }
+            HStack(alignment: .top, spacing: 20) {
+                cell("Switch", "Switch with a thumb icon", not: "the iOS toggle") {
+                    VStack(spacing: 2) {
+                        AnyView(M3ListItem(headline: "Follow-ups due") { EmptyView() } trailing: { M3Switch(isOn: true) }).background(M3.item)
+                        AnyView(M3ListItem(headline: "Match wallpaper colors") { EmptyView() } trailing: { M3Switch(isOn: false) }).background(M3.item)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                }
+                cell("Confirm", "Dialog: icon, headline, text buttons at the end", not: "an alert with a red, stacked destructive button") {
+                    M3Dialog(icon: "link_off", headline: "Unpair this phone?", text: "It stops getting updates until you pair it again.",
+                             dismiss: "Cancel", confirm: "Unpair", destructive: true)
+                        .scaleEffect(0.9).frame(height: 230)
+                }
+                cell("Toast", "Snackbar with Undo", not: "a floating capsule notice") {
+                    VStack(spacing: 12) {
+                        M3Snackbar(text: "Skipped Staff Frontend Engineer", action: "Undo")
+                        M3Snackbar(text: "Sent to the Mac. The result comes as an update.")
+                    }
+                }
+                cell("Navigation", "Navigation bar; rail when unfolded", not: "a tab bar of thin outline icons") {
+                    M3NavigationBar(selected: "Today", handle: false).clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+            }
+            HStack(alignment: .top, spacing: 20) {
+                cell("Page title", "Small and large flexible top app bars", not: "a centered title with text buttons") {
+                    VStack(spacing: 8) {
+                        M3TopBar(title: "Pipeline") { M3IconButton("search"); HubAvatar() }.background(M3.page)
+                        M3TopBar(title: "Today", subtitle: "7 to decide · 1 overdue", size: .large) { M3IconButton("search") }
+                            .frame(height: 150, alignment: .bottom).clipped()
+                    }
+                }
+                cell("Search", "Search bar, then a full-screen search view", not: "a grey field with a Cancel button") {
+                    M3SearchBar(placeholder: "Search jobs, companies, people")
+                }
+                cell("AsyncButton", "Wavy progress and the loading indicator", not: "a spinner beside a hand-made label") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Writing the brief…").font(M3Type.titleSmall).foregroundStyle(M3.onSurface)
+                        WavyProgress()
+                        Text("Claude is reading the posting").font(M3Type.bodySmall).foregroundStyle(M3.onSurfaceVariant)
+                    }
+                }
+                cell("Filters", "Tabs and filter chips", not: "a segmented control") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        M3Tabs(tabs: ["Applied 4", "Screening 2", "Interviewing 1"], selected: "Applied 4", scrollable: true).padding(.horizontal, -16)
+                        HStack(spacing: 8) { M3FilterChip(title: "Follow-up due", selected: true); M3FilterChip(title: "Agency") }
+                    }
+                }
+            }
+        }
+        .padding(48)
+        .background(windowBackground)
+    }
+
+    private func cell(_ hub: String, _ material: String, not: String, @ViewBuilder demo: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            HStack(spacing: 6) {
+                Text(hub).font(.system(size: 12, weight: .semibold).monospaced()).foregroundStyle(Tone.accent.color)
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(tertiaryInk)
+                Text(material).font(.system(size: 13, weight: .semibold)).foregroundStyle(ink).lineLimit(1)
+            }
+            demo()
+                .frame(maxWidth: .infinity, minHeight: 200)
+                .padding(16)
+                .background(M3.page, in: RoundedRectangle(cornerRadius: Radius.card))
+            HStack(spacing: 4) {
+                Image(systemName: "nosign").font(.system(size: 10, weight: .semibold)).foregroundStyle(Tone.negative.color)
+                Text("Not \(not)").font(.system(size: 11)).foregroundStyle(secondaryInk)
+            }
+        }
+        .padding(Space.l)
+        .frame(width: 400)
+        .background(surface, in: RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(separator))
+    }
+
+    private var colors: some View {
+        let swatches: [(String, Color, Color)] = [
+            ("primary", M3.primary, M3.onPrimary), ("primaryContainer", M3.primaryContainer, M3.onPrimaryContainer),
+            ("secondaryContainer", M3.secondaryContainer, M3.onSecondaryContainer), ("surfaceContainer", M3.page, M3.onSurface),
+            ("positive container", Tone.positive.m3Container, Tone.positive.m3OnContainer), ("caution container", Tone.caution.m3Container, Tone.caution.m3OnContainer),
+            ("errorContainer", Tone.negative.m3Container, Tone.negative.m3OnContainer), ("inverseSurface", M3.inverseSurface, M3.inverseOnSurface),
+        ]
+        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(swatches, id: \.0) { swatch in
+                Text(swatch.0).font(M3Type.labelSmall).foregroundStyle(swatch.2).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 36)
+                    .background(swatch.1, in: RoundedRectangle(cornerRadius: M3Shape.small))
+                    .overlay(RoundedRectangle(cornerRadius: M3Shape.small).strokeBorder(M3.outlineVariant.opacity(swatch.0 == "surfaceContainer" ? 1 : 0)))
+            }
+        }
+    }
+
+    private var type: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            specimen("headlineMedium 28", "Senior Product…", M3Type.headlineMedium)
+            specimen("titleMedium 16", "Brief", M3Type.titleMedium)
+            specimen("bodyLarge 16", "Where they hire", M3Type.bodyLarge)
+            specimen("bodyMedium 14", "Northwind · Remote", M3Type.bodyMedium)
+            specimen("labelMedium 12", "Strong match", M3Type.labelMedium)
+        }
+    }
+
+    private func specimen(_ role: String, _ sample: String, _ font: Font) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(sample).font(font).foregroundStyle(M3.onSurface).lineLimit(1)
+            Spacer()
+            Text(role).font(.system(size: 10).monospaced()).foregroundStyle(M3.onSurfaceVariant)
+        }
+    }
+
+    private var shapes: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            ForEach([("XS 4", M3Shape.extraSmall), ("S 8", M3Shape.small), ("M 12", M3Shape.medium), ("L 16", M3Shape.large), ("XL 28", M3Shape.extraLarge), ("Full", 40)], id: \.0) { shape in
+                VStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: shape.1).fill(M3.primaryContainer).frame(width: 64, height: 56)
+                    Text(shape.0).font(.system(size: 10).monospaced()).foregroundStyle(M3.onSurfaceVariant)
+                }
+            }
+        }
+    }
+
+    private var icons: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 14) {
+                ForEach(["home", "fact_check", "view_kanban", "work", "search", "more_vert", "arrow_back", "open_in_new", "check_circle", "help", "link_off", "hub"], id: \.self) { icon in
+                    MSymbol(icon, fill: ["home", "check_circle", "help", "hub"].contains(icon)).foregroundStyle(M3.onSurfaceVariant)
+                }
+            }
+            Text("24 dp, outlined; filled when selected or for a verdict").font(M3Type.bodySmall).foregroundStyle(M3.onSurfaceVariant)
+        }
+    }
+}
+
 // MARK: - Android job before and after
 
 struct AndroidJobBeforeAfter: View {
-    /// A wallpaper-driven dynamic palette, as Android 12+ picks it today.
+    /// A wallpaper-driven dynamic scheme, as Android 12+ picks it today.
     private let wallpaperPrimary = Color(hex: 0x4C662B)
     private let wallpaperSurface = Color(hex: 0xF9FAEF)
     private let wallpaperVariant = Color(hex: 0x44483D)
@@ -2713,24 +3756,25 @@ struct AndroidJobBeforeAfter: View {
     var body: some View {
         HStack(alignment: .top, spacing: 48) {
             VStack(alignment: .leading, spacing: Space.m) {
-                BoardHeading(title: "Today", subtitle: "The wallpaper's colors, two filled buttons, Fit and Match apart")
+                BoardHeading(title: "Today", subtitle: "The wallpaper's colors, two rows of buttons, Fit and Match apart")
                 legacyJob
                 notes([
-                    (1, "Two rows of buttons, and two of them filled: Open posting competes with Pursue."),
-                    (2, "Colors come from the wallpaper, so it never looks like the Mac app."),
-                    (3, "Match in the brief and Fit further down, as on the Mac."),
+                    (1, "Two rows of buttons at the top, two of them filled: Open posting competes with Pursue, out of thumb reach."),
+                    (2, "Colors come from the wallpaper, so the hub has no look of its own, and the tones are hard-coded hex."),
+                    (3, "Match in the brief and Fit further down, as on the Mac, in one long scroll with no tabs."),
                 ])
             }
             .frame(width: 380)
             VStack(alignment: .leading, spacing: Space.m) {
-                BoardHeading(title: "Proposed", subtitle: "Hub Indigo, the same chips and words as the Mac")
+                BoardHeading(title: "Proposed", subtitle: "Material 3 Expressive in Hub Indigo, the same words as the Mac")
                 AndroidScreens().job
                 VStack(alignment: .leading, spacing: Space.s) {
-                    fixed("Pursue is the one filled button; Later and Skip are tonal; Open posting and Fix sit in the overflow.")
-                    fixed("The brand palette replaces dynamic color, in light and dark.")
-                    fixed("Strong match and Passes screen are header chips; Brief and Screen are sections.")
+                    PlatformNote(text: "Medium flexible top app bar: back, Open posting and ⋮ (Fix…, Share, Skip with a reason).")
+                    PlatformNote(text: "The company is an assist chip that opens it; status words are M3 labels in tone containers.")
+                    PlatformNote(text: "Overview, People and Posting are primary tabs, the same split as the Mac's inspector.")
+                    PlatformNote(text: "Skip, Later and Pursue are one medium button group, docked at the bottom where the thumb is.")
                 }
-                .frame(width: 360)
+                .frame(width: 372)
             }
         }
         .padding(48)
@@ -2738,45 +3782,46 @@ struct AndroidJobBeforeAfter: View {
     }
 
     private var legacyJob: some View {
-        Phone(tab: nil, surface: wallpaperSurface) {
-            HStack(spacing: Space.l) {
-                Image(systemName: "arrow.left").font(.system(size: 17))
-                Text("Northwind").font(.system(size: 21))
+        AndroidPhone(background: wallpaperSurface) {
+            HStack(spacing: 0) {
+                MSymbol("arrow_back").frame(width: 48, height: 48)
+                Text("Northwind").font(M3Type.titleLarge).padding(.leading, 4)
                 Spacer()
             }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 18).frame(height: 56)
+            .foregroundStyle(M3.onSurface)
+            .padding(.horizontal, 4).frame(height: 64)
             VStack(alignment: .leading, spacing: 12) {
-                Text("Senior Product Engineer").font(.system(size: 22)).foregroundStyle(ink)
-                Text("Northwind · Remote, Americas · Remote").font(.system(size: 13)).foregroundStyle(wallpaperVariant)
-                HStack(spacing: 6) {
+                Text("Senior Product Engineer").font(M3Type.titleLarge).foregroundStyle(M3.onSurface)
+                Text("Northwind · Remote, Americas · Remote").font(M3Type.bodyLarge).foregroundStyle(wallpaperVariant)
+                HStack(spacing: 8) {
                     filled("Open posting")
                     outlined("Company brief")
                     outlined("Fix…")
                 }
                 .overlay(alignment: .topLeading) { Marker(number: 1).offset(x: -26, y: 10) }
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     filled("Pursue")
                     outlined("Skip")
                     outlined("Later")
                 }
                 HStack(spacing: 8) {
-                    Text("Brief").font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
-                    Text("Strong").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(hex: 0x2E9E4F))
+                    Text("Brief").font(M3Type.roboto(16, .medium)).foregroundStyle(M3.onSurface)
+                    Text("Strong").font(M3Type.labelLarge).foregroundStyle(Color(hex: 0x2E9E4F))
+                    Text("by Claude").font(M3Type.bodySmall).foregroundStyle(wallpaperVariant)
                 }
                 .overlay(alignment: .topLeading) { Marker(number: 3).offset(x: -26) }
                 Text("Your payments cases map onto their checkout rebuild, and the take-home clears your target.")
-                    .font(.system(size: 13)).foregroundStyle(ink).fixedSize(horizontal: false, vertical: true)
-                line("checkmark.circle.fill", Color(hex: 0x2E9E4F), "Led a checkout rewrite")
-                line("xmark.circle.fill", Color(hex: 0xD08A00), "No production GraphQL federation")
-                Text("Screen-out checks").font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
-                line("checkmark.circle.fill", Color(hex: 0x2E9E4F), "Where they hire: Americas")
-                line("questionmark.circle.fill", Color(hex: 0xD08A00), "Years: 6+ years")
+                    .font(M3Type.bodyLarge).foregroundStyle(M3.onSurface).fixedSize(horizontal: false, vertical: true)
+                line("check_circle", Color(hex: 0x2E9E4F), "Led a checkout rewrite")
+                line("cancel", Color(hex: 0xD08A00), "No production GraphQL federation")
+                Text("Screen-out checks").font(M3Type.roboto(16, .medium)).foregroundStyle(M3.onSurface)
+                line("check_circle", Color(hex: 0x2E9E4F), "Where they hire: Americas")
+                line("help", Color(hex: 0xD08A00), "Years: 6+ years")
                 HStack(spacing: 0) {
-                    Text("Fit  ").font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
-                    Text("Unclear").font(.system(size: 14)).foregroundStyle(Color(hex: 0xD08A00))
+                    Text("Fit  ").font(M3Type.roboto(16, .medium)).foregroundStyle(M3.onSurface)
+                    Text("Unclear").font(M3Type.bodyLarge).foregroundStyle(Color(hex: 0xD08A00))
                 }
-                line("checkmark.circle.fill", Color(hex: 0x2E9E4F), "Where they hire: Americas")
+                line("check_circle", Color(hex: 0x2E9E4F), "Where they hire: Americas")
             }
             .padding(.horizontal, 16)
         }
@@ -2784,19 +3829,19 @@ struct AndroidJobBeforeAfter: View {
     }
 
     private func filled(_ title: String) -> some View {
-        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.white).lineLimit(1).fixedSize()
-            .padding(.horizontal, 14).frame(height: 36).background(wallpaperPrimary, in: Capsule())
+        Text(title).font(M3Type.labelLarge).foregroundStyle(.white).lineLimit(1).fixedSize()
+            .padding(.horizontal, 16).frame(height: 40).background(wallpaperPrimary, in: Capsule())
     }
 
     private func outlined(_ title: String) -> some View {
-        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(wallpaperPrimary).lineLimit(1).fixedSize()
-            .padding(.horizontal, 14).frame(height: 36).overlay(Capsule().strokeBorder(wallpaperOutline))
+        Text(title).font(M3Type.labelLarge).foregroundStyle(wallpaperPrimary).lineLimit(1).fixedSize()
+            .padding(.horizontal, 16).frame(height: 40).overlay(Capsule().strokeBorder(wallpaperOutline))
     }
 
     private func line(_ symbol: String, _ color: Color, _ text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(color)
-            Text(text).font(.system(size: 13)).foregroundStyle(ink)
+        HStack(spacing: 8) {
+            MSymbol(symbol, fill: true).foregroundStyle(color)
+            Text(text).font(M3Type.bodyLarge).foregroundStyle(M3.onSurface)
         }
     }
 
@@ -2808,13 +3853,6 @@ struct AndroidJobBeforeAfter: View {
                     Text(item.1).font(.system(size: 12)).foregroundStyle(ink).fixedSize(horizontal: false, vertical: true)
                 }
             }
-        }
-    }
-
-    private func fixed(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(Tone.positive.color)
-            Text(text).font(.system(size: 12)).foregroundStyle(ink).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -2841,14 +3879,18 @@ struct RolloutBoard: View {
         Ticket(id: "TP-449", title: "Design tokens, tones and shared components, restyled in place", platform: "macOS",
                images: ["design-board.png", "macos-job-before-after.png"], column: 0, top: 0),
         Ticket(id: "TP-457", title: "The hub icon", platform: "Both", images: ["design-board.png"], column: 0, top: 276, alignment: .topLeading),
-        Ticket(id: "TP-456", title: "Android: brand theme, tones, components and vocabulary", platform: "Android",
-               images: ["android-job-before-after.png"], column: 0, top: 552),
+        Ticket(id: "TP-456", title: "Android: Material 3 theme from Hub Indigo, tones, components and vocabulary", platform: "Android",
+               images: ["android-components.png", "android-job-before-after.png"], column: 0, top: 552, alignment: .topLeading),
         Ticket(id: "TP-450", title: "One vocabulary: Skip, Screen, Match", platform: "macOS",
                images: ["macos-vocabulary.png"], column: 1, top: 0),
         Ticket(id: "TP-451", title: "Grouped sidebar, Settings window, Criteria page, Profile tabs, connection banner", platform: "macOS",
                images: ["macos-settings-criteria.png", "macos-sidebar.png"], column: 1, top: 276, alignment: .topLeading),
         Ticket(id: "TP-458", title: "Android: Today, Pipeline and Settings", platform: "Android",
-               images: ["android.png"], column: 1, top: 552),
+               images: ["android.png", "android-system.png"], column: 1, top: 552),
+        Ticket(id: "TP-463", title: "Android: adaptive layout for foldables and tablets", platform: "Android",
+               images: ["android-foldable.png"], column: 2, top: 552, alignment: .topLeading),
+        Ticket(id: "TP-462", title: "Android: notification channels and actions", platform: "Android",
+               images: ["android-system.png"], column: 2, top: 828, alignment: .topLeading),
         Ticket(id: "TP-452", title: "One inspector for jobs, companies and people, with history and links", platform: "macOS",
                images: ["macos-inspector.png", "macos-company-person.png", "ia-map.png"], column: 2, top: 138, alignment: .topLeading),
         Ticket(id: "TP-453", title: "People across companies, replacing Recruiters", platform: "Server + macOS",
@@ -2862,6 +3904,7 @@ struct RolloutBoard: View {
     private let dependencies = [
         ("TP-449", "TP-450"), ("TP-449", "TP-451"), ("TP-450", "TP-452"), ("TP-451", "TP-452"),
         ("TP-452", "TP-453"), ("TP-452", "TP-454"), ("TP-452", "TP-455"), ("TP-456", "TP-458"),
+        ("TP-458", "TP-463"), ("TP-458", "TP-462"),
     ]
 
     private let stages = ["1 · Foundations", "2 · Words and structure", "3 · One inspector", "4 · New pages"]
@@ -2869,7 +3912,7 @@ struct RolloutBoard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xl) {
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text("Rollout: ten tickets, each one shippable on its own").font(.system(size: 22, weight: .semibold)).foregroundStyle(ink)
+                Text("Rollout: twelve tickets, each one shippable on its own").font(.system(size: 22, weight: .semibold)).foregroundStyle(ink)
                 Text("Arrows are blocked-by links. Each card shows the mockup of what that ticket delivers; the names below it are the files in docs/design/mockups.")
                     .font(.system(size: 13)).foregroundStyle(secondaryInk)
             }
@@ -2886,7 +3929,7 @@ struct RolloutBoard: View {
                     card(ticket).offset(x: x(ticket.column), y: ticket.top)
                 }
             }
-            .frame(width: x(4) - columnGap, height: 552 + cardSize.height, alignment: .topLeading)
+            .frame(width: x(4) - columnGap, height: 828 + cardSize.height, alignment: .topLeading)
         }
         .padding(48)
         .background(windowBackground)
@@ -2976,7 +4019,19 @@ func write(_ view: some View, to directory: URL, name: String, dark: Bool = fals
     print("wrote \(name)")
 }
 
+/// Draws a view on its own, for a board that shows a dark view among light ones.
+@MainActor
+func snapshot(dark: Bool, _ view: () -> some View) -> NSImage {
+    darkMode = dark
+    defer { darkMode = false }
+    // Built after the mode is set: views read their colors when they're made.
+    let renderer = ImageRenderer(content: view().environment(\.colorScheme, dark ? .dark : .light))
+    renderer.scale = 2
+    return renderer.nsImage!
+}
+
 MainActor.assumeIsolated {
+    loadMaterialSymbols()
     let directory = URL(filePath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
     write(DesignBoard(), to: directory, name: "design-board.png")
     write(MacWindowToday(), to: directory, name: "macos-today.png")
@@ -2992,6 +4047,10 @@ MainActor.assumeIsolated {
     write(MacWindowPalette(), to: directory, name: "macos-palette.png")
     write(SettingsAndCriteria(), to: directory, name: "macos-settings-criteria.png")
     write(AndroidJobBeforeAfter(), to: directory, name: "android-job-before-after.png")
+    write(AndroidSystemBoard(), to: directory, name: "android-system.png")
+    write(AndroidComponentsBoard(), to: directory, name: "android-components.png")
+    let darkPhone = snapshot(dark: true) { AndroidPhone(nav: "Today") { AndroidScreens().todayContent(skipped: false) } }
+    write(AndroidFoldableBoard(darkPhone: darkPhone), to: directory, name: "android-foldable.png")
     // Last: the rollout board shows thumbnails of the images above.
     write(RolloutBoard(directory: directory), to: directory, name: "rollout.png")
 }
