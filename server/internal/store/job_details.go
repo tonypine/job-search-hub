@@ -42,7 +42,11 @@ type LabelledJobFacts struct {
 	Entries       []JobFactEntry `json:"entries"`
 	PromptVersion int            `json:"prompt_version"`
 	Model         string         `json:"model"`
-	ExtractedAt   time.Time      `json:"extracted_at"`
+	// Doubt says why FirstModel's reading was doubtful, when Model read the
+	// facts again.
+	Doubt       string    `json:"doubt,omitempty"`
+	FirstModel  string    `json:"first_model,omitempty"`
+	ExtractedAt time.Time `json:"extracted_at"`
 }
 
 // JobFactEntry is one fact: its key, the schema's title and description for
@@ -74,9 +78,9 @@ func (s *Store) GetJobDetails(ctx context.Context, id uuid.UUID) (JobDetails, er
 	var facts LabelledJobFacts
 	var rawFacts, schema json.RawMessage
 	err = s.pool.QueryRow(ctx, `
-		SELECT job_facts.facts, agent_prompts.result_schema, agent_prompts.version, job_facts.model, job_facts.extracted_at
+		SELECT job_facts.facts, agent_prompts.result_schema, agent_prompts.version, job_facts.model, job_facts.doubt, job_facts.first_model, job_facts.extracted_at
 		FROM job_facts JOIN agent_prompts ON agent_prompts.id = job_facts.prompt_id
-		WHERE job_facts.job_id = $1`, id).Scan(&rawFacts, &schema, &facts.PromptVersion, &facts.Model, &facts.ExtractedAt)
+		WHERE job_facts.job_id = $1`, id).Scan(&rawFacts, &schema, &facts.PromptVersion, &facts.Model, &facts.Doubt, &facts.FirstModel, &facts.ExtractedAt)
 	switch {
 	case err == nil:
 		if facts.Entries, err = labelJobFacts(rawFacts, schema); err != nil {

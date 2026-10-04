@@ -105,19 +105,34 @@ func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) err
 	return extractor.readJobFacts(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched), job, prompt)
 }
 
-// readJobFacts asks the model for the job's facts and saves them.
+// readJobFacts asks the model for the job's facts and saves them. A
+// doubtful reading (see FindDoubt) is read again on the second reading's
+// route, and that reading is saved instead, marked with the doubt. With no
+// such route, or when the second reading fails, the first is kept.
 func (extractor *Extractor) readJobFacts(ctx context.Context, job store.JobAwaitingFacts, prompt store.AgentPrompt) error {
-	answer, err := extractor.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
+	request := chatcompletions.JSONRequest{
 		System: prompt.Body, User: FormatJobText(job.Job, maximumDescriptionLength),
 		SchemaName: store.AgentPromptKindJobFacts, Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &job.ID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
-	})
+	}
+	answer, err := extractor.client.CompleteJSON(ctx, request)
 	if err != nil {
 		return err
 	}
-	return extractor.hub.SaveJobFacts(ctx, store.NewJobFacts{
-		JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object,
-	})
+	facts := store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: answer.Model, TextHash: job.TextHash, Facts: answer.Object}
+	if doubt := FindDoubt(job.Job, answer.Object); doubt != "" {
+		request.SchemaName = store.TaskKindJobFactsSecondReading
+		second, err := extractor.client.CompleteJSON(ctx, request)
+		switch {
+		case err == nil:
+			facts.Model, facts.Facts, facts.Doubt, facts.FirstModel = second.Model, second.Object, doubt, answer.Model
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case !errors.Is(err, store.ErrTaskRouteNotFound):
+			slog.Warn("job facts second reading failed, keeping the first", "job", job.ID, "doubt", doubt, "error", err)
+		}
+	}
+	return extractor.hub.SaveJobFacts(ctx, facts)
 }
 
 // FormatJobText is what a model reads of a posting: its headline facts, then

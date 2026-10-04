@@ -32,7 +32,19 @@ public struct LabelledJobFacts: Decodable, Equatable, Sendable {
     public var entries: [JobFactEntry]
     public var promptVersion: Int
     public var model: String
+    /// Why the first reading, by `firstModel`, was doubtful, when `model`
+    /// read the facts again.
+    public var doubt: String?
+    public var firstModel: String?
     public var extractedAt: Date
+
+    public var wasReadAgain: Bool { !(doubt ?? "").isEmpty }
+
+    /// Why the facts were read a second time, when they were.
+    public var secondReadingNote: String? {
+        guard let doubt, !doubt.isEmpty else { return nil }
+        return "The first reading, by \(firstModel ?? "the local model"), was doubtful: \(doubt)."
+    }
 }
 
 public struct JobFactEntry: Decodable, Equatable, Identifiable, Sendable {

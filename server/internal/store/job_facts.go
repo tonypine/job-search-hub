@@ -84,18 +84,22 @@ type NewJobFacts struct {
 	Model    string
 	TextHash []byte
 	Facts    json.RawMessage
+	// Doubt, when set, says why FirstModel's reading was doubtful, and so
+	// read again by Model.
+	Doubt      string
+	FirstModel string
 }
 
 // SaveJobFacts replaces the job's facts. Facts are derived from the job, with
 // their own provenance, so saving them records no change.
 func (s *Store) SaveJobFacts(ctx context.Context, input NewJobFacts) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO job_facts (job_id, prompt_id, model, text_hash, facts)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO job_facts (job_id, prompt_id, model, text_hash, facts, doubt, first_model)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (job_id) DO UPDATE SET
 			prompt_id = EXCLUDED.prompt_id, model = EXCLUDED.model, text_hash = EXCLUDED.text_hash,
-			facts = EXCLUDED.facts, extracted_at = now()`,
-		input.JobID, input.PromptID, input.Model, input.TextHash, input.Facts)
+			facts = EXCLUDED.facts, doubt = EXCLUDED.doubt, first_model = EXCLUDED.first_model, extracted_at = now()`,
+		input.JobID, input.PromptID, input.Model, input.TextHash, input.Facts, input.Doubt, input.FirstModel)
 	if isForeignKeyViolation(err) {
 		return ErrJobNotFound
 	}

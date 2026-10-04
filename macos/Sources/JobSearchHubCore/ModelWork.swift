@@ -10,12 +10,13 @@ public struct ModelWork: Decodable, Equatable, Sendable {
     public var runtime: ModelRuntimeStatus
     public var jobsAwaitingFacts: Int
 
-    /// Where a dispatched read of the job's facts stands.
+    /// Where a dispatched read of the job's facts stands, its second reading
+    /// included.
     public func getFactsReadState(for jobID: UUID) -> JobFactsReadState {
-        if running?.subjectID == jobID, running?.kind == ModelWorkTicket.jobFactsKind {
+        if let running, running.subjectID == jobID, ModelWorkTicket.jobFactsKinds.contains(running.kind) {
             return .running
         }
-        if waiting.contains(where: { $0.subjectID == jobID && $0.kind == ModelWorkTicket.jobFactsKind }) {
+        if waiting.contains(where: { $0.subjectID == jobID && ModelWorkTicket.jobFactsKinds.contains($0.kind) }) {
             return .queued
         }
         return .notQueued
@@ -30,7 +31,7 @@ public struct ModelWork: Decodable, Equatable, Sendable {
 }
 
 public struct ModelWorkTicket: Decodable, Equatable, Sendable {
-    static let jobFactsKind = "job_facts"
+    static let jobFactsKinds: Set = ["job_facts", "job_facts_second_reading"]
 
     public var kind: String
     public var subjectID: UUID?

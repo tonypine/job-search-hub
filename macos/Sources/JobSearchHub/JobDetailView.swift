@@ -444,9 +444,12 @@ struct JobDetailView: View {
                         }
                     }
                 }
-                Text("Read by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
+                Text("\(facts.wasReadAgain ? "Read again" : "Read") by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                if let note = facts.secondReadingNote {
+                    Text(note).font(.caption).foregroundStyle(.tertiary)
+                }
                 readFactsNowRow
             }
         } else {

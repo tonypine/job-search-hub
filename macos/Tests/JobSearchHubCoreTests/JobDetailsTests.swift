@@ -31,6 +31,7 @@ private let detailsJSON = #"""
     #expect(details.job.otherLocations == ["EMEA"])
     #expect(details.job.employmentType == "Full-time" && details.job.publishedAt != nil)
     #expect(details.facts?.promptVersion == 2 && details.facts?.entries.count == 6)
+    #expect(details.facts?.wasReadAgain == false && details.facts?.secondReadingNote == nil)
     #expect(details.phase?.name == "Saved" && details.application?.phaseID == details.phase?.id)
     #expect(details.fit.level == .unclear && details.fit.checks.first?.verdict == .yes)
     #expect(details.unseenUpdates == 1)
@@ -58,4 +59,15 @@ private let detailsJSON = #"""
     #expect(yearly.format(locale: locale) == "$152,000 – $190,000 a year")
     #expect(single.format(locale: locale) == "$230,000")
     #expect(hourly.format(locale: locale) == "CA$45.5 an hour")
+}
+
+@Test func factsReadAgainSayWhyTheFirstReadingWasDoubtful() throws {
+    let json = #"""
+    {"entries":[],"prompt_version":3,"model":"claude-sonnet-5-5","doubt":"open to Brazil was unclear","first_model":"Qwen3.8-27B-Q4_K_M.gguf",
+     "extracted_at":"2026-10-04T09:00:00Z"}
+    """#
+    let facts = try HubJSON.makeDecoder().decode(LabelledJobFacts.self, from: Data(json.utf8))
+
+    #expect(facts.wasReadAgain)
+    #expect(facts.secondReadingNote == "The first reading, by Qwen3.8-27B-Q4_K_M.gguf, was doubtful: open to Brazil was unclear.")
 }

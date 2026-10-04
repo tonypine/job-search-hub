@@ -31,3 +31,10 @@ private let workJSON = #"""
     #expect(work.getFactsReadState(for: UUID()) == .notQueued)
     #expect(work.waitingCountsByKind.map(\.title) == ["Job facts", "Mail sorting"])
 }
+
+@Test func aSecondReadingKeepsTheDispatchedReadGoing() throws {
+    var work = try HubJSON.makeDecoder().decode(ModelWork.self, from: Data(workJSON.utf8))
+    work.running?.kind = "job_facts_second_reading"
+
+    #expect(work.getFactsReadState(for: jobID) == .running)
+}

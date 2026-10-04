@@ -20,13 +20,19 @@ import (
 var owner = store.Actor{Kind: store.ActorOwner}
 
 // fakeModel answers every job with its title as the summary, except the ones
-// it is told to fail on.
+// it is told to fail on, or the doubtful answer for the doubtful title. A
+// second reading is unrouted unless secondReading is set.
 type fakeModel struct {
-	failOn      string
-	unreachable bool
-	requests    []chatcompletions.JSONRequest
-	priorities  []modelqueue.Priority
+	failOn         string
+	unreachable    bool
+	doubtfulTitle  string
+	secondReading  string
+	secondReadFail bool
+	requests       []chatcompletions.JSONRequest
+	priorities     []modelqueue.Priority
 }
+
+const doubtfulFacts = `{"location":{"evidence":"Americas","restriction":"Americas","open_to_brazil":"unclear","reason":"x"}}`
 
 func (model *fakeModel) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests = append(model.requests, request)
@@ -34,9 +40,21 @@ func (model *fakeModel) CompleteJSON(ctx context.Context, request chatcompletion
 	if model.unreachable {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
+	if request.SchemaName == store.TaskKindJobFactsSecondReading {
+		switch {
+		case model.secondReading == "":
+			return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s: %w", request.SchemaName, store.ErrTaskRouteNotFound)
+		case model.secondReadFail:
+			return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
+		}
+		return chatcompletions.Answer{Object: json.RawMessage(model.secondReading), Model: "second-model"}, nil
+	}
 	title := strings.TrimPrefix(strings.SplitN(request.User, "\n", 2)[0], "Title: ")
 	if title == model.failOn {
 		return chatcompletions.Answer{}, errors.New("the answer is not a JSON object")
+	}
+	if title == model.doubtfulTitle {
+		return chatcompletions.Answer{Object: json.RawMessage(doubtfulFacts), Model: "routed-model"}, nil
 	}
 	return chatcompletions.Answer{Object: json.RawMessage(fmt.Sprintf(`{"summary":%q}`, title)), Model: "routed-model"}, nil
 }
@@ -165,5 +183,64 @@ func TestAJobReadNowRunsAsADispatchedRunEvenWithCurrentFacts(t *testing.T) {
 	}
 	if err := extractor.ReadJobNow(ctx, uuid.New()); !errors.Is(err, store.ErrJobNotFound) {
 		t.Fatalf("an unknown job: %v", err)
+	}
+}
+
+func TestADoubtfulReadingIsReadAgainAndMarkedWithItsDoubt(t *testing.T) {
+	hub := startJobs(t, "Engineer", "Designer")
+	ctx := context.Background()
+	second := `{"location":{"evidence":"Americas","restriction":"Americas","open_to_brazil":"yes","reason":"Brazil is in the Americas."}}`
+	model := &fakeModel{doubtfulTitle: "Engineer", secondReading: second}
+
+	if summary, err := jobfacts.NewExtractor(hub, model).ExtractOnce(ctx); err != nil || summary.Read != 2 || summary.Failed != 0 {
+		t.Fatalf("summary = %+v, err = %v", summary, err)
+	}
+	var secondRequests []chatcompletions.JSONRequest
+	for _, request := range model.requests {
+		if request.SchemaName == store.TaskKindJobFactsSecondReading {
+			secondRequests = append(secondRequests, request)
+		}
+	}
+	if len(model.requests) != 3 || len(secondRequests) != 1 || !strings.HasPrefix(secondRequests[0].User, "Title: Engineer") ||
+		secondRequests[0].System != model.requests[0].System || string(secondRequests[0].Schema) != string(model.requests[0].Schema) {
+		t.Fatalf("requests = %+v; want one second reading of the doubtful job, with the same prompt", model.requests)
+	}
+
+	jobs, _, _ := hub.ListJobs(ctx, store.JobFilter{})
+	for _, job := range jobs {
+		details, err := hub.GetJobDetails(ctx, job.Job.ID)
+		if err != nil || details.Facts == nil {
+			t.Fatalf("%s: %+v, %v", job.Job.Title, details.Facts, err)
+		}
+		facts := details.Facts
+		switch job.Job.Title {
+		case "Engineer":
+			if facts.Model != "second-model" || facts.FirstModel != "routed-model" || facts.Doubt != jobfacts.DoubtOpenToBrazilUnclear ||
+				!strings.Contains(string(details.RawFacts), "Brazil is in the Americas.") {
+				t.Errorf("doubtful job's facts = %+v %s; want the second reading, marked", facts, details.RawFacts)
+			}
+		default:
+			if facts.Model != "routed-model" || facts.Doubt != "" || facts.FirstModel != "" {
+				t.Errorf("clear job's facts = %+v; want the first reading, unmarked", facts)
+			}
+		}
+	}
+}
+
+func TestADoubtfulReadingIsKeptWhenNoSecondReadingCanBeHad(t *testing.T) {
+	for _, model := range []*fakeModel{
+		{doubtfulTitle: "Engineer"},
+		{doubtfulTitle: "Engineer", secondReading: `{}`, secondReadFail: true},
+	} {
+		hub := startJobs(t, "Engineer")
+		ctx := context.Background()
+		if summary, err := jobfacts.NewExtractor(hub, model).ExtractOnce(ctx); err != nil || summary.Read != 1 || len(model.requests) != 2 {
+			t.Fatalf("summary = %+v, err = %v, %d requests; want the job read, and a second reading tried", summary, err, len(model.requests))
+		}
+		jobs, _, _ := hub.ListJobs(ctx, store.JobFilter{})
+		details, err := hub.GetJobDetails(ctx, jobs[0].Job.ID)
+		if err != nil || details.Facts == nil || details.Facts.Model != "routed-model" || details.Facts.Doubt != "" || !strings.Contains(string(details.RawFacts), "unclear") {
+			t.Fatalf("facts = %+v %s, %v; want the first reading kept, unmarked", details.Facts, details.RawFacts, err)
+		}
 	}
 }
