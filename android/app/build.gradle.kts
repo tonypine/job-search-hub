@@ -26,6 +26,11 @@ android {
         compose = true
     }
 
+    // Findings from before CI ran lint. New ones still fail `lintDebug`.
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21

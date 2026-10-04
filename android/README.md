@@ -18,6 +18,7 @@ Needs the Android SDK and JDK 21, which `gradle.properties` points at (`/opt/hom
 ```bash
 cd android
 ./gradlew :core:test :data:testDebugUnitTest
+./gradlew :app:lintDebug            # fails on findings not in app/lint-baseline.xml
 ./gradlew :app:assembleDebug        # → app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
