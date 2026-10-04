@@ -52,6 +52,48 @@ func TestAnIndeedAlertGivesItsPostingWithItsJobKey(t *testing.T) {
 	}
 }
 
+// makeIndeedAlert builds Indeed's alert for one posting with the given title
+// and company, in São Paulo.
+func makeIndeedAlert(t *testing.T, title, company string) jobalerts.Alert {
+	t.Helper()
+	link := makeIndeedLink(t, "https://br.indeed.com/rc/clk?jk=9f8e7d6c5b4a&from=email")
+	return jobalerts.Alert{
+		Sender: "Indeed <donotreply@match.indeed.com>", Subject: title + " na empresa " + company, SentAt: sentAt,
+		Text: title + "\n" + company + "\nSão Paulo, SP\n\nVer vaga: " + link + "\n",
+	}
+}
+
+func TestAnIndeedAlertWhoseCompanyIsASloganTakesItFromTheTitle(t *testing.T) {
+	alert := makeIndeedAlert(t, "Desenvolvedor Front-End Pleno - E-commerce| ACME SPORTS | São Paulo",
+		"A seleção já está rolando na Acme Sports! Vem com a gente?")
+
+	postings := jobalerts.ParsePostings(store.JobSourceIndeed, alert)
+
+	if len(postings) != 1 {
+		t.Fatalf("postings = %+v", postings)
+	}
+	if posting := postings[0]; posting.CompanyName != "Acme Sports" || posting.Title != "Desenvolvedor Front-End Pleno - E-commerce | São Paulo" ||
+		posting.ExternalID != "9f8e7d6c5b4a" || posting.Location != "São Paulo, SP" {
+		t.Errorf("posting = %+v; want the company from the title, in the slogan's casing, and the title without it", posting)
+	}
+}
+
+func TestAnIndeedAlertKeepsItsTitleAndCompanyUnlessTheCompanyIsASloganNamingAPartOfTheTitle(t *testing.T) {
+	for _, listing := range []struct{ title, company string }{
+		{"Pessoa Desenvolvedora Front-end Sênior (React) | Remoto", "Acme Labs"},
+		{"Desenvolvedor(a) Frontend Sênior | Remoto | PJ | Media Tech", "Acme Labs"},
+		{"Desenvolvedor(a) Frontend Sênior | Remoto | PJ | Media Tech", "Media Tech Comunicação Digital"},
+		{"Desenvolvedor Frontend | Acme Labs", "Venha construir o futuro com a gente!"},
+		{"Desenvolvedor Frontend | Remoto", "Uma vaga 100% remoto na Acme Labs!"},
+	} {
+		postings := jobalerts.ParsePostings(store.JobSourceIndeed, makeIndeedAlert(t, listing.title, listing.company))
+
+		if len(postings) != 1 || postings[0].Title != listing.title || postings[0].CompanyName != listing.company {
+			t.Errorf("%q at %q gave %+v; want both kept", listing.title, listing.company, postings)
+		}
+	}
+}
+
 func TestLinkedInAlertsGiveEachPostingOnce(t *testing.T) {
 	alert := jobalerts.Alert{
 		Sender: "LinkedIn <jobs-noreply@linkedin.com>", Subject: "Senior Frontend Engineer at Globex", SentAt: sentAt,
