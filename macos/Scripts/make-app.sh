@@ -33,6 +33,14 @@ rm -rf build/AppIcon.iconset
 "$ICON_TOOL" iconset build/AppIcon.iconset
 iconutil -c icns build/AppIcon.iconset -o "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+# Hub Indigo as the app's accent color, which SwiftUI's tint doesn't reach:
+# the sidebar selection, focus rings and default buttons. actool compiles the
+# color set into Assets.car, which NSAccentColorName below names.
+echo "==> Compiling the accent color"
+xcrun actool Assets/Assets.xcassets --compile "$APP_DIR/Contents/Resources" \
+  --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor \
+  --output-partial-info-plist build/assets-info.plist >/dev/null
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,6 +56,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 	<string>$APP_NAME</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
