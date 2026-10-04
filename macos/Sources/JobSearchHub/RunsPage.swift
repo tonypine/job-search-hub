@@ -77,7 +77,7 @@ struct RunsPage: View {
                         Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                     }
             } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
+                NotConnectedView()
             }
         }
         .navigationTitle("Runs")

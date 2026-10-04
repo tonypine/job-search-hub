@@ -74,7 +74,7 @@ set -a && . ./.env && set +a
 open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds.
+The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds. A build signed otherwise, ad hoc for instance, gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
 
 ## Prompts
 

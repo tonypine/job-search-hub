@@ -38,14 +38,16 @@ struct JobSearchHubApp: App {
                 .environment(jobDecisions)
                 .environment(taskRunner)
                 .frame(minWidth: 900, minHeight: 600)
-                .task(id: connection.hubURLText) {
+                // The stream holds its client, so it starts again with a new
+                // URL or token, and once the token arrives from the Keychain.
+                .task(id: [connection.hubURLText, connection.token.value]) {
                     if let client = connection.makeClient() {
                         await events.run(with: client)
                     }
                 }
                 // Work the phone asked for: checked on each update the hub
                 // announces, which includes a new request, and every minute.
-                .task(id: events.revision) {
+                .task(id: HubWorkKey(revision: events.revision, hasToken: connection.hasToken)) {
                     if let client = connection.makeClient() {
                         await taskRunner.check(with: client)
                     }
@@ -91,6 +93,13 @@ struct JobSearchHubApp: App {
         else { return }
         try? OwnerTokenKeychain.save(token)
     }
+}
+
+/// Keys a task that works with the hub on each update it announces, and once
+/// the owner token arrives from the Keychain after launch.
+struct HubWorkKey: Equatable {
+    let revision: Int
+    let hasToken: Bool
 }
 
 /// A request to show a job or a company, on its Details side or on its
@@ -167,7 +176,7 @@ struct ContentView: View {
             }
         }
         .environment(details)
-        .task(id: events.revision) {
+        .task(id: HubWorkKey(revision: events.revision, hasToken: connection.hasToken)) {
             if let client = connection.makeClient() {
                 await unseen.refresh(with: client)
             }

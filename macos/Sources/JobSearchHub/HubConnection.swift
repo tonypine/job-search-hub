@@ -5,6 +5,10 @@ import Observation
 /// The app's link to the hub: its URL (in preferences), the owner token (in
 /// the Keychain) and the last connection check. Pages build their API client
 /// from it.
+///
+/// The token is read once, off the main thread, and held in memory: when the
+/// Keychain item's access list doesn't name this build, the read waits on the
+/// Keychain's access prompt, and the window stays responsive meanwhile.
 @MainActor
 @Observable
 final class HubConnection {
@@ -12,14 +16,22 @@ final class HubConnection {
     private static let hubURLPreferenceKey = "hubURL"
 
     var hubURLText: String
-    private(set) var hasToken: Bool
+    private(set) var token: OwnerTokenState = .reading
     private(set) var status: ConnectionStatus = .unchecked
     private(set) var isChecking = false
+    @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
     init() {
         hubURLText = UserDefaults.standard.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
-        hasToken = OwnerTokenKeychain.read() != nil
+        tokenRead = Task {
+            let token = await OwnerTokenKeychain.readOffMainThread()
+            if self.token == .reading {
+                self.token = OwnerTokenState(read: token)
+            }
+        }
     }
+
+    var hasToken: Bool { token.value != nil }
 
     var hubURL: URL? {
         guard let url = URL(string: hubURLText.trimmingCharacters(in: .whitespaces)),
@@ -28,9 +40,10 @@ final class HubConnection {
         return url
     }
 
-    /// A client for the pages, or nil until a URL and a token are set.
+    /// A client for the pages, or nil until a URL and a token are set, and
+    /// while the token is still being read.
     func makeClient() -> HubClient? {
-        guard let hubURL, let token = OwnerTokenKeychain.read() else { return nil }
+        guard let hubURL, let token = token.value else { return nil }
         return HubClient(baseURL: hubURL, token: token)
     }
 
@@ -41,8 +54,8 @@ final class HubConnection {
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedToken.isEmpty {
             try OwnerTokenKeychain.save(trimmedToken)
+            token = .present(trimmedToken)
         }
-        hasToken = OwnerTokenKeychain.read() != nil
     }
 
     func check() async {
@@ -51,7 +64,11 @@ final class HubConnection {
             return
         }
         isChecking = true
-        status = await ConnectionStatus.check(baseURL: hubURL, token: OwnerTokenKeychain.read())
+        if token == .reading {
+            status = .waitingForKeychain
+            await tokenRead?.value
+        }
+        status = await ConnectionStatus.check(baseURL: hubURL, token: token.value)
         isChecking = false
     }
 }
