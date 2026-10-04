@@ -2,6 +2,7 @@ package postingtexts
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/url"
 	"regexp"
@@ -42,6 +43,7 @@ type jobStore interface {
 	CountPostingTextSearchesSince(ctx context.Context, since time.Time) (int, error)
 	SavePostingText(ctx context.Context, actor store.Actor, jobID uuid.UUID, text, sourceURL string, searchedAt time.Time) error
 	RecordPostingTextMissing(ctx context.Context, jobID uuid.UUID, reason string, searchedAt *time.Time) error
+	RecordPostingTextSearchFailed(ctx context.Context, jobID uuid.UUID, reason string, searchedAt time.Time) error
 }
 
 type Finder struct {
@@ -68,6 +70,7 @@ func New(hub *store.Store, search *JSearch, monthlySearches int) *Finder {
 type PassSummary struct {
 	Found    int
 	NotFound int
+	Failed   int
 }
 
 // Run looks once at start and then every interval, until ctx ends.
@@ -77,9 +80,9 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 	for {
 		summary, err := finder.FindOnce(ctx)
 		if err != nil {
-			slog.Error("posting text pass stopped", "error", err, "found", summary.Found, "not found", summary.NotFound)
+			slog.Error("posting text pass stopped", "error", err, "found", summary.Found, "not found", summary.NotFound, "failed", summary.Failed)
 		} else if summary != (PassSummary{}) {
-			slog.Info("posting texts searched", "found", summary.Found, "not found", summary.NotFound)
+			slog.Info("posting texts searched", "found", summary.Found, "not found", summary.NotFound, "failed", summary.Failed)
 		}
 		select {
 		case <-ctx.Done():
@@ -92,8 +95,9 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 // FindOnce goes over the open alert jobs with no more than a snippet,
 // newest first. Each one past its board's wait is searched on Google for
 // Jobs once, while the month's searches last; every other one is given the
-// reason it has no text yet. A refused or failed search stops the pass, and
-// the next one tries again.
+// reason it has no text yet. A refused search stops the pass, and the next
+// one tries again; any other failed search counts toward the month's, and
+// its job isn't searched again.
 func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 	saved, err := finder.hub.GetJobCriteria(ctx)
 	if err != nil {
@@ -118,6 +122,8 @@ func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 		switch {
 		case jobfit.IsRoleRuledOut(job, saved.Criteria):
 			reason = alert + ", and its title rules it out, so its posting wasn't looked for"
+		case awaiting.SearchFailed:
+			reason = alert + ", no board found lists it, and the Google for Jobs search for it failed"
 		case awaiting.Searched:
 			reason = alert + ", and neither a board found nor Google for Jobs lists the posting"
 		case now.Sub(job.FirstSeenAt) < boardSearchWait:
@@ -133,10 +139,19 @@ func (finder *Finder) FindOnce(ctx context.Context) (PassSummary, error) {
 		default:
 			searches++
 			posting, found, err := finder.searchText(ctx, awaiting)
-			if err != nil {
+			if err != nil && (errors.Is(err, ErrSearchRefused) || ctx.Err() != nil) {
 				return summary, err
 			}
 			used++
+			if err != nil {
+				slog.Warn("posting text search failed", "job", job.ID, "error", err)
+				summary.Failed++
+				reason = alert + ", no board found lists it, and the Google for Jobs search for it failed"
+				if err := finder.hub.RecordPostingTextSearchFailed(ctx, job.ID, reason, now); err != nil {
+					return summary, err
+				}
+				continue
+			}
 			if found {
 				if err := finder.hub.SavePostingText(ctx, textFinder, job.ID, posting.Description, posting.ApplyLink, now); err != nil {
 					return summary, err

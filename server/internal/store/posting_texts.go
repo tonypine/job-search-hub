@@ -16,6 +16,8 @@ type AlertJobAwaitingText struct {
 	CompanyName string
 	// Searched is whether Google for Jobs was asked for its text already.
 	Searched bool
+	// SearchFailed is whether that request failed rather than answered.
+	SearchFailed bool
 }
 
 // ListAlertJobsAwaitingText returns the open, undismissed alert jobs whose
@@ -23,8 +25,9 @@ type AlertJobAwaitingText struct {
 func (s *Store) ListAlertJobsAwaitingText(ctx context.Context) ([]AlertJobAwaitingText, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, jobs.company_name),
-		       EXISTS (SELECT 1 FROM posting_text_searches WHERE posting_text_searches.job_id = jobs.id)
+		       posting_text_searches.job_id IS NOT NULL, COALESCE(posting_text_searches.failed, false)
 		FROM jobs LEFT JOIN companies ON companies.id = jobs.company_id
+		LEFT JOIN posting_text_searches ON posting_text_searches.job_id = jobs.id
 		WHERE jobs.closed_at IS NULL AND jobs.dismissed_at IS NULL AND jobs.source = ANY($1)
 		  AND octet_length(btrim(jobs.description)) < $2
 		ORDER BY jobs.first_seen_at DESC, jobs.title`, AlertJobSources, AlertSnippetLength)
@@ -33,7 +36,7 @@ func (s *Store) ListAlertJobsAwaitingText(ctx context.Context) ([]AlertJobAwaiti
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AlertJobAwaitingText, error) {
 		var awaiting AlertJobAwaitingText
-		job, err := scanJob(row, &awaiting.CompanyName, &awaiting.Searched)
+		job, err := scanJob(row, &awaiting.CompanyName, &awaiting.Searched, &awaiting.SearchFailed)
 		awaiting.Job = job
 		return awaiting, err
 	})
@@ -52,7 +55,7 @@ func (s *Store) CountPostingTextSearchesSince(ctx context.Context, since time.Ti
 // as from its company's board, keeps that text.
 func (s *Store) SavePostingText(ctx context.Context, actor Actor, jobID uuid.UUID, text, sourceURL string, searchedAt time.Time) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := recordPostingTextSearch(ctx, tx, jobID, searchedAt, true); err != nil {
+		if err := recordPostingTextSearch(ctx, tx, jobID, searchedAt, true, false); err != nil {
 			return err
 		}
 		var previousReason string
@@ -82,7 +85,7 @@ func (s *Store) SavePostingText(ctx context.Context, actor Actor, jobID uuid.UUI
 func (s *Store) RecordPostingTextMissing(ctx context.Context, jobID uuid.UUID, reason string, searchedAt *time.Time) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if searchedAt != nil {
-			if err := recordPostingTextSearch(ctx, tx, jobID, *searchedAt, false); err != nil {
+			if err := recordPostingTextSearch(ctx, tx, jobID, *searchedAt, false, false); err != nil {
 				return err
 			}
 		}
@@ -91,9 +94,23 @@ func (s *Store) RecordPostingTextMissing(ctx context.Context, jobID uuid.UUID, r
 	})
 }
 
-func recordPostingTextSearch(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, searchedAt time.Time, found bool) error {
+// RecordPostingTextSearchFailed states why an alert job has no more than its
+// snippet when the Google for Jobs request made at searchedAt failed. The
+// request counts toward the month's, and the job isn't searched again.
+func (s *Store) RecordPostingTextSearchFailed(ctx context.Context, jobID uuid.UUID, reason string, searchedAt time.Time) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := recordPostingTextSearch(ctx, tx, jobID, searchedAt, false, true); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE jobs SET text_missing_reason = $2 WHERE id = $1 AND text_missing_reason <> $2`, jobID, reason)
+		return err
+	})
+}
+
+func recordPostingTextSearch(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, searchedAt time.Time, found, failed bool) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO posting_text_searches (job_id, searched_at, found) VALUES ($1, $2, $3)
-		ON CONFLICT (job_id) DO UPDATE SET searched_at = EXCLUDED.searched_at, found = EXCLUDED.found`, jobID, searchedAt, found)
+		INSERT INTO posting_text_searches (job_id, searched_at, found, failed) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (job_id) DO UPDATE SET searched_at = EXCLUDED.searched_at, found = EXCLUDED.found, failed = EXCLUDED.failed`,
+		jobID, searchedAt, found, failed)
 	return err
 }

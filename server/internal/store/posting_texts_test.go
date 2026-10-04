@@ -99,3 +99,67 @@ func TestABoardAdoptingAnAlertJobClearsTheReasonItHadNoText(t *testing.T) {
 		t.Errorf("adopted job = %+v, %v; want the board's text and no reason", details.Job, err)
 	}
 }
+
+func TestAFailedSearchCountsAndIsNotAskedAgain(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	now := time.Now()
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor, []store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "")}, now); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err := hub.ListAlertJobsAwaitingText(ctx)
+	if err != nil || len(awaiting) != 1 {
+		t.Fatalf("awaiting = %+v, %v", awaiting, err)
+	}
+
+	reason := "the Glassdoor alert gave no text, no board found lists it, and the Google for Jobs search for it failed"
+	if err := hub.RecordPostingTextSearchFailed(ctx, awaiting[0].Job.ID, reason, now); err != nil {
+		t.Fatal(err)
+	}
+
+	awaiting, err = hub.ListAlertJobsAwaitingText(ctx)
+	if err != nil || len(awaiting) != 1 || !awaiting[0].Searched || !awaiting[0].SearchFailed || awaiting[0].Job.TextMissingReason != reason {
+		t.Fatalf("awaiting = %+v, %v; want the job searched, failed, with its reason", awaiting, err)
+	}
+	if searches, err := hub.CountPostingTextSearchesSince(ctx, now.Add(-time.Minute)); err != nil || searches != 1 {
+		t.Errorf("searches = %d, %v; want the failed one counted", searches, err)
+	}
+}
+
+func TestAnAlertRelistingAJobWithItsTextClearsTheReasonItHadNone(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	now := time.Now()
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor, []store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "")}, now); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err := hub.ListAlertJobsAwaitingText(ctx)
+	if err != nil || len(awaiting) != 1 {
+		t.Fatalf("awaiting = %+v, %v", awaiting, err)
+	}
+	jobID := awaiting[0].Job.ID
+	if err := hub.RecordPostingTextMissing(ctx, jobID, "the Glassdoor alert gave no text; looking for the posting on its company's board", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor,
+		[]store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "A snippet.")}, now); err != nil {
+		t.Fatal(err)
+	}
+	details, err := hub.GetJobDetails(ctx, jobID)
+	if err != nil || details.Job.TextMissingReason == "" {
+		t.Fatalf("job = %+v, %v; a snippet should keep the reason", details.Job, err)
+	}
+
+	fullText := strings.Repeat("The whole posting. ", 40)
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor,
+		[]store.JobPosting{alertPosting("1", "Senior Frontend Engineer", fullText)}, now); err != nil {
+		t.Fatal(err)
+	}
+	details, err = hub.GetJobDetails(ctx, jobID)
+	if err != nil || details.Job.TextMissingReason != "" || details.Job.Description != fullText {
+		t.Errorf("job = %+v, %v; want the alert's text and no reason", details.Job, err)
+	}
+}

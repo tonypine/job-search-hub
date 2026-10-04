@@ -2,6 +2,7 @@ package postingtexts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -25,10 +26,12 @@ type fakeHub struct {
 	texts    map[uuid.UUID]string
 	reasons  map[uuid.UUID]string
 	searched map[uuid.UUID]bool
+	failed   map[uuid.UUID]bool
 }
 
 func newFakeHub(used int, jobs ...store.AlertJobAwaitingText) *fakeHub {
-	return &fakeHub{jobs: jobs, used: used, texts: map[uuid.UUID]string{}, reasons: map[uuid.UUID]string{}, searched: map[uuid.UUID]bool{}}
+	return &fakeHub{jobs: jobs, used: used, texts: map[uuid.UUID]string{}, reasons: map[uuid.UUID]string{}, searched: map[uuid.UUID]bool{},
+		failed: map[uuid.UUID]bool{}}
 }
 
 func (hub *fakeHub) GetJobCriteria(context.Context) (store.SavedJobCriteria, error) {
@@ -59,16 +62,25 @@ func (hub *fakeHub) RecordPostingTextMissing(_ context.Context, jobID uuid.UUID,
 	return nil
 }
 
-// fakeSearch answers every search with its postings, or its failure.
+func (hub *fakeHub) RecordPostingTextSearchFailed(_ context.Context, jobID uuid.UUID, reason string, _ time.Time) error {
+	hub.reasons[jobID], hub.searched[jobID], hub.failed[jobID] = reason, true, true
+	return nil
+}
+
+// fakeSearch answers every search with its postings, but for the first ones,
+// which fail with its failures in turn.
 type fakeSearch struct {
 	postings []Posting
-	failure  error
+	failures []error
 	queries  []string
 }
 
 func (search *fakeSearch) Search(_ context.Context, query, country string) ([]Posting, error) {
 	search.queries = append(search.queries, query+" in "+country)
-	return search.postings, search.failure
+	if len(search.failures) >= len(search.queries) {
+		return nil, search.failures[len(search.queries)-1]
+	}
+	return search.postings, nil
 }
 
 func alertJob(title, companyName string, age time.Duration) store.AlertJobAwaitingText {
@@ -115,6 +127,8 @@ func TestAnAlertJobWithoutItsTextSaysWhy(t *testing.T) {
 	ruledOut := alertJob("Sales Engineer", "Acme", 2*24*time.Hour)
 	searched := alertJob("Senior Frontend Engineer", "Globex", 3*24*time.Hour)
 	searched.Searched = true
+	failed := alertJob("Senior Frontend Engineer", "Hooli", 3*24*time.Hour)
+	failed.Searched, failed.SearchFailed = true, true
 	ready := alertJob("Senior Frontend Engineer", "Initech", 2*24*time.Hour)
 	ready.Job.Description = "Build the web app."
 
@@ -128,6 +142,8 @@ func TestAnAlertJobWithoutItsTextSaysWhy(t *testing.T) {
 		{"its board still has time", 0, &fakeSearch{}, waiting, "the Glassdoor alert gave no text; looking for the posting on its company's board"},
 		{"its title rules it out", 0, &fakeSearch{}, ruledOut, "the Glassdoor alert gave no text, and its title rules it out, so its posting wasn't looked for"},
 		{"it was searched", 0, &fakeSearch{}, searched, "the Glassdoor alert gave no text, and neither a board found nor Google for Jobs lists the posting"},
+		{"its search failed", 0, &fakeSearch{}, failed,
+			"the Glassdoor alert gave no text, no board found lists it, and the Google for Jobs search for it failed"},
 		{"the search is off", 0, nil, ready,
 			"the Glassdoor alert gave only a snippet, no board found lists it, and the Google for Jobs search is off: it needs a JSearch key"},
 		{"the month's searches are spent", 100, &fakeSearch{}, ready,
@@ -171,13 +187,55 @@ func TestAPostingGoogleForJobsDoesNotListIsSearchedOnce(t *testing.T) {
 func TestARefusedSearchStopsThePassWithoutCountingIt(t *testing.T) {
 	first, second := alertJob("Senior Frontend Engineer", "Acme", 2*24*time.Hour), alertJob("Senior Frontend Engineer", "Globex", 2*24*time.Hour)
 	hub := newFakeHub(0, first, second)
-	search := &fakeSearch{failure: fmt.Errorf("%w: it answered 429", ErrSearchRefused)}
+	search := &fakeSearch{failures: []error{fmt.Errorf("%w: it answered 429", ErrSearchRefused)}}
 
 	if _, err := newFinder(hub, search).FindOnce(context.Background()); err == nil {
 		t.Fatal("the refusal was not reported")
 	}
 	if len(search.queries) != 1 || hub.searched[first.Job.ID] || hub.reasons[first.Job.ID] != "" {
 		t.Errorf("queries %q, searched %v, reason %q", search.queries, hub.searched[first.Job.ID], hub.reasons[first.Job.ID])
+	}
+}
+
+func TestAFailedSearchCountsAndThePassGoesOn(t *testing.T) {
+	first, second := alertJob("Senior Frontend Engineer", "Acme", 2*24*time.Hour), alertJob("Senior Frontend Engineer", "Globex", 2*24*time.Hour)
+	third := alertJob("Senior Frontend Engineer", "Initech", 2*24*time.Hour)
+	hub := newFakeHub(98, first, second, third)
+	search := &fakeSearch{
+		postings: []Posting{{Title: "Senior Frontend Engineer", EmployerName: "Globex", Description: fullText}},
+		failures: []error{errors.New("JSearch answered 500")},
+	}
+
+	summary, err := newFinder(hub, search).FindOnce(context.Background())
+
+	if err != nil || summary != (PassSummary{Found: 1, Failed: 1}) {
+		t.Fatalf("summary %+v, err %v", summary, err)
+	}
+	if !hub.searched[first.Job.ID] || !hub.failed[first.Job.ID] ||
+		hub.reasons[first.Job.ID] != "the Glassdoor alert gave no text, no board found lists it, and the Google for Jobs search for it failed" {
+		t.Errorf("first: searched %v, failed %v, reason %q", hub.searched[first.Job.ID], hub.failed[first.Job.ID], hub.reasons[first.Job.ID])
+	}
+	if hub.texts[second.Job.ID] != fullText {
+		t.Errorf("second's text = %q, want the posting's", hub.texts[second.Job.ID])
+	}
+	if len(search.queries) != 2 || hub.searched[third.Job.ID] ||
+		!strings.Contains(hub.reasons[third.Job.ID], "this month's Google for Jobs searches are spent") {
+		t.Errorf("queries %q, third's reason %q; the failed search should count toward the month's", search.queries, hub.reasons[third.Job.ID])
+	}
+}
+
+func TestACanceledSearchStopsThePassWithoutCountingIt(t *testing.T) {
+	job := alertJob("Senior Frontend Engineer", "Acme", 2*24*time.Hour)
+	hub := newFakeHub(0, job)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	search := &fakeSearch{failures: []error{context.Canceled}}
+
+	if _, err := newFinder(hub, search).FindOnce(ctx); err == nil {
+		t.Fatal("the canceled search was not reported")
+	}
+	if hub.searched[job.Job.ID] || hub.reasons[job.Job.ID] != "" {
+		t.Errorf("searched %v, reason %q", hub.searched[job.Job.ID], hub.reasons[job.Job.ID])
 	}
 }
 

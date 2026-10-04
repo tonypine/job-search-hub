@@ -33,8 +33,9 @@ type FeedSyncResult struct {
 // closes the feed's jobs whose expiry has passed. A feed returns only what a
 // search matches, so a posting missing from it is not closed. A new posting
 // is linked to the hub's company of the same name when there is one, and left
-// out when that company's own board lists it under the same title. Only
-// lifecycle events are recorded as changes.
+// out when that company's own board lists it under the same title. A known
+// job given more text than an alert's snippet drops the reason it had none.
+// Only lifecycle events are recorded as changes.
 func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, postings []JobPosting, seenAt time.Time) (FeedSyncResult, error) {
 	result := FeedSyncResult{Seen: len(postings)}
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -100,10 +101,11 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 					`+buildPollAssignment(JobFieldLocation, "$4")+`, `+buildPollAssignment(JobFieldWorkplaceType, "$5")+`,
 					url = $6, description = $7, raw = $8, last_seen_at = $9, expires_at = $10, closed_at = NULL,
 					`+buildPollAssignment(JobFieldPay, "$11")+`, `+buildPollAssignment(JobFieldEmploymentType, "$12")+`,
-					department = $13, other_locations = $14, published_at = $15
+					department = $13, other_locations = $14, published_at = $15,
+					text_missing_reason = CASE WHEN octet_length(btrim($7)) >= $16 THEN '' ELSE text_missing_reason END
 				WHERE id = $1`,
-				append([]any{existing.id, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType, posting.URL,
-					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...)...); err != nil {
+				append(append([]any{existing.id, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType, posting.URL,
+					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...), AlertSnippetLength)...); err != nil {
 				return err
 			}
 			if existing.closedAt != nil {
