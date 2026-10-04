@@ -23,6 +23,40 @@ class HubClientTest {
             val request = server.takeRequest()
             assertEquals("Bearer hubdev_test", request.headers["Authorization"])
             assertTrue(request.target.startsWith("/v1/jobs?status=open"))
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun everyOpenJobIsReadAPageAtATime() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body(jobsPage(listOf("a", "b"), total = 3)).build())
+            server.enqueue(MockResponse.Builder().body(jobsPage(listOf("c"), total = 3)).build())
+            server.start()
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+
+            val jobs = client.getJobs()
+
+            assertEquals(listOf("a", "b", "c"), jobs.jobs.map { it.job.title })
+            assertEquals(3, jobs.total)
+            assertEquals("/v1/jobs?status=open&limit=500", server.takeRequest().target)
+            assertEquals("/v1/jobs?status=open&limit=500&offset=2", server.takeRequest().target)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
+    fun anEmptyPageEndsTheReadingEvenShortOfTheTotal() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body(jobsPage(listOf("a"), total = 2)).build())
+            server.enqueue(MockResponse.Builder().body(jobsPage(emptyList(), total = 2)).build())
+            server.start()
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+
+            val jobs = client.getJobs()
+
+            assertEquals(listOf("a"), jobs.jobs.map { it.job.title })
+            assertEquals(2, server.requestCount)
         }
     }
 
@@ -76,5 +110,12 @@ class HubClientTest {
             val error = assertFailsWith<HubException> { HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_old")).getUpdates() }
             assertTrue(error.isRefused)
         }
+    }
+
+    private fun jobsPage(titles: List<String>, total: Int): String {
+        val jobs = titles.joinToString(",") { title ->
+            """{"job":{"id":"$title","source":"x","title":"$title","url":"https://x/$title","first_seen_at":"2026-09-29T10:00:00Z"},"fit":{"level":"good"}}"""
+        }
+        return """{"jobs":[$jobs],"total":$total}"""
     }
 }
