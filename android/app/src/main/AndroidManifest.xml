@@ -35,5 +35,9 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- A notification's buttons, like Followed up and Snooze a day. -->
+        <receiver
+            android:name=".push.NotificationActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>
