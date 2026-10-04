@@ -6,6 +6,19 @@ hooks:
   after_create: |
     git config core.hooksPath .githooks
     cd server && go mod download
+# How Symphony's QA pass builds and opens the apps, over symphony.yml's
+# defaults. make-app.sh signs ad hoc in the QA VM, which has no Apple identity.
+# The Android build needs a writable ANDROID_USER_HOME for the debug keystore,
+# a temp dir for the Kotlin daemon, and no Gradle daemon in the sandbox.
+auto_review:
+  playbooks:
+    macos_app:
+      build: cd macos && ./Scripts/make-app.sh
+      app: macos/build/JobSearchHub.app
+    android_app:
+      build: cd android && ANDROID_HOME="$HOME/Library/Android/sdk" ANDROID_USER_HOME="$TMPDIR/android-home" JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR" ./gradlew --no-daemon :app:assembleDebug
+      apk_path: android/app/build/outputs/apk/debug/app-debug.apk
+      application_ids: ["com.tonypine.jobsearchhub"]
 prompts:
   pr: |
     You are working on an existing GitHub pull request.
