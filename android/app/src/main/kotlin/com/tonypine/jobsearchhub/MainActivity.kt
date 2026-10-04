@@ -9,7 +9,7 @@ import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import com.tonypine.jobsearchhub.push.UpdateNotifications
-import com.tonypine.jobsearchhub.ui.HubTheme
+import com.tonypine.jobsearchhub.ui.design.HubTheme
 import com.tonypine.jobsearchhub.ui.HubNavigation
 
 class MainActivity : ComponentActivity() {
