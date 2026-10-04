@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Laptop
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.Notifications
@@ -100,26 +101,29 @@ fun SettingsScreen(state: HubState, onBack: () -> Unit, onUnpair: () -> Unit) {
                 )
             }
             HubSection("Notifications") {
+                // The system's notification settings for the app list its channels, one per kind.
+                val openChannels = {
+                    context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                }
                 SegmentedGroup(
-                    listOf {
-                        SettingsRow(
-                            Icons.Rounded.Notifications, "Updates and reminders",
-                            when {
-                                !pushesAvailable -> "Off in this build, which has no Firebase config"
-                                notificationsOn -> "On. Change them in the system's settings"
-                                else -> "Off. Turn them on in the system's settings"
-                            },
-                            onClick = if (pushesAvailable) {
-                                {
-                                    context.startActivity(
-                                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
-                                    )
-                                }
-                            } else {
-                                null
-                            },
-                        )
-                    },
+                    listOfNotNull<@Composable () -> Unit>(
+                        {
+                            SettingsRow(
+                                Icons.Rounded.Notifications, "Updates and reminders",
+                                when {
+                                    !pushesAvailable -> "Off in this build, which has no Firebase config"
+                                    notificationsOn -> "On. Change them in the system's settings"
+                                    else -> "Off. Turn them on in the system's settings"
+                                },
+                                onClick = if (pushesAvailable) openChannels else null,
+                            )
+                        },
+                        if (pushesAvailable) {
+                            { SettingsRow(Icons.AutoMirrored.Rounded.VolumeUp, "Sound and vibration", "Follow-ups, Replies, Matches and Hub, each on its own", onClick = openChannels) }
+                        } else {
+                            null
+                        },
+                    ),
                     Modifier.padding(horizontal = Spacing.l),
                 )
             }
