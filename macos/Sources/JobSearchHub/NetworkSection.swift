@@ -96,8 +96,9 @@ final class NetworkSectionModel {
     }
 }
 
-/// Settings' network: the owner's LinkedIn connections, imported from their
-/// own data export, which the hub matches to its companies as warm paths.
+/// Settings › Accounts' LinkedIn import: the owner's connections, conversations
+/// and more from their own data export, which the hub matches to its
+/// companies as warm paths.
 struct NetworkSection: View {
     let client: HubClient
     @State private var model = NetworkSectionModel()
@@ -131,7 +132,7 @@ struct NetworkSection: View {
                 AsyncButton("Import from LinkedIn…", busyTitle: "Importing…", isBusy: model.isImporting) { isPickingFile = true }
             }
         } header: {
-            Text("Network")
+            Text("LinkedIn import")
         } footer: {
             Text("Import your LinkedIn data export, its folder or zip, or just its Connections.csv: LinkedIn › Settings › Data privacy › Get a copy of your data. The hub reads your connections, conversations and invitations, keeps them in its own database, and importing again updates them.")
                 .foregroundStyle(.secondary)

@@ -48,8 +48,6 @@ struct UpdatesPage: View {
                         }
                         .disabled(unseen.count == 0)
                     }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Updates")

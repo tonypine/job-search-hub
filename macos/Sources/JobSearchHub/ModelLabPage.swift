@@ -89,8 +89,9 @@ final class CompareModel {
 
 /// Model comparisons: each one's agreement with its first stack and the
 /// owner's verdicts, field by field, and its postings to judge side by side.
-struct ComparePage: View {
+struct ModelLabPage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
     @State private var model = CompareModel()
     @State private var isAddingComparison = false
 
@@ -100,20 +101,22 @@ struct ComparePage: View {
                 content(client)
                     .task(id: model.hasRunningComparison) { await model.watchList(with: client) }
                     .task(id: model.selectedID) { await model.watchSelected(with: client) }
+                    .onChange(of: events.revision) { Task { await model.loadList(with: client) } }
                     .toolbar {
-                        Button("New comparison", systemImage: "plus") { isAddingComparison = true }
-                        Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.loadList(with: client) } }
+                        Menu("Add", systemImage: "plus") {
+                            Button("Comparison…") { isAddingComparison = true }
+                        }
+                        .help("Add a comparison (⌘N)")
                     }
+                    .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Comparison…") { isAddingComparison = true })
                     .sheet(isPresented: $isAddingComparison) {
                         NewComparisonSheet(client: client) { comparison in
                             try await model.start(comparison, with: client)
                         }
                     }
-            } else {
-                NotConnectedView()
             }
         }
-        .navigationTitle("Compare")
+        .navigationTitle("Model lab")
     }
 
     private func content(_ client: HubClient) -> some View {
@@ -289,7 +292,7 @@ private struct ComparisonPostingsView: View {
                     Spacer()
                     Toggle("Only differences", isOn: $showsOnlyDifferences)
                     Button("Show posting", systemImage: "doc.text.magnifyingglass") {
-                        details.show(.job(job.id, opensSession: false), from: .compare)
+                        details.show(.job(job.id, opensSession: false), from: .modelLab)
                     }
                 }
                 let fields = record.summary.fields.filter { !showsOnlyDifferences || !record.isAgreed(jobID: job.id, field: $0) }

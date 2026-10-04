@@ -175,8 +175,7 @@ struct JobsPage: View {
                             Task { await model.load(with: client) }
                         }
                     }
-            } else {
-                NotConnectedView()
+                    .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
             }
         }
         .navigationTitle("Jobs")
@@ -312,11 +311,12 @@ struct JobsPage: View {
             .fixedSize()
             .help("Show open, closed, all or dismissed jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
-            Button("Add by URL", systemImage: "plus") { isAddingByURL = true }
-            Button("Generate missing CVs", systemImage: "doc.badge.plus") { Task { await generateMissingCVs(with: client) } }
-                .help("Draft and print a CV for every good-fit or pursued job that has none")
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                .disabled(model.isLoading)
+            Menu("Add", systemImage: "plus") {
+                Button("Job by URL…") { isAddingByURL = true }
+                Button("Generate missing CVs") { Task { await generateMissingCVs(with: client) } }
+                    .help("Draft and print a CV for every good-fit or pursued job that has none")
+            }
+            .help("Add a job by URL (⌘N), or the CVs good fits lack")
             ToolbarSearchField(text: $model.search, prompt: "Title, location or company")
                 .frame(width: 180)
         }

@@ -35,6 +35,12 @@ final class HubEventStream {
         }
     }
 
+    /// Has every page read again, as an update would: View › Refresh, for
+    /// when the stream missed something.
+    func requestRefresh() {
+        revision += 1
+    }
+
     private func handle(_ event: ServerSentEvent) {
         if let id = event.id {
             lastEventID = id

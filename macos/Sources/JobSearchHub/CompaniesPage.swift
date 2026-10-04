@@ -98,14 +98,14 @@ struct CompaniesPage: View {
                         }
                         .help("Show the research's progress")
                     }
-                    Button("Suggestions", systemImage: "sparkles") { isShowingSuggestions = true }
-                        .help("Companies you follow on LinkedIn, or remote ones on startups.gallery, to research")
-                    Button("Add company", systemImage: "plus") { isAddingCompany = true }
-                    Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                        .disabled(model.isLoading)
+                    Menu("Add", systemImage: "plus") {
+                        Button("Company…") { isAddingCompany = true }
+                        Button("From suggestions…") { isShowingSuggestions = true }
+                            .help("Companies you follow on LinkedIn, or remote ones on startups.gallery, to research")
+                    }
+                    .help("Add a company (⌘N), or pick one from suggestions")
                 }
-            } else {
-                NotConnectedView()
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Company…") { isAddingCompany = true })
             }
         }
         .navigationTitle("Companies")

@@ -58,7 +58,7 @@ final class ModelWorkModel {
 /// What the hub's models and agents are doing: the agent runs going on now,
 /// every kind of run with its failures and each model's average time, and
 /// the latest runs.
-struct RunsPage: View {
+struct ActivityPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @State private var model = RunsModel()
@@ -70,14 +70,9 @@ struct RunsPage: View {
                 content(client)
                     .task(id: events.revision) { await model.load(with: client) }
                     .task { await modelWork.watch(with: client) }
-                    .toolbar {
-                        Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                    }
-            } else {
-                NotConnectedView()
             }
         }
-        .navigationTitle("Runs")
+        .navigationTitle("Activity")
         .navigationSubtitle("The latest \(model.taskRuns.count + model.agentRuns.count) runs")
     }
 

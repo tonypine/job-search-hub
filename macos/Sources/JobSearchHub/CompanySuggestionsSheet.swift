@@ -39,7 +39,7 @@ struct CompanySuggestionsSheet: View {
                 } else if suggestions.isEmpty && !isLoading {
                     ContentUnavailableView(
                         "No suggestions", systemImage: "sparkles",
-                        description: Text("Import your LinkedIn archive in Settings › Network; the companies you follow show up here, beside the ones on startups.gallery's remote list with a fitting job, read weekly.")
+                        description: Text("Import your LinkedIn archive in Settings › Accounts; the companies you follow show up here, beside the ones on startups.gallery's remote list with a fitting job, read weekly.")
                     )
                 }
             }

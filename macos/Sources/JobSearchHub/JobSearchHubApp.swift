@@ -8,6 +8,7 @@ struct JobSearchHubApp: App {
     @State private var connection: HubConnection
     @State private var events = HubEventStream()
     @State private var unseen = UnseenUpdates()
+    @State private var sidebarCounts = SidebarCounts()
     @State private var jobFinder: CompanyJobFinder
     @State private var research: CompanyResearch
     @State private var taskRunner: RemoteTaskRunner
@@ -32,6 +33,7 @@ struct JobSearchHubApp: App {
                 .environment(connection)
                 .environment(events)
                 .environment(unseen)
+                .environment(sidebarCounts)
                 .environment(research)
                 .environment(jobFinder)
                 .environment(profileSeed)
@@ -62,8 +64,27 @@ struct JobSearchHubApp: App {
                         }
                     }
                 }
+                // While the event stream is down, the connection is checked
+                // every ten seconds, so the banner says why and goes once the
+                // hub answers again.
+                .task(id: ConnectionCheckKey(hubURLText: connection.hubURLText, token: connection.token.value, isStreamConnected: events.isConnected)) {
+                    guard !events.isConnected else { return }
+                    while !Task.isCancelled {
+                        await connection.check()
+                        try? await Task.sleep(for: .seconds(10))
+                    }
+                }
         }
         .defaultSize(width: 1400, height: 860)
+        .commands {
+            HubCommands(events: events)
+        }
+
+        Settings {
+            SettingsWindow()
+                .environment(connection)
+                .tint(.hubAccent)
+        }
     }
 
     /// `--page <name>` opens the app on that page, so a build can be checked
@@ -104,6 +125,14 @@ struct HubWorkKey: Equatable {
     let hasToken: Bool
 }
 
+/// Keys the connection check: again with a new URL or token, and stopped
+/// while the event stream shows the hub answers.
+struct ConnectionCheckKey: Equatable {
+    let hubURLText: String
+    let token: String?
+    let isStreamConnected: Bool
+}
+
 /// A request to show a job or a company, on its Details side or on its
 /// Session side, where the session is resumed when it has ended. Each request
 /// is new, so asking for the same one twice still opens it.
@@ -117,7 +146,12 @@ struct ContentView: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(SidebarCounts.self) private var counts
+    @Environment(JobDecisions.self) private var decisions
     @State private var selectedPage: Page?
+    /// The sidebar groups folded away, by raw value: the Hub's at first.
+    @AppStorage("sidebarCollapsedGroups") private var collapsedGroups = SidebarGroup.allCases
+        .filter { !$0.isExpandedByDefault }.map(\.rawValue).joined(separator: ",")
     @State private var focus: SubjectFocus?
     @State private var details = DetailsInspector()
     let initialJobID: UUID?
@@ -132,11 +166,11 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedPage) {
-                Section {
-                    ForEach(Page.allCases) { page in
-                        Label(page.title, systemImage: page.symbolName)
-                            .badge(page == .updates ? unseen.count : 0)
-                            .tag(page)
+                ForEach(SidebarGroup.allCases) { group in
+                    if let title = group.title {
+                        Section(title, isExpanded: isExpanded(group)) { rows(group) }
+                    } else {
+                        Section { rows(group) }
                     }
                 }
                 if let client = connection.makeClient() {
@@ -145,30 +179,12 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
-            switch selectedPage {
-            case .decide: DecidePage()
-            case .settings: SettingsPage()
-            case .updates:
-                UpdatesPage(
-                    onOpenJob: { open(.job($0), opensSession: false) },
-                    onOpenCompany: { open(.company($0), opensSession: false) }
-                )
-            case .companies:
-                CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil && focus?.opensSession == true).id(focus?.id)
-            case .recruiters:
-                RecruitersPage(onOpenCompany: { open(.company($0), opensSession: false) })
-            case .profile: ProfilePage()
-            case .prompts: PromptsPage()
-            case .compare: ComparePage()
-            case .runs: RunsPage()
-            case .jobs:
-                JobsPage(
-                    initialJobID: focusedJobID ?? initialJobID,
-                    opensSession: focusedJobID == nil ? opensSession : focus?.opensSession == true
-                ).id(focus?.id)
-            case .pipeline: PipelinePage(initialJobID: initialJobID)
-            case nil: EmptyView()
-            }
+            page
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let connectionProblem {
+                        ConnectionBanner(problem: connectionProblem)
+                    }
+                }
         }
         .inspector(isPresented: Binding(get: { shownDetails != nil }, set: { if !$0 { details.hide() } })) {
             if let shownDetails, let client = connection.makeClient() {
@@ -183,6 +199,71 @@ struct ContentView: View {
                 await unseen.refresh(with: client)
             }
         }
+        .task(id: [events.revision, decisions.revision, connection.hasToken ? 1 : 0]) {
+            if let client = connection.makeClient() {
+                await counts.refresh(with: client)
+            }
+        }
+        // A page opened in a folded group, from `--page` or a link, unfolds it.
+        .onChange(of: selectedPage, initial: true) {
+            if let group = selectedPage?.group { isExpanded(group).wrappedValue = true }
+        }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch selectedPage {
+        case .decide: DecidePage()
+        case .updates:
+            UpdatesPage(
+                onOpenJob: { open(.job($0), opensSession: false) },
+                onOpenCompany: { open(.company($0), opensSession: false) }
+            )
+        case .companies:
+            CompaniesPage(initialCompanyID: focusedCompanyID, opensSession: focusedCompanyID != nil && focus?.opensSession == true).id(focus?.id)
+        case .recruiters:
+            RecruitersPage(onOpenCompany: { open(.company($0), opensSession: false) })
+        case .profile: ProfilePage()
+        case .criteria: CriteriaPage()
+        case .activity: ActivityPage()
+        case .prompts: PromptsPage()
+        case .modelLab: ModelLabPage()
+        case .jobs:
+            JobsPage(
+                initialJobID: focusedJobID ?? initialJobID,
+                opensSession: focusedJobID == nil ? opensSession : focus?.opensSession == true
+            ).id(focus?.id)
+        case .pipeline: PipelinePage(initialJobID: initialJobID)
+        case nil: EmptyView()
+        }
+    }
+
+    private func rows(_ group: SidebarGroup) -> some View {
+        ForEach(group.pages) { page in
+            Label(page.title, systemImage: page.symbolName)
+                .badge(counts.getCount(for: page, unseen: unseen.count))
+                .tag(page)
+        }
+    }
+
+    private func isExpanded(_ group: SidebarGroup) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedGroups.split(separator: ",").contains(Substring(group.rawValue)) },
+            set: { isExpanded in
+                var collapsed = Set(collapsedGroups.split(separator: ",").map(String.init))
+                if isExpanded { collapsed.remove(group.rawValue) } else { collapsed.insert(group.rawValue) }
+                collapsedGroups = collapsed.sorted().joined(separator: ",")
+            }
+        )
+    }
+
+    /// What keeps the app from the hub, which the banner above every page
+    /// says; nil when nothing does.
+    private var connectionProblem: ConnectionProblem? {
+        ConnectionProblem.diagnose(
+            isReadingToken: connection.token == .reading, hasClient: connection.makeClient() != nil,
+            status: connection.status, isStreamConnected: events.isConnected
+        )
     }
 
     private var shownDetails: DetailsInspector.Subject? {

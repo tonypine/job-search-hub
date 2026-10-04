@@ -39,6 +39,7 @@ final class RecruitersModel {
 /// flagged by what their company has open now and whether the owner answered.
 struct RecruitersPage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(HubEventStream.self) private var events
     @State private var model = RecruitersModel()
     @State private var replyDraft = RecruiterReplyDraft()
     let onOpenCompany: (UUID) -> Void
@@ -48,6 +49,7 @@ struct RecruitersPage: View {
             if let client = connection.makeClient() {
                 table
                     .task { await model.load(with: client) }
+                    .onChange(of: events.revision) { Task { await model.load(with: client) } }
                     .task(id: model.selectedID) { await model.loadMessages(with: client) }
                     .inspector(isPresented: Binding(get: { model.selectedID != nil }, set: { if !$0 { model.selectedID = nil } })) {
                         if let recruiter = model.selected {
@@ -62,11 +64,7 @@ struct RecruitersPage: View {
                             .help("Only recruiters whose company has open jobs in the feed")
                         Toggle("Unanswered", systemImage: "arrowshape.turn.up.left", isOn: $model.filter.unansweredOnly)
                             .help("Only conversations you never answered")
-                        Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
-                            .disabled(model.isLoading)
                     }
-            } else {
-                NotConnectedView()
             }
         }
         .navigationTitle("Recruiters")
@@ -105,7 +103,7 @@ struct RecruitersPage: View {
             } else if model.recruiters.isEmpty && !model.isLoading {
                 ContentUnavailableView(
                     "No recruiters yet", systemImage: "person.crop.rectangle.stack",
-                    description: Text("Import your LinkedIn archive in Settings › Network. The hub reads the conversations others started and lists the recruiters here.")
+                    description: Text("Import your LinkedIn archive in Settings › Accounts. The hub reads the conversations others started and lists the recruiters here.")
                 )
             }
         }
