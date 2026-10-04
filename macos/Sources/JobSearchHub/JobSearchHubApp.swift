@@ -242,7 +242,7 @@ struct ContentView: View {
                 await palette.load(with: client)
             }
         }
-        .focusedSceneValue(\.paletteToggle, PaletteToggleAction { isShowingPalette.toggle() })
+        .focusedSceneValue(\.isShowingPalette, $isShowingPalette)
         .environment(details)
         .environment(replyDraft)
         .environment(requests)

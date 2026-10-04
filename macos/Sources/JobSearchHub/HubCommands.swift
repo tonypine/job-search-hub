@@ -8,14 +8,12 @@ struct PageAddAction {
     let perform: () -> Void
 }
 
-/// Opens or closes the window's ⌘K palette, which Go › Jump to… runs.
-struct PaletteToggleAction {
-    let perform: () -> Void
-}
-
 extension FocusedValues {
     @Entry var pageAdd: PageAddAction?
-    @Entry var paletteToggle: PaletteToggleAction?
+    /// Whether the window's ⌘K palette shows, which Go › Jump to… toggles.
+    /// A binding to the window's state stays the same from one render to the
+    /// next, unlike a closure, so the toolbar doesn't update on every render.
+    @Entry var isShowingPalette: Binding<Bool>?
 }
 
 /// The app's menu commands: the page's Add in the File menu, Refresh in the
@@ -24,7 +22,7 @@ extension FocusedValues {
 struct HubCommands: Commands {
     let events: HubEventStream
     @FocusedValue(\.pageAdd) private var pageAdd
-    @FocusedValue(\.paletteToggle) private var paletteToggle
+    @FocusedBinding(\.isShowingPalette) private var isShowingPalette
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -38,9 +36,9 @@ struct HubCommands: Commands {
             Divider()
         }
         CommandMenu("Go") {
-            Button("Jump to…") { paletteToggle?.perform() }
+            Button("Jump to…") { isShowingPalette?.toggle() }
                 .keyboardShortcut("k")
-                .disabled(paletteToggle == nil)
+                .disabled(isShowingPalette == nil)
         }
     }
 }
