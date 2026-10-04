@@ -81,7 +81,8 @@ func (s *Store) SavePostingText(ctx context.Context, actor Actor, jobID uuid.UUI
 
 // RecordPostingTextMissing states why an alert job has no more than its
 // snippet. searchedAt is when Google for Jobs was asked without finding it,
-// and nil when it wasn't asked.
+// and nil when it wasn't asked. A job that got its text some other way
+// since, as from its company's board, is given no reason.
 func (s *Store) RecordPostingTextMissing(ctx context.Context, jobID uuid.UUID, reason string, searchedAt *time.Time) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if searchedAt != nil {
@@ -89,8 +90,7 @@ func (s *Store) RecordPostingTextMissing(ctx context.Context, jobID uuid.UUID, r
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `UPDATE jobs SET text_missing_reason = $2 WHERE id = $1 AND text_missing_reason <> $2`, jobID, reason)
-		return err
+		return setTextMissingReason(ctx, tx, jobID, reason)
 	})
 }
 
@@ -102,9 +102,19 @@ func (s *Store) RecordPostingTextSearchFailed(ctx context.Context, jobID uuid.UU
 		if err := recordPostingTextSearch(ctx, tx, jobID, searchedAt, false, true); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE jobs SET text_missing_reason = $2 WHERE id = $1 AND text_missing_reason <> $2`, jobID, reason)
-		return err
+		return setTextMissingReason(ctx, tx, jobID, reason)
 	})
+}
+
+// setTextMissingReason gives the job the reason only while it is still an
+// alert job with no more than a snippet: the board search runs on its own
+// and may have adopted it since it was listed as awaiting its text.
+func setTextMissingReason(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, reason string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE jobs SET text_missing_reason = $2
+		WHERE id = $1 AND text_missing_reason <> $2 AND source = ANY($3) AND octet_length(btrim(description)) < $4`,
+		jobID, reason, AlertJobSources, AlertSnippetLength)
+	return err
 }
 
 func recordPostingTextSearch(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, searchedAt time.Time, found, failed bool) error {

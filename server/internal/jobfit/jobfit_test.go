@@ -3,6 +3,7 @@ package jobfit_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
@@ -191,6 +192,11 @@ func TestAnAlertJobWithoutTextSaysWhyItHasNone(t *testing.T) {
 	read := findCheck(t, jobfit.Judge(snippet, facts(t, map[string]any{"technologies": []string{"React"}}), criteria, rates), "Stack")
 	if read.Verdict != jobfit.VerdictYes {
 		t.Errorf("technologies read from the snippet: stack = %+v, want them judged", read)
+	}
+
+	whole := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", Description: strings.Repeat("Build things. ", 40), TextMissingReason: reason}
+	if stack := findCheck(t, jobfit.Judge(whole, nil, criteria, rates), "Stack"); stack.Reason == reason {
+		t.Errorf("a job with its whole text kept the reason it had none: stack = %+v", stack)
 	}
 }
 

@@ -100,6 +100,42 @@ func TestABoardAdoptingAnAlertJobClearsTheReasonItHadNoText(t *testing.T) {
 	}
 }
 
+func TestAReasonRecordedAfterABoardAdoptedTheJobIsDropped(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	now := time.Now()
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor, []store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "")}, now); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err := hub.ListAlertJobsAwaitingText(ctx)
+	if err != nil || len(awaiting) != 1 {
+		t.Fatalf("awaiting = %+v, %v", awaiting, err)
+	}
+	jobID := awaiting[0].Job.ID
+	board, err := hub.SaveFoundJobBoard(ctx, hubSystem, store.FoundJobBoardInput{CompanyName: "Acme Labs", Provider: "lever", BoardToken: "acmelabs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{
+		{ExternalID: "b1", Title: "Senior Frontend Engineer", URL: "https://jobs.lever.co/acmelabs/b1", Description: "The whole posting."},
+	}, now); err != nil || result.Adopted != 1 {
+		t.Fatalf("result = %+v, %v; want the alert job adopted", result, err)
+	}
+
+	if err := hub.RecordPostingTextMissing(ctx, jobID, "the Glassdoor alert gave no text, and neither a board found nor Google for Jobs lists the posting", &now); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.RecordPostingTextSearchFailed(ctx, jobID, "the Glassdoor alert gave no text, no board found lists it, and the Google for Jobs search for it failed", now); err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := hub.GetJobDetails(ctx, jobID)
+	if err != nil || details.Job.TextMissingReason != "" || details.Job.Description != "The whole posting." {
+		t.Errorf("adopted job = %+v, %v; want the board's text and no reason", details.Job, err)
+	}
+}
+
 func TestAFailedSearchCountsAndIsNotAskedAgain(t *testing.T) {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)
