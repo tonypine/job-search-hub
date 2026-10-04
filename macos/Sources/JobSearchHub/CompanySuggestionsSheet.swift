@@ -1,8 +1,9 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The companies the owner follows on LinkedIn that the hub doesn't hold,
-/// best first; researching one runs Add company.
+/// The companies the hub doesn't hold that the owner follows on LinkedIn, or
+/// that startups.gallery lists as remote with a fitting job open, best first;
+/// researching one runs Add company.
 struct CompanySuggestionsSheet: View {
     let client: HubClient
     let onResearch: (CompanySuggestion) -> Void
@@ -15,7 +16,7 @@ struct CompanySuggestionsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Suggestions").font(.title3.weight(.semibold))
-            Text("Companies you follow on LinkedIn, ranked by the fitting jobs they have open and the people you know there. Researching one costs an agent run, so pick the ones worth watching.")
+            Text("Companies you follow on LinkedIn, and remote ones on startups.gallery with a fitting job open, ranked by the fitting jobs they have open and the people you know there. Researching one costs an agent run, so pick the ones worth watching.")
                 .font(.callout).foregroundStyle(.secondary)
             List(suggestions) { suggestion in
                 HStack {
@@ -24,6 +25,7 @@ struct CompanySuggestionsSheet: View {
                         if !suggestion.reason.isEmpty {
                             Text(suggestion.reason).font(.caption).foregroundStyle(suggestion.fittingJobs > 0 ? .green : .secondary)
                         }
+                        Text(suggestion.origin).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Research") { onResearch(suggestion) }
@@ -38,7 +40,7 @@ struct CompanySuggestionsSheet: View {
                 } else if suggestions.isEmpty && !isLoading {
                     ContentUnavailableView(
                         "No suggestions", systemImage: "sparkles",
-                        description: Text("Import your LinkedIn archive in Settings › Network; the companies you follow show up here.")
+                        description: Text("Import your LinkedIn archive in Settings › Network; the companies you follow show up here, beside the ones on startups.gallery's remote list with a fitting job, read weekly.")
                     )
                 }
             }

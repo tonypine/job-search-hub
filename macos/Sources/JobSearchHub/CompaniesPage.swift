@@ -69,7 +69,7 @@ struct CompaniesPage: View {
                 .onChange(of: [events.revision, unseen.revision, research.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
                 .sheet(isPresented: $isShowingSuggestions) {
                     CompanySuggestionsSheet(client: client) { suggestion in
-                        research.start(company: suggestion.organization, foundVia: "Followed on LinkedIn", client: client)
+                        research.start(company: suggestion.researchTarget, foundVia: suggestion.origin, client: client)
                         isShowingSuggestions = false
                         isAddingCompany = true
                     }
@@ -99,7 +99,7 @@ struct CompaniesPage: View {
                         .help("Show the research's progress")
                     }
                     Button("Suggestions", systemImage: "sparkles") { isShowingSuggestions = true }
-                        .help("Companies you follow on LinkedIn, to research")
+                        .help("Companies you follow on LinkedIn, or remote ones on startups.gallery, to research")
                     Button("Add company", systemImage: "plus") { isAddingCompany = true }
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(with: client) } }
                         .disabled(model.isLoading)
