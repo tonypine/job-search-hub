@@ -67,7 +67,8 @@ fun HubCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -
     )
 }
 
-private fun segmentShape(index: Int, count: Int): RoundedCornerShape {
+/** The shape of the [index]th of [count] rows in a segmented group, for rows laid out one by one, as in a lazy list. */
+fun segmentShape(index: Int, count: Int): RoundedCornerShape {
     val top = if (index == 0) 20.dp else 4.dp
     val bottom = if (index == count - 1) 20.dp else 4.dp
     return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
