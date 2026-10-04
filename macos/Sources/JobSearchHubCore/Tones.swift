@@ -77,17 +77,16 @@ public extension FollowUpStatus {
     }
 }
 
-/// A job or application out of the way: skipped from the jobs, closed with
-/// an outcome, or a pipeline card dismissed as not a good fit. Each reads as
-/// neutral, told apart by its symbol.
+/// A job or pipeline card out of the way: skipped as not for you, or closed
+/// with an outcome. Each reads as neutral, told apart by its symbol.
 public enum SetAside: CaseIterable, Sendable {
-    case skipped, closed, dismissed
+    case skipped, closed
 
     public var tone: Tone { .neutral }
 
     public var symbolName: String {
         switch self {
-        case .skipped, .dismissed: "eye.slash"
+        case .skipped: "eye.slash"
         case .closed: "archivebox"
         }
     }

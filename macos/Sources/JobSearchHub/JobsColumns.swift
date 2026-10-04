@@ -1,25 +1,26 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The Jobs table's optional columns: board facts, each fit check, and the
-/// facts read from postings.
+/// The Jobs table's optional columns: board facts, each screen check, and
+/// the facts read from postings.
 enum JobsColumns {
     struct FitCheckColumn: Identifiable, Sendable {
-        /// The check's name in the fit.
+        /// The check's name in the hub's fit, the job's screen.
         let name: String
         let title: String
 
+        /// Keeps the hub's name, so saved table layouts still find it.
         var id: String { "fit." + name }
         var sortComparator: JobsSortComparator { JobsSortComparator(.fitCheck(name)) }
     }
 
-    /// The fit checks, titled as columns; Pay's reason is the take-home.
+    /// The screen's checks, titled as columns; Pay's reason is the take-home.
     static let fitChecks = [
-        FitCheckColumn(name: "Role", title: "Role fit"),
+        FitCheckColumn(name: "Role", title: "Role"),
         FitCheckColumn(name: "Where they hire", title: "Where they hire"),
-        FitCheckColumn(name: "Stack", title: "Stack fit"),
-        FitCheckColumn(name: "Level", title: "Level fit"),
-        FitCheckColumn(name: "Timezone", title: "Timezone fit"),
+        FitCheckColumn(name: "Stack", title: "Stack"),
+        FitCheckColumn(name: "Level", title: "Level"),
+        FitCheckColumn(name: "Timezone", title: "Timezone"),
         FitCheckColumn(name: "Pay", title: "Take-home pay"),
     ]
 
@@ -47,7 +48,7 @@ enum JobsColumns {
     }
 }
 
-/// A fit check's verdict and reason in a table cell.
+/// A screen check's verdict and reason in a table cell.
 struct FitCheckCell: View {
     let check: FitCheck?
 
@@ -76,7 +77,7 @@ struct ColumnsMenu: View {
             Section("From the board") {
                 ForEach(JobsColumns.boardFacts) { column in toggle(column.title, id: column.id) }
             }
-            Section("Fit") {
+            Section("Screen") {
                 ForEach(JobsColumns.fitChecks) { check in toggle(check.title, id: check.id) }
             }
             if !factColumns.isEmpty {

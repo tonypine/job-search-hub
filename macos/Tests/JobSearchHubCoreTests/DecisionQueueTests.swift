@@ -13,7 +13,7 @@ import Testing
 
     let signalsJSON = #"{"since":"2026-09-23T20:51:42.7Z","decisions":{"pursue":1,"skip":2,"later":0},"median_hours_to_decide":36,"good_or_unclear_seen":127,"good_or_unclear_decided":9}"#
     let signals = try HubJSON.makeDecoder().decode(DecisionSignals.self, from: Data(signalsJSON.utf8))
-    #expect(signals.summary == "This week: 1 pursued, 2 skipped, 0 for later · median 36 hours to decide · 9 of 127 good or unclear jobs decided")
+    #expect(signals.summary == "This week: 1 pursued, 2 skipped, 0 for later · median 36 hours to decide · 9 of 127 jobs that don't fail the screen decided")
 }
 
 @Test func waitsReadAsPeopleSayThem() {

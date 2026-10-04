@@ -39,12 +39,12 @@ struct CompanySuggestionsSheet: View {
                 } else if suggestions.isEmpty && !isLoading {
                     ContentUnavailableView(
                         "No suggestions", systemImage: "sparkles",
-                        description: Text("Import your LinkedIn archive in Settings › Network; the companies you follow show up here, beside the ones on startups.gallery's remote list with a fitting job, read weekly.")
+                        description: Text("Import your LinkedIn archive in Settings › Network; the companies you follow show up here, beside the ones on startups.gallery's remote list with a job that passes your screen, read weekly.")
                     )
                 }
             }
             HStack(alignment: .firstTextBaseline) {
-                Text("Ranked by the fitting jobs they have open and the people you know there. Researching one costs an agent run.")
+                Text("Ranked by their open jobs that pass your screen and the people you know there. Researching one costs an agent run.")
                     .font(.hubCaption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)

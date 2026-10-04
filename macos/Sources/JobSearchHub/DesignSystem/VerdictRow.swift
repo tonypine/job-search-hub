@@ -2,8 +2,8 @@ import JobSearchHubCore
 import SwiftUI
 
 /// One judgment: a symbol in its tone, the name of what was judged and why,
-/// and the posting's words behind it. Fit checks, screen-out answers and a
-/// brief's points all use it.
+/// and the posting's words behind it. A job's Screen and a brief's points
+/// use it.
 struct VerdictRow: View {
     let symbol: String
     let tone: Tone
@@ -41,7 +41,7 @@ struct VerdictRow: View {
 }
 
 extension VerdictRow {
-    /// A fit check or a screen-out answer. Without a verdict it's information
+    /// A row of a job's Screen. Without a verdict it's information
     /// the screen doesn't judge, such as the contract.
     init(_ verdict: FitVerdict?, name: String, reason: String, evidence: String? = nil) {
         self.init(

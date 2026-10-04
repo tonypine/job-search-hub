@@ -20,7 +20,8 @@ public struct DecisionQueueResponse: Decodable, Sendable {
 }
 
 /// How deciding goes over a period: the decisions by kind, how long jobs
-/// waited for them, and how many good or unclear jobs seen got decided.
+/// waited for them, and how many jobs seen that don't fail the screen got
+/// decided.
 public struct DecisionSignals: Decodable, Equatable, Sendable {
     public var since: Date
     public var decisions: [String: Int]
@@ -29,14 +30,15 @@ public struct DecisionSignals: Decodable, Equatable, Sendable {
     public var goodOrUnclearDecided: Int
 
     /// One line for the Decide page: "This week: 1 pursued, 2 skipped, 0 for
-    /// later · median 36 hours to decide · 9 of 127 good or unclear jobs decided".
+    /// later · median 36 hours to decide · 9 of 127 jobs that don't fail the
+    /// screen decided".
     public var summary: String {
         let counts = "This week: \(decisions["pursue"] ?? 0) pursued, \(decisions["skip"] ?? 0) skipped, \(decisions["later"] ?? 0) for later"
         var parts = [counts]
         if let hours = medianHoursToDecide {
             parts.append("median \(Self.formatWait(hours)) to decide")
         }
-        parts.append("\(goodOrUnclearDecided) of \(goodOrUnclearSeen) good or unclear jobs decided")
+        parts.append("\(goodOrUnclearDecided) of \(goodOrUnclearSeen) jobs that don't fail the screen decided")
         return parts.joined(separator: " · ")
     }
 

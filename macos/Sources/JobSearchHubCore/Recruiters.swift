@@ -24,10 +24,11 @@ public struct RecruiterConversation: Decodable, Equatable, Identifiable, Sendabl
     /// Their company has open jobs in the feed now.
     public var isHiringNow: Bool { openJobs > 0 }
 
-    /// "3 open, 1 fits", or empty.
+    /// "3 open, 1 passes the screen", or empty.
     public var openingsText: String {
         guard openJobs > 0 else { return "" }
-        return fittingJobs > 0 ? "\(openJobs) open, \(fittingJobs) fit" : "\(openJobs) open"
+        guard fittingJobs > 0 else { return "\(openJobs) open" }
+        return "\(openJobs) open, \(fittingJobs) " + (fittingJobs == 1 ? "passes" : "pass") + " the screen"
     }
 
     enum CodingKeys: String, CodingKey {

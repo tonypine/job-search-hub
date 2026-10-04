@@ -197,11 +197,11 @@ public struct CompanySuggestion: Decodable, Equatable, Identifiable, Sendable {
 
     public var id: String { organization }
 
-    /// "2 fitting jobs open · 1 person you know", or "Followed since 2019".
+    /// "2 open jobs pass the screen · 1 person you know", or "Followed since 2019".
     public var reason: String {
         var parts: [String] = []
         if fittingJobs > 0 {
-            parts.append(fittingJobs == 1 ? "1 fitting job open" : "\(fittingJobs) fitting jobs open")
+            parts.append(fittingJobs == 1 ? "1 open job passes the screen" : "\(fittingJobs) open jobs pass the screen")
         } else if openJobs > 0 {
             parts.append(openJobs == 1 ? "1 job open" : "\(openJobs) jobs open")
         }
