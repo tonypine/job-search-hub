@@ -25,6 +25,14 @@ echo "==> Building the hub command"
 mkdir -p "$APP_DIR/Contents/Resources"
 (cd ../server && go build -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
 
+# Scripts/make-icon.swift draws the mark; iconutil packs its sizes.
+echo "==> Drawing the icon"
+ICON_TOOL="build/make-icon"
+[ "$ICON_TOOL" -nt Scripts/make-icon.swift ] || swiftc -O Scripts/make-icon.swift -o "$ICON_TOOL"
+rm -rf build/AppIcon.iconset
+"$ICON_TOOL" iconset build/AppIcon.iconset
+iconutil -c icns build/AppIcon.iconset -o "$APP_DIR/Contents/Resources/AppIcon.icns"
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,6 +46,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 	<string>$BUNDLE_ID</string>
 	<key>CFBundleExecutable</key>
 	<string>$APP_NAME</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
