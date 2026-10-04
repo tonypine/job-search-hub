@@ -5,8 +5,9 @@ import Security
 ///
 /// The app writes the item itself, so the item's access list names the app
 /// and a rebuild signed with the same Apple identity keeps reading it without
-/// a prompt. Reads never show UI: an item that would need a prompt is skipped,
-/// so the read finds nothing instead of hanging the app.
+/// a prompt. A build signed with another identity gets the Keychain's access
+/// prompt: on the file-based keychain neither the Fail nor the Skip UI flag
+/// suppresses it (tested 2026-10-04).
 public enum OwnerTokenKeychain {
     static let service = "com.tonypine.JobSearchHub"
     static let account = "owner-token"
@@ -17,9 +18,9 @@ public enum OwnerTokenKeychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            // The file-based Keychain honors this key, not LAContext.interactionNotAllowed,
-            // which only covers Data Protection keychain items; without it an unanswerable
-            // access prompt hangs the app. Skip, unlike the deprecated Fail, finds nothing.
+            // Skip rather than the deprecated Fail. Neither suppresses the file-based
+            // keychain's access prompt (tested 2026-10-04), so this only drops the
+            // deprecation warning.
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
     }

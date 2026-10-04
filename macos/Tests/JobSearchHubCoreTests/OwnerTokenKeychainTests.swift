@@ -2,7 +2,7 @@
 import Security
 import Testing
 
-@Test func readingTheOwnerTokenSkipsAnItemThatWouldPrompt() {
+@Test func theOwnerTokenQueryAsksToSkipItemsThatNeedUI() {
     let query = OwnerTokenKeychain.readQuery
     #expect(query[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUISkip as String)
     #expect(query[kSecAttrService as String] as? String == "com.tonypine.JobSearchHub")
