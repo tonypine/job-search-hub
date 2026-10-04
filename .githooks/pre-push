@@ -1,0 +1,113 @@
+#!/bin/sh
+# The cheap Go checks, on what a push sends: gofmt on the .go files it changes
+# under server/, then go vet ./... in server/. No tests: they need Postgres and
+# run in CI. A push that changes no Go skips both.
+#
+# Turned on per clone with `git config core.hooksPath .githooks`. Never push
+# with --no-verify: fix what it reports, commit, and push again.
+#
+# Timed 2026-10-04 on an Apple Silicon Mac: 2.2 s for a push that changes Go
+# with a warm build cache, 11 s with an empty one; 0.05 s when no Go changed.
+
+set -u
+
+# A GUI app or a service may run git with a short PATH.
+PATH=$PATH:/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin
+
+tmp=
+trap '[ -n "$tmp" ] && rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+
+is_zero() {
+	case $1 in
+	*[!0]*) return 1 ;;
+	esac
+	return 0
+}
+
+setup_go() {
+	[ -n "$tmp" ] && return 0
+	if ! command -v go >/dev/null 2>&1; then
+		echo "pre-push: Go changed but go is not on PATH." >&2
+		return 1
+	fi
+	# An agent's sandbox can't write the default build cache.
+	if [ -z "${GOCACHE:-}" ]; then
+		cache=$(go env GOCACHE 2>/dev/null)
+		if ! { mkdir -p "$cache" && probe=$(mktemp "$cache/.pre-push.XXXXXX") && rm -f "$probe"; } 2>/dev/null; then
+			export GOCACHE="${TMPDIR:-/tmp}/job-search-hub-go-build"
+		fi
+	fi
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/job-search-hub-pre-push.XXXXXX")
+}
+
+# check COMMIT BASE REF: checks the Go that COMMIT changes since BASE, or all
+# of server/ when BASE is empty.
+check() {
+	commit=$1 base=$2 ref=$3
+	if [ -n "$base" ]; then
+		changed=$(git diff --name-only --no-renames "$base" "$commit" -- server) || return 1
+	else
+		echo "pre-push: nothing to compare $ref with, so checking all of server/."
+		changed=$(git ls-tree -r --name-only "$commit" -- server) || return 1
+	fi
+
+	# go.mod or go.sum can break the build without a .go file changing.
+	if ! printf '%s\n' "$changed" | grep -Eq '\.go$|^server/go\.(mod|sum)$'; then
+		echo "pre-push: no Go changes under server/ for $ref, skipping."
+		return 0
+	fi
+
+	setup_go || return 1
+	# The pushed commit, not the working tree, which may hold other edits.
+	dir="$tmp/$commit"
+	mkdir -p "$dir" && git archive "$commit" server | tar -x -C "$dir" || return 1
+
+	status=0
+	files=
+	for file in $(printf '%s\n' "$changed" | grep '\.go$'); do
+		[ -f "$dir/$file" ] && files="$files $file"
+	done
+	if [ -n "$files" ]; then
+		echo "pre-push: gofmt -l on the changed .go files for $ref"
+		# A file gofmt can't parse makes it exit non-zero with the error.
+		unformatted=$(cd "$dir" && gofmt -l $files) || status=1
+		if [ -n "$unformatted" ]; then
+			echo "pre-push: these files need gofmt:" >&2
+			for file in $unformatted; do
+				echo "  $file    fix: gofmt -w $file" >&2
+			done
+			status=1
+		fi
+	fi
+
+	echo "pre-push: go vet ./... in server/ for $ref"
+	if ! (cd "$dir/server" && go vet ./...); then
+		echo "pre-push: go vet found the problems above." >&2
+		status=1
+	fi
+	return $status
+}
+
+set -f # $files and $unformatted hold paths, not patterns.
+failed=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	# Deleting a remote branch sends nothing to check.
+	is_zero "$local_sha" && continue
+	commit=$(git rev-parse --verify -q "$local_sha^{commit}") || continue
+
+	base=
+	if ! is_zero "$remote_sha" && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+		base=$remote_sha
+	else
+		# A new branch, or a remote tip this clone hasn't fetched.
+		base=$(git merge-base "$commit" refs/remotes/origin/main 2>/dev/null) || base=
+	fi
+
+	check "$commit" "$base" "$remote_ref" </dev/null || failed=1
+done
+
+if [ "$failed" -ne 0 ]; then
+	echo "pre-push: push rejected. Fix the problems above, commit, and push again; don't use --no-verify." >&2
+	exit 1
+fi

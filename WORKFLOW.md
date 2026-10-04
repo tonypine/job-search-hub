@@ -4,6 +4,7 @@
 # Preview the assembled prompt with `symphony workflow preview --file WORKFLOW.md --agent claude`.
 hooks:
   after_create: |
+    git config core.hooksPath .githooks
     cd server && go mod download
 prompts:
   pr: |
@@ -82,6 +83,11 @@ job is the gate; record it as `verified by CI (macos)`.
 For `android/` changes, run `cd android && ./gradlew :core:test` when `android/core` changed. CI's
 `android` job runs the full set (`:core:test :data:testDebugUnitTest :app:lintDebug
 :app:assembleDebug`); record the rest as `verified by CI (android)`.
+
+Every push runs `.githooks/pre-push`, which `after_create` turns on with `core.hooksPath`. When a
+push changes Go under `server/`, the hook fails on a changed `.go` file that `gofmt -l` lists, or
+on a `go vet ./...` finding. Never push with `git push --no-verify`. When the hook fails, fix what
+it reports, commit, and push again.
 
 A red `ci` check comes back to you through the CI failure triage protocol below. Symphony's QA
 pass in `Auto Review` tests the PR as a user and runs no tests, so CI is the only test gate.
