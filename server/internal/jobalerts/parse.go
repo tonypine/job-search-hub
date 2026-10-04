@@ -110,14 +110,53 @@ func parseIndeed(alert Alert) []store.JobPosting {
 			if start+2 < len(lines) && lines[start+2] != "" && !indeedFact.MatchString(lines[start+2]) {
 				location = lines[start+2]
 			}
+			listedTitle, listedCompany := splitSloganCompany(title, company)
 			return []store.JobPosting{{
-				ExternalID: externalID, CompanyName: company, Title: title, Location: location, URL: postingURL,
+				ExternalID: externalID, CompanyName: listedCompany, Title: listedTitle, Location: location, URL: postingURL,
 				Description: strings.TrimSpace(strings.Join(block, "\n")),
 			}}
 		}
 		block = append(block, line)
 	}
 	return nil
+}
+
+var (
+	sentenceEnd = regexp.MustCompile(`[.!?]$`)
+	// workArrangement is a title part that says how the job is worked, which
+	// a slogan may mention without naming the company.
+	workArrangement = regexp.MustCompile(`(?i)^(?:remot[oa]|remote|h[íi]brido|hybrid|presencial|on-?site|home ?office|pj|clt)$`)
+)
+
+// splitSloganCompany returns the title and company of a posting whose
+// employer put the company in the title, as a part after a "|", and a slogan
+// naming it in the company field: the company becomes that part, as the
+// slogan writes it, and the title loses it. A company that doesn't read as a
+// sentence of five words or more, or names no part of the title past the
+// first, is kept with the title.
+func splitSloganCompany(title, company string) (string, string) {
+	parts := strings.Split(title, "|")
+	if len(parts) < 2 || len(strings.Fields(company)) < 5 || !sentenceEnd.MatchString(company) {
+		return title, company
+	}
+	for index, part := range parts[1:] {
+		part = strings.TrimSpace(part)
+		if part == "" || workArrangement.MatchString(part) {
+			continue
+		}
+		named := regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(` + regexp.QuoteMeta(part) + `)(?:[^\pL\pN]|$)`).FindStringSubmatch(company)
+		if named == nil {
+			continue
+		}
+		rest := make([]string, 0, len(parts)-1)
+		for kept, keptPart := range parts {
+			if kept != index+1 {
+				rest = append(rest, strings.TrimSpace(keptPart))
+			}
+		}
+		return strings.Join(rest, " | "), named[1]
+	}
+	return title, company
 }
 
 // readIndeedLink finds the posting's job key inside Indeed's tracking link,
