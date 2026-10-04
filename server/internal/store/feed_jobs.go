@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,10 +35,13 @@ type FeedSyncResult struct {
 // search matches, so a posting missing from it is not closed. A new posting
 // is linked to the hub's company of the same name when there is one, and left
 // out when that company's own board lists it under the same title. A known
-// job given more text than an alert's snippet drops the reason it had none.
-// Only lifecycle events are recorded as changes.
+// job given more text than an alert's snippet drops the reason it had none,
+// and an alert job that got its text, as from Google for Jobs, keeps it when
+// an alert lists it again with only a snippet. Only lifecycle events are
+// recorded as changes.
 func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, postings []JobPosting, seenAt time.Time) (FeedSyncResult, error) {
 	result := FeedSyncResult{Seen: len(postings)}
+	isAlertSource := slices.Contains(AlertJobSources, source)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		externalIDs := make([]string, 0, len(postings))
 		for _, posting := range postings {
@@ -99,13 +103,15 @@ func (s *Store) SyncFeedJobs(ctx context.Context, actor Actor, source string, po
 			if _, err := tx.Exec(ctx, `
 				UPDATE jobs SET `+buildPollAssignment(JobFieldCompanyName, "$2")+`, `+buildPollAssignment(JobFieldTitle, "$3")+`,
 					`+buildPollAssignment(JobFieldLocation, "$4")+`, `+buildPollAssignment(JobFieldWorkplaceType, "$5")+`,
-					url = $6, description = $7, raw = $8, last_seen_at = $9, expires_at = $10, closed_at = NULL,
+					url = $6, raw = $8,
+					description = CASE WHEN $17 AND octet_length(btrim($7)) < $16 AND octet_length(btrim(description)) >= $16
+						THEN description ELSE $7 END, last_seen_at = $9, expires_at = $10, closed_at = NULL,
 					`+buildPollAssignment(JobFieldPay, "$11")+`, `+buildPollAssignment(JobFieldEmploymentType, "$12")+`,
 					department = $13, other_locations = $14, published_at = $15,
 					text_missing_reason = CASE WHEN octet_length(btrim($7)) >= $16 THEN '' ELSE text_missing_reason END
 				WHERE id = $1`,
 				append(append([]any{existing.id, posting.CompanyName, posting.Title, posting.Location, posting.WorkplaceType, posting.URL,
-					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...), AlertSnippetLength)...); err != nil {
+					posting.Description, posting.Raw, seenAt, posting.ExpiresAt}, posting.boardFactsArguments()...), AlertSnippetLength, isAlertSource)...); err != nil {
 				return err
 			}
 			if existing.closedAt != nil {

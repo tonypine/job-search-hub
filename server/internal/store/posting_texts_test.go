@@ -163,3 +163,34 @@ func TestAnAlertRelistingAJobWithItsTextClearsTheReasonItHadNone(t *testing.T) {
 		t.Errorf("job = %+v, %v; want the alert's text and no reason", details.Job, err)
 	}
 }
+
+func TestAnAlertRelistingAJobWithASnippetKeepsTheTextFoundForIt(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	now := time.Now()
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor, []store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "")}, now); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err := hub.ListAlertJobsAwaitingText(ctx)
+	if err != nil || len(awaiting) != 1 {
+		t.Fatalf("awaiting = %+v, %v", awaiting, err)
+	}
+	jobID := awaiting[0].Job.ID
+	fullText := strings.Repeat("The whole posting. ", 40)
+	if err := hub.SavePostingText(ctx, hubSystem, jobID, fullText, "https://acme.example/jobs/1", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := hub.SyncAlertJobs(ctx, hubSystem, store.JobSourceGlassdoor,
+		[]store.JobPosting{alertPosting("1", "Senior Frontend Engineer", "A snippet.")}, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	details, err := hub.GetJobDetails(ctx, jobID)
+	if err != nil || details.Job.Description != fullText || details.Job.TextMissingReason != "" {
+		t.Errorf("job = %+v, %v; want the found text kept and no reason", details.Job, err)
+	}
+	if awaiting, err := hub.ListAlertJobsAwaitingText(ctx); err != nil || len(awaiting) != 0 {
+		t.Errorf("awaiting = %+v, %v; want none", awaiting, err)
+	}
+}
