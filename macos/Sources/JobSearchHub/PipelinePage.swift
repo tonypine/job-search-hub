@@ -144,7 +144,9 @@ struct PipelinePage: View {
         if model.showsDismissed {
             return count == 1 ? "1 dismissed" : "\(count) dismissed"
         }
-        return count == 1 ? "1 application" : "\(count) applications"
+        let applications = count == 1 ? "1 application" : "\(count) applications"
+        guard let contacts = model.board.getContactTally(now: .now).text else { return applications }
+        return "\(applications) · \(contacts)"
     }
 
     private func board(client: HubClient) -> some View {
@@ -334,6 +336,9 @@ struct PipelineCardView: View {
             if card.jobTitle != nil, let companyName = card.companyName {
                 Text(companyName).foregroundStyle(.secondary)
             }
+            if let contactedAt = card.application.contactedAt {
+                HeardBackLabel(contactedAt: contactedAt)
+            }
             if let status = card.getFollowUpStatus(now: .now) {
                 Text(status.text)
                     .font(.caption.weight(status.isDue ? .semibold : .regular))
@@ -377,5 +382,16 @@ struct PipelineCardView: View {
         case 1: "1 day in phase"
         default: "\(days) days in phase"
         }
+    }
+}
+
+/// When a person at the company first wrote back about an application.
+struct HeardBackLabel: View {
+    let contactedAt: Date
+
+    var body: some View {
+        Label("Heard back \(contactedAt.formatted(date: .abbreviated, time: .omitted))", systemImage: "arrowshape.turn.up.left")
+            .font(.caption)
+            .foregroundStyle(.green)
     }
 }

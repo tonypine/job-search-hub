@@ -148,6 +148,78 @@ private func decodeBoard() throws -> PipelineBoard {
     #expect(board.cards.first?.dismissalReason == "not a good fit: agency" && board.cards.first?.dismissedAt != nil)
 }
 
+@Test func aCardDecodesWhenSomeoneAtTheCompanyFirstWroteBack() throws {
+    let body = #"{"application":{"id":"22222222-0000-0000-0000-000000000001","phase_id":"\#(appliedID)","phase_entered_at":"2026-09-20T10:00:00Z","#
+        + #""contacted_at":"2026-09-24T15:30:00Z","created_at":"2026-09-20T10:00:00Z","updated_at":"2026-09-24T15:30:00Z"}}"#
+
+    let response = try HubJSON.makeDecoder().decode(ApplicationResponse.self, from: Data(body.utf8))
+
+    #expect(response.application.contactedAt == Date(timeIntervalSince1970: 1_790_263_800))
+    #expect(try decodeBoard().cards.allSatisfy { $0.application.contactedAt == nil })
+}
+
+private let tallyNow = Date(timeIntervalSince1970: 1_790_600_000)
+
+private func makeTallyCard(in phase: PipelinePhase, contactedAt: Date? = nil, followUpDueAt: Date? = nil) -> PipelineCard {
+    let application = Application(
+        id: UUID(), phaseID: phase.id, phaseEnteredAt: tallyNow.addingTimeInterval(-10 * 86_400), contactedAt: contactedAt,
+        createdAt: tallyNow, updatedAt: tallyNow
+    )
+    return PipelineCard(application: application, followUpDueAt: followUpDueAt, unseenUpdates: 0)
+}
+
+private func makeTallyCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Sao_Paulo")!
+    return calendar
+}
+
+@Test func theContactTallyCountsSentApplicationsAndTheOnesAPersonAnswered() {
+    let saved = PipelinePhase(id: UUID(), name: "Saved", position: 1, isClosed: false)
+    let applied = PipelinePhase(id: UUID(), name: "applied", position: 2, isClosed: false, followUpDays: 7)
+    let inContact = PipelinePhase(id: UUID(), name: "In contact", position: 3, isClosed: false)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 4, isClosed: true)
+    let replied = tallyNow.addingTimeInterval(-86_400)
+    let board = PipelineBoard(phases: [closed, inContact, applied, saved], cards: [
+        makeTallyCard(in: saved),
+        makeTallyCard(in: saved, contactedAt: replied),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied, contactedAt: replied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: inContact),
+        makeTallyCard(in: closed, contactedAt: replied),
+        makeTallyCard(in: closed),
+    ])
+
+    let tally = board.getContactTally(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(tally == ContactTally(sent: 5, heardBack: 3, unansweredPastFollowUp: 1))
+    #expect(tally.text == "heard back on 3 of 5 sent · 1 unanswered past follow-up")
+}
+
+@Test func withoutAnAppliedPhaseEveryOpenPhaseAfterTheFirstCountsAsSent() {
+    let wishlist = PipelinePhase(id: UUID(), name: "Wishlist", position: 1, isClosed: false)
+    let sent = PipelinePhase(id: UUID(), name: "Sent", position: 2, isClosed: false)
+    let talking = PipelinePhase(id: UUID(), name: "Talking", position: 3, isClosed: false)
+    let board = PipelineBoard(phases: [wishlist, sent, talking], cards: [
+        makeTallyCard(in: wishlist),
+        makeTallyCard(in: sent),
+        makeTallyCard(in: talking),
+    ])
+
+    let tally = board.getContactTally(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(tally == ContactTally(sent: 2, heardBack: 0, unansweredPastFollowUp: 0))
+    #expect(tally.text == "heard back on 0 of 2 sent")
+}
+
+@Test func theContactTallyHasNoTextUntilAnApplicationGoesOut() throws {
+    let board = try decodeBoard()
+
+    #expect(board.getContactTally(now: tallyNow) == ContactTally())
+    #expect(board.getContactTally(now: tallyNow).text == nil)
+}
+
 @Test func outreachToACompanyIsSentWithTheTrimmedNote() async throws {
     let companyID = UUID(uuidString: "3f2504e0-4f89-41d3-9a0c-0305e82c3301")!
     let answer = #"{"application":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"0aa55565-58d2-4247-ba01-cba65060a316","#
