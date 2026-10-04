@@ -24,6 +24,10 @@ object UpdateNotifications {
     const val COMPANY_ID = "company_id"
     const val KIND = "kind"
 
+    /** The notification an intent came from, by its id and its channel's, so opening or swiping it counts its kind again. */
+    const val NOTIFICATION_ID = "notification_id"
+    const val CHANNEL = "channel"
+
     /**
      * Creates a channel per kind, and deletes the one channel the app had
      * before, so an upgrade leaves no duplicate. The old channel's off switch
@@ -53,41 +57,64 @@ object UpdateNotifications {
      */
     fun show(context: Context, update: PushedUpdate) {
         val id = notificationId(update)
-        val open = openIntent(context, update, id)
+        val open = openIntent(context, update, update.channel, id)
         val actions = update.actions.map { action ->
             action to if (action == NoticeAction.OPEN) open else NotificationActionReceiver.intent(context, update, action)
         }
-        post(context, update.channel, id, update.title, update.body, open, actions, NotificationActionReceiver.dismissedIntent(context, update))
+        post(context, update.channel, id, update.title, update.body, open, actions)
     }
 
     /** Tells, on Hub, that a button didn't reach the hub; tapping it opens what the update is about, to do it in the app. */
     fun showFailure(context: Context, update: PushedUpdate, action: NoticeAction, reason: String) {
         val notice = action.failure(update, reason)
         val id = "failed:${update.updateId}".hashCode()
-        post(context, NoticeChannel.HUB, id, notice.title, notice.text, openIntent(context, update, id))
+        post(context, NoticeChannel.HUB, id, notice.title, notice.text, openIntent(context, update, NoticeChannel.HUB, id))
     }
 
     /** Takes an update's notification away once its button did what it says. */
     fun dismiss(context: Context, update: PushedUpdate) {
-        val id = notificationId(update)
-        NotificationManagerCompat.from(context).cancel(id)
-        summarize(context, update.channel, gone = id)
+        cancel(context, update.channel, notificationId(update))
+    }
+
+    /**
+     * Takes away the notification the app was opened from, and counts its
+     * kind again. A tap cancels it already, but the Open button doesn't, and
+     * neither tells the summary.
+     */
+    fun opened(context: Context, intent: Intent) {
+        val (channel, id) = intent.notification() ?: return
+        cancel(context, channel, id)
     }
 
     /** Counts the kind's notifications again after the user swiped one away. */
-    fun forget(context: Context, update: PushedUpdate) {
-        summarize(context, update.channel, gone = notificationId(update))
+    fun forget(context: Context, intent: Intent) {
+        val (channel, id) = intent.notification() ?: return
+        summarize(context, channel, gone = id)
+    }
+
+    /** Names the notification an intent comes from, which `opened` and `forget` read back. */
+    fun Intent.fromNotification(channel: NoticeChannel, id: Int): Intent = putExtra(CHANNEL, channel.id).putExtra(NOTIFICATION_ID, id)
+
+    private fun Intent.notification(): Pair<NoticeChannel, Int>? {
+        val channel = NoticeChannel.entries.firstOrNull { it.id == getStringExtra(CHANNEL) } ?: return null
+        return if (hasExtra(NOTIFICATION_ID)) channel to getIntExtra(NOTIFICATION_ID, 0) else null
+    }
+
+    private fun cancel(context: Context, channel: NoticeChannel, id: Int) {
+        NotificationManagerCompat.from(context).cancel(id)
+        summarize(context, channel, gone = id)
     }
 
     private fun notificationId(update: PushedUpdate) = update.updateId.hashCode()
 
-    private fun openIntent(context: Context, update: PushedUpdate, requestCode: Int): PendingIntent {
+    private fun openIntent(context: Context, update: PushedUpdate, channel: NoticeChannel, id: Int): PendingIntent {
         val open = Intent(context, MainActivity::class.java)
             .putExtra(JOB_ID, update.jobId)
             .putExtra(COMPANY_ID, update.companyId)
             .putExtra(KIND, update.kind)
+            .fromNotification(channel, id)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        return PendingIntent.getActivity(context, requestCode, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     private fun post(
@@ -98,7 +125,6 @@ object UpdateNotifications {
         text: String?,
         open: PendingIntent,
         actions: List<Pair<NoticeAction, PendingIntent>> = emptyList(),
-        onDismissed: PendingIntent? = null,
     ) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) {
@@ -114,7 +140,7 @@ object UpdateNotifications {
             .setGroup(channel.id)
             .setAutoCancel(true)
             .setContentIntent(open)
-            .setDeleteIntent(onDismissed)
+            .setDeleteIntent(NotificationActionReceiver.dismissedIntent(context, channel, id))
         actions.forEach { (action, intent) -> builder.addAction(0, action.title, intent) }
         notify(manager, id, builder.build())
         summarize(context, channel, shown = id to title)

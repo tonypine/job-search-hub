@@ -12,9 +12,11 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.tonypine.jobsearchhub.HubApp
 import com.tonypine.jobsearchhub.core.NoticeAction
+import com.tonypine.jobsearchhub.core.NoticeChannel
 import com.tonypine.jobsearchhub.core.PushedUpdate
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
+import com.tonypine.jobsearchhub.push.UpdateNotifications.fromNotification
 import kotlinx.serialization.SerializationException
 import java.time.Duration
 import java.time.Instant
@@ -27,11 +29,11 @@ import java.time.ZoneId
  */
 class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val update = PushedUpdate.parse(intent.readUpdate()) ?: return
         if (intent.action == DISMISSED) {
-            UpdateNotifications.forget(context, update)
+            UpdateNotifications.forget(context, intent)
             return
         }
+        val update = PushedUpdate.parse(intent.readUpdate()) ?: return
         when (val action = NoticeAction.of(intent.action)) {
             NoticeAction.SNOOZE_A_DAY -> {
                 UpdateNotifications.dismiss(context, update)
@@ -46,18 +48,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
         private const val DISMISSED = "dismissed"
 
-        fun intent(context: Context, update: PushedUpdate, action: NoticeAction): PendingIntent = broadcast(context, update, action.id)
-
-        /** Sent when the user swipes the notification away, so its kind's summary counts again. */
-        fun dismissedIntent(context: Context, update: PushedUpdate): PendingIntent = broadcast(context, update, DISMISSED)
-
-        private fun broadcast(context: Context, update: PushedUpdate, action: String): PendingIntent {
-            val intent = Intent(context, NotificationActionReceiver::class.java).setAction(action)
+        fun intent(context: Context, update: PushedUpdate, action: NoticeAction): PendingIntent {
+            val intent = Intent(context, NotificationActionReceiver::class.java).setAction(action.id)
             update.toData().forEach { (key, value) -> intent.putExtra(key, value) }
-            return PendingIntent.getBroadcast(
-                context, "${update.updateId}:$action".hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
+            return broadcast(context, "${update.updateId}:${action.id}".hashCode(), intent)
         }
+
+        /** Sent when the user swipes a notification away, an update or a failure, so its kind's summary counts again. */
+        fun dismissedIntent(context: Context, channel: NoticeChannel, id: Int): PendingIntent {
+            val intent = Intent(context, NotificationActionReceiver::class.java).setAction(DISMISSED).fromNotification(channel, id)
+            return broadcast(context, "$id:$DISMISSED".hashCode(), intent)
+        }
+
+        private fun broadcast(context: Context, requestCode: Int, intent: Intent): PendingIntent =
+            PendingIntent.getBroadcast(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         private fun Intent.readUpdate(): Map<String, String> =
             extras?.keySet().orEmpty().mapNotNull { key -> getStringExtra(key)?.let { key to it } }.toMap()
