@@ -28,10 +28,12 @@ const (
 // unregistered, or it belongs to another Firebase project.
 var ErrTokenGone = errors.New("FCM no longer delivers to this token")
 
-// Message is what a phone gets: the update's text and what it's about. The
-// phone builds the notification from it.
+// Message is what a phone gets: the update's kind and text, and what it's
+// about. The phone builds the notification from it, and opens a follow-up
+// reminder on its pipeline card.
 type Message struct {
 	UpdateID  string
+	Kind      string
 	Title     string
 	Body      string
 	JobID     string
@@ -95,7 +97,7 @@ func (sender *Sender) Send(ctx context.Context, pushToken string, message Messag
 		return fmt.Errorf("get an FCM access token: %w", err)
 	}
 	data := map[string]string{"update_id": message.UpdateID, "title": message.Title}
-	for key, value := range map[string]string{"body": truncate(message.Body), "job_id": message.JobID, "company_id": message.CompanyID} {
+	for key, value := range map[string]string{"kind": message.Kind, "body": truncate(message.Body), "job_id": message.JobID, "company_id": message.CompanyID} {
 		if value != "" {
 			data[key] = value
 		}
