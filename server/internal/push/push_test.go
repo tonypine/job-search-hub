@@ -63,7 +63,7 @@ func startFakeFCM(t *testing.T) (*fakeFCM, *Sender) {
 
 func TestSendPostsADataMessageToTheProject(t *testing.T) {
 	fake, sender := startFakeFCM(t)
-	err := sender.Send(context.Background(), "phone-token", Message{UpdateID: "u1", Title: "Acme replied", Body: "They'd like a call.", CompanyID: "c1"})
+	err := sender.Send(context.Background(), "phone-token", Message{UpdateID: "u1", Kind: "human_reply", Title: "Acme replied", Body: "They'd like a call.", CompanyID: "c1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSendPostsADataMessageToTheProject(t *testing.T) {
 		t.Errorf("path %q, authorization %q", fake.paths[0], fake.headers[0])
 	}
 	message := fake.requests[0].Message
-	want := map[string]string{"update_id": "u1", "title": "Acme replied", "body": "They'd like a call.", "company_id": "c1"}
+	want := map[string]string{"update_id": "u1", "kind": "human_reply", "title": "Acme replied", "body": "They'd like a call.", "company_id": "c1"}
 	if message.Token != "phone-token" || message.Android.Priority != "HIGH" || len(message.Data) != len(want) {
 		t.Fatalf("message = %+v", message)
 	}
@@ -151,7 +151,7 @@ func TestPushSendsAnUpdateToEachPhoneAndForgetsGoneTokens(t *testing.T) {
 		t.Fatalf("sends = %d, want 2", len(fake.requests))
 	}
 	for _, request := range fake.requests {
-		if request.Message.Data["update_id"] != update.ID.String() || request.Message.Data["title"] != "Acme reached out" {
+		if request.Message.Data["update_id"] != update.ID.String() || request.Message.Data["kind"] != "recruiter_outreach" || request.Message.Data["title"] != "Acme reached out" {
 			t.Errorf("data = %v", request.Message.Data)
 		}
 	}

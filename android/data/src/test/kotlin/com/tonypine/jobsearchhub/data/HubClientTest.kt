@@ -103,6 +103,55 @@ class HubClientTest {
     }
 
     @Test
+    fun aFollowUpIsRecordedOnItsApplication() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("{}").build())
+            server.start()
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).recordFollowUp("a1", " Wrote to the recruiter ")
+
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/v1/applications/a1/follow-ups", request.target)
+            assertEquals("""{"note":"Wrote to the recruiter"}""", request.body?.utf8())
+        }
+    }
+
+    @Test
+    fun aMoveSendsThePhaseAndAClosedReason() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("{}").build())
+            server.enqueue(MockResponse.Builder().body("{}").build())
+            server.start()
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            client.moveApplication("a1", "screening")
+            client.moveApplication("a1", "closed", "Took another offer")
+
+            val move = server.takeRequest()
+            assertEquals("PATCH", move.method)
+            assertEquals("/v1/applications/a1", move.target)
+            assertEquals("""{"phase_id":"screening"}""", move.body?.utf8())
+            assertEquals("""{"phase_id":"closed","closed_reason":"Took another offer"}""", server.takeRequest().body?.utf8())
+        }
+    }
+
+    @Test
+    fun theRecruitersAreReadAndUpdatesMarkedSeen() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("""{"recruiters":[{"id":"r1","started_by_name":"Sam","owner_wrote":false,"fitting_jobs":2}]}""").build())
+            server.enqueue(MockResponse.Builder().body("""{"marked":1}""").build())
+            server.start()
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+
+            assertTrue(client.getRecruiters().recruiters.single().isWaiting)
+            assertEquals("/v1/recruiters", server.takeRequest().target)
+            client.markUpdatesSeen(listOf("u1"))
+            val seen = server.takeRequest()
+            assertEquals("/v1/updates/seen", seen.target)
+            assertEquals("""{"ids":["u1"]}""", seen.body?.utf8())
+        }
+    }
+
+    @Test
     fun aRefusedTokenSaysToPairAgain() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(401).build())

@@ -19,6 +19,7 @@ object UpdateNotifications {
     private const val CHANNEL_ID = "updates"
     const val JOB_ID = "job_id"
     const val COMPANY_ID = "company_id"
+    const val KIND = "kind"
 
     fun createChannel(context: Context) {
         val channel = NotificationChannel(CHANNEL_ID, "Hub updates", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -32,7 +33,7 @@ object UpdateNotifications {
 
     suspend fun getPushToken(): String = FirebaseMessaging.getInstance().token.await()
 
-    /** Shows an update; tapping it opens its job, or else its company. */
+    /** Shows an update; tapping it opens a reminder's pipeline card, or else its job, or else its company. */
     fun show(context: Context, update: PushedUpdate) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) {
@@ -41,6 +42,7 @@ object UpdateNotifications {
         val open = Intent(context, MainActivity::class.java)
             .putExtra(JOB_ID, update.jobId)
             .putExtra(COMPANY_ID, update.companyId)
+            .putExtra(KIND, update.kind)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val notificationID = update.updateId.hashCode()
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

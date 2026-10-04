@@ -66,7 +66,7 @@ func (notifier *Notifier) Push(ctx context.Context, update store.Update) {
 		slog.Error("push: list the phones' tokens", "error", err)
 		return
 	}
-	message := Message{UpdateID: update.ID.String(), Title: update.Title, Body: update.Body}
+	message := Message{UpdateID: update.ID.String(), Kind: update.Kind, Title: update.Title, Body: update.Body}
 	if update.JobID != nil {
 		message.JobID = update.JobID.String()
 	}

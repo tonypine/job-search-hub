@@ -67,8 +67,8 @@ class CompanyBriefTest {
     fun aCompanysCardsComeWithTheirPhase() {
         val board = hubJson.decodeFromString<PipelineBoard>(
             """{"phases":[{"id":"p1","name":"Saved","position":1,"is_closed":false},{"id":"p2","name":"Interviewing","position":4}],
-            "cards":[{"application":{"company_id":"c1","phase_id":"p2","notes":"Panel on Friday"},"job_title":"Engineer","company_name":"Acme"},
-            {"application":{"company_id":"c2","phase_id":"p1"},"company_name":"Other"}]}""",
+            "cards":[{"application":{"id":"a1","company_id":"c1","phase_id":"p2","notes":"Panel on Friday","phase_entered_at":"2026-09-29T10:00:00Z"},"job_title":"Engineer","company_name":"Acme"},
+            {"application":{"id":"a2","company_id":"c2","phase_id":"p1","phase_entered_at":"2026-09-29T10:00:00Z"},"company_name":"Other"}]}""",
         )
         val cards = board.findCards("c1")
         assertEquals(1, cards.size)
