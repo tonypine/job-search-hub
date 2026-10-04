@@ -3,12 +3,16 @@ package com.tonypine.jobsearchhub.data
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.DecisionQueueResponse
+import com.tonypine.jobsearchhub.core.FollowUpRequest
 import com.tonypine.jobsearchhub.core.JobDecision
 import com.tonypine.jobsearchhub.core.JobDecisionRequest
 import com.tonypine.jobsearchhub.core.JobsResponse
+import com.tonypine.jobsearchhub.core.MarkUpdatesSeenRequest
+import com.tonypine.jobsearchhub.core.MoveApplicationRequest
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.core.RecruitersResponse
 import com.tonypine.jobsearchhub.core.SetPushTokenRequest
 import com.tonypine.jobsearchhub.core.TaskRequest
 import com.tonypine.jobsearchhub.core.UpdatesResponse
@@ -54,6 +58,23 @@ class HubClient(
     suspend fun getCompanyJobs(id: String): JobsResponse = get("/v1/jobs?company_id=$id&status=open&limit=200")
 
     suspend fun getPipeline(): PipelineBoard = get("/v1/pipeline")
+
+    /** Notes that the owner followed up on the application now, which restarts its phase's follow-up count. */
+    suspend fun recordFollowUp(applicationId: String, note: String) {
+        fetch("POST", "/v1/applications/$applicationId/follow-ups", hubJson.encodeToString(FollowUpRequest(note.trim())))
+    }
+
+    /** Moves the application to the phase; a closed phase keeps the reason it ended. */
+    suspend fun moveApplication(applicationId: String, phaseId: String, closedReason: String = "") {
+        fetch("PATCH", "/v1/applications/$applicationId", hubJson.encodeToString(MoveApplicationRequest(phaseId, closedReason.trim())))
+    }
+
+    /** The conversations recruiters started on LinkedIn, the latest first. */
+    suspend fun getRecruiters(): RecruitersResponse = get("/v1/recruiters")
+
+    suspend fun markUpdatesSeen(ids: List<String>) {
+        fetch("POST", "/v1/updates/seen", hubJson.encodeToString(MarkUpdatesSeenRequest(ids)))
+    }
 
     /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
     suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
