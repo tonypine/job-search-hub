@@ -82,15 +82,26 @@ echo "==> Signing"
 # rebuilds, so its Keychain access survives them; a self-signed or ad-hoc
 # signature makes macOS ask again after every build. CODESIGN_IDENTITY picks
 # one; otherwise the first Apple Development identity in the keychain is used.
+# Without one, as in Symphony's QA VM, or with CODESIGN_IDENTITY=-, the app is
+# signed ad hoc, and without the hardened runtime, which only notarization needs.
 IDENTITIES="$(security find-identity -v -p codesigning)"
 IDENTITY="${CODESIGN_IDENTITY:-$(awk -F'"' '/"Apple Development: /{print $2; exit}' <<<"$IDENTITIES")}"
-if [ -z "$IDENTITY" ] || ! grep -qF "$IDENTITY" <<<"$IDENTITIES"; then
-  echo "No signing identity matching \"${IDENTITY:-Apple Development}\". Create an Apple Development certificate in" >&2
-  echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY." >&2
+if [ -z "$IDENTITY" ]; then
+  echo "No Apple Development identity in the keychain, so signing ad hoc: the Keychain will ask for access after" >&2
+  echo "every build. Create one in Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY." >&2
+  IDENTITY="-"
+fi
+if [ "$IDENTITY" = "-" ]; then
+  SIGN_OPTIONS=(--sign -)
+elif grep -qF "$IDENTITY" <<<"$IDENTITIES"; then
+  SIGN_OPTIONS=(--options runtime --sign "$IDENTITY")
+else
+  echo "No signing identity matching \"$IDENTITY\". Create an Apple Development certificate in" >&2
+  echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY (- signs ad hoc)." >&2
   exit 1
 fi
-codesign --force --options runtime --sign "$IDENTITY" "$APP_DIR/Contents/Resources/hub"
-codesign --force --options runtime --sign "$IDENTITY" "$APP_DIR"
+codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR/Contents/Resources/hub"
+codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 
 echo "==> Built $APP_DIR"
