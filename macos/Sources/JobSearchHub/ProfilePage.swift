@@ -14,7 +14,7 @@ struct ProfilePage: View {
                     .task { await editor.load(with: client) }
                     .task { linkedIn = try? await client.get("v1/linkedin/profile", as: LinkedInProfileResponse.self) }
             } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
+                NotConnectedView()
             }
         }
         .navigationTitle("Profile")
