@@ -60,10 +60,12 @@ plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 echo "==> Signing"
 # An Apple-issued identity keeps the app's designated requirement stable across
 # rebuilds, so its Keychain access survives them; a self-signed or ad-hoc
-# signature makes macOS ask again after every build.
-IDENTITY="${CODESIGN_IDENTITY:-Apple Development: djtonypine@gmail.com}"
-if ! security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
-  echo "No signing identity matching \"$IDENTITY\". Create an Apple Development certificate in" >&2
+# signature makes macOS ask again after every build. CODESIGN_IDENTITY picks
+# one; otherwise the first Apple Development identity in the keychain is used.
+IDENTITIES="$(security find-identity -v -p codesigning)"
+IDENTITY="${CODESIGN_IDENTITY:-$(awk -F'"' '/"Apple Development: /{print $2; exit}' <<<"$IDENTITIES")}"
+if [ -z "$IDENTITY" ] || ! grep -qF "$IDENTITY" <<<"$IDENTITIES"; then
+  echo "No signing identity matching \"${IDENTITY:-Apple Development}\". Create an Apple Development certificate in" >&2
   echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY." >&2
   exit 1
 fi
