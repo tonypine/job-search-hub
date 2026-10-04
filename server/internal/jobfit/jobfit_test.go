@@ -3,6 +3,7 @@ package jobfit_test
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -268,6 +269,8 @@ func TestAContractorPostingWithoutACurrencyRateStaysUnclear(t *testing.T) {
 }
 
 func TestTheRole(t *testing.T) {
+	withGrowth := criteria
+	withGrowth.Roles = append(slices.Clone(criteria.Roles), "Growth Engineer")
 	for _, test := range []struct {
 		title  string
 		want   jobfit.Verdict
@@ -283,8 +286,18 @@ func TestTheRole(t *testing.T) {
 		{"Senior Software Engineer, Agents", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
 		{"Desenvolvedor(a) Backend Pleno", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
 		{"Content Writer, Investment Research", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Product Design Intern", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Product Management Intern", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Head of Growth", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Growth Marketer Retention", jobfit.VerdictNo, "the title names none of your roles"},
+		{"AI Product Lead", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Growth Engineer (Software Engineer)", jobfit.VerdictYes, "Growth Engineer"},
+		{"Senior AI Product Engineer", jobfit.VerdictYes, "Product Engineer"},
+		{"Desenvolvedor de Produto", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
+		{"Front-end React Sr", jobfit.VerdictYes, "Senior Front-End Engineer"},
+		{"Fullstack Lead", jobfit.VerdictYes, "Senior Full-Stack Engineer"},
 	} {
-		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, criteria, rates), "Role")
+		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, withGrowth, rates), "Role")
 		if check.Verdict != test.want || check.Reason != test.reason {
 			t.Errorf("%q: %+v, want %s %q", test.title, check, test.want, test.reason)
 		}

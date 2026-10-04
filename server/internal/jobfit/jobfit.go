@@ -134,18 +134,25 @@ var engineeringNouns = []string{
 	"engineer", "developer", "desenvolvedor", "desenvolvedora", "programmer", "programador", "dev", "architect", "arquiteto", "swe",
 }
 
+// engineeringSpecialties name engineering work without an engineering noun,
+// as "Front-end React Sr" does. A role keyword without one, such as "product"
+// or "growth", also needs an engineering noun in the title, so "Head of
+// Growth" isn't read as "Growth Engineer".
+var engineeringSpecialties = []string{"frontend", "backend", "fullstack"}
+
 func checkRole(job store.Job, criteria store.JobCriteria) Check {
 	const name = "Role"
 	title := normalizeTitle(job.Title)
 	if term, found := findTerm([]string{job.Title}, criteria.ExcludedRoleTerms); found {
 		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("%q in the title", term)}
 	}
+	isEngineering := hasAnyTerm([]string{job.Title}, engineeringNouns...)
 	for _, role := range criteria.Roles {
-		if keyword := getRoleKeyword(role, criteria.SeniorityLevels); keyword != "" && wordmatch.Contains(title, keyword) {
+		keyword := getRoleKeyword(role, criteria.SeniorityLevels)
+		if keyword != "" && wordmatch.Contains(title, keyword) && (isEngineering || hasAnyTerm([]string{keyword}, engineeringSpecialties...)) {
 			return Check{Name: name, Verdict: VerdictYes, Reason: role}
 		}
 	}
-	isEngineering := hasAnyTerm([]string{job.Title}, engineeringNouns...)
 	for _, technology := range criteria.Technologies {
 		if isEngineering && containsTechnology(job.Title, technology) {
 			return Check{Name: name, Verdict: VerdictYes, Reason: "a " + technology + " role"}

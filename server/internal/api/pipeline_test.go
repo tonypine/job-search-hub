@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -172,6 +173,7 @@ func TestThePipelineRoutesAreForTheOwnerOnly(t *testing.T) {
 		{http.MethodDelete, "/v1/pipeline/phases/" + someID, ""},
 		{http.MethodPost, "/v1/applications/" + someID + "/follow-ups", `{"note":"x"}`},
 		{http.MethodPut, "/v1/pipeline/phases/" + someID + "/follow-up", `{"days":3}`},
+		{http.MethodPost, "/v1/companies/" + someID + "/outreach", `{"note":"x"}`},
 	} {
 		if status, _ := send(t, attempt.method, service.url+attempt.path, agentToken, attempt.body); status != http.StatusForbidden {
 			t.Errorf("agent token on %s %s: %d, want 403", attempt.method, attempt.path, status)
@@ -209,6 +211,40 @@ func TestFollowUpsAreRecordedAndPhaseIntervalsSetOverREST(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodPut, service.url+"/v1/pipeline/phases/"+saved.ID.String()+"/follow-up", ownerToken, `{"days":0}`); status != http.StatusBadRequest {
 		t.Errorf("zero days: %d, want 400", status)
+	}
+}
+
+func TestOutreachToACompanyPutsItsCardInAppliedOverREST(t *testing.T) {
+	service := startAPI(t)
+	job := addTestJob(t, service)
+	outreachURL := service.url + "/v1/companies/" + job.CompanyID.String() + "/outreach"
+
+	status, body := send(t, http.MethodPost, outreachURL, ownerToken, `{"note":"LinkedIn message to the engineering lead","sent_on":"2026-09-28"}`)
+	var added applicationAnswer
+	if err := json.Unmarshal(body, &added); status != http.StatusCreated || err != nil || !added.Created || added.Application.JobID != nil ||
+		added.Application.PhaseEnteredAt.Format(time.DateOnly) != "2026-09-28" {
+		t.Fatalf("outreach: %d %s", status, body)
+	}
+	board := readPipeline(t, service)
+	for _, card := range board.Cards {
+		if card.Application.ID == added.Application.ID && (card.Application.PhaseID != board.Phases[1].ID || card.FollowUpDueAt == nil ||
+			card.FollowUpDueAt.Format(time.DateOnly) != "2026-10-05") {
+			t.Fatalf("the outreach card = %+v; want it in Applied, due a week after the message", card)
+		}
+	}
+
+	status, body = send(t, http.MethodPost, outreachURL, ownerToken, `{"note":"Emailed the recruiter"}`)
+	var again applicationAnswer
+	if err := json.Unmarshal(body, &again); status != http.StatusOK || err != nil || again.Created || again.Application.ID != added.Application.ID ||
+		again.Application.LastFollowedUpAt == nil {
+		t.Fatalf("second outreach: %d %s, want 200 with a follow-up on the same card", status, body)
+	}
+
+	if status, _ := send(t, http.MethodPost, outreachURL, ownerToken, `{"sent_on":"last week"}`); status != http.StatusBadRequest {
+		t.Errorf("a day that isn't a date: %d, want 400", status)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/companies/"+uuid.NewString()+"/outreach", ownerToken, `{}`); status != http.StatusNotFound {
+		t.Errorf("an unknown company: %d, want 404", status)
 	}
 }
 
