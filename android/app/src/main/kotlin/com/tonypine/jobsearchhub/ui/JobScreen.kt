@@ -168,7 +168,9 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
         val shown = details
         when {
             shown != null -> {
-                JobDetailsView(shown, onOpenCompany, message = message, error = error, modifier = Modifier.weight(1f))
+                JobDetailsView(shown, onOpenCompany, message = message, modifier = Modifier.weight(1f))
+                // Above the docked bar, so a failed decision shows wherever the details are scrolled.
+                error?.let { HubErrorView("Couldn't record your decision", it) }
                 ActionBar(
                     primary = HubAction("Pursue", Icons.Rounded.Check, enabled = !isDeciding) { decide("pursue", "") },
                     tonal = HubAction("Later", enabled = !isDeciding) { decide("later", "") },
@@ -183,7 +185,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: () -> Unit, onOpenCom
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, message: String?, error: String?, modifier: Modifier = Modifier) {
+private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit, message: String?, modifier: Modifier = Modifier) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val people = details.connections.orEmpty()
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = Spacing.l)) {
@@ -209,7 +211,6 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit,
             }
             message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
         }
-        error?.let { HubErrorView("Couldn't record your decision", it) }
         PrimaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Overview") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(if (people.isEmpty()) "People" else "People · ${people.size}") })
@@ -278,7 +279,7 @@ private fun ScreenSection(details: JobDetails) {
             rows.map { row ->
                 {
                     VerdictRow(
-                        name = row.name, tone = row.tone, icon = row.screen.symbol, verdict = row.screen?.word,
+                        name = row.name, tone = row.tone, icon = row.screen.symbol, verdict = row.screen?.word ?: "Information",
                         reason = row.reason, evidence = row.evidence,
                     )
                 }
