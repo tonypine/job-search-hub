@@ -32,8 +32,14 @@ func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource excha
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
+	confirmed := true
+	roles, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Kind: store.ProfileEntryRole, Confirmed: &confirmed})
+	if err != nil {
+		return judgedJobDetails{}, err
+	}
 	fit := jobfit.Judge(details.Job, details.RawFacts, criteria, rates)
-	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: buildScreenOutAnswers(details, fit)}, nil
+	screenOut := buildScreenOutAnswers(details, fit, countExperienceMonths(roles, time.Now()))
+	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: screenOut}, nil
 }
 
 type jobsResponse struct {
