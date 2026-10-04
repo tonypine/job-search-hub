@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -65,12 +64,14 @@ const (
 	AgentPromptKindHiringThread = "hiring_thread"
 )
 
-var agentPromptKinds = map[string]bool{
-	AgentRunKindCompanyTriage: true, AgentPromptKindJobFacts: true, AgentPromptKindCompanySession: true, AgentPromptKindJobSession: true,
-	AgentPromptKindOutreachDraft: true, AgentPromptKindMailTriage: true, AgentPromptKindLinkedInConversation: true,
-	AgentPromptKindRecruiterReply: true, AgentPromptKindProfileAudit: true, AgentRunKindJobFinder: true, AgentRunKindProfileSeed: true, AgentPromptKindProfileInterview: true,
-	AgentPromptKindJobBrief: true, AgentPromptKindJobCV: true, AgentRunKindJobFix: true, AgentPromptKindRecruiterScreen: true,
-	AgentPromptKindMarketGaps: true, AgentPromptKindInterviewPrep: true, AgentPromptKindHiringThread: true,
+// AgentPromptKinds are every prompt the hub keeps, the same kinds the
+// agent_prompts table's check allows.
+var AgentPromptKinds = []string{
+	AgentRunKindCompanyTriage, AgentPromptKindJobFacts, AgentPromptKindCompanySession, AgentPromptKindJobSession,
+	AgentPromptKindOutreachDraft, AgentPromptKindMailTriage, AgentPromptKindLinkedInConversation,
+	AgentPromptKindRecruiterReply, AgentPromptKindProfileAudit, AgentRunKindJobFinder, AgentRunKindProfileSeed, AgentPromptKindProfileInterview,
+	AgentPromptKindJobBrief, AgentPromptKindJobCV, AgentRunKindJobFix, AgentPromptKindRecruiterScreen,
+	AgentPromptKindMarketGaps, AgentPromptKindInterviewPrep, AgentPromptKindHiringThread,
 }
 
 // AgentPrompt is one version of an agent's instructions, and of the JSON
@@ -134,7 +135,7 @@ func (s *Store) ListAgentPromptVersions(ctx context.Context, kind string) ([]Age
 
 // SaveAgentPrompt adds the next version of the kind's prompt.
 func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgentPrompt) (AgentPrompt, error) {
-	if !agentPromptKinds[input.Kind] {
+	if !slices.Contains(AgentPromptKinds, input.Kind) {
 		return AgentPrompt{}, ErrAgentPromptNotFound
 	}
 	if strings.TrimSpace(input.Body) == "" {
@@ -186,7 +187,7 @@ func (s *Store) SaveAgentPrompt(ctx context.Context, actor Actor, input NewAgent
 // repo. It returns the kinds it saved.
 func (s *Store) SeedAgentPrompts(ctx context.Context, seed fs.FS) ([]string, error) {
 	var seeded []string
-	for _, kind := range slices.Sorted(maps.Keys(agentPromptKinds)) {
+	for _, kind := range slices.Sorted(slices.Values(AgentPromptKinds)) {
 		body, err := fs.ReadFile(seed, kind+".md")
 		if errors.Is(err, fs.ErrNotExist) {
 			continue

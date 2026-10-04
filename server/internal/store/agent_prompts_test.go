@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -67,6 +68,23 @@ func TestSavingAPromptRefusesAnUnknownKindOrAnEmptyBody(t *testing.T) {
 	}
 	if _, err := hub.GetAgentPrompt(ctx, store.AgentRunKindCompanyTriage, 99); !errors.Is(err, store.ErrAgentPromptNotFound) {
 		t.Errorf("missing version: err = %v", err)
+	}
+}
+
+func TestThePromptKindsAreTheOnesTheTableAllows(t *testing.T) {
+	database := testdatabase.New(t)
+
+	var check string
+	if err := database.QueryRow(context.Background(),
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'agent_prompts_kind_check'`).Scan(&check); err != nil {
+		t.Fatalf("read the check: %v", err)
+	}
+	var allowed []string
+	for _, match := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(check, -1) {
+		allowed = append(allowed, match[1])
+	}
+	if kinds := slices.Sorted(slices.Values(store.AgentPromptKinds)); !slices.Equal(kinds, slices.Sorted(slices.Values(allowed))) {
+		t.Fatalf("AgentPromptKinds = %v, the table allows %v", kinds, allowed)
 	}
 }
 
