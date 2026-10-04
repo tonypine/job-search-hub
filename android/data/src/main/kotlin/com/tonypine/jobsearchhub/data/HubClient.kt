@@ -32,7 +32,20 @@ class HubClient(
 ) {
     suspend fun getUpdates(): UpdatesResponse = get("/v1/updates?limit=100")
 
-    suspend fun getJobs(): JobsResponse = get("/v1/jobs?status=open&limit=500")
+    /** Every open job, read a page at a time until the hub's total, so the oldest ones are not left out. */
+    suspend fun getJobs(): JobsResponse {
+        val first = getOpenJobsPage(offset = 0)
+        val jobs = first.jobs.toMutableList()
+        while (jobs.size < first.total) {
+            val page = getOpenJobsPage(offset = jobs.size)
+            if (page.jobs.isEmpty()) break
+            jobs += page.jobs
+        }
+        return first.copy(jobs = jobs)
+    }
+
+    private suspend fun getOpenJobsPage(offset: Int): JobsResponse =
+        get("/v1/jobs?status=open&limit=$JOBS_PAGE_SIZE" + if (offset > 0) "&offset=$offset" else "")
 
     suspend fun getJob(id: String): JobDetails = get("/v1/jobs/$id")
 
@@ -81,5 +94,10 @@ class HubClient(
         } catch (error: IOException) {
             throw HubException("Can't reach the hub at ${pairing.hubUrl}: ${error.message}")
         }
+    }
+
+    private companion object {
+        /** The most jobs the hub returns in one page. */
+        const val JOBS_PAGE_SIZE = 500
     }
 }
