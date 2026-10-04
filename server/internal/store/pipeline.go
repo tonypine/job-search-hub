@@ -203,6 +203,12 @@ func (s *Store) UpdateApplicationNotes(ctx context.Context, actor Actor, id uuid
 	return application, err
 }
 
+// cardFollowUpDueAt is when a card's phase wants a follow-up: its interval
+// after the card entered the phase or was last followed up, whichever came
+// later; null when the phase asks for none. It needs pipeline_phases joined.
+const cardFollowUpDueAt = `GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
+	+ make_interval(days => pipeline_phases.follow_up_days)`
+
 // cardDismissedAt is a card's dismissal: its job's, or its own when it has no job.
 const cardDismissedAt = `CASE WHEN applications.job_id IS NOT NULL THEN jobs.dismissed_at ELSE applications.dismissed_at END`
 
@@ -271,9 +277,7 @@ func (s *Store) listPipelineCards(ctx context.Context, dismissed bool, companyID
 		       applications.notes, applications.phase_entered_at, applications.last_followed_up_at, applications.contacted_at, applications.created_at,
 		       applications.updated_at,
 		       jobs.title, jobs.url, COALESCE(companies.name, NULLIF(jobs.company_name, '')),
-		       GREATEST(applications.phase_entered_at, COALESCE(applications.last_followed_up_at, applications.phase_entered_at))
-		           + make_interval(days => pipeline_phases.follow_up_days),
-		       `+cardUnseenUpdates+`, `+cardDismissedAt+`,
+		       `+cardFollowUpDueAt+`, `+cardUnseenUpdates+`, `+cardDismissedAt+`,
 		       CASE WHEN applications.job_id IS NOT NULL THEN jobs.dismissal_reason ELSE applications.dismissal_reason END
 		FROM applications
 		JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id

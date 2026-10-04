@@ -32,6 +32,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
+	"github.com/tonypine/job-search-hub/server/internal/followupreminders"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hiringthread"
@@ -87,6 +88,9 @@ const (
 	// hiringThreadInterval paces the reading of Hacker News' monthly "Who is
 	// hiring?" thread, whose comments keep arriving for days.
 	hiringThreadInterval = 6 * time.Hour
+	// followUpReminderInterval is how often the server checks for follow-ups
+	// fallen due since the last pass.
+	followUpReminderInterval = 15 * time.Minute
 )
 
 func main() {
@@ -162,6 +166,7 @@ func run() error {
 	if sender := makePushSender(ctx, settings); sender != nil {
 		go push.NewNotifier(hub, sender, broadcaster).Run(ctx)
 	}
+	go followupreminders.NewReminder(hub, updateRecorder).Run(ctx, followUpReminderInterval)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	boards.SearchTerms = func(ctx context.Context) []string {
