@@ -172,6 +172,9 @@ struct DossierPane: View {
     let onChanged: () -> Void
     @State private var isAddingWarmPath = false
     @State private var errorMessage: String?
+    @State private var isRecordingOutreach = false
+    @State private var outreachNote = ""
+    @State private var outreachError: String?
     @Environment(CompanyJobFinder.self) private var jobFinder
 
     var body: some View {
@@ -295,6 +298,22 @@ struct DossierPane: View {
                     }
                     .help(application.card.application.notes ?? "")
                 }
+                if let outreachError {
+                    Label(outreachError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                Button("Messaged someone here…", systemImage: "paperplane") {
+                    outreachNote = ""
+                    isRecordingOutreach = true
+                }
+                .buttonStyle(.link)
+                .help("Puts the company's outreach card in Applied, or counts a follow-up when it's already there, so the hub reminds you a week later")
+            }
+            .alert("Messaged someone at \(dossier.company.name)", isPresented: $isRecordingOutreach) {
+                TextField("Who, and how", text: $outreachNote)
+                Button("Record") { recordOutreach(at: dossier.company) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Its follow-up falls due a week from today.")
             }
 
             section("Latest mail") {
@@ -345,6 +364,19 @@ struct DossierPane: View {
                     errorMessage = "Could not add them: \(error)"
                     return false
                 }
+            }
+        }
+    }
+
+    private func recordOutreach(at company: Company) {
+        let note = outreachNote
+        Task {
+            do {
+                _ = try await client.recordOutreach(companyID: company.id, note: note)
+                outreachError = nil
+                onChanged()
+            } catch {
+                outreachError = "Could not record the message: \(error)"
             }
         }
     }

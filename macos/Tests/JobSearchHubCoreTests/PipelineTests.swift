@@ -147,3 +147,19 @@ private func decodeBoard() throws -> PipelineBoard {
     #expect(recording.lastRequest?.url?.query == "dismissed=true")
     #expect(board.cards.first?.dismissalReason == "not a good fit: agency" && board.cards.first?.dismissedAt != nil)
 }
+
+@Test func outreachToACompanyIsSentWithTheTrimmedNote() async throws {
+    let companyID = UUID(uuidString: "3f2504e0-4f89-41d3-9a0c-0305e82c3301")!
+    let answer = #"{"application":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"0aa55565-58d2-4247-ba01-cba65060a316","#
+        + #""phase_entered_at":"2026-10-04T14:00:00Z","created_at":"2026-10-04T14:00:00Z","updated_at":"2026-10-04T14:00:00Z"},"created":true}"#
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/companies/\(companyID.uuidString)/outreach": StubHub.Answer(status: 201, body: answer),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    let response = try await client.recordOutreach(companyID: companyID, note: " LinkedIn message to the engineering lead ")
+    #expect(response.created)
+    #expect(recording.lastRequest?.httpMethod == "POST")
+    let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
+    #expect(sent?["note"] as? String == "LinkedIn message to the engineering lead")
+}

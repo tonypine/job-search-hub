@@ -8,6 +8,7 @@ It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions t
 
 - **The hub server** (`hub-server`) keeps companies, the watch list, job boards, people, agent runs, agent prompts and the owner's profile in Postgres. Every write is recorded in a change log with who made it: the owner, or one agent run.
 - **MCP tools** at `/mcp` are the hub's interface for Claude Code and agents. Agents can only write through them, and some tools are the owner's alone: the watch list, prompts and the profile.
+- **Follow-ups** fall due by pipeline phase, a week after applying by default. A cold message to a company, recorded with `record_outreach` or *Messaged someone here…* on its page in the Mac app, puts its outreach card in Applied, so it falls due the same way. From 08:00 each follow-up due that day becomes an update on the Mac and the paired phones, once per due date.
 - **The `hub` CLI** lists the watch list, prints a dossier, and runs the company triage agent:
 
   ```

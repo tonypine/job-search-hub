@@ -155,31 +155,39 @@ func (s *Store) MoveApplication(ctx context.Context, actor Actor, id, phaseID uu
 func (s *Store) MoveApplicationAsOf(ctx context.Context, actor Actor, id, phaseID uuid.UUID, closedReason string, enteredAt time.Time, sourceURL string) (Application, error) {
 	var application Application
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1 FOR UPDATE`, id))
-		if err != nil {
-			return err
-		}
-		target, err := scanPipelinePhase(tx.QueryRow(ctx, `SELECT `+pipelinePhaseColumns+` FROM pipeline_phases WHERE id = $1`, phaseID))
-		if err != nil {
-			return err
-		}
-		if !target.IsClosed {
-			closedReason = ""
-		}
-		application, err = scanApplication(tx.QueryRow(ctx, `
-			UPDATE applications SET phase_id = $2, closed_reason = $3, phase_entered_at = $4, updated_at = now()
-			WHERE id = $1
-			RETURNING `+applicationColumns, id, phaseID, strings.TrimSpace(closedReason), enteredAt))
-		if err != nil {
-			return err
-		}
-		return insertChange(ctx, tx, actor, change{
-			entityType: "application", entityID: id, operation: "move", sourceURL: sourceURL,
-			before: map[string]any{"phase_id": current.PhaseID, "closed_reason": current.ClosedReason},
-			after:  map[string]any{"phase_id": application.PhaseID, "closed_reason": application.ClosedReason},
-		})
+		var err error
+		application, err = moveApplicationInTransaction(ctx, tx, actor, id, phaseID, closedReason, enteredAt, sourceURL)
+		return err
 	})
 	return application, err
+}
+
+// moveApplicationInTransaction is MoveApplicationAsOf inside tx.
+func moveApplicationInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, id, phaseID uuid.UUID, closedReason string, enteredAt time.Time,
+	sourceURL string) (Application, error) {
+	current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1 FOR UPDATE`, id))
+	if err != nil {
+		return Application{}, err
+	}
+	target, err := scanPipelinePhase(tx.QueryRow(ctx, `SELECT `+pipelinePhaseColumns+` FROM pipeline_phases WHERE id = $1`, phaseID))
+	if err != nil {
+		return Application{}, err
+	}
+	if !target.IsClosed {
+		closedReason = ""
+	}
+	application, err := scanApplication(tx.QueryRow(ctx, `
+		UPDATE applications SET phase_id = $2, closed_reason = $3, phase_entered_at = $4, updated_at = now()
+		WHERE id = $1
+		RETURNING `+applicationColumns, id, phaseID, strings.TrimSpace(closedReason), enteredAt))
+	if err != nil {
+		return Application{}, err
+	}
+	return application, insertChange(ctx, tx, actor, change{
+		entityType: "application", entityID: id, operation: "move", sourceURL: sourceURL,
+		before: map[string]any{"phase_id": current.PhaseID, "closed_reason": current.ClosedReason},
+		after:  map[string]any{"phase_id": application.PhaseID, "closed_reason": application.ClosedReason},
+	})
 }
 
 // UpdateApplicationNotes replaces the application's notes.
@@ -421,18 +429,77 @@ func (s *Store) RecordFollowUpAsOf(ctx context.Context, actor Actor, id uuid.UUI
 	var application Application
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		application, err = scanApplication(tx.QueryRow(ctx, `
-			UPDATE applications SET last_followed_up_at = GREATEST(last_followed_up_at, $2), updated_at = now() WHERE id = $1
-			RETURNING `+applicationColumns, id, followedUpAt))
+		application, err = recordFollowUpInTransaction(ctx, tx, actor, id, note, followedUpAt, sourceURL)
+		return err
+	})
+	return application, err
+}
+
+// recordFollowUpInTransaction is RecordFollowUpAsOf inside tx.
+func recordFollowUpInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, id uuid.UUID, note string, followedUpAt time.Time,
+	sourceURL string) (Application, error) {
+	application, err := scanApplication(tx.QueryRow(ctx, `
+		UPDATE applications SET last_followed_up_at = GREATEST(last_followed_up_at, $2), updated_at = now() WHERE id = $1
+		RETURNING `+applicationColumns, id, followedUpAt))
+	if err != nil {
+		return Application{}, err
+	}
+	return application, insertChange(ctx, tx, actor, change{
+		entityType: "application", entityID: id, operation: "follow_up", sourceURL: sourceURL,
+		after: map[string]any{"note": strings.TrimSpace(note), "followed_up_at": followedUpAt},
+	})
+}
+
+// outreachPhase is the phase a cold message puts a company's card in, by
+// name, since the owner can rename phases: reaching out is applying without
+// a posting, and its follow-up falls due the same way.
+const outreachPhase = "applied"
+
+// RecordOutreach notes that the owner messaged someone at the company at
+// sentAt, cold. The company's open outreach card, the one without a job,
+// moves to Applied as of sentAt, and is added when the company has none, so
+// its follow-up falls due like an application's. A card already in Applied
+// or past it counts the message as a follow-up. created reports a new card.
+func (s *Store) RecordOutreach(ctx context.Context, actor Actor, companyID uuid.UUID, note string, sentAt time.Time) (Application, bool, error) {
+	var application Application
+	created := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		applied, err := scanPipelinePhase(tx.QueryRow(ctx, `SELECT `+pipelinePhaseColumns+` FROM pipeline_phases WHERE lower(name) = $1`, outreachPhase))
+		if errors.Is(err, ErrPipelinePhaseNotFound) {
+			return fmt.Errorf("outreach goes to the Applied phase, and the board has none: %w", ErrPipelinePhaseNotFound)
+		}
 		if err != nil {
 			return err
 		}
+		application, err = scanApplication(tx.QueryRow(ctx, `
+			SELECT `+applicationColumns+` FROM applications
+			WHERE company_id = $1 AND job_id IS NULL AND dismissed_at IS NULL
+			  AND phase_id IN (SELECT id FROM pipeline_phases WHERE NOT is_closed)
+			ORDER BY updated_at DESC LIMIT 1
+			FOR UPDATE`, companyID))
+		if errors.Is(err, ErrApplicationNotFound) {
+			application, created, err = addApplicationInTransaction(ctx, tx, actor, ApplicationInput{CompanyID: &companyID})
+		}
+		if err != nil {
+			return err
+		}
+		var position int
+		if err := tx.QueryRow(ctx, `SELECT position FROM pipeline_phases WHERE id = $1`, application.PhaseID).Scan(&position); err != nil {
+			return err
+		}
+		if position >= applied.Position {
+			application, err = recordFollowUpInTransaction(ctx, tx, actor, application.ID, note, sentAt, "")
+			return err
+		}
+		if application, err = moveApplicationInTransaction(ctx, tx, actor, application.ID, applied.ID, "", sentAt, ""); err != nil {
+			return err
+		}
 		return insertChange(ctx, tx, actor, change{
-			entityType: "application", entityID: id, operation: "follow_up", sourceURL: sourceURL,
-			after: map[string]any{"note": strings.TrimSpace(note), "followed_up_at": followedUpAt},
+			entityType: "application", entityID: application.ID, operation: "outreach",
+			after: map[string]any{"note": strings.TrimSpace(note), "sent_at": sentAt},
 		})
 	})
-	return application, err
+	return application, created, err
 }
 
 // FindCompanyApplication returns the company's open application updated

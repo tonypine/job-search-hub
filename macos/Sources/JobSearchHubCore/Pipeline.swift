@@ -213,6 +213,16 @@ public struct FollowUpRequest: Encodable, Sendable {
     }
 }
 
+/// A cold message to someone at a company, in the owner's words; the hub
+/// dates it today and has its follow-up fall due a week later.
+public struct OutreachRequest: Encodable, Equatable, Sendable {
+    public var note: String
+
+    public init(note: String) {
+        self.note = note
+    }
+}
+
 /// Sets a phase's follow-up interval; no days stops it asking for follow-ups.
 public struct FollowUpDaysRequest: Encodable, Sendable {
     public var days: Int?
@@ -246,6 +256,14 @@ public extension HubClient {
     func dismissApplication(_ id: UUID, note: String) async throws -> Application {
         let request = DismissApplicationRequest(note: note.trimmingCharacters(in: .whitespacesAndNewlines))
         return try await send("POST", "v1/applications/\(id.uuidString)/dismiss", body: request, as: ApplicationResponse.self).application
+    }
+
+    /// Records a cold message to someone at the company: its outreach card
+    /// moves to Applied, added when it has none, or counts a follow-up when
+    /// it is already there or further on.
+    func recordOutreach(companyID: UUID, note: String) async throws -> ApplicationResponse {
+        let request = OutreachRequest(note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+        return try await send("POST", "v1/companies/\(companyID.uuidString)/outreach", body: request, as: ApplicationResponse.self)
     }
 
     /// Puts a dismissed card back on the board, in the phase it left.

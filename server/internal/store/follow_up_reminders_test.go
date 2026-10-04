@@ -95,3 +95,73 @@ func TestADueFollowUpIsListedOncePerDueTime(t *testing.T) {
 		t.Fatalf("reminding an unknown card = %v", err)
 	}
 }
+
+func TestOutreachPutsTheCompanysCardInAppliedAndASecondMessageFollowsUp(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	phases := phasesByName(t, hub)
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &acme.ID, Title: "Engineer", URL: "https://acme.com/jobs/1"})
+	jobCard, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &job.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	card, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "LinkedIn message to the engineering lead", sentAt)
+	if err != nil || !created || card.JobID != nil || card.CompanyID == nil || *card.CompanyID != acme.ID ||
+		card.PhaseID != phases["Applied"].ID || !card.PhaseEnteredAt.Equal(sentAt) {
+		t.Fatalf("outreach = %+v, created=%v, %v; want a new outreach card in Applied since %v", card, created, err, sentAt)
+	}
+	cards, _ := hub.ListPipelineCards(ctx)
+	for _, listed := range cards {
+		switch listed.Application.ID {
+		case card.ID:
+			if listed.FollowUpDueAt == nil || !isAboutAt(*listed.FollowUpDueAt, sentAt.Add(7*24*time.Hour)) {
+				t.Fatalf("the outreach card is due %v; want a week after the message", listed.FollowUpDueAt)
+			}
+		case jobCard.ID:
+			if listed.Application.PhaseID != phases["Saved"].ID {
+				t.Fatal("outreach moved the company's job card")
+			}
+		}
+	}
+	var notes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM changes WHERE operation = 'outreach' AND entity_id = $1
+		AND after->>'note' = 'LinkedIn message to the engineering lead'`, card.ID).Scan(&notes); err != nil || notes != 1 {
+		t.Fatalf("outreach changes = %d, %v", notes, err)
+	}
+
+	again, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "Emailed the recruiter", time.Now())
+	if err != nil || created || again.ID != card.ID || again.PhaseID != phases["Applied"].ID || again.LastFollowedUpAt == nil ||
+		!again.PhaseEnteredAt.Equal(sentAt) {
+		t.Fatalf("a second message = %+v, created=%v, %v; want a follow-up on the same card", again, created, err)
+	}
+
+	// A company's card waiting in Saved moves; once closed, the next message
+	// starts a new card.
+	globex, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
+	saved, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &globex.ID})
+	moved, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now())
+	if err != nil || created || moved.ID != saved.ID || moved.PhaseID != phases["Applied"].ID {
+		t.Fatalf("outreach to a company in Saved = %+v, created=%v, %v; want its card moved", moved, created, err)
+	}
+	if _, err := hub.MoveApplication(ctx, owner, moved.ID, phases["Closed"].ID, "No answer."); err != nil {
+		t.Fatal(err)
+	}
+	fresh, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now())
+	if err != nil || !created || fresh.ID == moved.ID {
+		t.Fatalf("outreach after the card closed = %+v, created=%v, %v; want a new card", fresh, created, err)
+	}
+
+	if _, _, err := hub.RecordOutreach(ctx, owner, uuid.New(), "", time.Now()); !errors.Is(err, store.ErrCompanyNotFound) {
+		t.Fatalf("outreach to an unknown company = %v", err)
+	}
+	if _, err := hub.RenamePipelinePhase(ctx, owner, phases["Applied"].ID, "Reached out"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := hub.RecordOutreach(ctx, owner, acme.ID, "", time.Now()); !errors.Is(err, store.ErrPipelinePhaseNotFound) {
+		t.Fatalf("outreach without an Applied phase = %v", err)
+	}
+}
