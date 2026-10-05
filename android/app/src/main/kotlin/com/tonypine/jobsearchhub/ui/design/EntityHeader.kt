@@ -22,19 +22,20 @@ data class ParentLink(val name: String, val onClick: () -> Unit)
 
 /**
  * An entity's header: its name, the parent as an assist chip that opens it,
- * one line of facts, and up to three [chips].
+ * one line of facts, and up to three [chips]. With no [title], the name is in
+ * the app bar above.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EntityHeader(
-    title: String,
+    title: String?,
     modifier: Modifier = Modifier,
     parent: ParentLink? = null,
     facts: String? = null,
     chips: (@Composable FlowRowScope.() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxWidth().padding(horizontal = Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+        title?.let { Text(it, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }) }
         if (parent != null || !facts.isNullOrBlank()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), itemVerticalAlignment = Alignment.CenterVertically) {
                 parent?.let {

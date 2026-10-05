@@ -24,12 +24,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MediumTopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +42,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import com.tonypine.jobsearchhub.HubViewModel
@@ -98,6 +100,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
     var note by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(id, attempt) {
         loadError = null
         viewModel.loadJob(id).onSuccess { details = it }.onFailure { loadError = it.message ?: it.toString() }
@@ -151,9 +154,9 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
             dismissButton = { TextButton(onClick = { isAskingForFix = false }) { Text("Cancel") } },
         )
     }
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {},
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        MediumTopAppBar(
+            title = { details?.let { EntityTitle(it.job.title) } }, scrollBehavior = scrollBehavior,
             navigationIcon = { onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } } },
             actions = {
                 details?.let { shown ->
@@ -197,7 +200,7 @@ private fun JobDetailsView(details: JobDetails, onOpenCompany: (String) -> Unit,
     val companyId = details.job.companyId
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = Spacing.l)) {
         EntityHeader(
-            title = details.job.title,
+            title = null,
             parent = company?.let { name -> companyId?.let { ParentLink(name) { onOpenCompany(it) } } },
             facts = listOfNotNull(
                 company.takeIf { companyId == null }, details.job.location, details.job.workplaceType, formatWhen(details.job.firstSeenAt),
