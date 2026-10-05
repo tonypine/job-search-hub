@@ -7,7 +7,8 @@ hooks:
     git config core.hooksPath .githooks
     cd server && go mod download
 # How Symphony's QA pass builds and opens the apps, over symphony.yml's
-# defaults. make-app.sh signs ad hoc in the QA VM, which has no Apple identity.
+# defaults. make-app.sh signs ad hoc in the QA VM, which has no Apple identity,
+# and leaves out the bundled hub command there, since the VM has no Go.
 # The Android build needs a writable ANDROID_USER_HOME for the debug keystore,
 # a temp dir for the Kotlin daemon, and no Gradle daemon in the sandbox.
 auto_review:
