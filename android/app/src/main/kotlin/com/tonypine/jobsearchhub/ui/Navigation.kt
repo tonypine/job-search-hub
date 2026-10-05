@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Checklist
@@ -48,6 +49,7 @@ import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.core.PipelinePhase
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.push.UpdateNotifications
+import com.tonypine.jobsearchhub.ui.design.SnackbarClearance
 import kotlinx.coroutines.launch
 
 private const val TODAY = "today"
@@ -92,6 +94,8 @@ fun HubNavigation(viewModel: HubViewModel) {
     val jobsDetails = rememberDetailStack()
     val isWide = showsTwoPanes()
     val snackbar = remember { SnackbarHostState() }
+    // A job's docked decision bar reports its height here, and the snackbar shows above it, so its Undo doesn't cover the next job's.
+    val clearance = remember { SnackbarClearance() }
     val scope = rememberCoroutineScope()
     val say: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
     // Later and Skip don't ask first; their snackbar offers Undo, and stays up when the page moves on to the next job.
@@ -129,7 +133,7 @@ fun HubNavigation(viewModel: HubViewModel) {
         val onBack = if (isAlone) details::close else null
         when (detail.kind) {
             Detail.Kind.JOB -> JobScreen(
-                detail.id, viewModel, onBack = onBack,
+                detail.id, viewModel, onBack = onBack, snackbarClearance = clearance,
                 onOpenCompany = { details.open(Detail.company(it)) },
                 onDecided = { next, notice ->
                     decided(detail.id, notice)
@@ -172,7 +176,13 @@ fun HubNavigation(viewModel: HubViewModel) {
             }
         },
     ) {
-        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+        Scaffold(
+            snackbarHost = {
+                // Read here, so a bar coming or going recomposes only the snackbar.
+                val lift by animateDpAsState(clearance.height, label = "snackbarLift")
+                SnackbarHost(snackbar, Modifier.padding(bottom = lift))
+            },
+        ) { padding ->
             NavHost(navigation, startDestination = TODAY, modifier = Modifier.padding(padding)) {
                 composable(TODAY) {
                     ListDetailPage(todayDetails, "Open a job or a company to see it here.", detail = { detail, isAlone -> detailPane(todayDetails, detail, isAlone) }) {
@@ -241,7 +251,8 @@ fun HubNavigation(viewModel: HubViewModel) {
                 composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
                     val id = backStack.arguments?.getString("id").orEmpty()
                     JobScreen(
-                        id, viewModel, onBack = { navigation.popBackStack() }, onOpenCompany = { navigation.navigate("company/$it") },
+                        id, viewModel, onBack = { navigation.popBackStack() }, snackbarClearance = clearance,
+                        onOpenCompany = { navigation.navigate("company/$it") },
                         onDecided = { _, notice ->
                             decided(id, notice)
                             navigation.popBackStack()

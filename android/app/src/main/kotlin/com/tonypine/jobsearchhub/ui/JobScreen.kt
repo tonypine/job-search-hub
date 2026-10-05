@@ -73,6 +73,7 @@ import com.tonypine.jobsearchhub.ui.design.ParentLink
 import com.tonypine.jobsearchhub.ui.design.PersonRow
 import com.tonypine.jobsearchhub.ui.design.Relation
 import com.tonypine.jobsearchhub.ui.design.SegmentedGroup
+import com.tonypine.jobsearchhub.ui.design.SnackbarClearance
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 import com.tonypine.jobsearchhub.ui.design.VerdictRow
@@ -89,11 +90,19 @@ import kotlinx.serialization.json.contentOrNull
  * with Pursue the primary. Later and Skip don't ask first: [onDecided] gets
  * what the snackbar says, for Undo. Open posting is in the app bar, Fix… and
  * Share in the overflow. Beside the list it has no back arrow ([onBack] is
- * null), and back returns to the list all the same.
+ * null), and back returns to the list all the same. The docked bar keeps
+ * [snackbarClearance]'s snackbar above it, so the next job's buttons stay free.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenCompany: (String) -> Unit, onDecided: (next: String?, notice: String?) -> Unit) {
+fun JobScreen(
+    id: String,
+    viewModel: HubViewModel,
+    onBack: (() -> Unit)?,
+    onOpenCompany: (String) -> Unit,
+    onDecided: (next: String?, notice: String?) -> Unit,
+    snackbarClearance: SnackbarClearance? = null,
+) {
     val context = LocalContext.current
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -177,6 +186,7 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
                     primary = HubAction("Pursue", Icons.Rounded.Check, enabled = !isDeciding) { decide("pursue", "") },
                     tonal = HubAction("Later", enabled = !isDeciding) { decide("later", "") },
                     outlined = HubAction("Skip…", enabled = !isDeciding) { isAskingForSkip = true },
+                    clearance = snackbarClearance,
                 )
             }
             loadError != null -> HubErrorView("Couldn't load this job", loadError, onRetry = { attempt++ })
