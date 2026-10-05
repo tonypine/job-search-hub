@@ -181,23 +181,13 @@ struct JobsPage: View {
                         }
                     }
                     .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
+                    .onPageRequest(.jobs) { request in
+                        if request == .addJobByURL { isAddingByURL = true }
+                    }
             }
         }
         .navigationTitle("Jobs")
         .navigationSubtitle(describeCounts())
-    }
-
-    /// Starts the hub generating the CVs that jobs passing the screen and
-    /// pursued jobs lack, and says how many it will make.
-    private func generateMissingCVs(with client: HubClient) async {
-        do {
-            let queued = try await client.generateMissingCVs()
-            model.toast = queued == 0
-                ? ToastMessage(text: "No CVs are missing, or the hub is already making them.", tone: .neutral, symbol: "info.circle")
-                : ToastMessage(text: "Generating \(queued) \(queued == 1 ? "CV" : "CVs") in the background. Each appears in its job's details once printed.")
-        } catch {
-            model.actionError = HubFailure("Couldn't start the missing CVs", error)
-        }
     }
 
     /// How many jobs show out of all, and how many of those pass the screen.
@@ -316,12 +306,8 @@ struct JobsPage: View {
             .fixedSize()
             .help("Show open, closed, all or skipped jobs")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
-            Menu("Add", systemImage: "plus") {
-                Button("Job by URL…") { isAddingByURL = true }
-                Button("Generate missing CVs") { Task { await generateMissingCVs(with: client) } }
-                    .help("Draft and print a CV for every job that passes the screen or is pursued and has none")
-            }
-            .help("Add a job by URL (⌘N), or the CVs screened-in jobs lack")
+            Button("Add job by URL…", systemImage: "plus") { isAddingByURL = true }
+                .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
             ToolbarSearchField(text: $model.search, prompt: "Title, location or company")
                 .frame(width: 180)
         }

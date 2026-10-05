@@ -118,6 +118,11 @@ struct TodayPage: View {
     @State private var skipping: DecisionQueueItem?
     @State private var followingUp: PipelineCard?
     @State private var followUpNote = ""
+    /// The Decide card has the keyboard: ↑↓ move through its jobs, Return
+    /// opens one, and P, L and S decide the one open.
+    @FocusState private var isDecideFocused: Bool
+    /// The palette asked for the keyboard before the queue was read.
+    @State private var focusesDecideOnLoad = false
 
     var body: some View {
         Group {
@@ -127,6 +132,20 @@ struct TodayPage: View {
                     .task { await activity.watch(with: client) }
                     .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
                     .onChange(of: events.revision) { Task { await activity.load(with: client) } }
+                    .onPageRequest(.today) { request in
+                        guard request == .focusList else { return }
+                        if model.hasLoaded {
+                            isDecideFocused = !model.queue.isEmpty
+                        } else {
+                            focusesDecideOnLoad = true
+                        }
+                    }
+                    .onChange(of: model.hasLoaded) {
+                        if focusesDecideOnLoad && model.hasLoaded {
+                            focusesDecideOnLoad = false
+                            isDecideFocused = !model.queue.isEmpty
+                        }
+                    }
             }
         }
         .navigationTitle("Today")
@@ -171,7 +190,7 @@ struct TodayPage: View {
         .toast($model.toast)
         .sheet(item: $skipping) { item in
             SkipJobsSheet(jobCount: 1) { reason in
-                await model.decide(item, .skip, reason: reason, through: decisions, with: client)
+                await decide(item, .skip, reason: reason, client: client)
             }
         }
         .alert("Followed up", isPresented: Binding(get: { followingUp != nil }, set: { if !$0 { followingUp = nil } })) {
@@ -235,8 +254,9 @@ struct TodayPage: View {
             ForEach(items) { item in
                 TodayDecisionRow(item: item, isOpen: isOpen(.job(item.id))) {
                     open(.job(item.id))
+                    isDecideFocused = true
                 } decide: { decision in
-                    if let failure = await model.decide(item, decision, through: decisions, with: client) {
+                    if let failure = await decide(item, decision, client: client) {
                         model.actionError = failure
                     }
                 } skip: {
@@ -245,6 +265,64 @@ struct TodayPage: View {
                 if item.id != items.last?.id { Divider() }
             }
         }
+        .focusable()
+        .focused($isDecideFocused)
+        .focusEffectDisabled()
+        .overlay {
+            RoundedRectangle(cornerRadius: Radius.card)
+                .strokeBorder(Tone.accent.color, lineWidth: 2)
+                .opacity(isDecideFocused ? 1 : 0)
+                .accessibilityHidden(true)
+        }
+        .onKeyPress(.downArrow) {
+            open(.job(KeyboardDecision.move(from: openDecisionID(items), by: 1, in: items.map(\.id)) ?? items[0].id))
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            open(.job(KeyboardDecision.move(from: openDecisionID(items), by: -1, in: items.map(\.id)) ?? items[0].id))
+            return .handled
+        }
+        .onKeyPress(.return) {
+            open(.job(openDecisionID(items) ?? items[0].id))
+            return .handled
+        }
+        .onKeyPress(characters: .letters, phases: .down) { press in
+            guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
+                  let decision = press.characters.first.flatMap(KeyboardDecision.getDecision(for:)),
+                  let item = items.first(where: { $0.id == openDecisionID(items) })
+            else { return .ignored }
+            switch decision {
+            case .skip:
+                skipping = item
+            case .later where item.decision != nil:
+                break
+            case .pursue, .later:
+                Task {
+                    if let failure = await decide(item, decision, client: client) {
+                        model.actionError = failure
+                    }
+                }
+            }
+            return .handled
+        }
+        .accessibilityHint("Up and down arrows move through the jobs; P pursues, L leaves for later and S skips the one open.")
+    }
+
+    /// The job to decide open in the inspector, if one is.
+    private func openDecisionID(_ items: [DecisionQueueItem]) -> UUID? {
+        items.first { isOpen(.job($0.id)) }?.id
+    }
+
+    /// Records the decision; when the job was open, the next one in the
+    /// queue opens in its place.
+    private func decide(_ item: DecisionQueueItem, _ decision: JobDecisionKind, reason: String = "", client: HubClient) async -> HubFailure? {
+        let nextID = KeyboardDecision.getNextID(after: item.id, in: model.queue.map(\.id))
+        let wasOpen = isOpen(.job(item.id))
+        if let failure = await model.decide(item, decision, reason: reason, through: decisions, with: client) {
+            return failure
+        }
+        if wasOpen, let nextID { open(.job(nextID)) }
+        return nil
     }
 
     private func followUpCard(_ followUps: [DueFollowUp]) -> some View {

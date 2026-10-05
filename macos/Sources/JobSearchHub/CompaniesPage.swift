@@ -78,6 +78,13 @@ struct CompaniesPage: View {
                         .help("Add a company (⌘N), or pick one from suggestions")
                     }
                     .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Company…") { isAddingCompany = true })
+                    .onPageRequest(.companies) { request in
+                        switch request {
+                        case .addCompany: isAddingCompany = true
+                        case .addCompanyFromSuggestions: isShowingSuggestions = true
+                        default: break
+                        }
+                    }
             }
         }
         .navigationTitle("Companies")
