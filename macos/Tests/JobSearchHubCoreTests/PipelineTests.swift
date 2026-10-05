@@ -225,6 +225,28 @@ private func makeTallyCalendar() -> Calendar {
     #expect(board.getContactTally(now: tallyNow).text == "heard back on 0 of 1 sent")
 }
 
+@Test func theUnansweredCardsPastFollowUpAreTheOnesTheTallyCounts() {
+    let saved = PipelinePhase(id: UUID(), name: "Saved", position: 1, isClosed: false, followUpDays: 7)
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 2, isClosed: false, followUpDays: 7)
+    let inContact = PipelinePhase(id: UUID(), name: "In contact", position: 3, isClosed: false, followUpDays: 7)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 4, isClosed: true)
+    let overdue = tallyNow.addingTimeInterval(-2 * 86_400)
+    let unanswered = makeTallyCard(in: applied, followUpDueAt: overdue)
+    let board = PipelineBoard(phases: [saved, applied, inContact, closed], cards: [
+        unanswered,
+        makeTallyCard(in: saved, followUpDueAt: overdue),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied, contactedAt: tallyNow.addingTimeInterval(-86_400), followUpDueAt: overdue),
+        makeTallyCard(in: inContact, followUpDueAt: overdue),
+        makeTallyCard(in: closed, followUpDueAt: overdue),
+    ])
+
+    let cardIDs = board.getUnansweredPastFollowUp(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(cardIDs == [unanswered.id])
+    #expect(board.getContactTally(now: tallyNow, calendar: makeTallyCalendar()).unansweredPastFollowUp == cardIDs.count)
+}
+
 @Test func withoutAnAppliedPhaseEveryOpenPhaseAfterTheFirstCountsAsSent() {
     let wishlist = PipelinePhase(id: UUID(), name: "Wishlist", position: 1, isClosed: false)
     let sent = PipelinePhase(id: UUID(), name: "Sent", position: 2, isClosed: false)
