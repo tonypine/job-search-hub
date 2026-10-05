@@ -88,6 +88,49 @@ The prompts live only in the database; none are in this repo. A fresh database t
 
 `android/` holds the phone companion: updates and good-fit jobs, paired with the hub through a QR code from the Mac app's Settings › Phones. See `android/README.md`.
 
+## Releases
+
+Each merge to `main` that changes `android/` becomes a GitHub Release once `ci` passes: `android-v0.1.<N>`, where `N` is the commit count on `main`, with the signed `job-search-hub-0.1.<N>.apk` and a changelog of the app's commits since the previous release. A merge that touches only the server or the Mac app releases nothing. `.github/workflows/release.yml` does it, and `docs/decisions/0001-android-release-distribution.md` says why it works this way.
+
+To install a release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+
+The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
+
+### One-time setup
+
+Until the signing secrets exist, the release job fails at its first step, naming the missing ones, and publishes nothing.
+
+1. **Make the release key** on the Mac, outside the repository:
+
+   ```bash
+   keytool -genkeypair -v -storetype PKCS12 -keystore ~/job-search-hub-release.keystore \
+     -alias job-search-hub -keyalg RSA -keysize 4096 -validity 10000 \
+     -dname "CN=Job Search Hub"
+   ```
+
+   It asks for a password; with PKCS12 the key's password is the same one. **Store the keystore file and its password in the password manager before anything else.** Every release has to be signed with this key: without it, a new APK can't install over the old one, and the phone has to uninstall the app and pair again.
+
+2. **Add the repository secrets** in Settings › Secrets and variables › Actions › New repository secret:
+
+   | Secret | Value |
+   | --- | --- |
+   | `RELEASE_KEYSTORE_BASE64` | `base64 -i ~/job-search-hub-release.keystore \| pbcopy` |
+   | `RELEASE_KEYSTORE_PASSWORD` | the keystore's password |
+   | `RELEASE_KEY_ALIAS` | `job-search-hub` |
+   | `RELEASE_KEY_PASSWORD` | the same password |
+   | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
+   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each release is posted as a Job Search Hub project update. |
+
+   Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
+
+3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next app change.
+
+4. **Swap the debug build for the release**, once: a debug build is signed with another key, so the release can't install over it. Uninstall the app, install the release and pair again. Later releases install over it.
+
+A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
+
+To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
+
 ## Where it runs
 
 The hub stays on the Mac rather than moving to an always-on PC (decided October 2026). The reasons:
