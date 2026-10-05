@@ -63,3 +63,9 @@ data class DecisionQueueItem(
 
 @Serializable
 data class DecisionQueueResponse(val items: List<DecisionQueueItem>, val total: Int)
+
+/** What Decide takes from the decision queue. */
+object Decide {
+    /** The line under Decide's title: "7 to decide". */
+    fun summary(toDecide: Int): String = if (toDecide > 0) "$toDecide to decide" else "Nothing to decide"
+}

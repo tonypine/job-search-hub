@@ -20,9 +20,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MediumTopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -63,13 +65,14 @@ fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, on
     var attempt by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(id, attempt) {
         error = null
         viewModel.loadCompanyBrief(id).onSuccess { brief = it }.onFailure { error = it.message ?: it.toString() }
     }
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {},
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        MediumTopAppBar(
+            title = { brief?.let { EntityTitle(it.dossier.company.name) } }, scrollBehavior = scrollBehavior,
             navigationIcon = { onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") } } },
             actions = {
                 brief?.dossier?.company?.careersUrl?.let { url ->
@@ -101,7 +104,7 @@ fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, on
 private fun BriefView(brief: CompanyBrief, message: String?, onOpenJob: (String) -> Unit, onFindJobs: () -> Unit) {
     val company = brief.dossier.company
     Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.l)) {
-        EntityHeader(company.name, facts = listOfNotNull(company.domain, company.headquartersCountry).joinToString(" · "))
+        EntityHeader(title = null, facts = listOfNotNull(company.domain, company.headquartersCountry).joinToString(" · "))
         Column(Modifier.padding(horizontal = Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.l)) {
             company.summary?.takeIf { it.isNotBlank() }?.let {
                 HubSection("Summary") { HubCard { Text(it, style = MaterialTheme.typography.bodyMedium) } }

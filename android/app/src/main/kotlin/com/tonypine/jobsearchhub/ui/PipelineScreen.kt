@@ -33,7 +33,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -58,11 +59,9 @@ import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.core.PipelinePhase
 import com.tonypine.jobsearchhub.core.Tone
-import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubErrorView
 import com.tonypine.jobsearchhub.ui.design.HubTheme
 import com.tonypine.jobsearchhub.ui.design.Monogram
-import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 import com.tonypine.jobsearchhub.ui.design.segmentShape
@@ -83,7 +82,7 @@ fun PipelineScreen(
     onOpenCard: (PipelineCard) -> Unit,
     onFollowedUp: (PipelineCard, String) -> Unit,
     onMove: (PipelineCard, PipelinePhase, String) -> Unit,
-    menu: List<HubAction>,
+    onOpenSettings: () -> Unit,
     selected: Detail? = null,
 ) {
     val board = state.pipeline
@@ -95,6 +94,7 @@ fun PipelineScreen(
     val phase = phases.firstOrNull { it.id == chosenPhaseId } ?: board?.let(::firstBusyPhase)
     val cards = if (board != null && phase != null) board.cardsIn(phase.id) else emptyList()
     val cardsState = rememberLazyListState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     // A follow-up reminder opens its card: its phase's tab chosen, the card in view and marked.
     LaunchedEffect(focus, board) {
@@ -122,8 +122,9 @@ fun PipelineScreen(
         }
     }
 
-    Column {
-        TopAppBar(title = { Text("Pipeline") }, actions = { OverflowMenu(menu) })
+    Column(Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        PageTopAppBar("Pipeline", state, scrollBehavior, onOpenSettings)
+        board?.let { PageSummary(it.summary(Instant.now(), ZoneId.systemDefault()), Modifier.padding(bottom = Spacing.s)) }
         // The selected tab scrolls itself into view, so a reminder's phase shows even far along the row.
         if (phases.isNotEmpty()) {
             PrimaryScrollableTabRow(

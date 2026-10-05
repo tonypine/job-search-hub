@@ -17,7 +17,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -72,7 +71,7 @@ fun TodayScreen(
     onSeeUpdates: () -> Unit,
     onOpenCompany: (String) -> Unit,
     onAskTheMac: (String) -> Unit,
-    menu: List<HubAction>,
+    onOpenSettings: () -> Unit,
     selected: Detail? = null,
 ) {
     var isAsking by rememberSaveable { mutableStateOf(false) }
@@ -96,19 +95,12 @@ fun TodayScreen(
     }
 
     Column(Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)) {
-        LargeTopAppBar(
-            title = { Text("Today") }, scrollBehavior = scrollBehavior,
-            actions = { OverflowMenu(listOf(HubAction("Ask the Mac…", Icons.Rounded.Laptop) { isAsking = true }) + menu) },
-        )
+        PageTopAppBar("Today", state, scrollBehavior, onOpenSettings) {
+            OverflowMenu(listOf(HubAction("Ask the Mac…", Icons.Rounded.Laptop) { isAsking = true }))
+        }
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                item {
-                    Text(
-                        Today.summary(state.decisionQueue.size, followUps.map { it.second }, state.updates),
-                        style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = Spacing.l),
-                    )
-                }
+                item { PageSummary(Today.summary(state.decisionQueue.size, followUps.map { it.second }, state.updates)) }
                 state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
                 if (state.decisionQueue.isNotEmpty()) item {
                     TodayGroup("Decide · ${state.decisionQueue.size}", onSeeAll = onSeeDecide, rows = state.decisionQueue.take(SHOWN).map { item ->
