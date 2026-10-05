@@ -4,8 +4,9 @@ import SwiftUI
 /// What the window's details inspector shows, and its history. Pages put
 /// their selection here, and links inside the inspector open there, so they
 /// never switch the page under it. The inspector sits on the split view
-/// rather than on a page: the window's toolbar then gives it a section of its
-/// own, and a page's toolbar stays over the page.
+/// rather than on a page, so one inspector and its history serve every page;
+/// its own controls are on a bar at its top (see InspectorNavigationBar), not
+/// in the window's toolbar.
 @MainActor
 @Observable
 final class DetailsInspector {
