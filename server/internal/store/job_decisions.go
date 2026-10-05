@@ -72,6 +72,38 @@ func (s *Store) DecideJob(ctx context.Context, actor Actor, jobID uuid.UUID, dec
 	return recorded, err
 }
 
+// ClearJobDecision takes back the owner's decision on a job, which leaves it
+// undecided: a skipped job is restored, and a job left for later goes back
+// among the undecided. A pursued job keeps its card on the pipeline. Clearing
+// an undecided job changes nothing.
+func (s *Store) ClearJobDecision(ctx context.Context, actor Actor, jobID uuid.UUID) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var dismissed bool
+		err := tx.QueryRow(ctx, `SELECT dismissed_at IS NOT NULL FROM jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&dismissed)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrJobNotFound
+		}
+		if err != nil {
+			return err
+		}
+		cleared, err := scanJobDecision(tx.QueryRow(ctx, `DELETE FROM job_decisions WHERE job_id = $1 RETURNING `+jobDecisionColumns, jobID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			if !dismissed {
+				return nil
+			}
+		} else if err != nil {
+			return err
+		}
+		if dismissed {
+			if _, err := restoreJobsInTransaction(ctx, tx, actor, []uuid.UUID{jobID}); err != nil {
+				return err
+			}
+		}
+		return insertChange(ctx, tx, actor, change{entityType: "job", entityID: jobID, operation: "undecide",
+			before: map[string]string{"decision": cleared.Decision, "reason": cleared.Reason}})
+	})
+}
+
 // GetJobDecision returns the job's latest decision; nil when undecided.
 func (s *Store) GetJobDecision(ctx context.Context, jobID uuid.UUID) (*JobDecision, error) {
 	decision, err := scanJobDecision(s.pool.QueryRow(ctx, `SELECT `+jobDecisionColumns+` FROM job_decisions WHERE job_id = $1`, jobID))
