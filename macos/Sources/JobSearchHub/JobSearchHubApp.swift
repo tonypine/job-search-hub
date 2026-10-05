@@ -78,6 +78,9 @@ struct JobSearchHubApp: App {
                 }
         }
         .defaultSize(width: 1400, height: 860)
+        // The window can't be made smaller than the content's minimum, where
+        // every page lays out.
+        .windowResizability(.contentMinSize)
         .commands {
             HubCommands(events: events)
         }
