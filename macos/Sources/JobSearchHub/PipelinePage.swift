@@ -71,9 +71,11 @@ final class PipelineModel {
         } catch {
             loadError = HubFailure("Couldn't load the pipeline", error)
         }
-        if !showsSkipped && !board.getUnansweredPastFollowUp(now: .now).isEmpty,
-           let listed = try? await client.get("v1/people", as: PeopleResponse.self).people {
-            people = listed
+        guard !showsSkipped && !board.getUnansweredPastFollowUp(now: .now).isEmpty else { return }
+        do {
+            people = try await client.get("v1/people", as: PeopleResponse.self).people
+        } catch {
+            actionError = HubFailure("Couldn't read who to write to", error)
         }
     }
 
@@ -96,7 +98,6 @@ final class PipelineModel {
     func makeDraftRequest(to person: RelatedPerson, about card: PipelineCard, with client: HubClient) async -> String? {
         do {
             let prompt = try await client.get("v1/agent-prompts/outreach_draft", as: AgentPrompt.self).body
-            draftedTo[card.id] = person.name
             return SecondRoute.makeDraftRequest(prompt: prompt, to: person, about: card)
         } catch {
             actionError = HubFailure("Couldn't read the outreach prompt", error)
@@ -104,11 +105,13 @@ final class PipelineModel {
         }
     }
 
-    /// Asks the card's session for the draft: typed into the running one, or
-    /// the first message of its latest resumed, or of a new one. The page
-    /// sends it rather than the inspector, so the Session tab only shows the
-    /// session and nothing it lays out changes with the request.
-    func send(_ request: String, to subject: ClaudeSessionSubject, with client: HubClient) async {
+    /// Asks the card's session for the draft to the person: typed into the
+    /// running one, or the first message of its latest resumed, or of a new
+    /// one. The page sends it rather than the inspector, so the Session tab
+    /// only shows the session and nothing it lays out changes with the
+    /// request. Only a draft the session got names the person in the card's
+    /// next follow-up.
+    func send(_ request: String, to subject: ClaudeSessionSubject, writingTo person: RelatedPerson, about cardID: UUID, with client: HubClient) async {
         let session = ClaudeSessionPaneModel()
         await session.load(subject, with: client)
         if session.failure == nil {
@@ -116,6 +119,8 @@ final class PipelineModel {
         }
         if let failure = session.failure {
             actionError = failure
+        } else {
+            draftedTo[cardID] = person.name
         }
     }
 
@@ -333,7 +338,7 @@ struct PipelinePage: View {
         Task {
             guard let request = await model.makeDraftRequest(to: person, about: card, with: client) else { return }
             // Sent before the tab shows, so the pane finds the session running.
-            await model.send(request, to: session, with: client)
+            await model.send(request, to: session, writingTo: person, about: card.id, with: client)
             selectedCardID = card.id
             details.show(subject, tab: .session, from: .pipeline)
         }
