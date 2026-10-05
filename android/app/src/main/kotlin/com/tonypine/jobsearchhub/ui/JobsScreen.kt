@@ -14,17 +14,17 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import com.tonypine.jobsearchhub.HubState
 import com.tonypine.jobsearchhub.core.JobListItem
+import com.tonypine.jobsearchhub.core.JobsOrder
 import com.tonypine.jobsearchhub.core.Screen
-import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubErrorView
-import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
 
@@ -35,23 +35,18 @@ fun JobsScreen(
     onRefresh: () -> Unit,
     onIncludeUnclear: (Boolean) -> Unit,
     onOpenJob: (String) -> Unit,
-    menu: List<HubAction>,
+    onOpenSettings: () -> Unit,
     selected: Detail? = null,
 ) {
-    Column {
-        TopAppBar(title = { Text("Jobs") }, actions = {
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    Column(Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        PageTopAppBar("Jobs", state, scrollBehavior, onOpenSettings) {
             FilterChip(selected = state.includesUnclear, onClick = { onIncludeUnclear(!state.includesUnclear) }, label = { Text("Unclear too") })
-            OverflowMenu(menu)
-        })
+        }
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize()) {
+                item { PageSummary(JobsOrder.summary(state.openJobCount, state.shownJobs.size), Modifier.padding(bottom = Spacing.s)) }
                 state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
-                item {
-                    Text(
-                        "${state.shownJobs.size} of ${state.openJobCount} open jobs",
-                        style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = Spacing.l, vertical = Spacing.s),
-                    )
-                }
                 items(state.shownJobs, key = { it.job.id }) { item ->
                     JobRow(item, isSelected = Detail.job(item.job.id).isSameItem(selected)) { onOpenJob(item.job.id) }
                     HorizontalDivider()

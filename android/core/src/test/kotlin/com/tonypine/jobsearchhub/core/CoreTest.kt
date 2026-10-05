@@ -49,6 +49,24 @@ class CoreTest {
         assertEquals(listOf("new-good", "old-good"), JobsOrder.pick(items, includeUnclear = false).map { it.job.id })
         assertEquals(listOf("new-good", "old-good", "unclear"), JobsOrder.pick(items, includeUnclear = true).map { it.job.id })
     }
+
+    @Test
+    fun theHubAvatarNamesTheHostOrElseTheHub() {
+        assertEquals("mac", Pairing("https://mac.tailnet.ts.net", "t").hubName)
+        assertEquals("localhost", Pairing("http://localhost:8080", "t").hubName)
+        assertEquals("Hub", Pairing("http://10.0.2.2:8080", "t").hubName)
+        assertEquals("Hub", Pairing("http://[::1]:8080", "t").hubName)
+        assertEquals("Hub", Pairing("not a url", "t").hubName)
+    }
+
+    @Test
+    fun theSummariesUnderDecideAndJobsCountTheirLists() {
+        assertEquals("7 to decide", Decide.summary(7))
+        assertEquals("Nothing to decide", Decide.summary(0))
+        assertEquals("84 open", JobsOrder.summary(84, 84))
+        assertEquals("84 open · 12 shown", JobsOrder.summary(84, 12))
+        assertEquals("0 open", JobsOrder.summary(0, 0))
+    }
 }
 
 class JobBriefTest {

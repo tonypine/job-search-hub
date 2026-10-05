@@ -10,6 +10,27 @@ if (file("google-services.json").exists()) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
 }
 
+// Releases are <versionMajorMinor>.<versionCode>, and the release workflow passes
+// -PversionCode (the commit count on main) and -PversionName. Raise this by hand for
+// a new major or minor version.
+val versionMajorMinor = "0.1"
+
+// The release key comes from the environment, all four values or none. With none the
+// release APK is unsigned, which the release workflow refuses to publish.
+val releaseSigning = listOf(
+    "RELEASE_KEYSTORE_PATH",
+    "RELEASE_KEYSTORE_PASSWORD",
+    "RELEASE_KEY_ALIAS",
+    "RELEASE_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull.orEmpty() }
+val missingReleaseSigning = releaseSigning.filterValues { it.isEmpty() }.keys
+if (missingReleaseSigning.isNotEmpty() && missingReleaseSigning.size < releaseSigning.size) {
+    throw GradleException(
+        "Release signing needs all of ${releaseSigning.keys.joinToString()}; " +
+            "missing ${missingReleaseSigning.joinToString()}",
+    )
+}
+
 android {
     namespace = "com.tonypine.jobsearchhub"
     compileSdk = 36
@@ -18,8 +39,25 @@ android {
         applicationId = "com.tonypine.jobsearchhub"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = providers.gradleProperty("versionCode").map(String::toInt).getOrElse(1)
+        versionName = providers.gradleProperty("versionName").getOrElse("$versionMajorMinor.0")
+    }
+
+    signingConfigs {
+        if (missingReleaseSigning.isEmpty()) {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("RELEASE_KEYSTORE_PATH"))
+                storePassword = releaseSigning.getValue("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigning.getValue("RELEASE_KEY_ALIAS")
+                keyPassword = releaseSigning.getValue("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
 
     buildFeatures {

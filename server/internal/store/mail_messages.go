@@ -262,6 +262,16 @@ func (s *Store) ListMailAwaitingAction(ctx context.Context, limit int) ([]MailMe
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (MailMessage, error) { return scanMailMessage(row) })
 }
 
+// StartsItsThread reports whether the message is the first the hub has of
+// its thread, as one the owner wrote rather than answered is.
+func (s *Store) StartsItsThread(ctx context.Context, message MailMessage) (bool, error) {
+	var answers bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM mail_messages WHERE thread_id = $1 AND id <> $2 AND sent_at <= $3)`,
+		message.ThreadID, message.ID, message.SentAt).Scan(&answers)
+	return !answers, err
+}
+
 // MarkMailActed records what the hub did about a message, so it acts once.
 func (s *Store) MarkMailActed(ctx context.Context, messageID uuid.UUID, action string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE mail_messages SET acted_at = now(), action = $2 WHERE id = $1`, messageID, action)

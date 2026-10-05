@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +26,14 @@ const (
 	// newsAge is how old mail can be and still make an update when it
 	// changed nothing.
 	newsAge = 7 * 24 * time.Hour
+	// outreachKind is the kind of update a cold message the hub counted
+	// records.
+	outreachKind = "outreach"
 )
+
+// replyPrefixes start the subject of mail answering a thread, in the
+// languages the owner's mail comes in.
+var replyPrefixes = []string{"re:", "res:", "aw:", "sv:"}
 
 // Phases the hub moves cards to, by name, since the owner can rename them.
 const (
@@ -162,16 +170,57 @@ func (pass *messagePass) act(ctx context.Context) (string, error) {
 }
 
 // actOnSentMail counts mail the owner sent to a company with an open card as
-// a follow-up.
+// a follow-up, and a thread the owner starts with someone at a company
+// without one as outreach.
 func (pass *messagePass) actOnSentMail(ctx context.Context) (string, error) {
 	application, found, err := pass.findApplication(ctx)
-	if err != nil || !found || pass.isClosed(application) {
-		return "nothing: no open card", err
+	if err != nil {
+		return "", err
+	}
+	if !found || pass.isClosed(application) {
+		return pass.recordOutreach(ctx)
 	}
 	if _, err := pass.handler.hub.RecordFollowUpAsOf(ctx, mailWatcher, application.ID, "Sent: "+pass.message.Subject, pass.message.SentAt, pass.sourceURL); err != nil {
 		return "", err
 	}
 	return "recorded a follow-up", nil
+}
+
+// recordOutreach counts mail the owner wrote to someone at the company, as
+// their address or the company's domain shows, as a cold message: the
+// company's outreach card goes to Applied as of the send time, so its
+// follow-up falls due, and an update says so. Mail answering a thread is
+// not outreach, even when the hub never saw the thread's start.
+func (pass *messagePass) recordOutreach(ctx context.Context) (string, error) {
+	message := pass.message
+	matchedByRecipient := message.MatchedBy == store.MatchedByPerson || message.MatchedBy == store.MatchedByDomain
+	applied, known := pass.findPhase(appliedPhase)
+	if !matchedByRecipient || !known || isReply(message.Subject) {
+		return "nothing: no open card", nil
+	}
+	startsItsThread, err := pass.handler.hub.StartsItsThread(ctx, message)
+	if err != nil || !startsItsThread {
+		return "nothing: no open card", err
+	}
+	application, _, err := pass.handler.hub.RecordOutreach(ctx, mailWatcher, *message.CompanyID, "Sent: "+message.Subject, message.SentAt, pass.sourceURL)
+	if err != nil {
+		return "", err
+	}
+	company, err := pass.handler.hub.GetCompany(ctx, *message.CompanyID)
+	if err != nil {
+		return "", err
+	}
+	outcome := "The hub recorded the outreach and put the card in " + applied.Name + "."
+	if applied.FollowUpDays != nil {
+		outcome += " Follow up by " + message.SentAt.AddDate(0, 0, *applied.FollowUpDays).Format("Jan 2") + "."
+	}
+	if _, err := pass.handler.updates.Record(ctx, store.NewUpdate{
+		Kind: outreachKind, Title: "You reached out to " + company.Name, Body: message.Subject + "\n" + outcome,
+		JobID: application.JobID, CompanyID: message.CompanyID, SourceURL: pass.sourceURL,
+	}); err != nil {
+		return "", err
+	}
+	return "recorded outreach", nil
 }
 
 // confirmApplication puts the card in Applied at the mail's date: a card
@@ -201,7 +250,7 @@ func (pass *messagePass) moveForward(ctx context.Context, application store.Appl
 		return nil
 	}
 	if !found {
-		added, _, err := pass.handler.hub.AddApplication(ctx, mailWatcher, store.ApplicationInput{CompanyID: pass.message.CompanyID})
+		added, _, err := pass.handler.hub.AddApplication(ctx, mailWatcher, store.ApplicationInput{CompanyID: pass.message.CompanyID, SourceURL: pass.sourceURL})
 		if err != nil {
 			return err
 		}
@@ -399,6 +448,12 @@ func getCompanyNameFromDomain(domain string) string {
 	}
 	name := labels[index]
 	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// isReply reports whether a subject answers a thread: "Re: Engineer".
+func isReply(subject string) bool {
+	subject = strings.ToLower(strings.TrimSpace(subject))
+	return slices.ContainsFunc(replyPrefixes, func(prefix string) bool { return strings.HasPrefix(subject, prefix) })
 }
 
 func firstNonEmpty(values ...string) string {
