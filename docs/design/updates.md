@@ -169,7 +169,8 @@ moment:
 │   ✎ Profile has unsaved edits                                        │
 │   ○ 2 Claude sessions idle: they reopen where they left off          │
 │                                                                      │
-│ This version changes the database. A copy is saved first.            │
+│ This version changes the database. A copy is saved first, while the  │
+│ server is stopped, which adds a few seconds.                         │
 │                                                                      │
 │        [Cancel]   [Install anyway]   [Install when these finish]     │
 └──────────────────────────────────────────────────────────────────────┘
@@ -215,8 +216,8 @@ the Mac app always come from the same commit. The Android app has its own channe
 
 | Order | Part | How it's swapped | Downtime |
 |---|---|---|---|
-| 1 | `hub-server` and its migrations | `current` points at the new version's folder, then launchd restarts the agent | ~10 s, longer for a slow migration |
-| 1 | `hub-cvprint` | Same folder as the server, so it switches at the same moment. The server runs it per CV, so nothing holds it open | none of its own |
+| 1 | `hub-server` and its migrations | launchd stops the agent, `current` points at the new version's folder, then launchd starts it again | ~10 s, plus the pre-update dump when the version changes the database, and longer for a slow migration |
+| 1 | `hub-cvprint` | Same folder as the server, and the server finds it next to its own executable, so it switches at the same moment. The server runs it per CV, so nothing holds it open | none of its own |
 | 2 | Mac app, with the bundled `hub` | The app quits, the bundle is replaced, and the app reopens | the app's relaunch |
 | — | Android | GitHub Releases, as today. The phone says a new version exists | none on the Mac |
 
@@ -317,7 +318,7 @@ Its files live in `~/Library/Application Support/JobSearchHub/`:
 source/                  the updater's own clone, fetched from origin, main only
 versions/
   0.1.512-1de6185/       one folder per installed version
-    bin/hub-server  bin/hub-cvprint  bin/hub  bin/hub-update
+    bin/run-hub-server  bin/hub-server  bin/hub-cvprint  bin/hub  bin/hub-update
     Job Search Hub.app
   0.1.520-9f3c2aa/
 current  -> versions/0.1.520-9f3c2aa
@@ -331,6 +332,16 @@ backups/                 nightly dumps, as today, plus hub-pre-<version>.dump
 ```
 
 - **The LaunchAgent runs `current/bin/run-hub-server`**, so restarting it picks up the switch.
+  Today `install-native-server.sh` writes that wrapper with absolute paths to `bin/hub-server`, so
+  it would keep running the old binary. In the new layout the build writes it into each version's
+  `bin/`, and it finds the server through its own resolved path (`exec "${0:A:h}/hub-server"`),
+  which is the version's folder, not `current`. The settings stay in `~/.config/job-search-hub/`,
+  shared by every version.
+- **The server finds `hub-cvprint` next to its own executable** (`os.Executable`, symlinks
+  resolved), instead of today's fixed `bin/hub-cvprint` under the support folder. Each server then
+  prints with the `hub-cvprint` of its own version, before and after a switch.
+  `HUB_CV_PRINT_BIN` still overrides it, for development; the one-time move to this layout drops
+  it from the settings file when it points at the old `bin/`.
 - **The app is installed in `~/Applications/Job Search Hub.app`**, copied from the version's
   folder, instead of running from the checkout's `macos/build/`. The Dock and Spotlight keep one
   stable path. Keychain access follows the code signature, not the path, so the move doesn't ask
@@ -388,20 +399,27 @@ sleeps, loses power or the updater crashes, the next run picks up from the recor
 
 1. **Drain.** `POST /v1/drain` to the server. Ask the app, through `state.json`, to drain. Wait
    until both report idle, or until the limit or the owner's *Install anyway*.
-2. **Save the database**, only when `migrate --check` listed migrations: `pg_dump` to
-   `backups/hub-pre-<version>.dump`. If the dump fails, cancel the drain and stop. Nothing has
-   changed yet.
-3. **Switch the server.** Point `previous` at the running version and `current` at the new one,
-   then `launchctl kickstart -k`. The new server applies its migrations at start, as today.
-4. **Check the server.** Within 60 seconds, `GET /v1/version` has to answer with the new version,
+2. **Stop the old server**, with `launchctl bootout`, so launchd's `KeepAlive` doesn't start it
+   again. The owner's writes kept working through the drain, so the server has to be stopped
+   before the dump for the dump to hold every one of them. From here until the new server is up
+   in step 5, the app and the phone show the hub offline, as they do during a restart. If the Mac
+   loses power here, launchd starts the old server again at login, and the next run cancels the
+   install, since nothing has switched.
+3. **Save the database**, only when `migrate --check` listed migrations: `pg_dump` to
+   `backups/hub-pre-<version>.dump`. Nothing can write while it runs. If the dump fails, start the
+   old server again (`launchctl bootstrap`), cancel the drain and stop. Nothing has changed.
+4. **Switch the server.** Point `previous` at the running version and `current` at the new one,
+   then `launchctl bootstrap` the agent. The new server applies its migrations at start, as today,
+   and only listens once they're done.
+5. **Check the server.** Within 60 seconds, `GET /v1/version` has to answer with the new version,
    and `GET /v1/health` with `ok`. Otherwise, roll back (see [Failures](#failures)).
-5. **Switch the app.** Ask the app to quit, and wait for its process to end. Replace
+6. **Switch the app.** Ask the app to quit, and wait for its process to end. Replace
    `~/Applications/Job Search Hub.app` with a rename, keeping the old one until the end, and open
    the new one. If the app wasn't running, replace it without opening it.
-6. **Check the app.** The new app writes `launched` to `app.json` once its window is up and it's
+7. **Check the app.** The new app writes `launched` to `app.json` once its window is up and it's
    connected to the hub. If that doesn't happen within 60 seconds, or the app exits, put the old
    app back and open it (see [Failures](#failures)).
-7. **Done.** Record the install, with the old and new versions and the dump's name, so *Go back*
+8. **Done.** Record the install, with the old and new versions and the dump's name, so *Go back*
    knows what it would cost.
 
 The updater installs a new version of itself like any other part. The next run uses the new one,
@@ -437,13 +455,18 @@ Version, with *Show install log*.
 | The build or verification fails | The prepare stops; `.partial` is removed | "Couldn't prepare 0.1.520", with the log |
 | The drain runs past its limit at night | Draining is cancelled; next night tries again | The version stays ready |
 | The pre-update dump fails | Draining is cancelled; nothing switches | "Couldn't save the database before installing; nothing changed" |
-| The new server doesn't come up, or a migration fails | **Automatic rollback**: stop it, restore the pre-update dump if any migration ran, point `current` back, restart the old server, and check it. The new version is marked bad and isn't offered again; the next newer one is | "0.1.520 couldn't start, so the hub went back to 0.1.512. Nothing was lost." Also an update in the feed and on the phones, on the Hub channel, since this can happen at night |
+| The new server doesn't come up, or a migration fails | **Automatic rollback**: stop it, count what it wrote (below), restore the pre-update dump if any migration ran, point `current` back, restart the old server, and check it. The new version is marked bad and isn't offered again; the next newer one is | "0.1.520 couldn't start, so the hub went back to 0.1.512." Then either "Nothing was lost." or what was, in the words *Go back* uses: "1 card moved and 1 update since 03:31 were lost." Also an update in the feed and on the phones, on the Hub channel, since this can happen at night |
 | The new app doesn't open, or crashes within a minute | The old app is put back and opened. The server stays on the new version, which the old app works with, by the compatibility rule | "Job Search Hub 0.1.520 didn't open, so the previous app is back. The server is on 0.1.520." |
 | The Mac sleeps or loses power mid-install | The next run reads `state.json` and either finishes or rolls back, never leaving half a switch | The install finishes or rolls back, and says which |
 | Rollback itself fails | The updater stops and leaves everything as it is. The app (or the phone, if the server is up) shows the exact state, with the manual commands to finish | "The hub couldn't go back by itself", with the steps |
 
-Restoring the pre-update dump after a failed start loses nothing. The new server never served a
-request, and the old one was drained and stopped before the dump.
+Restoring the pre-update dump after a failed start loses only what the new server wrote. The old
+server was stopped before the dump, so the dump holds everything it wrote. The new server listens
+only once its migrations are done, but from then until its health check fails it can serve
+requests: a session's MCP call, the phone, a background pass. Before restoring, the rollback counts
+the `changes` rows written after the dump, which only the new server can have written, the same
+way *Go back* does. When there are none, and when no migration ran and nothing is restored, the
+notice says "Nothing was lost". Otherwise it names what was.
 
 ### Going back later
 
@@ -565,9 +588,9 @@ marked.
 |---|---|---|
 | TP-585 | **Versions everywhere**: `0.1.<N>` stamped into `hub-server`, `hub`, `hub-cvprint` and the app; `GET /v1/version`; `hub-server --version` and `migrate --check`; clients send `X-Hub-Client`, and the server keeps each phone's version; `hub-server` refuses a database newer than its migrations; *About* and Settings show the version | — |
 | TP-586 | **Server restarts without breaking work in flight**: drain mode (`/v1/drain`), a longer graceful stop, and MCP sessions that survive a restart | — |
-| TP-587 | **Versioned install layout**: `versions/`, `current`, `previous`; the LaunchAgent runs `current`; the app installs to `~/Applications`; the scripts install local builds into it; the one-time move from today's layout | TP-585 |
+| TP-587 | **Versioned install layout**: `versions/`, `current`, `previous`; the LaunchAgent runs `current/bin/run-hub-server`, a wrapper the build writes into each version that runs the `hub-server` beside it; `hub-server` finds `hub-cvprint` next to its own executable, with `HUB_CV_PRINT_BIN` as an override; the app installs to `~/Applications`; the scripts install local builds into it; the one-time move from today's layout, which drops a `HUB_CV_PRINT_BIN` that points at the old `bin/` | TP-585 |
 | TP-588 | **`hub-update check` and `prepare`**: the updater's clone, the `ci` check, the changelog, building and signing with the pinned identity, verification, `state.json`, and the LaunchAgent with the hourly check | TP-585, TP-587 |
-| TP-589 | **`hub-update install` for the server**: drain, pre-update dump, switch, health check, automatic rollback with restore, recovery after a crash, bad versions | TP-586, TP-588 |
+| TP-589 | **`hub-update install` for the server**: drain, stopping the old server before the pre-update dump, switch, health check, automatic rollback with restore and the count of what it lost, recovery after a crash, bad versions | TP-586, TP-588 |
 | TP-590 | **The app's part in an install**: report what's running to `app.json`, quit when asked, reopen the open sessions after relaunch, put remote tasks back in the queue, launch check and rollback to the old app | TP-589 |
 | TP-591 | **Settings › Version and the install sheet**: the sidebar's *New version* label, *Check for New Version…*, the change list, the install sheet with the drain list, progress, the *Now on* banner, and failure notices | TP-590 |
 | TP-592 | **Night installs**: the 03:30 run, the idle rules, the *Install new versions* setting, and the failed-install update on the phones | TP-591 |
