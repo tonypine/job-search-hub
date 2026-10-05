@@ -97,6 +97,15 @@ data class PipelineBoard(val phases: List<PipelinePhase>, val cards: List<Pipeli
         cards.mapNotNull { card -> card.followUpStatus(now, zone)?.takeIf { it.isDue }?.let { card to it } }
             .sortedByDescending { (_, status) -> if (status.due == FollowUpDue.OVERDUE) status.days else 0 }
 
+    /** The line under Pipeline's title: "1 overdue · 2 due this week", this week being today and the six days after. */
+    fun summary(now: Instant, zone: ZoneId): String {
+        val statuses = cards.mapNotNull { it.followUpStatus(now, zone) }
+        val overdue = statuses.count { it.due == FollowUpDue.OVERDUE }
+        val thisWeek = statuses.count { it.due != FollowUpDue.OVERDUE && it.days < 7 }
+        val parts = listOfNotNull("$overdue overdue".takeIf { overdue > 0 }, "$thisWeek due this week".takeIf { thisWeek > 0 })
+        return parts.joinToString(" · ").ifEmpty { "Nothing due this week" }
+    }
+
     /**
      * The card an update about a job or a company is for: the job's card, or
      * else the company's, its card with no job first, as a reminder about a

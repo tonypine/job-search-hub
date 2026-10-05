@@ -14,7 +14,6 @@ import androidx.compose.material.icons.outlined.ViewKanban
 import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ViewKanban
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Badge
@@ -50,7 +49,6 @@ import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.core.PipelinePhase
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.push.UpdateNotifications
-import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.SnackbarClearance
 import kotlinx.coroutines.launch
 
@@ -119,7 +117,7 @@ fun HubNavigation(viewModel: HubViewModel) {
             restoreState = true
         }
     }
-    val menu = listOf(HubAction("Settings", Icons.Rounded.Settings) { navigation.navigate(SETTINGS) { launchSingleTop = true } })
+    val openSettings: () -> Unit = { navigation.navigate(SETTINGS) { launchSingleTop = true } }
     val followedUp: (PipelineCard, String) -> Unit = { card, note ->
         scope.launch {
             viewModel.recordFollowUp(card, note).fold({ say("Followed up on ${card.title}") }, { say(it.message ?: "Couldn't record the follow-up.") })
@@ -205,7 +203,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                                         .fold({ say("Sent to the Mac. The result comes as an update.") }, { say(it.message ?: "Couldn't reach the Mac.") })
                                 }
                             },
-                            menu = menu, selected = todayDetails.root,
+                            onOpenSettings = openSettings, selected = todayDetails.root,
                         )
                     }
                 }
@@ -213,7 +211,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                     ListDetailPage(decideDetails, "Open a job to decide on it here.", detail = { detail, isAlone -> detailPane(decideDetails, detail, isAlone) }) {
                         DecideScreen(
                             state, onRefresh = viewModel::refresh, onOpenJob = { decideDetails.show(Detail.job(it, fromQueue = true)) },
-                            menu = menu, selected = decideDetails.root,
+                            onOpenSettings = openSettings, selected = decideDetails.root,
                         )
                     }
                 }
@@ -223,7 +221,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                         PipelineScreen(
                             state, focus = focus, onFocusShown = viewModel::clearPipelineFocus, onRefresh = viewModel::refresh,
                             onOpenCard = { card -> card.detail()?.let(pipelineDetails::show) }, onFollowedUp = followedUp, onMove = move,
-                            menu = menu, selected = pipelineDetails.root,
+                            onOpenSettings = openSettings, selected = pipelineDetails.root,
                         )
                     }
                 }
@@ -231,7 +229,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                     ListDetailPage(jobsDetails, "Open a job to see it here.", detail = { detail, isAlone -> detailPane(jobsDetails, detail, isAlone) }) {
                         JobsScreen(
                             state, onRefresh = viewModel::refresh, onIncludeUnclear = viewModel::setIncludesUnclear,
-                            onOpenJob = { jobsDetails.show(Detail.job(it)) }, menu = menu, selected = jobsDetails.root,
+                            onOpenJob = { jobsDetails.show(Detail.job(it)) }, onOpenSettings = openSettings, selected = jobsDetails.root,
                         )
                     }
                 }
