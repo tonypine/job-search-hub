@@ -4,8 +4,9 @@ import SwiftUI
 /// What the window's details inspector shows, and its history. Pages put
 /// their selection here, and links inside the inspector open there, so they
 /// never switch the page under it. The inspector sits on the split view
-/// rather than on a page: the window's toolbar then gives it a section of its
-/// own, and a page's toolbar stays over the page.
+/// rather than on a page, so one inspector and its history serve every page;
+/// its own controls are on a bar at its top (see InspectorNavigationBar), not
+/// in the window's toolbar.
 @MainActor
 @Observable
 final class DetailsInspector {
@@ -96,15 +97,17 @@ struct DetailsInspectorContent: View {
     }
 }
 
-/// The inspector's own toolbar items: back and forward through what it
-/// showed (⌘[ and ⌘]), and Hide. Declaring them inside the inspector gives
-/// them their own section of the window's toolbar, so the page's toolbar and
-/// search field stay over the page instead of reaching over the details.
-struct InspectorToolbar: ToolbarContent {
+/// The inspector's own controls, on a bar at its top: back and forward
+/// through what it showed (⌘[ and ⌘]), and Hide. They stay out of the
+/// window's toolbar: items declared inside the inspector get a section of
+/// the toolbar that follows the inspector's divider, and that section could
+/// keep the window's constraint updates from settling until AppKit stopped
+/// the app.
+struct InspectorNavigationBar: View {
     let details: DetailsInspector
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup {
+    var body: some View {
+        HStack(spacing: Space.xs) {
             Button("Back", systemImage: "chevron.backward") { details.goBack() }
                 .keyboardShortcut("[", modifiers: .command)
                 .disabled(!details.history.canGoBack)
@@ -113,11 +116,14 @@ struct InspectorToolbar: ToolbarContent {
                 .keyboardShortcut("]", modifiers: .command)
                 .disabled(!details.history.canGoForward)
                 .help("Forward (⌘])")
-        }
-        ToolbarItem {
+            Spacer(minLength: 0)
             Button("Hide details", systemImage: "sidebar.trailing") { details.hide() }
                 .help("Close the details")
         }
+        .buttonStyle(.borderless)
+        .labelStyle(.iconOnly)
+        .padding(.horizontal, Space.m)
+        .padding(.top, Space.s)
     }
 }
 
@@ -150,6 +156,9 @@ struct EntityInspector<Top: View, Content: View>: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                // Its natural width, rather than the column's, so the control
+                // never resizes as the inspector's width settles.
+                .fixedSize()
             }
             .padding(.horizontal, Space.l)
             .padding(.top, Space.m)
