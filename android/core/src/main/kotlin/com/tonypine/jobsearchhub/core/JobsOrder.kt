@@ -8,4 +8,7 @@ object JobsOrder {
         items
             .filter { it.fit.level == "good" || (includeUnclear && it.fit.level == "unclear") }
             .sortedWith(compareBy<JobListItem> { rank[it.fit.level] ?: 3 }.thenByDescending { it.job.firstSeenAt })
+
+    /** The line under Jobs' title: "84 open", and how many the list shows when it shows fewer. */
+    fun summary(openCount: Int, shown: Int): String = if (shown < openCount) "$openCount open · $shown shown" else "$openCount open"
 }

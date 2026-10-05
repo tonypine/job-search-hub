@@ -4,7 +4,13 @@ import java.net.URI
 import java.net.URLDecoder
 
 /** Where the hub is and the phone's token, from the Mac's pairing QR code. */
-data class Pairing(val hubUrl: String, val token: String)
+data class Pairing(val hubUrl: String, val token: String) {
+    /** The name the hub avatar's monogram stands for: the host's first label, "mac" for mac.tailnet.ts.net, or "Hub" for an address. */
+    val hubName: String get() {
+        val host = runCatching { URI(hubUrl).host }.getOrNull().orEmpty()
+        return if (host.isEmpty() || host.startsWith("[") || host.all { it.isDigit() || it == '.' }) "Hub" else host.substringBefore('.')
+    }
+}
 
 /**
  * The link a pairing QR code carries, `jobsearchhub://pair?url=…&token=…`,

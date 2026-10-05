@@ -65,6 +65,23 @@ class PipelineTest {
     }
 
     @Test
+    fun theSummaryCountsTheOverdueAndThoseDueThisWeek() {
+        val board = PipelineBoard(
+            phases = listOf(PipelinePhase("applied", "Applied")),
+            cards = listOf(
+                card("overdue", due = "2026-10-03T12:00:00Z"),
+                card("today", due = "2026-10-04T20:00:00Z"),
+                card("sixth day", due = "2026-10-10T15:00:00Z"),
+                card("next week", due = "2026-10-11T15:00:00Z"),
+                card("none"),
+            ),
+        )
+        assertEquals("1 overdue · 2 due this week", board.summary(now, zone))
+        assertEquals("1 overdue", board.copy(cards = board.cards.take(1)).summary(now, zone))
+        assertEquals("Nothing due this week", board.copy(cards = board.cards.drop(3)).summary(now, zone))
+    }
+
+    @Test
     fun aPhasesCardsAreNewestInThePhaseFirst() {
         val board = PipelineBoard(
             phases = listOf(PipelinePhase("applied", "Applied"), PipelinePhase("screening", "Screening")),
