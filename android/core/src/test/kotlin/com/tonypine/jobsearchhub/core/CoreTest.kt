@@ -26,6 +26,13 @@ class CoreTest {
     }
 
     @Test
+    fun laterAndSkipSayWhatUndoTakesBack() {
+        assertEquals("Left Senior Engineer for later", decisionNotice("Senior Engineer", "later"))
+        assertEquals("Skipped Senior Engineer", decisionNotice("Senior Engineer", "skip"))
+        assertNull(decisionNotice("Senior Engineer", "pursue"))
+    }
+
+    @Test
     fun aFixRequestCarriesTheJobAndTheNote() {
         val encoded = hubJson.encodeToString(QueueTaskRequest.serializer(), QueueTaskRequest(kind = "fix_job", jobId = "j1", note = "the city is Lisbon"))
         assertEquals("""{"kind":"fix_job","job_id":"j1","note":"the city is Lisbon"}""", encoded)

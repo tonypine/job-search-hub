@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,18 +20,21 @@ import androidx.compose.material.icons.rounded.RemoveCircle
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumTopAppBar
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,6 +59,7 @@ import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.core.Screen
 import com.tonypine.jobsearchhub.core.SetAside
 import com.tonypine.jobsearchhub.core.Tone
+import com.tonypine.jobsearchhub.core.decisionNotice
 import com.tonypine.jobsearchhub.core.screenRows
 import com.tonypine.jobsearchhub.ui.design.ActionBar
 import com.tonypine.jobsearchhub.ui.design.EntityHeader
@@ -81,13 +86,14 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * A job: its header, then Overview (Brief, Screen), People and Posting as tabs,
  * the same split as the Mac's inspector. The decision is docked at the bottom,
- * with Pursue the primary. Open posting is in the app bar, Fix… and Share in
- * the overflow. Beside the list it has no back arrow ([onBack] is null), and
- * back returns to the list all the same.
+ * with Pursue the primary. Later and Skip don't ask first: [onDecided] gets
+ * what the snackbar says, for Undo. Open posting is in the app bar, Fix… and
+ * Share in the overflow. Beside the list it has no back arrow ([onBack] is
+ * null), and back returns to the list all the same.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenCompany: (String) -> Unit, onDecided: (String?) -> Unit) {
+fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenCompany: (String) -> Unit, onDecided: (next: String?, notice: String?) -> Unit) {
     val context = LocalContext.current
     var details by remember { mutableStateOf<JobDetails?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -95,7 +101,6 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
     var error by remember { mutableStateOf<String?>(null) }
     var isDeciding by remember { mutableStateOf(false) }
     var isAskingForSkip by remember { mutableStateOf(false) }
-    var reason by remember { mutableStateOf("") }
     var isAskingForFix by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -109,28 +114,18 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
         isDeciding = true
         error = null
         scope.launch {
-            viewModel.decideJob(id, decision, why).fold({ next -> onDecided(next) }, { error = it.message ?: it.toString() })
+            viewModel.decideJob(id, decision, why).fold(
+                { next -> onDecided(next, decisionNotice(details?.job?.title ?: "the job", decision)) },
+                { error = it.message ?: it.toString() },
+            )
             isDeciding = false
         }
     }
     if (isAskingForSkip) {
-        AlertDialog(
-            onDismissRequest = { isAskingForSkip = false },
-            title = { Text("Skip this job?") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                    Text("It leaves the jobs list and stays skipped when its board lists it again. Restore it from the Mac.")
-                    OutlinedTextField(reason, { reason = it }, label = { Text("Reason (optional)") })
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    isAskingForSkip = false
-                    decide("skip", reason)
-                }) { Text("Skip") }
-            },
-            dismissButton = { TextButton(onClick = { isAskingForSkip = false }) { Text("Cancel") } },
-        )
+        SkipSheet(id, details?.job?.title, onDismiss = { isAskingForSkip = false }) { reason ->
+            isAskingForSkip = false
+            decide("skip", reason)
+        }
     }
     if (isAskingForFix) {
         AlertDialog(
@@ -186,6 +181,27 @@ fun JobScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpen
             }
             loadError != null -> HubErrorView("Couldn't load this job", loadError, onRetry = { attempt++ })
             else -> CircularProgressIndicator(Modifier.padding(Spacing.xl).align(Alignment.CenterHorizontally))
+        }
+    }
+}
+
+/** Skips the job, with an optional reason; the snackbar after it offers Undo, so it doesn't ask first. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkipSheet(id: String, title: String?, onDismiss: () -> Unit, onSkip: (reason: String) -> Unit) {
+    var reason by rememberSaveable(id) { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.xl).padding(bottom = Spacing.xl), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
+            Text(title?.let { "Skip $it" } ?: "Skip", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "It leaves the jobs list and stays skipped when its board lists it again.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(reason, { reason = it }, label = { Text("Reason (optional)") }, modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.s, Alignment.End)) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(onClick = { onSkip(reason) }) { Text("Skip") }
+            }
         }
     }
 }
