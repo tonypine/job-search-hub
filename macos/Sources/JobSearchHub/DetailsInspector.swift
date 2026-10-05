@@ -15,8 +15,6 @@ final class DetailsInspector {
     private(set) var history = InspectorHistory()
     /// A session to resume, or start, once its Session tab shows.
     private(set) var sessionToStart: InspectorSubject?
-    /// What to ask that session once it shows, if anything.
-    private(set) var sessionRequest: String?
 
     /// Shows a page's selection, or hides the inspector when nothing is
     /// selected. Another page than before starts a new history.
@@ -39,17 +37,14 @@ final class DetailsInspector {
     }
 
     /// Opens a subject's Session tab over the page and resumes its latest
-    /// session, or starts one. A request is typed into the running session,
-    /// or sent as the first message of the one resumed or started.
-    func openSession(_ subject: InspectorSubject, from page: Page, request: String? = nil) {
+    /// session, or starts one.
+    func openSession(_ subject: InspectorSubject, from page: Page) {
         show(subject, tab: .session, from: page)
         sessionToStart = subject
-        sessionRequest = request
     }
 
     func sessionStarted() {
         sessionToStart = nil
-        sessionRequest = nil
     }
 
     func goBack() {
@@ -67,7 +62,6 @@ final class DetailsInspector {
     func hide() {
         history.clear()
         sessionToStart = nil
-        sessionRequest = nil
     }
 
     func getEntry(on page: Page) -> InspectorEntry? {
@@ -177,7 +171,7 @@ struct EntityInspector<Top: View, Content: View>: View {
 }
 
 /// A subject's Session tab: its Claude session, resumed or started when it
-/// was opened from a session list, or asked to draft a message.
+/// was opened from a session list.
 struct InspectorSessionTab: View {
     let subject: InspectorSubject
     let client: HubClient
@@ -185,10 +179,8 @@ struct InspectorSessionTab: View {
 
     var body: some View {
         if let session = subject.sessionSubject {
-            let startsOnAppear = details.sessionToStart == subject
             ClaudeSessionPane(
-                subject: session, client: client, startsOnAppear: startsOnAppear,
-                request: startsOnAppear ? details.sessionRequest : nil,
+                subject: session, client: client, startsOnAppear: details.sessionToStart == subject,
                 onStartedOnAppear: { details.sessionStarted() }
             )
         }
