@@ -29,6 +29,7 @@ jobs:
       server: ${{ steps.flags.outputs.server }}
       macos: ${{ steps.flags.outputs.macos }}
       android: ${{ steps.flags.outputs.android }}
+      scripts: ${{ steps.flags.outputs.scripts }}
       ci: ${{ steps.flags.outputs.ci }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,7 +43,7 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          server=false macos=false android=false ci=false all=false
+          server=false macos=false android=false scripts=false ci=false all=false
 
           case "$EVENT" in
             pull_request) base=$PR_BASE ;;
@@ -64,19 +65,21 @@ jobs:
                 server/*|compose.yaml) server=true ;;
                 macos/*) macos=true ;;
                 android/*) android=true ;;
+                scripts/*) scripts=true ;;
                 .github/*) all=true ;;
               esac
             done < "$RUNNER_TEMP/changed"
           fi
 
           if [ "$all" = true ]; then
-            server=true macos=true android=true ci=true
+            server=true macos=true android=true scripts=true ci=true
           fi
 
           {
             echo "server=$server"
             echo "macos=$macos"
             echo "android=$android"
+            echo "scripts=$scripts"
             echo "ci=$ci"
           } | tee -a "$GITHUB_OUTPUT"
 
@@ -279,13 +282,33 @@ jobs:
           mkdir -p ~/.gradle
           echo "org.gradle.java.home=$JAVA_HOME" >> ~/.gradle/gradle.properties
 
+      # assembleRelease builds the unsigned release APK, so a change that
+      # breaks the release build (lintVitalRelease included) fails here rather
+      # than in release.yml after the merge.
       - name: Test, lint and build
-        run: ./gradlew :core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
+        run: ./gradlew :core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
+
+  # The release scripts that release.yml runs after a merge.
+  release-scripts:
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck scripts/release/*.sh
+
+      - name: Test
+        run: scripts/release/test.sh
 
   # The one check branch protection requires. Add every new job to `needs`.
   ci:
     if: always()
-    needs: [changes, server-static, server-test, macos, android]
+    needs: [changes, server-static, server-test, macos, android, release-scripts]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -23,6 +23,8 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Local builds are version `0.1.0` (`versionCode` 1). Signed releases come from CI: each merge to `main` that changes `android/` ships `android-v<versionMajorMinor>.<commit count>` on GitHub Releases, and `versionMajorMinor` in `app/build.gradle.kts` is raised by hand. See the main README's Releases section.
+
 ## Large screens
 
 Under 600 dp the app is a phone app: a navigation bar, and a job or company opens over its page. From 600 dp, on an unfolded Galaxy Z Fold, a tablet, or a wide split screen or pop-up view, a navigation rail replaces the bar, and Today, Decide, Pipeline, Jobs and the updates' history show their list beside the open job or company (`NavigationSuiteScaffold` and `ListDetailPaneScaffold`); a notification's job or company opens beside Today's list. Drag the handle between them to resize the panes. Back closes the open item, and back from a job's company returns to the job at the tab and scroll it was left at. The activity handles size and orientation changes itself, so folding and rotating keep the open job and its scroll position.

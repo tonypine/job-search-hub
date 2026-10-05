@@ -41,6 +41,12 @@ final class ClaudeSessionPaneModel {
             failure = HubFailure("Couldn't read the outreach prompt", error)
             return
         }
+        await send(request, about: subject, with: client, host: host)
+    }
+
+    /// Types a request into the subject's running session, or sends it as
+    /// the first message of its latest session resumed, or of a new one.
+    func send(_ request: String, about subject: ClaudeSessionSubject, with client: HubClient, host: ClaudeSessionHost) async {
         if let running = sessions.first(where: { host.isRunning($0.id) }) {
             host.send(request, to: running.id)
         } else if let latest = sessions.first {
@@ -73,6 +79,10 @@ struct ClaudeSessionPane: View {
     /// Typed into a session the pane starts or resumes, for a session whose
     /// prompt has it speak first, like the profile interview.
     var openingMessage: String?
+    /// Asked of the session as the pane shows, when it starts on appear:
+    /// typed into the running session, or the first message of the one it
+    /// resumes or starts, like a drafted message to someone.
+    var request: String?
     /// Told once the pane has resumed or started the session it was asked to.
     var onStartedOnAppear: (() -> Void)?
     /// The pane fills a session window, rather than a tab of the inspector.
@@ -119,10 +129,12 @@ struct ClaudeSessionPane: View {
             }
         }
         // Asked again to start while showing, it starts.
-        .task(id: PaneStart(subject: subject, startsOnAppear: startsOnAppear)) {
+        .task(id: PaneStart(subject: subject, startsOnAppear: startsOnAppear, request: request)) {
             await model.load(subject, with: client)
             if startsOnAppear {
-                if !model.sessions.contains(where: { host.isRunning($0.id) }) {
+                if let request {
+                    await model.send(request, about: subject, with: client, host: host)
+                } else if !model.sessions.contains(where: { host.isRunning($0.id) }) {
                     if let latest = model.sessions.first {
                         await model.resume(latest, with: client, host: host, firstMessage: openingMessage)
                     } else {
@@ -174,6 +186,7 @@ struct ClaudeSessionPane: View {
 private struct PaneStart: Hashable {
     let subject: ClaudeSessionSubject
     let startsOnAppear: Bool
+    let request: String?
 }
 
 extension ClaudeSessionPane {

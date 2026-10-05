@@ -26,6 +26,13 @@ class CoreTest {
     }
 
     @Test
+    fun laterAndSkipSayWhatUndoTakesBack() {
+        assertEquals("Left Senior Engineer for later", decisionNotice("Senior Engineer", "later"))
+        assertEquals("Skipped Senior Engineer", decisionNotice("Senior Engineer", "skip"))
+        assertNull(decisionNotice("Senior Engineer", "pursue"))
+    }
+
+    @Test
     fun aFixRequestCarriesTheJobAndTheNote() {
         val encoded = hubJson.encodeToString(QueueTaskRequest.serializer(), QueueTaskRequest(kind = "fix_job", jobId = "j1", note = "the city is Lisbon"))
         assertEquals("""{"kind":"fix_job","job_id":"j1","note":"the city is Lisbon"}""", encoded)
@@ -41,6 +48,24 @@ class CoreTest {
             item("new-good", "good", "2026-09-28"), item("poor", "poor", "2026-09-29"))
         assertEquals(listOf("new-good", "old-good"), JobsOrder.pick(items, includeUnclear = false).map { it.job.id })
         assertEquals(listOf("new-good", "old-good", "unclear"), JobsOrder.pick(items, includeUnclear = true).map { it.job.id })
+    }
+
+    @Test
+    fun theHubAvatarNamesTheHostOrElseTheHub() {
+        assertEquals("mac", Pairing("https://mac.tailnet.ts.net", "t").hubName)
+        assertEquals("localhost", Pairing("http://localhost:8080", "t").hubName)
+        assertEquals("Hub", Pairing("http://10.0.2.2:8080", "t").hubName)
+        assertEquals("Hub", Pairing("http://[::1]:8080", "t").hubName)
+        assertEquals("Hub", Pairing("not a url", "t").hubName)
+    }
+
+    @Test
+    fun theSummariesUnderDecideAndJobsCountTheirLists() {
+        assertEquals("7 to decide", Decide.summary(7))
+        assertEquals("Nothing to decide", Decide.summary(0))
+        assertEquals("84 open", JobsOrder.summary(84, 84))
+        assertEquals("84 open · 12 shown", JobsOrder.summary(84, 12))
+        assertEquals("0 open", JobsOrder.summary(0, 0))
     }
 }
 
