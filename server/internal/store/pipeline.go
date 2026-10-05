@@ -86,6 +86,9 @@ type ApplicationInput struct {
 	JobID     *uuid.UUID
 	CompanyID *uuid.UUID
 	Notes     string
+	// SourceURL is what put the card on the board, such as a mail, for the
+	// change log.
+	SourceURL string
 }
 
 // AddApplication puts a job or company on the board in its first phase. A job
@@ -138,7 +141,8 @@ func addApplicationInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, in
 	if err != nil {
 		return Application{}, false, err
 	}
-	err = insertChange(ctx, tx, actor, change{entityType: "application", entityID: application.ID, operation: "create", after: application})
+	err = insertChange(ctx, tx, actor, change{entityType: "application", entityID: application.ID, operation: "create", after: application,
+		sourceURL: input.SourceURL})
 	return application, true, err
 }
 
@@ -460,7 +464,8 @@ const outreachPhase = "applied"
 // moves to Applied as of sentAt, and is added when the company has none, so
 // its follow-up falls due like an application's. A card already in Applied
 // or past it counts the message as a follow-up. created reports a new card.
-func (s *Store) RecordOutreach(ctx context.Context, actor Actor, companyID uuid.UUID, note string, sentAt time.Time) (Application, bool, error) {
+// sourceURL is where the message was sent, such as a mail, for the change log.
+func (s *Store) RecordOutreach(ctx context.Context, actor Actor, companyID uuid.UUID, note string, sentAt time.Time, sourceURL string) (Application, bool, error) {
 	var application Application
 	created := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -478,7 +483,7 @@ func (s *Store) RecordOutreach(ctx context.Context, actor Actor, companyID uuid.
 			ORDER BY updated_at DESC LIMIT 1
 			FOR UPDATE`, companyID))
 		if errors.Is(err, ErrApplicationNotFound) {
-			application, created, err = addApplicationInTransaction(ctx, tx, actor, ApplicationInput{CompanyID: &companyID})
+			application, created, err = addApplicationInTransaction(ctx, tx, actor, ApplicationInput{CompanyID: &companyID, SourceURL: sourceURL})
 		}
 		if err != nil {
 			return err
@@ -488,14 +493,14 @@ func (s *Store) RecordOutreach(ctx context.Context, actor Actor, companyID uuid.
 			return err
 		}
 		if position >= applied.Position {
-			application, err = recordFollowUpInTransaction(ctx, tx, actor, application.ID, note, sentAt, "")
+			application, err = recordFollowUpInTransaction(ctx, tx, actor, application.ID, note, sentAt, sourceURL)
 			return err
 		}
-		if application, err = moveApplicationInTransaction(ctx, tx, actor, application.ID, applied.ID, "", sentAt, ""); err != nil {
+		if application, err = moveApplicationInTransaction(ctx, tx, actor, application.ID, applied.ID, "", sentAt, sourceURL); err != nil {
 			return err
 		}
 		return insertChange(ctx, tx, actor, change{
-			entityType: "application", entityID: application.ID, operation: "outreach",
+			entityType: "application", entityID: application.ID, operation: "outreach", sourceURL: sourceURL,
 			after: map[string]any{"note": strings.TrimSpace(note), "sent_at": sentAt},
 		})
 	})

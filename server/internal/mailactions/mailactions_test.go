@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -26,6 +27,7 @@ func (recorder *recordedUpdates) Record(ctx context.Context, input store.NewUpda
 type fixture struct {
 	t       *testing.T
 	ctx     context.Context
+	pool    *pgxpool.Pool
 	hub     *store.Store
 	handler *Handler
 	updates *recordedUpdates
@@ -35,7 +37,8 @@ type fixture struct {
 
 func startFixture(t *testing.T) *fixture {
 	t.Helper()
-	hub := store.New(testdatabase.New(t))
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
 	ctx := context.Background()
 	owner := store.Actor{Kind: store.ActorOwner}
 	if _, err := hub.SaveGoogleConnection(ctx, owner, "owner@example.com", "refresh-1", google.Scopes); err != nil {
@@ -51,19 +54,26 @@ func startFixture(t *testing.T) *fixture {
 		phases[phase.Name] = phase
 	}
 	updates := &recordedUpdates{hub: hub}
-	return &fixture{t: t, ctx: ctx, hub: hub, handler: NewHandler(hub, updates), updates: updates, phases: phases, acme: acme}
+	return &fixture{t: t, ctx: ctx, pool: pool, hub: hub, handler: NewHandler(hub, updates), updates: updates, phases: phases, acme: acme}
 }
 
 // receive records a classified message, about Acme when companyID is set.
 func (f *fixture) receive(sender, subject, class string, sentAt time.Time, companyID *uuid.UUID) {
 	f.t.Helper()
-	f.record(store.MailReceived, sender, "owner@example.com", subject, sentAt, companyID, class)
+	f.record(store.MailReceived, sender, "owner@example.com", subject, "thread", sentAt, companyID, class)
 }
 
-func (f *fixture) record(direction, sender, recipients, subject string, sentAt time.Time, companyID *uuid.UUID, class string) {
+// send records a message the owner sent in thread, to Acme when companyID
+// is set.
+func (f *fixture) send(recipients, subject, thread string, sentAt time.Time, companyID *uuid.UUID) store.MailMessage {
+	f.t.Helper()
+	return f.record(store.MailSent, "owner@example.com", recipients, subject, thread, sentAt, companyID, "")
+}
+
+func (f *fixture) record(direction, sender, recipients, subject, thread string, sentAt time.Time, companyID *uuid.UUID, class string) store.MailMessage {
 	f.t.Helper()
 	message, _, err := f.hub.RecordMailMessage(f.ctx, store.NewMailMessage{
-		GmailMessageID: uuid.NewString(), ThreadID: "thread", Direction: direction, Sender: sender, Recipients: recipients,
+		GmailMessageID: uuid.NewString(), ThreadID: thread, Direction: direction, Sender: sender, Recipients: recipients,
 		Subject: subject, SentAt: sentAt,
 	})
 	if err != nil {
@@ -79,6 +89,7 @@ func (f *fixture) record(direction, sender, recipients, subject string, sentAt t
 			f.t.Fatal(err)
 		}
 	}
+	return message
 }
 
 func (f *fixture) act() int {
@@ -176,7 +187,7 @@ func TestMailSentToACompanyWithAnOpenCardIsAFollowUp(t *testing.T) {
 	f.addCard("Applied")
 	sentAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 
-	f.record(store.MailSent, "owner@example.com", "Ada <ada@acme.com>", "Checking in", sentAt, &f.acme.ID, "")
+	f.send("Ada <ada@acme.com>", "Checking in", "thread", sentAt, &f.acme.ID)
 	f.act()
 
 	if card := f.card(); card.LastFollowedUpAt == nil || !card.LastFollowedUpAt.Equal(sentAt) || len(f.updates.updates) != 0 {
@@ -258,5 +269,90 @@ func TestARejectionForAClosedCardIsNoNews(t *testing.T) {
 
 	if len(f.updates.updates) != 0 {
 		t.Fatalf("updates = %+v", f.updates.updates)
+	}
+}
+
+func TestAColdEmailToACompanyWithoutACardRecordsOutreach(t *testing.T) {
+	f := startFixture(t)
+	sentAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+
+	message := f.send("Ada <ada@acme.com>", "Hello from a fellow engineer", "cold", sentAt, &f.acme.ID)
+	f.act()
+
+	card := f.card()
+	if card.PhaseID != f.phases["Applied"].ID || card.JobID != nil || !card.PhaseEnteredAt.Equal(sentAt) {
+		t.Fatalf("card = %+v; want an outreach card in Applied since the mail was sent", card)
+	}
+	if len(f.updates.updates) != 1 || f.updates.updates[0].Title != "You reached out to Acme" || f.updates.updates[0].Kind != "outreach" ||
+		!strings.HasPrefix(f.updates.updates[0].Body, "Hello from a fellow engineer\nThe hub recorded the outreach") ||
+		!strings.HasSuffix(f.updates.updates[0].SourceURL, "#all/"+message.GmailMessageID) || *f.updates.updates[0].CompanyID != f.acme.ID {
+		t.Fatalf("updates = %+v", f.updates.updates)
+	}
+	var fromTheMail string
+	var changes int
+	err := f.pool.QueryRow(f.ctx, `
+		SELECT coalesce(string_agg(operation, ',' ORDER BY id) FILTER (WHERE source_url = $2), ''), count(*) FROM changes WHERE entity_id = $1`,
+		card.ID, f.updates.updates[0].SourceURL).Scan(&fromTheMail, &changes)
+	if err != nil || fromTheMail != "create,move,outreach" || changes != 3 {
+		t.Fatalf("changes from the mail = %q of %d, %v; want each change to name the mail", fromTheMail, changes, err)
+	}
+
+	f.send("Ada <ada@acme.com>", "Hello again", "cold-2", sentAt.Add(time.Minute), &f.acme.ID)
+	f.act()
+	if again := f.card(); again.ID != card.ID || again.LastFollowedUpAt == nil || len(f.updates.updates) != 1 {
+		t.Fatalf("card = %+v; want a second cold email to count as a follow-up on the same card", again)
+	}
+}
+
+func TestAColdEmailToACompanyWithAClosedCardStartsANewOne(t *testing.T) {
+	f := startFixture(t)
+	closed := f.addCard("Closed")
+
+	f.send("ada@acme.com", "A different team", "cold", time.Now().Add(-time.Hour), &f.acme.ID)
+	f.act()
+
+	if card := f.card(); card.ID == closed.ID || card.PhaseID != f.phases["Applied"].ID {
+		t.Fatalf("card = %+v; want a new outreach card in Applied", card)
+	}
+}
+
+func TestMailAnsweringAThreadIsNotOutreach(t *testing.T) {
+	f := startFixture(t)
+	startedAt := time.Now().Add(-3 * time.Hour)
+
+	f.receive("Ada <ada@acme.com>", "Coffee?", store.MailNoise, startedAt, &f.acme.ID)
+	f.send("ada@acme.com", "Sounds good", "thread", startedAt.Add(time.Hour), &f.acme.ID)
+	f.send("ada@acme.com", "Re: Your talk", "older-thread", startedAt.Add(2*time.Hour), &f.acme.ID)
+	f.act()
+
+	if _, err := f.hub.FindCompanyApplication(f.ctx, f.acme.ID); err == nil || len(f.updates.updates) != 0 {
+		t.Fatalf("err = %v, updates = %+v; want no card for answers in a thread the company started", err, f.updates.updates)
+	}
+}
+
+func TestMailMatchedOnlyByItsThreadIsNotOutreach(t *testing.T) {
+	f := startFixture(t)
+	message, _, err := f.hub.RecordMailMessage(f.ctx, store.NewMailMessage{
+		GmailMessageID: "forward", ThreadID: "intro", Direction: store.MailSent, Sender: "owner@example.com",
+		Recipients: "Pat <pat@example.dev>", Subject: "Meet Acme", SentAt: time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hub.SaveMailMatch(f.ctx, message.ID, store.MailMatch{CompanyID: f.acme.ID, MatchedBy: store.MatchedByThread}); err != nil {
+		t.Fatal(err)
+	}
+	f.act()
+
+	if _, err := f.hub.FindCompanyApplication(f.ctx, f.acme.ID); err == nil || len(f.updates.updates) != 0 {
+		t.Fatalf("err = %v, updates = %+v; want no card for mail to someone outside the company", err, f.updates.updates)
+	}
+}
+
+func TestAReplyIsKnownByItsSubject(t *testing.T) {
+	for subject, want := range map[string]bool{"Re: Engineer": true, "RES: Vaga": true, " re:x": true, "Regarding the role": false, "Fwd: CV": false} {
+		if got := isReply(subject); got != want {
+			t.Fatalf("%q: got %v, want %v", subject, got, want)
+		}
 	}
 }

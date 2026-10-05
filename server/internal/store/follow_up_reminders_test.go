@@ -109,7 +109,7 @@ func TestOutreachPutsTheCompanysCardInAppliedAndASecondMessageFollowsUp(t *testi
 	}
 
 	sentAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
-	card, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "LinkedIn message to the engineering lead", sentAt)
+	card, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "LinkedIn message to the engineering lead", sentAt, "")
 	if err != nil || !created || card.JobID != nil || card.CompanyID == nil || *card.CompanyID != acme.ID ||
 		card.PhaseID != phases["Applied"].ID || !card.PhaseEnteredAt.Equal(sentAt) {
 		t.Fatalf("outreach = %+v, created=%v, %v; want a new outreach card in Applied since %v", card, created, err, sentAt)
@@ -133,7 +133,7 @@ func TestOutreachPutsTheCompanysCardInAppliedAndASecondMessageFollowsUp(t *testi
 		t.Fatalf("outreach changes = %d, %v", notes, err)
 	}
 
-	again, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "Emailed the recruiter", time.Now())
+	again, created, err := hub.RecordOutreach(ctx, owner, acme.ID, "Emailed the recruiter", time.Now(), "")
 	if err != nil || created || again.ID != card.ID || again.PhaseID != phases["Applied"].ID || again.LastFollowedUpAt == nil ||
 		!again.PhaseEnteredAt.Equal(sentAt) {
 		t.Fatalf("a second message = %+v, created=%v, %v; want a follow-up on the same card", again, created, err)
@@ -143,25 +143,25 @@ func TestOutreachPutsTheCompanysCardInAppliedAndASecondMessageFollowsUp(t *testi
 	// starts a new card.
 	globex, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
 	saved, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &globex.ID})
-	moved, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now())
+	moved, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now(), "")
 	if err != nil || created || moved.ID != saved.ID || moved.PhaseID != phases["Applied"].ID {
 		t.Fatalf("outreach to a company in Saved = %+v, created=%v, %v; want its card moved", moved, created, err)
 	}
 	if _, err := hub.MoveApplication(ctx, owner, moved.ID, phases["Closed"].ID, "No answer."); err != nil {
 		t.Fatal(err)
 	}
-	fresh, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now())
+	fresh, created, err := hub.RecordOutreach(ctx, owner, globex.ID, "", time.Now(), "")
 	if err != nil || !created || fresh.ID == moved.ID {
 		t.Fatalf("outreach after the card closed = %+v, created=%v, %v; want a new card", fresh, created, err)
 	}
 
-	if _, _, err := hub.RecordOutreach(ctx, owner, uuid.New(), "", time.Now()); !errors.Is(err, store.ErrCompanyNotFound) {
+	if _, _, err := hub.RecordOutreach(ctx, owner, uuid.New(), "", time.Now(), ""); !errors.Is(err, store.ErrCompanyNotFound) {
 		t.Fatalf("outreach to an unknown company = %v", err)
 	}
 	if _, err := hub.RenamePipelinePhase(ctx, owner, phases["Applied"].ID, "Reached out"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := hub.RecordOutreach(ctx, owner, acme.ID, "", time.Now()); !errors.Is(err, store.ErrPipelinePhaseNotFound) {
+	if _, _, err := hub.RecordOutreach(ctx, owner, acme.ID, "", time.Now(), ""); !errors.Is(err, store.ErrPipelinePhaseNotFound) {
 		t.Fatalf("outreach without an Applied phase = %v", err)
 	}
 }
