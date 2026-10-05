@@ -14,6 +14,14 @@ final class PipelineModel {
     var showsOnlyDue = false
     /// Shows the skipped cards instead of the board.
     var showsSkipped = false
+    /// Everyone who can get the owner in, read while a card waits for a
+    /// second route; nil until read.
+    private(set) var people: [RelatedPerson]?
+    /// The company research this page started to find people, while it runs.
+    var researchedCompanyID: UUID?
+    /// Who the owner last drafted a message to about a card, for the note of
+    /// its follow-up.
+    private(set) var draftedTo: [UUID: String] = [:]
 
     /// The board's cards for a phase, only the due ones when asked.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
@@ -26,6 +34,7 @@ final class PipelineModel {
     func recordFollowUp(_ cardID: UUID, note: String, with client: HubClient) async {
         do {
             _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            draftedTo[cardID] = nil
             await load(with: client)
         } catch {
             actionError = HubFailure("Couldn't record the follow-up", error)
@@ -61,6 +70,72 @@ final class PipelineModel {
             loadError = nil
         } catch {
             loadError = HubFailure("Couldn't load the pipeline", error)
+        }
+        guard !showsSkipped && !board.getUnansweredPastFollowUp(now: .now).isEmpty else { return }
+        do {
+            people = try await client.get("v1/people", as: PeopleResponse.self).people
+        } catch {
+            actionError = HubFailure("Couldn't read who to write to", error)
+        }
+    }
+
+    /// Who to write to next about each card nobody answered past its
+    /// follow-up, best first, by card; empty for a card whose company has
+    /// nobody on file. No card has any until the people are read, and the
+    /// skipped cards never do.
+    func getSecondRoutes(now: Date) -> [UUID: [RelatedPerson]] {
+        guard !showsSkipped, let people else { return [:] }
+        let unanswered = board.getUnansweredPastFollowUp(now: now)
+        var routes: [UUID: [RelatedPerson]] = [:]
+        for card in board.cards where unanswered.contains(card.id) {
+            guard let companyID = card.application.companyID else { continue }
+            routes[card.id] = SecondRoute.getCandidates(companyID: companyID, among: people)
+        }
+        return routes
+    }
+
+    /// The outreach_draft prompt aimed at the person, about the card.
+    func makeDraftRequest(to person: RelatedPerson, about card: PipelineCard, with client: HubClient) async -> String? {
+        do {
+            let prompt = try await client.get("v1/agent-prompts/outreach_draft", as: AgentPrompt.self).body
+            return SecondRoute.makeDraftRequest(prompt: prompt, to: person, about: card)
+        } catch {
+            actionError = HubFailure("Couldn't read the outreach prompt", error)
+            return nil
+        }
+    }
+
+    /// Asks the card's session for the draft to the person: typed into the
+    /// running one, or the first message of its latest resumed, or of a new
+    /// one. The page sends it rather than the inspector, so the Session tab
+    /// only shows the session and nothing it lays out changes with the
+    /// request. Only a draft the session got names the person in the card's
+    /// next follow-up.
+    func send(_ request: String, to subject: ClaudeSessionSubject, writingTo person: RelatedPerson, about cardID: UUID, with client: HubClient) async {
+        let session = ClaudeSessionPaneModel()
+        await session.load(subject, with: client)
+        if session.failure == nil {
+            await session.send(request, about: subject, with: client, host: .shared)
+        }
+        if let failure = session.failure {
+            actionError = failure
+        } else {
+            draftedTo[cardID] = person.name
+        }
+    }
+
+    /// Researches the card's company again, the agent that finds who to
+    /// reach there; the page reads the people once it ends.
+    func findPeople(at companyID: UUID, with client: HubClient, research: CompanyResearch) async {
+        guard !research.isRunning else { return }
+        do {
+            let dossier = try await client.get("v1/companies/\(companyID.uuidString)", as: CompanyDossier.self)
+            // From idle, a run that fails at once still shows as a change.
+            research.reset()
+            researchedCompanyID = companyID
+            research.start(company: dossier.company.domain, foundVia: "", client: client)
+        } catch {
+            actionError = HubFailure("Couldn't find people", error)
         }
     }
 
@@ -98,6 +173,7 @@ struct PipelinePage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(CompanyResearch.self) private var research
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
@@ -132,6 +208,7 @@ struct PipelinePage: View {
                     .onChange(of: details.getEntry(on: .pipeline)) {
                         if details.getEntry(on: .pipeline) == nil { selectedCardID = nil }
                     }
+                    .onChange(of: research.state) { finishFindingPeople(with: client) }
             }
         }
         .navigationTitle("Pipeline")
@@ -151,14 +228,16 @@ struct PipelinePage: View {
     private func board(client: HubClient) -> some View {
         GeometryReader { geometry in
             let columnWidth = getColumnWidth(availableWidth: geometry.size.width)
+            let secondRoutes = makeSecondRoutes(with: client)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: Self.columnSpacing) {
                     ForEach(model.board.phases) { phase in
                         PipelineColumn(
                             phase: phase, cards: model.getShownCards(in: phase), phases: model.board.phases,
                             movingCardID: model.movingCardID, width: columnWidth, selectedCardID: $selectedCardID,
+                            secondRoutes: secondRoutes,
                             onFollowUp: { cardID in
-                                followUpNote = ""
+                                followUpNote = model.draftedTo[cardID].map { "Wrote to \($0)" } ?? ""
                                 followUpCardID = cardID
                             },
                             onSkip: { cardID in
@@ -226,14 +305,55 @@ struct PipelinePage: View {
         }
     }
 
-    /// The selected card's details: its job's, or its company's for a card
-    /// without one.
+    /// The selected card's details.
     private var selectedCardSubject: InspectorSubject? {
-        guard let application = model.board.cards.first(where: { $0.id == selectedCardID })?.application else { return nil }
-        if let jobID = application.jobID {
+        model.board.cards.first { $0.id == selectedCardID }.flatMap(getSubject)
+    }
+
+    /// A card's details: its job's, or its company's for a card without one.
+    private func getSubject(of card: PipelineCard) -> InspectorSubject? {
+        if let jobID = card.application.jobID {
             return .job(jobID)
         }
-        return application.companyID.map(InspectorSubject.company)
+        return card.application.companyID.map(InspectorSubject.company)
+    }
+
+    private func makeSecondRoutes(with client: HubClient) -> SecondRoutes {
+        SecondRoutes(
+            candidates: model.getSecondRoutes(now: .now),
+            findingPeopleCompanyID: research.isRunning ? model.researchedCompanyID : nil,
+            canFindPeople: !research.isRunning,
+            onWrite: { card, person in write(to: person, about: card, with: client) },
+            onFindPeople: { card in
+                guard let companyID = card.application.companyID else { return }
+                Task { await model.findPeople(at: companyID, with: client, research: research) }
+            }
+        )
+    }
+
+    /// Selects the card and opens its session on a message to the person,
+    /// drafted with the outreach prompt for the owner to send.
+    private func write(to person: RelatedPerson, about card: PipelineCard, with client: HubClient) {
+        guard let subject = getSubject(of: card), let session = subject.sessionSubject else { return }
+        Task {
+            guard let request = await model.makeDraftRequest(to: person, about: card, with: client) else { return }
+            // Sent before the tab shows, so the pane finds the session running.
+            await model.send(request, to: session, writingTo: person, about: card.id, with: client)
+            selectedCardID = card.id
+            details.show(subject, tab: .session, from: .pipeline)
+        }
+    }
+
+    /// Once the research this page started ends, reads the people again, or
+    /// says why it failed, and leaves the research ready for the next one.
+    private func finishFindingPeople(with client: HubClient) {
+        guard model.researchedCompanyID != nil, !research.isRunning else { return }
+        if case let .failed(reason) = research.state {
+            model.actionError = HubFailure("Couldn't find people", advice: reason)
+        }
+        model.researchedCompanyID = nil
+        research.reset()
+        Task { await model.load(with: client) }
     }
 
     /// Shares the width among the columns so every phase shows at once, down
@@ -261,6 +381,7 @@ struct PipelineColumn: View {
     let movingCardID: UUID?
     let width: CGFloat
     @Binding var selectedCardID: UUID?
+    let secondRoutes: SecondRoutes
     let onFollowUp: (UUID) -> Void
     let onSkip: (UUID) -> Void
     let onRestore: (UUID) -> Void
@@ -277,7 +398,8 @@ struct PipelineColumn: View {
             ScrollView(.vertical) {
                 LazyVStack(spacing: Space.s) {
                     ForEach(cards) { card in
-                        PipelineCardView(card: card, isMoving: card.id == movingCardID, isSelected: card.id == selectedCardID)
+                        let secondRoute = secondRoutes.makeRow(for: card) { onFollowUp(card.id) }
+                        PipelineCardView(card: card, isMoving: card.id == movingCardID, isSelected: card.id == selectedCardID, secondRoute: secondRoute)
                             .onTapGesture { selectedCardID = card.id }
                             .draggable(card.id.uuidString)
                             .contextMenu {
@@ -324,6 +446,8 @@ struct PipelineCardView: View {
     let card: PipelineCard
     let isMoving: Bool
     let isSelected: Bool
+    /// Who to write to next, for a card nobody answered past its follow-up.
+    var secondRoute: SecondRouteRow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
@@ -342,6 +466,9 @@ struct PipelineCardView: View {
             }
             if let status = card.getFollowUpStatus(now: .now) {
                 ToneChip(status)
+            }
+            if let secondRoute {
+                secondRoute
             }
             if let closedReason = card.application.closedReason {
                 Label(closedReason, systemImage: SetAside.closed.symbolName)
@@ -386,5 +513,82 @@ struct HeardBackLabel: View {
         Label("Heard back \(contactedAt.formatted(date: .abbreviated, time: .omitted))", systemImage: "arrowshape.turn.up.left")
             .font(.hubCaption)
             .foregroundStyle(Tone.positive.color)
+    }
+}
+
+/// What the board needs to offer each card nobody answered past its
+/// follow-up its next route.
+@MainActor
+struct SecondRoutes {
+    /// Who to write to, best first, by card; empty for a card whose company
+    /// has nobody on file.
+    var candidates: [UUID: [RelatedPerson]] = [:]
+    /// The company whose people are being found.
+    var findingPeopleCompanyID: UUID?
+    /// False while any company research runs, since one runs at a time.
+    var canFindPeople = true
+    var onWrite: (PipelineCard, RelatedPerson) -> Void = { _, _ in }
+    var onFindPeople: (PipelineCard) -> Void = { _ in }
+
+    func makeRow(for card: PipelineCard, onFollowUp: @escaping () -> Void) -> SecondRouteRow? {
+        guard let people = candidates[card.id] else { return nil }
+        return SecondRouteRow(
+            candidates: people,
+            isFindingPeople: card.application.companyID != nil && card.application.companyID == findingPeopleCompanyID,
+            canFindPeople: canFindPeople,
+            onWrite: { onWrite(card, $0) }, onFindPeople: { onFindPeople(card) }, onFollowUp: onFollowUp
+        )
+    }
+}
+
+/// A card's next route once nobody answered it past its follow-up: write to
+/// someone at the company or someone who can introduce you, or find who to
+/// write to, then record the follow-up.
+struct SecondRouteRow: View {
+    let candidates: [RelatedPerson]
+    let isFindingPeople: Bool
+    let canFindPeople: Bool
+    let onWrite: (RelatedPerson) -> Void
+    let onFindPeople: () -> Void
+    let onFollowUp: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            if let first = candidates.first {
+                Menu {
+                    ForEach(candidates) { person in
+                        Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
+                            .help(person.whatTheyCanDo)
+                    }
+                } label: {
+                    Label("Write to \(first.name)", systemImage: "paperplane").lineLimit(1)
+                } primaryAction: {
+                    onWrite(first)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.visible)
+                .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
+            } else if isFindingPeople {
+                HStack(spacing: Space.s) {
+                    ProgressView().controlSize(.small)
+                    Text("Finding people…").foregroundStyle(.secondary)
+                }
+            } else {
+                Button("Find people", systemImage: "person.2") { onFindPeople() }
+                    .buttonStyle(.link)
+                    .disabled(!canFindPeople)
+                    .help(findPeopleHelp)
+            }
+            Button("Followed up…") { onFollowUp() }
+                .buttonStyle(.link)
+                .help("Record the message you sent; it restarts the count to the next follow-up")
+        }
+        .font(.hubCaption)
+    }
+
+    private var findPeopleHelp: String {
+        canFindPeople
+            ? "Nobody at the company is on file: an agent researches it for who to reach there, in a few minutes"
+            : "Another company's research is running"
     }
 }
