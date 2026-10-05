@@ -68,3 +68,32 @@ public extension HubClient {
         try await get("v1/decision-signals", as: DecisionSignals.self)
     }
 }
+
+/// Deciding jobs from the keyboard in a list: P, L and S for Pursue, Later
+/// and Skip, after which the next job comes up.
+public enum KeyboardDecision {
+    /// The decision a key makes, in either case; nil for any other key.
+    public static func getDecision(for key: Character) -> JobDecisionKind? {
+        switch key.lowercased() {
+        case "p": .pursue
+        case "l": .later
+        case "s": .skip
+        default: nil
+        }
+    }
+
+    /// The job to bring up once one is decided: the one after it, or the one
+    /// before when it was last; nil when it was the only one or isn't listed.
+    public static func getNextID(after id: UUID, in ids: [UUID]) -> UUID? {
+        guard let index = ids.firstIndex(of: id) else { return nil }
+        if index + 1 < ids.count { return ids[index + 1] }
+        return index > 0 ? ids[index - 1] : nil
+    }
+
+    /// The job a step up or down from the one shown, which stops at either
+    /// end; the first when none is shown.
+    public static func move(from id: UUID?, by step: Int, in ids: [UUID]) -> UUID? {
+        guard let id, let index = ids.firstIndex(of: id) else { return ids.first }
+        return ids[min(max(index + step, 0), ids.count - 1)]
+    }
+}

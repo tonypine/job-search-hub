@@ -10,13 +10,19 @@ struct PageAddAction {
 
 extension FocusedValues {
     @Entry var pageAdd: PageAddAction?
+    /// Whether the window's ⌘K palette shows, which Go › Jump to… toggles.
+    /// A binding to the window's state stays the same from one render to the
+    /// next, unlike a closure, so the toolbar doesn't update on every render.
+    @Entry var isShowingPalette: Binding<Bool>?
 }
 
-/// The app's menu commands: the page's Add in the File menu, and Refresh in
-/// the View menu for when the event stream missed something.
+/// The app's menu commands: the page's Add in the File menu, Refresh in the
+/// View menu for when the event stream missed something, and Jump to… (⌘K)
+/// in the Go menu.
 struct HubCommands: Commands {
     let events: HubEventStream
     @FocusedValue(\.pageAdd) private var pageAdd
+    @FocusedBinding(\.isShowingPalette) private var isShowingPalette
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -28,6 +34,11 @@ struct HubCommands: Commands {
             Button("Refresh") { events.requestRefresh() }
                 .keyboardShortcut("r")
             Divider()
+        }
+        CommandMenu("Go") {
+            Button("Jump to…") { isShowingPalette?.toggle() }
+                .keyboardShortcut("k")
+                .disabled(isShowingPalette == nil)
         }
     }
 }
