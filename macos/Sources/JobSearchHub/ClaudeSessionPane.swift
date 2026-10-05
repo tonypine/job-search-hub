@@ -41,6 +41,12 @@ final class ClaudeSessionPaneModel {
             failure = HubFailure("Couldn't read the outreach prompt", error)
             return
         }
+        await send(request, about: subject, with: client, host: host)
+    }
+
+    /// Types a request into the subject's running session, or sends it as
+    /// the first message of its latest session resumed, or of a new one.
+    func send(_ request: String, about subject: ClaudeSessionSubject, with client: HubClient, host: ClaudeSessionHost) async {
         if let running = sessions.first(where: { host.isRunning($0.id) }) {
             host.send(request, to: running.id)
         } else if let latest = sessions.first {
