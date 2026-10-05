@@ -197,6 +197,21 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusOK, decision)
 		}
 	})))
+	routes.Handle("DELETE /v1/jobs/{id}/decision", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		switch err := hub.ClearJobDecision(r.Context(), owner, id); {
+		case errors.Is(err, store.ErrJobNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case err != nil:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})))
 }
 
 // handleJobDismissal serves a dismissal or restore: every job it names

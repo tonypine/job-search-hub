@@ -90,6 +90,19 @@ class HubClientTest {
     }
 
     @Test
+    fun undoingADecisionDeletesIt() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(204).build())
+            server.start()
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).clearJobDecision("7")
+
+            val request = server.takeRequest()
+            assertEquals("DELETE", request.method)
+            assertEquals("/v1/jobs/7/decision", request.target)
+        }
+    }
+
+    @Test
     fun theDecisionQueueIsRead() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().body("""{"items":[{"job":{"id":"1","source":"x","title":"Engineer","url":"https://x","first_seen_at":"2026-09-29T10:00:00Z"},
