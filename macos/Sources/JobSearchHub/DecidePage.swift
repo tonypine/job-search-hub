@@ -115,14 +115,28 @@ struct DecidePage: View {
         if let client = connection.makeClient() { await model.load(with: client) }
     }
 
+    /// The queue, under how deciding went this week. The summary sits above
+    /// the list rather than in it: a list row whose height follows the list's
+    /// width can keep the window's layout from settling as the inspector
+    /// opens beside hundreds of rows.
     private func queue(_ client: HubClient) -> some View {
         List(selection: $model.selectedID) {
-            if let signals = model.signals {
-                Text(signals.summary).font(.hubCaption).foregroundStyle(.secondary)
-                    .selectionDisabled()
-            }
             ForEach(model.items) { item in
                 DecisionQueueRow(item: item).tag(item.id)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let signals = model.signals {
+                VStack(spacing: 0) {
+                    Text(signals.summary).font(.hubCaption).foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(signals.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Space.l)
+                        .padding(.vertical, Space.s)
+                    Divider()
+                }
+                .background(.background)
             }
         }
         .focused($isQueueFocused)
@@ -186,6 +200,9 @@ struct DecidePage: View {
 }
 
 /// One job in the queue: its match, title, company and the brief's reason.
+/// Its height never depends on the list's width: each line is truncated,
+/// and the reason always takes two lines. Rows that grow as the list
+/// narrows can loop the window's layout until AppKit stops the app.
 struct DecisionQueueRow: View {
     let item: DecisionQueueItem
 
@@ -199,9 +216,9 @@ struct DecisionQueueRow: View {
                 }
             }
             if let company = item.companyName {
-                Text(company).font(.hubSecondary).foregroundStyle(.secondary)
+                Text(company).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
             }
-            Text(item.reason).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2)
+            Text(item.reason).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
         }
         .padding(.vertical, Space.xs)
     }
