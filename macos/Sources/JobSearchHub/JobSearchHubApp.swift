@@ -41,7 +41,7 @@ struct JobSearchHubApp: App {
                 .environment(profileSeed)
                 .environment(jobDecisions)
                 .environment(taskRunner)
-                .frame(minWidth: MainWindow.minimumSize.width, minHeight: MainWindow.minimumSize.height)
+                .frame(minWidth: 900, minHeight: 600)
                 // Hub Indigo marks you and your actions: selection, links, the primary button.
                 .tint(.hubAccent)
                 // The stream holds its client, so it starts again with a new
@@ -77,9 +77,7 @@ struct JobSearchHubApp: App {
                     }
                 }
         }
-        .defaultSize(MainWindow.defaultSize)
-        // Resizing stops at the content's minimum size.
-        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1400, height: 860)
         .commands {
             HubCommands(events: events)
         }
@@ -158,9 +156,6 @@ struct ContentView: View {
         .filter { !$0.isExpandedByDefault }.map(\.rawValue).joined(separator: ",")
     @State private var details = DetailsInspector()
     @State private var replyDraft = RecruiterReplyDraft()
-    /// False while the window is smaller than its minimum, as the window
-    /// server leaves one opened while the screen is locked.
-    @State private var windowHasRoom = true
     @State private var requests = PageRequests()
     @State private var palette = PaletteModel()
     @State private var isShowingPalette = false
@@ -218,18 +213,13 @@ struct ContentView: View {
             }
             .toast($toast)
         }
-        // The inspector waits until the window has room: in a window smaller
-        // than its minimum, its section of the toolbar never settles, and
-        // AppKit ends the endless constraint updates with a crash. A page's
-        // selection outlasts the wait.
-        .inspector(isPresented: Binding(get: { shownEntry != nil && windowHasRoom }, set: { if !$0 && windowHasRoom { details.hide() } })) {
+        .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
                 DetailsInspectorContent(entry: shownEntry, client: client)
                     .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
                     .toolbar { InspectorToolbar(details: details) }
             }
         }
-        .background { MainWindowGuard { windowHasRoom = $0 } }
         .overlay(alignment: .top) {
             if isShowingPalette {
                 ZStack(alignment: .top) {
