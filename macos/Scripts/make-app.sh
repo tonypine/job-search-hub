@@ -20,10 +20,15 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
 # The hub's command runs the company triage agent for "Add company"; the app
-# starts it because the agent needs Claude Code on this Mac.
-echo "==> Building the hub command"
+# starts it because the agent needs Claude Code on this Mac. Without Go, as in
+# Symphony's QA VM, the app is built without it, and those features say so.
 mkdir -p "$APP_DIR/Contents/Resources"
-(cd ../server && go build -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
+if command -v go >/dev/null; then
+  echo "==> Building the hub command"
+  (cd ../server && go build -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
+else
+  echo "No Go toolchain: building without the bundled hub CLI; features that run it won't work in this build." >&2
+fi
 
 # Scripts/make-icon.swift draws the mark; iconutil packs its sizes.
 echo "==> Drawing the icon"
@@ -100,7 +105,9 @@ else
   echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY (- signs ad hoc)." >&2
   exit 1
 fi
-codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR/Contents/Resources/hub"
+if [ -f "$APP_DIR/Contents/Resources/hub" ]; then
+  codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR/Contents/Resources/hub"
+fi
 codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 
