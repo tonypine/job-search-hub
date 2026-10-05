@@ -218,9 +218,22 @@ struct ContentView: View {
         }
         .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
-                DetailsInspectorContent(entry: shownEntry, client: client)
-                    .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
-                    .toolbar { InspectorToolbar(details: details) }
+                VStack(spacing: 0) {
+                    InspectorNavigationBar(details: details)
+                    DetailsInspectorContent(entry: shownEntry, client: client)
+                }
+                // The column tells the window the same sizes whatever it
+                // shows and however wide it is: a frame with every bound set
+                // takes the size it's offered, and the column's width range
+                // stays with inspectorColumnWidth. Sizes that follow a job's
+                // header, buttons and tabs can change the column's
+                // constraints on every pass, and a window whose constraint
+                // updates never settle is stopped by AppKit.
+                .frame(
+                    minWidth: 0, idealWidth: 480, maxWidth: .infinity,
+                    minHeight: 0, idealHeight: 600, maxHeight: .infinity, alignment: .top
+                )
+                .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
             }
         }
         .overlay(alignment: .top) {

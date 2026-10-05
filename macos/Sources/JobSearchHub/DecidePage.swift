@@ -118,7 +118,8 @@ struct DecidePage: View {
     /// The queue, under how deciding went this week. The summary sits above
     /// the list rather than in it: a list row whose height follows the list's
     /// width can keep the window's layout from settling as the inspector
-    /// opens beside hundreds of rows.
+    /// opens beside hundreds of rows. For the same reason it always takes two
+    /// lines, so its height doesn't follow the page's width either.
     private func queue(_ client: HubClient) -> some View {
         List(selection: $model.selectedID) {
             ForEach(model.items) { item in
@@ -129,7 +130,7 @@ struct DecidePage: View {
             if let signals = model.signals {
                 VStack(spacing: 0) {
                     Text(signals.summary).font(.hubCaption).foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(2, reservesSpace: true)
                         .help(signals.summary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Space.l)
