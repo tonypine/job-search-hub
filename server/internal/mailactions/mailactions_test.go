@@ -127,12 +127,29 @@ func TestAConfirmationDatesTheApplicationByTheMail(t *testing.T) {
 	if card.PhaseID != f.phases["Applied"].ID || !card.PhaseEnteredAt.Equal(confirmedAt) || card.ContactedAt != nil {
 		t.Fatalf("card = %+v; want Applied since the mail's date, and no contact from an automated note", card)
 	}
+	if card.AppliedAt == nil || !card.AppliedAt.Equal(confirmedAt) {
+		t.Fatalf("card went out at %v; want the mail's date %v", card.AppliedAt, confirmedAt)
+	}
 	if len(f.updates.updates) != 1 || f.updates.updates[0].Title != "Acme confirmed your application" ||
 		!strings.Contains(f.updates.updates[0].Body, "dated the application") || !strings.Contains(f.updates.updates[0].SourceURL, "authuser=owner%40example.com#all/") {
 		t.Fatalf("updates = %+v", f.updates.updates)
 	}
 	if acted := f.act(); acted != 0 || len(f.updates.updates) != 1 {
 		t.Fatalf("a second pass acted on %d messages; each message is acted on once", acted)
+	}
+}
+
+func TestAConfirmationMovesASavedCardToAppliedGoneOutAtTheMailsDate(t *testing.T) {
+	f := startFixture(t)
+	f.addCard("Saved")
+	confirmedAt := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+
+	f.receive("Acme No Reply <no-reply@acme.com>", "We received your application", store.MailApplicationConfirmation, confirmedAt, &f.acme.ID)
+	f.act()
+
+	card := f.card()
+	if card.PhaseID != f.phases["Applied"].ID || card.AppliedAt == nil || !card.AppliedAt.Equal(confirmedAt) {
+		t.Fatalf("card = %+v; want it in Applied, gone out at %v", card, confirmedAt)
 	}
 }
 

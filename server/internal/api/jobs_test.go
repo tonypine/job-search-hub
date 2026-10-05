@@ -149,6 +149,7 @@ type jobDetailsAnswer struct {
 	Facts       *store.LabelledJobFacts `json:"facts"`
 	Application *store.Application      `json:"application"`
 	Phase       *store.PipelinePhase    `json:"phase"`
+	Decision    *store.JobDecision      `json:"decision"`
 }
 
 func readJobDetails(t *testing.T, service apiUnderTest, id string) (int, jobDetailsAnswer) {
@@ -399,6 +400,29 @@ func TestADecisionIsRecordedAndActedOn(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, `{"decision":"later"}`); status != http.StatusNotFound {
 		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}
+
+func TestADecisionCanBeTakenBack(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
+	if _, err := service.hub.DecideJob(ctx, owner, job.ID, store.JobDecisionSkip, "agency"); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, body := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, ""); status != http.StatusNoContent {
+		t.Fatalf("clear: %d %s", status, body)
+	}
+	if _, details := readJobDetails(t, service, job.ID.String()); details.Decision != nil || details.Job.DismissedAt != nil {
+		t.Errorf("after clearing, decision = %+v, dismissed at %v; want undecided and restored", details.Decision, details.Job.DismissedAt)
+	}
+	if status, _ := send(t, http.MethodDelete, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, ""); status != http.StatusNotFound {
+		t.Errorf("an unknown job: %d, want 404", status)
+	}
+	if status, _ := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("without a token: %d, want 401", status)
 	}
 }
 

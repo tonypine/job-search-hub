@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -76,5 +77,43 @@ func TestADismissalIsASkipAndARestoreTakesItBack(t *testing.T) {
 	}
 	if decision, _ := hub.GetJobDecision(ctx, job.ID); decision != nil {
 		t.Errorf("after restoring, decision = %+v, want none", decision)
+	}
+}
+
+func TestClearingADecisionLeavesTheJobUndecided(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	later, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Later", URL: "https://acme.com/later"})
+	skipped, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Skipped", URL: "https://acme.com/skipped"})
+	undecided, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Undecided", URL: "https://acme.com/undecided"})
+	if _, err := hub.DecideJob(ctx, owner, later.ID, store.JobDecisionLater, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.DecideJob(ctx, owner, skipped.ID, store.JobDecisionSkip, "agency"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []uuid.UUID{later.ID, skipped.ID, undecided.ID} {
+		if err := hub.ClearJobDecision(ctx, owner, id); err != nil {
+			t.Fatal(err)
+		}
+		if decision, err := hub.GetJobDecision(ctx, id); err != nil || decision != nil {
+			t.Errorf("after clearing, decision = %+v, %v; want none", decision, err)
+		}
+	}
+	if open := listJobTitles(t, hub, store.JobStatusOpen); len(open) != 3 {
+		t.Errorf("clearing a skip didn't restore the job: open = %v", open)
+	}
+	var cleared string
+	if err := pool.QueryRow(ctx, `SELECT before->>'decision' FROM changes WHERE operation = 'undecide' AND entity_id = $1`, skipped.ID).Scan(&cleared); err != nil || cleared != store.JobDecisionSkip {
+		t.Errorf("the undecide change's decision = %q, %v", cleared, err)
+	}
+	var undecideChanges int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM changes WHERE operation = 'undecide' AND entity_id = $1`, undecided.ID).Scan(&undecideChanges); err != nil || undecideChanges != 0 {
+		t.Errorf("clearing an undecided job recorded %d changes, %v", undecideChanges, err)
+	}
+	if err := hub.ClearJobDecision(ctx, owner, uuid.New()); !errors.Is(err, store.ErrJobNotFound) {
+		t.Errorf("an unknown job: %v, want ErrJobNotFound", err)
 	}
 }

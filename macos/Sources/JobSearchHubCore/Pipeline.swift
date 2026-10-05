@@ -23,11 +23,14 @@ public struct Application: Codable, Equatable, Identifiable, Sendable {
     /// When a person at the company first wrote back, as the hub read it in
     /// the mail; nil until someone does.
     public var contactedAt: Date?
+    /// When the application went out, the first time it reached Applied or
+    /// a later phase; kept when the card closes, nil for one never sent.
+    public var appliedAt: Date?
     public var createdAt: Date
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, closedReason, notes, phaseEnteredAt, lastFollowedUpAt, contactedAt, createdAt, updatedAt
+        case id, closedReason, notes, phaseEnteredAt, lastFollowedUpAt, contactedAt, appliedAt, createdAt, updatedAt
         case jobID = "jobId"
         case companyID = "companyId"
         case phaseID = "phaseId"
@@ -100,15 +103,26 @@ public struct PipelineBoard: Equatable, Sendable {
         cards.filter { $0.application.phaseID == phase.id }
     }
 
-    /// How many open applications went out and how many a person answered,
-    /// so a run of unanswered ones shows before it costs weeks. A card went
+    /// How many applications went out and how many a person answered, so a
+    /// run of unanswered ones shows before it costs weeks. An open card went
     /// out once it reached Applied, or every phase after the first when none
     /// is named so; it was answered when someone at the company wrote back or
-    /// the owner moved it past Applied.
+    /// the owner moved it past Applied. A closed card counts when the hub
+    /// dated it gone out, and was answered when someone wrote back, so a
+    /// rejection stays in the tally and a card dropped while saved doesn't.
     public func getContactTally(now: Date, calendar: Calendar = .current) -> ContactTally {
         let reading = ContactReading(phases: phases)
+        let closedPhaseIDs = Set(phases.filter(\.isClosed).map(\.id))
         var tally = ContactTally()
         for card in cards {
+            if closedPhaseIDs.contains(card.application.phaseID) {
+                guard card.application.appliedAt != nil else { continue }
+                tally.sent += 1
+                if card.application.contactedAt != nil {
+                    tally.heardBack += 1
+                }
+                continue
+            }
             guard let answer = reading.getAnswer(to: card) else { continue }
             tally.sent += 1
             if answer == .heardBack {
@@ -145,7 +159,7 @@ public struct PipelineBoard: Equatable, Sendable {
     }
 }
 
-/// Whether a card went out and was answered, read from the open phases.
+/// Whether an open card went out and was answered, read from the open phases.
 private struct ContactReading {
     enum Answer {
         case heardBack
@@ -175,12 +189,12 @@ private struct ContactReading {
     }
 }
 
-/// The open applications that went out, and how they were answered.
+/// The applications that went out, and how they were answered.
 public struct ContactTally: Equatable, Sendable {
     public var sent: Int
     /// Sent applications a person at the company answered.
     public var heardBack: Int
-    /// Sent applications nobody answered whose follow-up is due.
+    /// Open sent applications nobody answered whose follow-up is due.
     public var unansweredPastFollowUp: Int
 
     public init(sent: Int = 0, heardBack: Int = 0, unansweredPastFollowUp: Int = 0) {

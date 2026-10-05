@@ -41,7 +41,8 @@ type LinkedInJobsImport struct {
 // ImportLinkedInJobs puts the owner's LinkedIn applications and saved jobs on
 // the pipeline: a recent application in Applied at its date, a recent save
 // in the first phase, an older application in the closed phase as history,
-// and an older save not at all. A job already on the board keeps its card.
+// and an older save not at all. An application is dated as gone out on its
+// date. A job already on the board keeps its card.
 func (s *Store) ImportLinkedInJobs(ctx context.Context, actor Actor, entries []NewLinkedInJob, now time.Time) (LinkedInJobsImport, error) {
 	var result LinkedInJobsImport
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -83,10 +84,14 @@ func (s *Store) ImportLinkedInJobs(ctx context.Context, actor Actor, entries []N
 				result.AlreadyOnBoard++
 				continue
 			}
+			var appliedAt *time.Time
+			if entry.Kind == LinkedInJobApplied {
+				appliedAt = &entry.At
+			}
 			application, err := scanApplication(tx.QueryRow(ctx, `
-				INSERT INTO applications (job_id, phase_id, closed_reason, phase_entered_at)
-				VALUES ($1, $2, $3, $4)
-				RETURNING `+applicationColumns, jobID, phaseID, closedReason, entry.At))
+				INSERT INTO applications (job_id, phase_id, closed_reason, phase_entered_at, applied_at)
+				VALUES ($1, $2, $3, $4, $5)
+				RETURNING `+applicationColumns, jobID, phaseID, closedReason, entry.At, appliedAt))
 			if err != nil {
 				return err
 			}

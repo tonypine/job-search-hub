@@ -254,6 +254,18 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. */
+    suspend fun undoDecision(id: String): Result<Unit> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            client.clearJobDecision(id)
+            refresh()
+            Result.success(Unit)
+        } catch (error: HubException) {
+            Result.failure(error)
+        }
+    }
+
     suspend fun loadJob(id: String): Result<JobDetails> {
         val client = client ?: return Result.failure(HubException("Not paired."))
         return try {

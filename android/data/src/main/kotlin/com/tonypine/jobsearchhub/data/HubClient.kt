@@ -86,6 +86,11 @@ class HubClient(
     suspend fun decideJob(id: String, decision: String, reason: String = ""): JobDecision =
         send("/v1/jobs/$id/decision", hubJson.encodeToString(JobDecisionRequest(decision, reason.trim())))
 
+    /** Takes back the decision on a job, which leaves it undecided: a skipped job comes back to the jobs list. */
+    suspend fun clearJobDecision(id: String) {
+        fetch("DELETE", "/v1/jobs/$id/decision", null)
+    }
+
     /** Registers the token FCM gave this app, so the hub pushes its updates here. */
     suspend fun setPushToken(token: String) {
         fetch("PUT", "/v1/devices/me/push-token", hubJson.encodeToString(SetPushTokenRequest(token)))

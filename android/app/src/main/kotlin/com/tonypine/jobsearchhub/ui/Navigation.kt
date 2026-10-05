@@ -21,8 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,6 +96,18 @@ fun HubNavigation(viewModel: HubViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val say: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
+    // Later and Skip don't ask first; their snackbar offers Undo, and stays up when the page moves on to the next job.
+    // A newer decision's snackbar replaces an older one's, rather than waiting behind it.
+    val decided: (String, String?) -> Unit = { id, notice ->
+        notice?.let {
+            snackbar.currentSnackbarData?.dismiss()
+            scope.launch {
+                if (snackbar.showSnackbar(it, actionLabel = "Undo", duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
+                    viewModel.undoDecision(id).onFailure { error -> say(error.message ?: "Couldn't undo the decision.") }
+                }
+            }
+        }
+    }
     val goTo: (String) -> Unit = { destination ->
         navigation.navigate(destination) {
             popUpTo(navigation.graph.findStartDestination().id) { saveState = true }
@@ -119,7 +133,8 @@ fun HubNavigation(viewModel: HubViewModel) {
             Detail.Kind.JOB -> JobScreen(
                 detail.id, viewModel, onBack = onBack,
                 onOpenCompany = { details.open(Detail.company(it)) },
-                onDecided = { next ->
+                onDecided = { next, notice ->
+                    decided(detail.id, notice)
                     // From the queue, a decision moves on to the next job in it; elsewhere it closes the job.
                     if (detail.fromQueue && next != null) details.replace(Detail.job(next, fromQueue = true)) else details.close()
                 },
@@ -226,9 +241,13 @@ fun HubNavigation(viewModel: HubViewModel) {
                 }
                 // On a phone, a job or company opened from a notification, over the page.
                 composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
+                    val id = backStack.arguments?.getString("id").orEmpty()
                     JobScreen(
-                        backStack.arguments?.getString("id").orEmpty(), viewModel, onBack = { navigation.popBackStack() },
-                        onOpenCompany = { navigation.navigate("company/$it") }, onDecided = { navigation.popBackStack() },
+                        id, viewModel, onBack = { navigation.popBackStack() }, onOpenCompany = { navigation.navigate("company/$it") },
+                        onDecided = { _, notice ->
+                            decided(id, notice)
+                            navigation.popBackStack()
+                        },
                     )
                 }
                 composable(COMPANY, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
