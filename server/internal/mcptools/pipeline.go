@@ -124,7 +124,7 @@ func addPipelineTools(server *mcp.Server, hub *store.Store) {
 		if err != nil {
 			return nil, recordOutreachOutput{}, err
 		}
-		application, created, err := hub.RecordOutreach(ctx, actor, companyID, input.Note, sentAt)
+		application, created, err := hub.RecordOutreach(ctx, actor, companyID, input.Note, sentAt, "")
 		return nil, recordOutreachOutput{Application: application, Created: created}, err
 	})
 	addTool(server, &mcp.Tool{

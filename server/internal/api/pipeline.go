@@ -207,7 +207,7 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 				return
 			}
 		}
-		application, created, err := hub.RecordOutreach(r.Context(), owner, id, request.Note, sentAt)
+		application, created, err := hub.RecordOutreach(r.Context(), owner, id, request.Note, sentAt, "")
 		if err != nil {
 			writeStoreError(w, err)
 			return
