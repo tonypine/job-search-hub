@@ -65,6 +65,9 @@ jobs:
                 server/*|compose.yaml) server=true ;;
                 macos/*) macos=true ;;
                 android/*) android=true ;;
+                # The Mac's Postgres engine has a workflow of its own,
+                # postgres-engine.yml; no job here runs its recipe.
+                scripts/postgres-engine/*|.github/workflows/postgres-engine.yml) ;;
                 scripts/*) scripts=true ;;
                 .github/*) all=true ;;
               esac
