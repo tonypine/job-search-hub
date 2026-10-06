@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestTheAnswersLibraryIsEditedAndAnImportNeverReplacesAnAnswer(t *testing.T)
 		Answers []store.ApplicationAnswer `json:"answers"`
 	}
 	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Answers) != 2 ||
-		listed.Answers[0].Answer != "30 days" || listed.Answers[1].Source != "linkedin" || strings.Contains(string(body), "555") {
+		listed.Answers[0].Answer != "30 days" || listed.Answers[1].Source != "linkedin" || slices.ContainsFunc(listed.Answers, holdsThePhoneNumber) {
 		t.Fatalf("list: %d %s", status, body)
 	}
 
@@ -52,4 +53,11 @@ func TestTheAnswersLibraryIsEditedAndAnImportNeverReplacesAnAnswer(t *testing.T)
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/application-answers", agentToken, `{"question":"Salary","answer":"Any"}`); status != http.StatusForbidden {
 		t.Errorf("an agent's save: %d, want 403", status)
 	}
+}
+
+// holdsThePhoneNumber reports whether an answer carries the phone number the
+// import must reject. It looks only at the question and answer, since an ID or
+// an updated_at timestamp can hold "555" by chance.
+func holdsThePhoneNumber(answer store.ApplicationAnswer) bool {
+	return strings.Contains(answer.Question, "555 0100") || strings.Contains(answer.Answer, "555 0100")
 }
