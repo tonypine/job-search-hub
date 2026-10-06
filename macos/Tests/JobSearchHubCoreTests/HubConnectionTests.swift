@@ -84,6 +84,36 @@ private func makePreferences() -> UserDefaults {
 
 private struct RefusedByKeychain: Error {}
 
+@MainActor @Test func aQABuildStartsFromEmptyConnectionSettingsWithoutTheFlag() async {
+    let preferences = makePreferences()
+    let earlierRun = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false, isQABuild: true,
+        readKeychain: { nil }, saveKeychain: { _ in throw RefusedByKeychain() }
+    )
+    earlierRun.hubURLText = "http://localhost:65442"
+    earlierRun.save(newToken: "earlier-token")
+
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false, isQABuild: true,
+        readKeychain: { Issue.record("read the Keychain in a QA build"); return "keychain-token" }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.hubURLText == HubConnection.defaultHubURL)
+    #expect(connection.token == .missing)
+    #expect(connection.makeClient() == nil)
+}
+
+@MainActor @Test func aQABuildUsesHUB_OWNER_TOKENWithoutTheFlag() async {
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: ["HUB_OWNER_TOKEN": "qa-token"],
+        preferences: makePreferences(), isTeamSigned: false, isQABuild: true, readKeychain: { nil }
+    )
+
+    #expect(connection.makeClient()?.token == "qa-token")
+    #expect(connection.tokenSource == .environment)
+}
+
 @MainActor @Test func aBuildWithoutATeamKeepsTheTokenInItsPreferencesWhenTheKeychainRefusesIt() async {
     let preferences = makePreferences()
     let connection = HubConnection(

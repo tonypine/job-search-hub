@@ -14,7 +14,9 @@ import Observation
 /// Launched with `--qa-mode`, the app starts from empty connection settings:
 /// it forgets the hub URL and token an earlier run saved, takes the token
 /// from HUB_OWNER_TOKEN, and leaves the Keychain alone, for a QA machine whose
-/// Keychain won't keep it. Without the flag the variable is ignored.
+/// Keychain won't keep it. Without the flag the variable is ignored. A QA
+/// build, whose Info.plist make-app.sh marks with HubQABuild, as it does in
+/// Symphony's QA VM, runs in QA mode at every launch, with or without the flag.
 ///
 /// A build no Apple team signed, such as the ad hoc build in Symphony's QA
 /// VM, keeps the token in its preferences when the Keychain refuses it, and
@@ -25,6 +27,8 @@ import Observation
 public final class HubConnection {
     public static let defaultHubURL = "http://localhost:8090"
     public static let qaModeArgument = "--qa-mode"
+    /// The Info.plist key make-app.sh sets on a QA build.
+    public nonisolated static let qaBuildInfoKey = "HubQABuild"
     private static let hubURLPreferenceKey = "hubURL"
     static let ownerTokenPreferenceKey = "ownerToken"
 
@@ -47,13 +51,14 @@ public final class HubConnection {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
         isTeamSigned: Bool = BuildSignature.hasTeam,
+        isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true,
         readKeychain: @escaping @Sendable () async -> String? = { await OwnerTokenKeychain.readOffMainThread() },
         saveKeychain: @escaping (String) throws -> Void = { try OwnerTokenKeychain.save($0) }
     ) {
         self.preferences = preferences
         self.saveKeychain = saveKeychain
         self.isTeamSigned = isTeamSigned
-        let isQAMode = arguments.contains(Self.qaModeArgument)
+        let isQAMode = isQABuild || arguments.contains(Self.qaModeArgument)
         if isQAMode {
             preferences.removeObject(forKey: Self.hubURLPreferenceKey)
             preferences.removeObject(forKey: Self.ownerTokenPreferenceKey)
@@ -63,13 +68,13 @@ public final class HubConnection {
             token = keep(importedToken)
             return
         }
-        if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
-            token = .present(qaToken)
-            tokenSource = .environment
-            return
-        }
         if isQAMode {
-            token = .missing
+            if let qaToken = OwnerTokenState(read: environment["HUB_OWNER_TOKEN"]).value {
+                token = .present(qaToken)
+                tokenSource = .environment
+            } else {
+                token = .missing
+            }
             return
         }
         if !isTeamSigned, let saved = OwnerTokenState(read: preferences.string(forKey: Self.ownerTokenPreferenceKey)).value {
@@ -83,12 +88,6 @@ public final class HubConnection {
                 self.token = OwnerTokenState(read: token)
             }
         }
-    }
-
-    /// HUB_OWNER_TOKEN when the app runs in QA mode and the variable holds one.
-    static func qaModeToken(arguments: [String], environment: [String: String]) -> String? {
-        guard arguments.contains(qaModeArgument) else { return nil }
-        return OwnerTokenState(read: environment["HUB_OWNER_TOKEN"]).value
     }
 
     public var hasToken: Bool { token.value != nil }
