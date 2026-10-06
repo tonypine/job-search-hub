@@ -313,3 +313,31 @@ func TestASocketPathTooLongIsRefusedBeforePostgresStarts(t *testing.T) {
 		t.Fatalf("the folder was created: %v", err)
 	}
 }
+
+func TestAnInitdbLeftUnfinishedIsReplacedByAWorkingCluster(t *testing.T) {
+	dir := newDir(t)
+	output, err := exec.Command(filepath.Join(getEngine(t), "bin", "postgres"), "--version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	major := strings.SplitN(strings.Fields(string(output))[2], ".", 2)[0]
+	// What a killed initdb leaves: PG_VERSION and no template1.
+	unfinished := filepath.Join(dir, major+".partial")
+	if err := os.MkdirAll(filepath.Join(unfinished, "base"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unfinished, "PG_VERSION"), []byte(major+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cluster := start(t, dir)
+	if cluster.DataDir() != filepath.Join(dir, major) {
+		t.Fatalf("DataDir = %s, want %s", cluster.DataDir(), filepath.Join(dir, major))
+	}
+	if got := queryString(t, connect(t, cluster), "SELECT current_database()"); got != "hub" {
+		t.Fatalf("current_database() = %q", got)
+	}
+	if _, err := os.Stat(unfinished); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the unfinished folder is left: %v", err)
+	}
+}

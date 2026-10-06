@@ -213,7 +213,9 @@ At start, with no `HUB_DATABASE_URL`:
    `postgres/<major>/`. A cluster of a newer major than any engine means the app was rolled back
    past an upgrade: the server refuses to start and says so, rather than open a stale older cluster.
    An older major's cluster alone means an upgrade is due (see below). No cluster means a fresh
-   install: `initdb`, unless a `<major>.replaced-<date>` folder is there without its replacement,
+   install: `initdb` into `postgres/<major>.partial`, removing any an earlier `initdb` left when it
+   was killed, then a rename to `postgres/<major>/`, so a cluster folder is always a finished one.
+   The exception is a `<major>.replaced-<date>` folder there without its replacement,
    which means a restore was killed between its two renames: the server refuses to start and names
    the folder to rename back, rather than open an empty cluster.
 3. **Clean up an orphan.** If `postmaster.pid` names a live process, a previous server may have died

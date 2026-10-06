@@ -328,6 +328,9 @@ func getMajor(engine string) (string, error) {
 	return string(match[1]), nil
 }
 
+// createIfMissing runs initdb into a sibling folder and renames it into place
+// only once initdb succeeds, so an interrupted initdb never leaves a folder
+// that looks like a finished cluster.
 func createIfMissing(ctx context.Context, engine, dataDir string) error {
 	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); err == nil {
 		return nil
@@ -335,16 +338,40 @@ func createIfMissing(ctx context.Context, engine, dataDir string) error {
 		return err
 	}
 	slog.Info("creating the database cluster", "data", dataDir)
-	output, err := exec.CommandContext(ctx, filepath.Join(engine, "bin", "initdb"),
-		"-D", dataDir,
+	partial := dataDir + ".partial"
+	if err := os.RemoveAll(partial); err != nil {
+		return fmt.Errorf("remove an unfinished cluster: %w", err)
+	}
+	command := exec.CommandContext(ctx, filepath.Join(engine, "bin", "initdb"),
+		"-D", partial,
 		"--username="+User,
 		"--auth-local=trust",
 		"--encoding=UTF8",
 		"--locale-provider=builtin",
 		"--builtin-locale=C.UTF-8",
-	).CombinedOutput()
-	if err != nil {
+	)
+	// SIGTERM lets initdb remove what it wrote; SIGKILL follows if it lingers.
+	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
+	command.WaitDelay = stopTimeout
+	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("initdb: %w: %s", err, output)
+	}
+	if err := os.Rename(partial, dataDir); err != nil {
+		return fmt.Errorf("move the new cluster into place: %w", err)
+	}
+	// Without this, a power cut could undo the rename after the hub has
+	// written to the cluster, and the next start would remove it as unfinished.
+	return syncDir(filepath.Dir(dataDir))
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", path, err)
 	}
 	return nil
 }
