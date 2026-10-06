@@ -49,7 +49,7 @@ struct PersonInspector: View {
     var body: some View {
         Group {
             if let person = model.person, person.key == reference.key {
-                EntityInspector(tabs: InspectorTab.getTabs(for: .person(reference)), tab: $tab) {
+                EntityInspector(subject: .person(reference), tabs: InspectorTab.getTabs(for: .person(reference)), tab: $tab) {
                     header(person)
                     actions(person)
                 } content: { tab in

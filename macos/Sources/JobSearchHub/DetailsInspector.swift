@@ -131,15 +131,18 @@ struct InspectorNavigationBar: View {
 /// on top, its tabs, then the chosen tab, which scrolls, or which a session
 /// fills to the bottom.
 struct EntityInspector<Top: View, Content: View>: View {
+    let subject: InspectorSubject
     let tabs: [InspectorTab]
     @Binding var tab: InspectorTab
     @ViewBuilder let top: Top
     @ViewBuilder let content: (InspectorTab) -> Content
+    private let host = ClaudeSessionHost.shared
 
     init(
-        tabs: [InspectorTab], tab: Binding<InspectorTab>, @ViewBuilder top: () -> Top,
+        subject: InspectorSubject, tabs: [InspectorTab], tab: Binding<InspectorTab>, @ViewBuilder top: () -> Top,
         @ViewBuilder content: @escaping (InspectorTab) -> Content
     ) {
+        self.subject = subject
         self.tabs = tabs
         _tab = tab
         self.top = top()
@@ -151,20 +154,13 @@ struct EntityInspector<Top: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: Space.m) {
                 top
-                Picker("Show", selection: Binding(get: { shown }, set: { tab = $0 })) {
-                    ForEach(tabs) { tab in Text(tab.title).tag(tab) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                // Its natural width, rather than the column's, so the control
-                // never resizes as the inspector's width settles.
-                .fixedSize()
+                // A constant height, and no width of its own, so the tabs
+                // never resize the inspector's column as its width settles.
+                TabStrip(items: tabs.map { makeItem($0) }, selection: Binding(get: { shown }, set: { tab = $0 }), showsRule: true)
             }
             .padding(.horizontal, Space.l)
             .padding(.top, Space.m)
-            .padding(.bottom, Space.s)
             if shown == .session {
-                Divider()
                 content(shown)
             } else {
                 ScrollView {
@@ -176,6 +172,12 @@ struct EntityInspector<Top: View, Content: View>: View {
                 }
             }
         }
+    }
+
+    /// A tab, with a dot on Session while the subject's session waits for you.
+    private func makeItem(_ tab: InspectorTab) -> TabStripItem<InspectorTab> {
+        let isWaiting = tab == .session && subject.sessionSubject.flatMap { host.getActivity(about: $0) } == .blocked
+        return TabStripItem(id: tab, title: tab.title, dot: isWaiting ? .caution : nil)
     }
 }
 

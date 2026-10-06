@@ -34,11 +34,25 @@ final class ClaudeSessionHost {
     @ObservationIgnored private var terminals: [UUID: LocalProcessTerminalView] = [:]
     @ObservationIgnored private var watchers: [UUID: ProcessEndWatcher] = [:]
     @ObservationIgnored private var names: [UUID: String] = [:]
+    @ObservationIgnored private var subjects: [UUID: ClaudeSessionSubject] = [:]
     @ObservationIgnored private var stateFiles: [UUID: URL] = [:]
     @ObservationIgnored private var activityTimer: Timer?
 
     func isRunning(_ sessionID: UUID) -> Bool {
         runningSessionIDs.contains(sessionID)
+    }
+
+    /// What the subject's running session is doing; nil when none runs.
+    func getActivity(about subject: ClaudeSessionSubject) -> SessionActivity? {
+        guard let sessionID = runningSessionIDs.first(where: { subjects[$0] == subject }) else { return nil }
+        return activities[sessionID] ?? .idle
+    }
+
+    /// The name of a running session that waits for the owner, if one does.
+    var waitingSessionName: String? {
+        runningSessionIDs.sorted { $0.uuidString < $1.uuidString }
+            .first { activities[$0] == .blocked }
+            .map { names[$0] ?? "A session" }
     }
 
     func getTerminal(for sessionID: UUID) -> LocalProcessTerminalView? {
@@ -82,6 +96,7 @@ final class ClaudeSessionHost {
         terminals[session.id] = terminal
         watchers[session.id] = watcher
         names[session.id] = session.name
+        subjects[session.id] = session.subject
         stateFiles[session.id] = stateFile
         runningSessionIDs.insert(session.id)
         startReadingActivities()
@@ -129,6 +144,7 @@ final class ClaudeSessionHost {
         terminals[sessionID] = nil
         watchers[sessionID] = nil
         stateFiles[sessionID] = nil
+        subjects[sessionID] = nil
         activities[sessionID] = nil
         runningSessionIDs.remove(sessionID)
         Task { _ = try? await client.send("POST", "v1/claude-sessions/\(sessionID.uuidString)/stop", body: EmptyRequest(), as: ClaudeSession.self) }

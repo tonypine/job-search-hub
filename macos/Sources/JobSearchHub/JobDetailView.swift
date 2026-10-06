@@ -122,7 +122,7 @@ struct JobDetailView: View {
     var body: some View {
         Group {
             if let details = model.details, details.job.id == jobID {
-                EntityInspector(tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab) {
+                EntityInspector(subject: .job(jobID), tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab) {
                     header(details)
                     actions(details)
                 } content: { tab in
