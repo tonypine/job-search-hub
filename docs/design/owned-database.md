@@ -156,12 +156,16 @@ JobSearchHub/
 
 - The data directory is named by its Postgres major, so a new major's cluster is built beside the
   old one and the old one stays until the new one has run. Only a folder named by a bare major is a
-  cluster the server opens; `19.partial` and `18.replaced-<date>` are left alone.
+  cluster the server opens. A cluster being built (by an upgrade, a restore or an import) is
+  `<major>.partial` until it's checked; one left by a build that was killed mid-way is removed by
+  the next build, which holds the lock, before its `initdb`. `18.replaced-<date>` is left for the
+  owner to delete.
 - The server finds the engines next to its own binary (`../engines` from `hub-server`), so the
   layout holds wherever TP-381 puts the app. `HUB_POSTGRES_ENGINES` and `HUB_POSTGRES_DIR` override
   both, for development.
-- The socket's path is 64 characters plus the user name, within macOS's 103. The server checks the
-  length and says so if a long user name breaks it, rather than failing inside Postgres.
+- The socket's path is 71 characters plus the user name, within macOS's 103 for user names up to
+  32 characters. The server checks the length and says so if a long user name breaks it, rather
+  than failing inside Postgres.
 - The data directory is excluded from Time Machine (`tmutil addexclusion`). A copy of a live data
   directory is the wrong thing to restore, and only into the same major. The dumps in `backups/`,
   which Time Machine does copy, are the backup.
@@ -209,10 +213,18 @@ At start, with no `HUB_DATABASE_URL`:
    `postgres/<major>/`. A cluster of a newer major than any engine means the app was rolled back
    past an upgrade: the server refuses to start and says so, rather than open a stale older cluster.
    An older major's cluster alone means an upgrade is due (see below). No cluster means a fresh
-   install: `initdb`.
-3. **Clean up an orphan.** If `postmaster.pid` names a live process, a previous server died and left
-   its Postgres behind. Holding the lock proves no server owns it, so `pg_ctl stop -m fast` stops
-   it.
+   install: `initdb`, unless a `<major>.replaced-<date>` folder is there without its replacement,
+   which means a restore was killed between its two renames: the server refuses to start and names
+   the folder to rename back, rather than open an empty cluster.
+3. **Clean up an orphan.** If `postmaster.pid` names a live process, a previous server may have died
+   and left its Postgres behind. Holding the lock proves no server owns the cluster, but not that
+   the process is a Postgres: after a reboot the PID can belong to anything of the owner's. So the
+   server signals it only if it is this cluster's postmaster: its executable is a `postgres` binary
+   under `engines/` (`proc_pidpath` on the Mac, `/proc/<pid>/exe` on Linux), and its start time
+   matches the one Postgres wrote on the file's third line, to within a few seconds. Then
+   `pg_ctl stop -m fast` stops it. Otherwise the file is stale and the server deletes it, since
+   Postgres refuses to start while the file names a live process. A dead PID needs nothing:
+   Postgres replaces the stale file itself.
 4. **Start** `postgres -D postgres/<major> -c …` as a child in the server's process group. Its
    stderr goes into the server's log, tagged `postgres`.
 5. **Wait** until it accepts a connection on the socket, for up to 30 seconds. If it exits first,
@@ -250,8 +262,9 @@ sees `postgres/18/` and no `postgres/19/`, and:
 1. starts the 18 cluster with the 18 engine;
 2. dumps it with 19's `pg_dump` (a newer `pg_dump` reads older servers) to
    `backups/hub-pre-upgrade-18-to-19-<date>.dump`, and stops it;
-3. runs `initdb` into `postgres/19.partial`, restores the dump with 19's `pg_restore`, and checks
-   each table's row count against the source;
+3. removes any `postgres/19.partial` an earlier upgrade left when it was killed, runs `initdb` into
+   `postgres/19.partial`, restores the dump with 19's `pg_restore`, and checks each table's row
+   count against the source;
 4. renames `postgres/19.partial` to `postgres/19`, and starts normally.
 
 At 28 MB this takes seconds. `pg_upgrade` would be faster for a large database, but needs the same
@@ -278,8 +291,9 @@ The upgrade path is tested in CI from 17 to 18, so it works before the hub ever 
 - **Before a major upgrade or an import**, a dump as above, kept until removed by hand.
 - **Restore** becomes a command: `hub-server database restore <dump>`. It takes the lock, so it
   refuses while the server runs ("stop the hub in Settings › Server first"). It restores into a
-  fresh cluster beside the current one (`--no-owner --no-privileges --exit-on-error`), checks it,
-  then swaps it in and keeps the old one as `postgres/18.replaced-<date>/` for the owner to delete.
+  fresh cluster beside the current one, `postgres/18.partial`, after removing any a killed restore
+  left (`--no-owner --no-privileges --exit-on-error`), checks it, then swaps it in and keeps the old
+  one as `postgres/18.replaced-<date>/` for the owner to delete.
   A restore that fails leaves the current cluster as it was.
 
 ### Moving the current data out of `hub-db`
@@ -317,9 +331,11 @@ on the Mac, now that Docker goes:
   `go test` with the arguments it's given, and stops and removes the cluster on exit. It replaces
   `docker compose up -d db` in `CLAUDE.md`'s optional full run.
 - The new lifecycle package (`internal/postgresprocess`) is tested against real Postgres binaries:
-  `initdb`, start, stop, an orphan left by a killed parent and a crash, and later a restore, an
-  import and an upgrade from 17 to 18. The engines come from `HUB_TEST_POSTGRES_ENGINE` and
-  `HUB_TEST_POSTGRES_OLD_ENGINE`; like `testdatabase`, the tests fail rather than skip without them.
+  `initdb`, start, stop, an orphan left by a killed parent, a `postmaster.pid` naming a live process
+  that isn't Postgres (left untouched, and the cluster still starts), and a crash; later a restore,
+  an import and an upgrade from 17 to 18, each also after a leftover `.partial` from a killed run.
+  The engines come from `HUB_TEST_POSTGRES_ENGINE` and `HUB_TEST_POSTGRES_OLD_ENGINE`; like
+  `testdatabase`, the tests fail rather than skip without them.
 - Agent sessions keep leaving the database packages to CI.
 
 ### CI
