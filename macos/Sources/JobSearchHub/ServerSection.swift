@@ -15,6 +15,9 @@ final class ServerControl {
 
     var logURL: URL { ServerLaunchAgent.makeLogURL(home: home) }
     var bundleCarriesServer: Bool { ServerAgent.bundleCarriesServer }
+    /// Whether this build can start an unloaded server: only the installed
+    /// app registers the agent. Any build stops and restarts a loaded one.
+    var canRegister: Bool { ServerAgent.isInstalledCopy }
 
     func watch() async {
         while !Task.isCancelled {
@@ -122,7 +125,12 @@ struct ServerSection: View {
                 Label(describeState(), systemImage: stateSymbol).foregroundStyle(control.state?.tone.color ?? Tone.neutral.color)
                 HStack {
                     if control.state == .stopped {
-                        AsyncButton("Start", busyTitle: "Starting…") { await control.start() }
+                        if control.canRegister {
+                            AsyncButton("Start", busyTitle: "Starting…") { await control.start() }
+                        } else {
+                            Text("Start it from the installed app in ~/Applications.")
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         AsyncButton("Restart", busyTitle: "Restarting…") { await control.perform(.restart) }
                         Button("Stop") { isConfirmingStop = true }

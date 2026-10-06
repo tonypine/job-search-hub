@@ -2,6 +2,14 @@ import Foundation
 import JobSearchHubCore
 import ServiceManagement
 
+enum ServerAgentError: LocalizedError {
+    case notInstalledCopy
+
+    var errorDescription: String? {
+        "Only the app installed in ~/Applications starts the server. This build would point the agent at itself, and the next build deletes it."
+    }
+}
+
 /// The server's launch agent, registered with `SMAppService` from the plist
 /// in this bundle: launchd runs the server inside the bundle, and System
 /// Settings › General › Login Items lists it under the app's name and icon.
@@ -43,8 +51,11 @@ enum ServerAgent {
     /// Registers the agent anew from this bundle's plist, which loads it and
     /// starts the server: Settings › Server's Start, and `install-app.sh`.
     /// Returns the agent's status, `.requiresApproval` when the owner turned
-    /// it off in Login Items and has to allow it there first.
+    /// it off in Login Items and has to allow it there first. Only the
+    /// installed app registers it: the agent runs the server from the bundle
+    /// that registered it, and one in macos/build/ goes with the next build.
     nonisolated static func register() async throws -> SMAppService.Status {
+        guard isInstalledCopy else { throw ServerAgentError.notInstalledCopy }
         let service = SMAppService.agent(plistName: ServerLaunchAgent.plistName)
         if service.status != .notRegistered {
             try? await service.unregister()
