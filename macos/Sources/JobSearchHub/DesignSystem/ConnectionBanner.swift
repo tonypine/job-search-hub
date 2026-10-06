@@ -37,11 +37,15 @@ struct ConnectionBanner: View {
                 .fontWeight(.medium)
                 .help(help)
             Spacer(minLength: Space.s)
-            if problem.isFixedByStartingTheServer && server.isInstalled {
+            if problem.isFixedByStartingTheServer && server.bundleCarriesServer {
                 AsyncButton("Start server", busyTitle: "Starting…", isBusy: server.isWorking) {
-                    // A loaded agent that isn't running is kicked; an unloaded one is loaded.
+                    // A loaded agent that isn't running is kicked; an unloaded one is registered from the bundle.
                     await server.readState()
-                    await server.perform(server.state == .stopped ? .start : .restart)
+                    if server.state == .stopped {
+                        await server.start()
+                    } else {
+                        await server.perform(.restart)
+                    }
                     try? await Task.sleep(for: .seconds(1))
                     await connection.check()
                 }
