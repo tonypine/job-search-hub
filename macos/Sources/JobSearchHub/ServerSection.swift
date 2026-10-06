@@ -1,9 +1,10 @@
 import AppKit
 import JobSearchHubCore
+import ServiceManagement
 import SwiftUI
 
-/// The hub server's launch agent on this Mac, read and driven through
-/// `launchctl`.
+/// The hub server's launch agent on this Mac, read, stopped and restarted
+/// through `launchctl`, and started by registering it from the bundle.
 @MainActor
 @Observable
 final class ServerControl {
@@ -12,9 +13,8 @@ final class ServerControl {
     var failure: HubFailure?
     @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
 
-    var plistURL: URL { ServerLaunchAgent.makePlistURL(home: home) }
     var logURL: URL { ServerLaunchAgent.makeLogURL(home: home) }
-    var isInstalled: Bool { FileManager.default.fileExists(atPath: plistURL.path) }
+    var bundleCarriesServer: Bool { ServerAgent.bundleCarriesServer }
 
     func watch() async {
         while !Task.isCancelled {
@@ -28,30 +28,76 @@ final class ServerControl {
         state = ServerLaunchAgent.parseState(finished.output, status: finished.status)
     }
 
-    /// Starts, stops or restarts the server, then reads its state again.
-    func perform(_ action: ServerLaunchAgent.Action) async {
+    /// Starts the server by registering its agent from this bundle, which
+    /// launchd loads and runs, then reads its state again.
+    func start() async {
         isWorking = true
         defer { isWorking = false }
-        let finished = await runLaunchctl(action)
+        do {
+            if try await ServerAgent.register() == .requiresApproval {
+                failure = HubFailure(
+                    "Couldn't start the server",
+                    advice: "It's turned off in System Settings › General › Login Items. Turn on Job Search Hub there, then start it again."
+                )
+                SMAppService.openSystemSettingsLoginItems()
+            } else {
+                failure = nil
+            }
+        } catch {
+            failure = HubFailure("Couldn't start the server", error)
+        }
+        await readState()
+    }
+
+    /// Stops or restarts the server, then reads its state again.
+    func perform(_ command: ServerLaunchAgent.Command) async {
+        isWorking = true
+        defer { isWorking = false }
+        let finished = await runLaunchctl(command)
         failure = finished.status == 0 ? nil : HubFailure(
-            "Couldn't \(describe(action)) the server", advice: "launchd turned it down. The log may say why.",
+            "Couldn't \(describe(command)) the server", advice: "launchd turned it down. The log may say why.",
             details: "launchctl: \(finished.output.trimmingCharacters(in: .whitespacesAndNewlines))"
         )
         await readState()
     }
 
-    private func describe(_ action: ServerLaunchAgent.Action) -> String {
-        switch action {
+    private func describe(_ command: ServerLaunchAgent.Command) -> String {
+        switch command {
         case .readState: "read"
-        case .start: "start"
         case .stop: "stop"
         case .restart: "restart"
         }
     }
 
-    private func runLaunchctl(_ action: ServerLaunchAgent.Action) async -> (output: String, status: Int32) {
-        let arguments = ServerLaunchAgent.makeArguments(action, userID: getuid(), plist: plistURL)
+    private func runLaunchctl(_ command: ServerLaunchAgent.Command) async -> (output: String, status: Int32) {
+        let arguments = ServerLaunchAgent.makeArguments(command, userID: getuid())
         return await BundledHubCommandRunner.run(URL(filePath: "/bin/launchctl"), arguments: arguments, environment: ProcessInfo.processInfo.environment)
+    }
+}
+
+/// `~/.local/bin/hub`, and linking it to this bundle's `hub`.
+@MainActor
+@Observable
+final class HubCommandControl {
+    private(set) var state: HubCommandLink.State = .missing
+    var failure: HubFailure?
+    @ObservationIgnored private let link = HubCommandLink.makeLinkURL(home: FileManager.default.homeDirectoryForCurrentUser)
+    @ObservationIgnored let target = ServerAgent.hubCommand
+
+    func readState() {
+        guard let target else { return }
+        state = HubCommandLink.readState(link: link, target: target)
+    }
+
+    func install() {
+        guard let target else { return }
+        do {
+            try HubCommandLink.install(link: link, target: target)
+            failure = nil
+        } catch {
+            failure = HubFailure("Couldn't install the hub command", error)
+        }
+        readState()
     }
 }
 
@@ -61,19 +107,20 @@ final class ServerControl {
 struct ServerSection: View {
     let client: HubClient?
     @State private var control = ServerControl()
+    @State private var hubCommand = HubCommandControl()
     @State private var modelWork = ModelWorkModel()
     @State private var isConfirmingStop = false
 
     var body: some View {
         Section("Server on this Mac") {
-            if !control.isInstalled {
-                Text("The server isn't installed here. Run server/scripts/install-native-server.sh from the repository.")
+            if !control.bundleCarriesServer {
+                Text("This build of the app doesn't carry the server. Install one with macos/Scripts/install-app.sh from the repository.")
                     .foregroundStyle(.secondary)
             } else {
                 Label(describeState(), systemImage: stateSymbol).foregroundStyle(control.state?.tone.color ?? Tone.neutral.color)
                 HStack {
                     if control.state == .stopped {
-                        AsyncButton("Start", busyTitle: "Starting…") { await control.perform(.start) }
+                        AsyncButton("Start", busyTitle: "Starting…") { await control.start() }
                     } else {
                         AsyncButton("Restart", busyTitle: "Restarting…") { await control.perform(.restart) }
                         Button("Stop") { isConfirmingStop = true }
@@ -84,6 +131,9 @@ struct ServerSection: View {
                 if control.failure != nil {
                     HubErrorView($control.failure)
                 }
+            }
+            if hubCommand.target != nil {
+                hubCommandRow
             }
             if client != nil, let work = modelWork.work {
                 HStack {
@@ -99,6 +149,7 @@ struct ServerSection: View {
             }
         }
         .task { await control.watch() }
+        .task { hubCommand.readState() }
         .task(id: client == nil) {
             if let client { await modelWork.watch(with: client) }
         }
@@ -106,6 +157,34 @@ struct ServerSection: View {
             Button("Stop", role: .destructive) { Task { await control.perform(.stop) } }
         } message: {
             Text("The phone, the Mac app and the agents lose the hub until you start it again, or until the Mac restarts.")
+        }
+    }
+
+    /// The terminal's `hub`, linked to this app's so it is always the
+    /// installed version's.
+    @ViewBuilder private var hubCommandRow: some View {
+        if hubCommand.state == .linked {
+            Label("The hub command is installed in ~/.local/bin", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(Tone.positive.color)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Button("Install the hub command") { hubCommand.install() }
+                Text(describeHubCommand())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if hubCommand.failure != nil {
+            HubErrorView($hubCommand.failure)
+        }
+    }
+
+    private func describeHubCommand() -> String {
+        let links = "Links ~/.local/bin/hub to this app's, so hub in a terminal is always this version. ~/.local/bin needs to be on your PATH."
+        switch hubCommand.state {
+        case .missing, .linked: return links
+        case let .other(destination?): return links + " It replaces the link to \(destination)."
+        case .other(destination: nil): return links + " It replaces the hub there now."
         }
     }
 

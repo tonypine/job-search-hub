@@ -85,7 +85,7 @@ final class RemoteTaskRunner {
     }
 
     private func fix(_ jobID: UUID, note: String, companyID: UUID?, with client: HubClient) async -> FinishTaskRequest {
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil), let claude = ClaudeLaunch.findClaudeExecutable() else {
+        guard let command = ServerAgent.hubCommand, let claude = ClaudeLaunch.findClaudeExecutable() else {
             return FinishTaskRequest(succeeded: false, result: "The Mac app can't run agents: its hub command or Claude Code is missing.", companyID: companyID)
         }
         fixingJobIDs.insert(jobID)
@@ -106,7 +106,7 @@ final class RemoteTaskRunner {
     }
 
     private func research(_ company: String, with client: HubClient) async -> FinishTaskRequest {
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil), let claude = ClaudeLaunch.findClaudeExecutable() else {
+        guard let command = ServerAgent.hubCommand, let claude = ClaudeLaunch.findClaudeExecutable() else {
             return FinishTaskRequest(succeeded: false, result: "The Mac app can't run agents: its hub command or Claude Code is missing.", companyID: nil)
         }
         let environment = BundledHubCommand.makeEnvironment(

@@ -27,11 +27,15 @@ gui/501/com.tonypine.jobsearchhub.server = {
     #expect(ServerLaunchAgent.parseState("Could not find service", status: 113) == .stopped)
 }
 
-@Test func eachActionIsALaunchctlCallInTheUsersDomain() {
-    let plist = ServerLaunchAgent.makePlistURL(home: URL(filePath: "/Users/ada"))
-    #expect(plist.path == "/Users/ada/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist")
-    #expect(ServerLaunchAgent.makeArguments(.readState, userID: 501, plist: plist) == ["print", "gui/501/com.tonypine.jobsearchhub.server"])
-    #expect(ServerLaunchAgent.makeArguments(.start, userID: 501, plist: plist) == ["bootstrap", "gui/501", plist.path])
-    #expect(ServerLaunchAgent.makeArguments(.stop, userID: 501, plist: plist) == ["bootout", "gui/501/com.tonypine.jobsearchhub.server"])
-    #expect(ServerLaunchAgent.makeArguments(.restart, userID: 501, plist: plist) == ["kickstart", "-k", "gui/501/com.tonypine.jobsearchhub.server"])
+@Test func eachCommandIsALaunchctlCallInTheUsersDomain() {
+    #expect(ServerLaunchAgent.makeArguments(.readState, userID: 501) == ["print", "gui/501/com.tonypine.jobsearchhub.server"])
+    #expect(ServerLaunchAgent.makeArguments(.stop, userID: 501) == ["bootout", "gui/501/com.tonypine.jobsearchhub.server"])
+    #expect(ServerLaunchAgent.makeArguments(.restart, userID: 501) == ["kickstart", "-k", "gui/501/com.tonypine.jobsearchhub.server"])
+}
+
+@Test func theServerAndItsCommandsLiveInTheInstalledBundle() {
+    let app = ServerLaunchAgent.makeInstalledAppURL(home: URL(filePath: "/Users/ada"))
+    #expect(app.path == "/Users/ada/Applications/Job Search Hub.app")
+    #expect(ServerLaunchAgent.makeCommandURL("hub-server", bundle: app).path == "/Users/ada/Applications/Job Search Hub.app/Contents/Helpers/bin/hub-server")
+    #expect(ServerLaunchAgent.plistName == "com.tonypine.jobsearchhub.server.plist")
 }

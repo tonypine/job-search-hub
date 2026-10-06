@@ -40,7 +40,7 @@ final class CompanyResearch {
         self.client = client
         lines = []
         unfinishedLine = ""
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
+        guard let command = ServerAgent.hubCommand else {
             state = .failed("The app has no bundled hub command. Build it with Scripts/make-app.sh.")
             return
         }

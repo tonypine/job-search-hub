@@ -25,7 +25,7 @@ final class ProfileSeed {
     }
 
     private func build(with client: HubClient) async {
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
+        guard let command = ServerAgent.hubCommand else {
             return finish(.failed("The app has no bundled hub command. Build it with Scripts/make-app.sh."))
         }
         guard let claude = ClaudeLaunch.findClaudeExecutable() else {
