@@ -77,3 +77,25 @@ func TestAStoppingServerGivesUpOnWorkThatOutlastsTheWait(t *testing.T) {
 		t.Fatal("the workers weren't stopped")
 	}
 }
+
+func TestWaitForModelRuntimeWaitsUntilItStops(t *testing.T) {
+	stopped := make(chan struct{})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		close(stopped)
+	}()
+
+	started := time.Now()
+	waitForModelRuntime(stopped, 5*time.Second)
+	if waited := time.Since(started); waited < 200*time.Millisecond || waited > 2*time.Second {
+		t.Fatalf("waited %v, want until the runtime stopped, about 200ms", waited)
+	}
+}
+
+func TestWaitForModelRuntimeGivesUpAfterTheTimeout(t *testing.T) {
+	started := time.Now()
+	waitForModelRuntime(make(chan struct{}), 100*time.Millisecond)
+	if waited := time.Since(started); waited < 100*time.Millisecond || waited > 2*time.Second {
+		t.Fatalf("waited %v, want about the 100ms given", waited)
+	}
+}
