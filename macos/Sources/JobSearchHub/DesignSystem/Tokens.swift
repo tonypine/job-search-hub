@@ -45,6 +45,10 @@ extension Tone {
     /// The tone behind a chip or a banner, under solid text.
     var fill: Color { color.opacity(0.13) }
 
+    /// The tone behind words marked in text to read, such as a posting's
+    /// phrases a screen check quoted.
+    var mark: Color { color.opacity(0.24) }
+
     private static let positiveColor = Color(light: 0x1E8E50, dark: 0x3CC97F)
     private static let cautionColor = Color(light: 0xB86E00, dark: 0xF2A33A)
     private static let negativeColor = Color(light: 0xD13438, dark: 0xFF6B6B)
@@ -80,6 +84,8 @@ extension Font {
     static let hubSection = Font.headline
     /// Text to read.
     static let hubBody = Font.body
+    /// Text to read at length, such as a posting (P3 Reader): 13 pt.
+    static let hubReading = Font.system(size: 13)
     /// Company, location, reasons; shown in `.secondary`.
     static let hubSecondary = Font.callout
     /// Who wrote it and when.
