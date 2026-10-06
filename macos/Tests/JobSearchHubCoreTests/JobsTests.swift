@@ -115,17 +115,20 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     #expect(restoreBody?["reason"] == nil)
 }
 
-@Test func aDecisionIsTakenBackWithADelete() async throws {
+@Test func aDecisionIsTakenBackWithADeleteThatSaysWhatBecameOfThePursuesCard() async throws {
     let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
+    let cardID = UUID(uuidString: "1b4e28ba-2fa1-11d2-883f-0016d3cca427")!
     let (session, recording) = StubHub.makeSession(answers: [
-        "/v1/jobs/\(jobID.uuidString)/decision": StubHub.Answer(status: 204, body: ""),
+        "/v1/jobs/\(jobID.uuidString)/decision": StubHub.Answer(
+            status: 200, body: #"{"decision":"pursue","kept_application_id":"\#(cardID.uuidString)"}"#),
     ])
     let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
 
-    try await client.clearJobDecision(jobID)
+    let cleared = try await client.clearJobDecision(jobID)
 
     #expect(recording.lastRequest?.httpMethod == "DELETE")
     #expect(recording.lastRequest?.url?.path == "/v1/jobs/\(jobID.uuidString)/decision")
+    #expect(cleared == ClearedJobDecision(decision: .pursue, keptApplicationID: cardID))
 }
 
 @Test func skippedJobsAreAStatusOfTheirOwnThatTheHubCallsDismissed() {

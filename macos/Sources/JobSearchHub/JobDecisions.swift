@@ -31,12 +31,16 @@ final class JobDecisions {
         return jobs
     }
 
-    /// Takes back the decisions on the jobs, as Undo does after Later.
-    func clear(_ jobIDs: Set<UUID>, with client: HubClient) async throws {
+    /// Takes back the decisions on the jobs, as Undo does after Later or
+    /// Pursue, and returns what that did to each job.
+    @discardableResult
+    func clear(_ jobIDs: Set<UUID>, with client: HubClient) async throws -> [UUID: ClearedJobDecision] {
         defer { revision += 1 }
+        var cleared: [UUID: ClearedJobDecision] = [:]
         for id in jobIDs {
-            try await client.clearJobDecision(id)
+            cleared[id] = try await client.clearJobDecision(id)
         }
+        return cleared
     }
 }
 
