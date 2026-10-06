@@ -1,9 +1,13 @@
-# Ships the Android app: after `ci` passes on a push to main, a commit that
-# changed android/ since the previous release becomes a GitHub Release,
-# android-v<major>.<minor>.<commit count>, with the signed APK attached. Then,
-# if a Linear key is set, the release is posted as a Job Search Hub project
-# update. See docs/decisions/0001-android-release-distribution.md, and the
-# README's Releases section for the secrets.
+# Ships the apps: after `ci` passes on a push to main, a commit that changed
+# server/ or macos/ since the previous Mac release becomes a GitHub Release,
+# mac-v<major>.<minor>.<commit count>, with the signed app zipped; one that
+# changed android/ since the previous Android release becomes
+# android-v<major>.<minor>.<commit count>, with the signed APK. A commit that
+# changed both releases both, with the same number. Then, if a Linear key is
+# set, the Android release is posted as a Job Search Hub project update. See
+# docs/design/updates.md › Releases from CI,
+# docs/decisions/0001-android-release-distribution.md, and the README's
+# Releases section for the secrets.
 #
 # workflow_run runs this file from main with the repository's secrets, so it
 # only ever builds a commit already on main, never a pull request's code.
@@ -25,7 +29,7 @@ permissions:
 
 # One release at a time, in merge order, and a running one is never cancelled.
 # GitHub keeps only the newest waiting run; one it drops is harmless, since the
-# next run releases every app change since the previous release. Every other
+# next run releases every change since each app's previous release. Every other
 # run (a pull request's ci, a failed ci, a Linear repost) gets a group of its
 # own, so it never takes a waiting release's place.
 concurrency:
@@ -48,11 +52,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      changed: ${{ steps.plan.outputs.changed }}
-      previous_tag: ${{ steps.plan.outputs.previous_tag }}
       version_code: ${{ steps.plan.outputs.version_code }}
       version_name: ${{ steps.plan.outputs.version_name }}
-      tag: ${{ steps.plan.outputs.tag }}
+      mac_changed: ${{ steps.plan.outputs.mac_changed }}
+      mac_previous_tag: ${{ steps.plan.outputs.mac_previous_tag }}
+      mac_tag: ${{ steps.plan.outputs.mac_tag }}
+      android_changed: ${{ steps.plan.outputs.android_changed }}
+      android_previous_tag: ${{ steps.plan.outputs.android_previous_tag }}
+      android_tag: ${{ steps.plan.outputs.android_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,21 +73,167 @@ jobs:
           scripts/release/plan.sh > "$RUNNER_TEMP/plan"
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/plan"
 
-  release:
+  # The Mac app, with the server and its commands inside, signed with the
+  # owner's Apple Development certificate. See docs/design/updates.md › The
+  # Mac release job and › Signing.
+  mac:
     needs: plan
-    if: needs.plan.outputs.changed == 'true'
+    if: needs.plan.outputs.mac_changed == 'true'
+    # As ci.yml's macos job: move both pins together.
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      TAG: ${{ needs.plan.outputs.mac_tag }}
+      VERSION_CODE: ${{ needs.plan.outputs.version_code }}
+      VERSION_NAME: ${{ needs.plan.outputs.version_name }}
+      PREVIOUS_TAG: ${{ needs.plan.outputs.mac_previous_tag }}
+      XCODE_VERSION: "26.6"
+    steps:
+      # Before anything else, so a missing secret fails in seconds and by name.
+      - name: Check the signing secrets
+        env:
+          MAC_SIGNING_CERTIFICATE_BASE64: ${{ secrets.MAC_SIGNING_CERTIFICATE_BASE64 }}
+          MAC_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MAC_SIGNING_CERTIFICATE_PASSWORD }}
+          MAC_SIGNING_TEAM_ID: ${{ secrets.MAC_SIGNING_TEAM_ID }}
+        run: |
+          missing=
+          for name in MAC_SIGNING_CERTIFICATE_BASE64 MAC_SIGNING_CERTIFICATE_PASSWORD MAC_SIGNING_TEAM_ID; do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error::The repository secret $name is missing. See the README's Releases › One-time setup."
+              missing=1
+            fi
+          done
+          [ -z "$missing" ]
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app"
+          xcodebuild -version
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # A keychain of the job's own, with a random password, which "Remove
+      # the signing keychain" deletes once the app is signed, or after
+      # whichever step failed. It joins the search list so make-app.sh's
+      # signing-identity.sh finds the identity, and the partition list lets
+      # codesign use the key without a prompt.
+      - name: Import the signing certificate
+        env:
+          MAC_SIGNING_CERTIFICATE_BASE64: ${{ secrets.MAC_SIGNING_CERTIFICATE_BASE64 }}
+          MAC_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MAC_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          printf '%s' "$MAC_SIGNING_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -f pkcs12 \
+            -P "$MAC_SIGNING_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          # Split on purpose: the current list, one path a line, after ours.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+
+      # Warns 30 days before the certificate expires, and fails once it has.
+      - name: Check the signing certificate
+        env:
+          MAC_SIGNING_TEAM_ID: ${{ secrets.MAC_SIGNING_TEAM_ID }}
+        run: |
+          security find-certificate -a -p "$RUNNER_TEMP/signing.keychain-db" > "$RUNNER_TEMP/certificates.pem"
+          status=0
+          scripts/release/check-certificate.sh "$MAC_SIGNING_TEAM_ID" "$RUNNER_TEMP/certificates.pem" \
+            >> "$GITHUB_STEP_SUMMARY" || status=$?
+          exit $status
+
+      # A clean build, without ci's cache: the release is built from the
+      # commit alone. CODESIGN_TEAM_ID pins the owner's team, so nothing else
+      # in the keychain signs it.
+      - name: Build the app
+        working-directory: macos
+        env:
+          CODESIGN_TEAM_ID: ${{ secrets.MAC_SIGNING_TEAM_ID }}
+          HUB_VERSION_CODE: ${{ env.VERSION_CODE }}
+        run: |
+          test "$(sh ../scripts/release/version.sh)" = "$VERSION_NAME"
+          Scripts/make-app.sh
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/signing.p12"
+          if [ -e "$RUNNER_TEMP/signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db"
+          fi
+
+      - name: Verify the app
+        env:
+          MAC_SIGNING_TEAM_ID: ${{ secrets.MAC_SIGNING_TEAM_ID }}
+        run: scripts/release/verify-app.sh macos/build/JobSearchHub.app "$VERSION_NAME" "$MAC_SIGNING_TEAM_ID"
+
+      # ditto keeps the signature's extended attributes and symlinks, which
+      # zip doesn't. The copy unzipped from it, as the app will unzip a
+      # download, has to verify too.
+      - name: Zip the app
+        env:
+          MAC_SIGNING_TEAM_ID: ${{ secrets.MAC_SIGNING_TEAM_ID }}
+        run: |
+          zip=Job-Search-Hub-$VERSION_NAME.zip
+          mkdir "$RUNNER_TEMP/assets" "$RUNNER_TEMP/unzipped"
+          ditto -c -k --keepParent macos/build/JobSearchHub.app "$RUNNER_TEMP/assets/$zip"
+          (cd "$RUNNER_TEMP/assets" && shasum -a 256 "$zip" > "$zip.sha256")
+          cat "$RUNNER_TEMP/assets/$zip.sha256"
+          ditto -x -k "$RUNNER_TEMP/assets/$zip" "$RUNNER_TEMP/unzipped"
+          scripts/release/verify-app.sh "$RUNNER_TEMP/unzipped/JobSearchHub.app" "$VERSION_NAME" "$MAC_SIGNING_TEAM_ID"
+
+      - name: Write the changelog
+        run: |
+          scripts/release/changelog.sh "$PREVIOUS_TAG" "$SHA" server/ macos/ > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # Creates the tag at the built commit along with the release.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/assets/Job-Search-Hub-$VERSION_NAME.zip" \
+            "$RUNNER_TEMP/assets/Job-Search-Hub-$VERSION_NAME.zip.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Job Search Hub $VERSION_NAME for Mac" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+  android:
+    needs: plan
+    if: needs.plan.outputs.android_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
     outputs:
-      tag: ${{ needs.plan.outputs.tag }}
+      tag: ${{ needs.plan.outputs.android_tag }}
     env:
       SHA: ${{ github.event.workflow_run.head_sha }}
-      TAG: ${{ needs.plan.outputs.tag }}
+      TAG: ${{ needs.plan.outputs.android_tag }}
       VERSION_CODE: ${{ needs.plan.outputs.version_code }}
       VERSION_NAME: ${{ needs.plan.outputs.version_name }}
-      PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
+      PREVIOUS_TAG: ${{ needs.plan.outputs.android_previous_tag }}
     steps:
       # Before anything else, so a missing secret fails in seconds and by name.
       - name: Check the signing secrets
@@ -160,7 +313,7 @@ jobs:
 
       - name: Write the changelog
         run: |
-          scripts/release/changelog.sh "$PREVIOUS_TAG" "$SHA" > "$RUNNER_TEMP/notes.md"
+          scripts/release/changelog.sh "$PREVIOUS_TAG" "$SHA" android/ > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
 
       # Creates the tag at the built commit along with the release.
@@ -174,14 +327,15 @@ jobs:
             --title "Android $VERSION_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
-  # Optional: without LINEAR_RELEASE_API_KEY it only says so. If Linear
-  # refuses, this job fails and the release stays published; run the workflow
-  # by hand with the tag to post again.
+  # Posts the Android release, for now. Optional: without
+  # LINEAR_RELEASE_API_KEY it only says so. If Linear refuses, this job fails
+  # and the release stays published; run the workflow by hand with the tag to
+  # post again.
   linear:
-    needs: release
+    needs: android
     if: >-
       always() &&
-      (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
+      (needs.android.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -191,7 +345,7 @@ jobs:
 
       - name: Post the Linear project update
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.android.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_RELEASE_API_KEY }}
           LINEAR_PROJECT: Job Search Hub
