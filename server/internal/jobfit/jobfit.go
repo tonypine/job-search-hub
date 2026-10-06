@@ -217,7 +217,7 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if named == "" {
 		return Check{Name: name, Verdict: VerdictUnclear, Reason: "the posting doesn't say"}
 	}
-	if softener := getSoftener(named); softener != "" && !hasAnyTerm(texts, residencyRuleWords...) {
+	if softener := getSoftener(named); softener != "" && !hasResidencyRule(texts) {
 		if isOnlyRemote(job.Location) || getSoftener(job.Location) != "" {
 			return Check{Name: name, Verdict: VerdictUnclear, Reason: fmt.Sprintf("only %s: %q", softener, named)}
 		}
@@ -229,15 +229,20 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 // A place a posting names reads as a residency rule, unless it is only
 // preferred, as in "Remote, North America preferred", or only sets working
 // hours, as in "Remote (US time zones)": those postings may still hire in
-// Brazil. Any word that requires keeps it a rule, and so does a location
-// that names a place on its own, as "United States (Remote)" does.
+// Brazil. A word about residence keeps it a rule, and so does a word that
+// requires, unless it only requires hours, as in "Must overlap 4 hours with
+// EST". A location that names a place on its own, as "United States
+// (Remote)" does, stays a rule too.
 var (
-	residencyRuleWords = []string{
+	requirementWords = []string{
 		"must", "only", "required", "requires", "require", "requirement", "mandatory", "need to", "needs to",
+		"apenas", "somente", "obrigatorio", "obrigatoria", "obrigatoriamente", "requisito",
+		"solo", "solamente", "unicamente", "excluyente",
+	}
+	residenceWords = []string{
 		"resident", "residents", "residency", "reside", "residing", "based in", "located in", "living in", "live in",
 		"citizen", "citizens", "citizenship", "authorized", "authorization", "eligible", "eligibility", "right to work",
-		"apenas", "somente", "obrigatorio", "obrigatoria", "obrigatoriamente", "requisito", "residir", "residente", "residentes", "morar",
-		"solo", "solamente", "unicamente", "excluyente",
+		"residir", "residente", "residentes", "morar",
 	}
 	preferenceWords = []string{
 		"preferred", "preferably", "prefer", "prefers", "preference", "ideally", "nice to have", "a plus", "bonus",
@@ -254,16 +259,43 @@ var (
 	// qualifierWords soften the place they come with. A zone name alone
 	// doesn't: in "Austin TX CST" it only tags the city.
 	qualifierWords = slices.Concat(preferenceWords, workingHoursWords)
-	zoneOnlyWords  = slices.Concat(zoneNames, []string{"to", "or", "and", "remote"})
+	hoursWords     = slices.Concat(workingHoursWords, zoneNames)
+	// hoursOnlyWords are the words of a text about working hours that names
+	// no place, as "UTC-5 to UTC+1", "EST only" and "Must be able to work EST
+	// hours" are. Country codes like "de", "at" and "no" are left out.
+	hoursOnlyWords = slices.Concat(hoursWords, requirementWords, []string{
+		"remote", "remoto", "remota", "fully", "be", "is", "are", "able", "to", "work", "working", "during", "with", "within", "in",
+		"the", "a", "an", "at", "least", "of", "our", "your", "and", "or", "core", "business", "hrs", "am", "pm",
+		"ser", "capaz", "trabalhar", "em", "com", "ou", "durante", "pelo", "menos", "con", "trabajar", "poder", "minimo",
+	})
 )
+
+// isOnlyAboutHours reports whether a text sets working hours or a time zone
+// and names no place.
+func isOnlyAboutHours(text string) bool {
+	return hasAnyTerm([]string{text}, hoursWords...) && isOnlyWordsOf(text, hoursOnlyWords)
+}
+
+// hasResidencyRule reports whether any part of the texts requires where
+// someone lives. A requirement on working hours alone isn't one.
+func hasResidencyRule(texts []string) bool {
+	for _, text := range texts {
+		for _, part := range getParts(text) {
+			if hasAnyTerm([]string{part}, residenceWords...) || hasAnyTerm([]string{part}, requirementWords...) && !isOnlyAboutHours(part) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // getSoftener returns "a preference" or "a time zone" when every place a
 // posting names comes with one, and "" when any place stands on its own:
-// "Remote (US, EST preferred)" and "Austin, TX (CST)" still name only the
-// US.
+// "Remote (US, EST preferred)", "Austin, TX (CST)" and "Hiring in the US
+// with PST hours" still name only the US.
 func getSoftener(named string) string {
 	var places []string
-	for _, part := range strings.FieldsFunc(named, isPartSeparator) {
+	for _, part := range getParts(named) {
 		switch {
 		case isOnlyRemote(part):
 		case len(places) > 0 && isOnlyWordsOf(part, preferenceWords):
@@ -288,6 +320,17 @@ func getSoftener(named string) string {
 	return "a time zone"
 }
 
+// partJoiners start a part of their own, so what follows them qualifies
+// only itself: in "Hiring in the US with PST hours" the hours aren't the
+// US's.
+var partJoiners = regexp.MustCompile(`(?i)\s+(with|com|con)\s+`)
+
+// getParts splits a text at commas, semicolons, parentheses and
+// partJoiners.
+func getParts(text string) []string {
+	return strings.FieldsFunc(partJoiners.ReplaceAllString(text, ","), isPartSeparator)
+}
+
 func isPartSeparator(character rune) bool {
 	return strings.ContainsRune(",;()", character)
 }
@@ -297,7 +340,7 @@ func isPartSeparator(character rune) bool {
 var placeJoiners = strings.NewReplacer(" - ", "/", " – ", "/", "—", "/", "|", "/")
 
 // isSoftened reports whether a place comes with a preference or working
-// hours, or is only a time zone, as "EST" and "UTC-5 to UTC+1" are. A zone
+// hours, or is only a time zone, as "EST" and "EST only" are. A zone
 // name beside a place only tags it, as in "Austin TX CST". Places joined by
 // slashes, spaced dashes or bars share a qualifier written before the first
 // or after the last of them, as in "preferably US/Canada" and "US/Canada
@@ -310,7 +353,7 @@ func isSoftened(place string) bool {
 		}
 	}
 	for _, alternative := range alternatives {
-		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, qualifierWords...) && !isOnlyWordsOf(alternative, zoneOnlyWords) {
+		if !isOnlyRemote(alternative) && !hasAnyTerm([]string{alternative}, qualifierWords...) && !isOnlyAboutHours(alternative) {
 			return false
 		}
 	}
