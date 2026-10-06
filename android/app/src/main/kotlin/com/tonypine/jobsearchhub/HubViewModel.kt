@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tonypine.jobsearchhub.core.ClearedJobDecision
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.FollowUpStatus
 import com.tonypine.jobsearchhub.core.HubUpdate
@@ -267,13 +268,16 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. */
-    suspend fun undoDecision(id: String): Result<Unit> {
+    /**
+     * Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. Returns
+     * what the hub did with a pursue's card.
+     */
+    suspend fun undoDecision(id: String): Result<ClearedJobDecision> {
         val client = client ?: return Result.failure(HubException("Not paired."))
         return try {
-            client.clearJobDecision(id)
+            val cleared = client.clearJobDecision(id)
             refresh()
-            Result.success(Unit)
+            Result.success(cleared)
         } catch (error: HubException) {
             Result.failure(error)
         }

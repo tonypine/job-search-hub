@@ -14,19 +14,28 @@ import Observation
 /// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
 /// instead, for a QA machine whose Keychain won't keep it. Without the flag
 /// the variable is ignored.
+///
+/// A build no Apple team signed, such as the ad hoc build in Symphony's QA
+/// VM, keeps the token in its preferences when the Keychain refuses it, and
+/// reads it from there first. A team-signed build never reads or writes that
+/// copy.
 @MainActor
 @Observable
 public final class HubConnection {
     public static let defaultHubURL = "http://localhost:8090"
     public static let qaModeArgument = "--qa-mode"
     private static let hubURLPreferenceKey = "hubURL"
+    static let ownerTokenPreferenceKey = "ownerToken"
 
     public var hubURLText: String
     public private(set) var token: OwnerTokenState = .reading
+    /// Where the token came from, or went on the last save.
+    public private(set) var tokenSource: OwnerTokenSource = .keychain
     public private(set) var status: ConnectionStatus = .unchecked
     public private(set) var isChecking = false
     @ObservationIgnored private let preferences: UserDefaults
-    @ObservationIgnored private let saveToKeychain: (String) throws -> Void
+    @ObservationIgnored private let saveKeychain: (String) throws -> Void
+    @ObservationIgnored private let isTeamSigned: Bool
     @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
     /// With an imported token, from `--import-owner-token`, the app uses it
@@ -36,18 +45,26 @@ public final class HubConnection {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
+        isTeamSigned: Bool = BuildSignature.hasTeam,
         readKeychain: @escaping @Sendable () async -> String? = { await OwnerTokenKeychain.readOffMainThread() },
-        saveToKeychain: @escaping (String) throws -> Void = OwnerTokenKeychain.save
+        saveKeychain: @escaping (String) throws -> Void = { try OwnerTokenKeychain.save($0) }
     ) {
         self.preferences = preferences
-        self.saveToKeychain = saveToKeychain
+        self.saveKeychain = saveKeychain
+        self.isTeamSigned = isTeamSigned
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
         if let importedToken {
-            token = importedToken
+            token = keep(importedToken)
             return
         }
         if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
             token = .present(qaToken)
+            tokenSource = .environment
+            return
+        }
+        if !isTeamSigned, let saved = OwnerTokenState(read: preferences.string(forKey: Self.ownerTokenPreferenceKey)).value {
+            token = .present(saved)
+            tokenSource = .preferences
             return
         }
         tokenRead = Task {
@@ -82,12 +99,30 @@ public final class HubConnection {
 
     /// Saves the URL, and the token when one is given; an empty token field
     /// keeps the stored token. A token the Keychain refuses is unsaved, and
-    /// used until the app quits.
+    /// used until the app quits, unless the build has no team: it keeps the
+    /// token in its preferences instead, and drops that copy once the
+    /// Keychain takes one.
     public func save(newToken: String) {
         preferences.set(hubURLText, forKey: Self.hubURLPreferenceKey)
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedToken.isEmpty {
-            token = .saving(trimmedToken, with: saveToKeychain)
+        guard !trimmedToken.isEmpty else { return }
+        token = keep(.saving(trimmedToken, with: saveKeychain))
+    }
+
+    /// The state of a token just handed to the Keychain, after a build
+    /// without a team has moved one the Keychain refused to its preferences.
+    private func keep(_ state: OwnerTokenState) -> OwnerTokenState {
+        switch state {
+        case .present:
+            preferences.removeObject(forKey: Self.ownerTokenPreferenceKey)
+            tokenSource = .keychain
+            return state
+        case .unsaved(let token, _) where !isTeamSigned:
+            preferences.set(token, forKey: Self.ownerTokenPreferenceKey)
+            tokenSource = .preferences
+            return .present(token)
+        case .unsaved, .reading, .missing:
+            return state
         }
     }
 
@@ -109,4 +144,13 @@ public final class HubConnection {
     func finishReadingToken() async {
         await tokenRead?.value
     }
+}
+
+/// Where the app holds the owner token.
+public enum OwnerTokenSource: Equatable, Sendable {
+    case keychain
+    /// This build's preferences, for a build without a team whose Keychain refused it.
+    case preferences
+    /// HUB_OWNER_TOKEN, in QA mode.
+    case environment
 }
