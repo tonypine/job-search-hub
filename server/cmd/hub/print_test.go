@@ -22,7 +22,7 @@ func TestPrintDossierShowsBoardsAndPeopleWithSources(t *testing.T) {
 	openPostings := 12
 	var out bytes.Buffer
 	printDossier(&out, store.CompanyDossier{
-		Company:      store.Company{Name: "Acme", Domain: "acme.com", CareersURL: "https://acme.com/careers", Summary: "Makes anvils."},
+		Company:      store.Company{Name: "Acme", Domain: "acme.com", CareersURL: "https://acme.com/careers", Industry: "Hardware", Summary: "Makes anvils."},
 		WatchedSince: &watchedSince,
 		JobBoards: []store.JobBoard{{
 			Provider: "greenhouse", BoardToken: "acme", BoardURL: "https://job-boards.greenhouse.io/acme",
@@ -32,7 +32,7 @@ func TestPrintDossierShowsBoardsAndPeopleWithSources(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Acme (acme.com)", "careers: https://acme.com/careers", "Makes anvils.", "On the watch list since 2026-09-28.",
+		"Acme (acme.com)", "careers: https://acme.com/careers", "industry: Hardware", "Makes anvils.", "On the watch list since 2026-09-28.",
 		"greenhouse/acme  verified 2026-09-28, 12 open postings", "Ada Lovelace (Engineering Manager, hiring_manager)",
 		"source: https://acme.com/team",
 	} {
