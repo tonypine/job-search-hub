@@ -63,3 +63,48 @@ struct Evidence: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 }
+
+/// A check that doesn't pass, where exceptions come first (P6): its symbol,
+/// name and reason, the posting's words marked in its tone, and a link to
+/// them in the posting.
+struct ExceptionRow: View {
+    let row: ScreenRow
+    /// Shows the quote in the posting; nil without one.
+    var openInPosting: (() -> Void)?
+
+    var body: some View {
+        let tone = row.verdict?.tone ?? .neutral
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            Image(systemName: row.verdict?.symbolName ?? "info.circle")
+                .foregroundStyle(tone.color)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("\(Text(row.name).fontWeight(.medium))  \(Text(row.reason).foregroundStyle(.secondary))")
+                    .fixedSize(horizontal: false, vertical: true)
+                if let evidence = row.evidence, !evidence.isEmpty {
+                    Text("\u{201C}\(evidence)\u{201D}")
+                        .font(.hubEvidence)
+                        .padding(.horizontal, Space.xs + 2)
+                        .padding(.vertical, 2)
+                        .background(tone.fill, in: RoundedRectangle(cornerRadius: Radius.control))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(row.name), \(row.verdict?.title ?? "not judged"): \(row.reason)")
+            if let openInPosting {
+                Button(action: openInPosting) {
+                    Text("In posting \(Image(systemName: "arrow.down.right"))")
+                }
+                .buttonStyle(.link)
+                .font(.hubSecondary)
+                .lineLimit(1)
+                .fixedSize()
+                .help("Show the posting it quotes")
+                .accessibilityLabel("Show \(row.name) in the posting")
+            }
+        }
+    }
+}

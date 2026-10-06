@@ -147,6 +147,12 @@ struct ConnectionCheckKey: Equatable {
     let isStreamConnected: Bool
 }
 
+/// Where the owner was going when the Criteria page asked to save its
+/// changes first.
+struct PendingLeave {
+    let go: @MainActor () -> Void
+}
+
 struct ContentView: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
@@ -165,6 +171,11 @@ struct ContentView: View {
     /// What an action run from the palette did, or why it failed.
     @State private var toast: ToastMessage?
     @State private var actionError: HubFailure?
+    /// The Criteria page's form, here so leaving the page with changes asks
+    /// to save or discard them first.
+    @State private var criteria = JobCriteriaEditor()
+    /// Where the owner was going when the page asked; nil when it isn't asking.
+    @State private var pendingLeave: PendingLeave?
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -176,7 +187,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedPage) {
+            List(selection: Binding(get: { selectedPage }, set: { page in if page != selectedPage { leave { selectedPage = page } } })) {
                 ForEach(SidebarGroup.allCases) { group in
                     if let title = group.title {
                         Section(title, isExpanded: isExpanded(group)) { rows(group) }
@@ -216,6 +227,21 @@ struct ContentView: View {
                 }
             }
             .toast($toast)
+            .confirmationDialog(
+                "Save the changes to your criteria?",
+                isPresented: Binding(get: { pendingLeave != nil }, set: { if !$0 { pendingLeave = nil } }),
+                presenting: pendingLeave
+            ) { leaving in
+                Button("Save") { Task { await saveCriteria(thenRun: leaving) } }
+                    .keyboardShortcut(.defaultAction)
+                Button("Discard", role: .destructive) {
+                    criteria.revert()
+                    leaving.go()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("You have \(SaveBar.describe(criteria.changeCount)) on Criteria. Discarded, they're gone.")
+            }
         }
         .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
@@ -282,13 +308,13 @@ struct ContentView: View {
     @ViewBuilder
     private var page: some View {
         switch selectedPage {
-        case .today: TodayPage { selectedPage = $0 }
+        case .today: TodayPage { page in leave { selectedPage = page } }
         case .decide: DecidePage()
         case .updates: UpdatesPage()
         case .companies: CompaniesPage()
         case .people: PeoplePage()
         case .profile: ProfilePage()
-        case .criteria: CriteriaPage()
+        case .criteria: CriteriaPage(editor: criteria)
         case .activity: ActivityPage()
         case .prompts: PromptsPage()
         case .modelLab: ModelLabPage()
@@ -343,24 +369,55 @@ struct ContentView: View {
             details.show(subject, from: selectedPage ?? .today)
             if selectedPage == nil { selectedPage = .today }
         case let .page(page):
-            selectedPage = page
-            requests.ask(.focusList, on: page)
+            leave {
+                selectedPage = page
+                requests.ask(.focusList, on: page)
+            }
         case let .action(action):
             run(action)
+        }
+    }
+
+    /// Runs what leaves the page shown, once the Criteria page's unsaved
+    /// changes are saved or discarded; at once when there are none.
+    private func leave(_ go: @escaping @MainActor () -> Void) {
+        if selectedPage == .criteria, criteria.hasChanges {
+            pendingLeave = PendingLeave(go: go)
+        } else {
+            go()
+        }
+    }
+
+    /// Saves the criteria, then leaves; a refused save stays on the page,
+    /// which says why, and so does a hub this app can't reach yet.
+    private func saveCriteria(thenRun leaving: PendingLeave) async {
+        guard let client = connection.makeClient() else {
+            actionError = HubFailure("Couldn't save the criteria", advice: "The hub's address or token isn't set. Set them in Settings, then save again.")
+            return
+        }
+        if await criteria.save(with: client) {
+            toast = ToastMessage(text: "Saved your criteria")
+            leaving.go()
         }
     }
 
     private func run(_ action: PaletteAction) {
         switch action {
         case .addCompany:
-            selectedPage = .companies
-            requests.ask(.addCompany, on: .companies)
+            leave {
+                selectedPage = .companies
+                requests.ask(.addCompany, on: .companies)
+            }
         case .addCompanyFromSuggestions:
-            selectedPage = .companies
-            requests.ask(.addCompanyFromSuggestions, on: .companies)
+            leave {
+                selectedPage = .companies
+                requests.ask(.addCompanyFromSuggestions, on: .companies)
+            }
         case .addJobByURL:
-            selectedPage = .jobs
-            requests.ask(.addJobByURL, on: .jobs)
+            leave {
+                selectedPage = .jobs
+                requests.ask(.addJobByURL, on: .jobs)
+            }
         case .generateMissingCVs:
             guard let client = connection.makeClient() else { return }
             Task {
@@ -399,8 +456,10 @@ struct ContentView: View {
     /// shown, or the profile interview beside the Profile page.
     private func openSession(_ subject: ClaudeSessionSubject) {
         if subject == .profile {
-            selectedPage = .profile
-            details.show(.profileInterview, from: .profile)
+            leave {
+                selectedPage = .profile
+                details.show(.profileInterview, from: .profile)
+            }
         } else if let selectedPage {
             details.openSession(InspectorSubject(subject), from: selectedPage)
         }

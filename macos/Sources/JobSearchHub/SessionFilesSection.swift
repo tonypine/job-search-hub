@@ -3,24 +3,33 @@ import JobSearchHubCore
 import SwiftUI
 
 /// The one folder Claude sessions in the app can read without /add-dir, so
-/// an agent can attach the owner's files, such as the CV, to a form.
+/// an agent can attach the owner's files, such as the CV, to a form; a
+/// status row in Settings › Accounts.
 struct SessionFilesSection: View {
     @AppStorage(ClaudeLaunch.readableFolderKey) private var readableFolder =
         ClaudeLaunch.getDefaultReadableFolder(home: FileManager.default.homeDirectoryForCurrentUser)
 
     var body: some View {
-        Section("Sessions") {
-            LabeledContent("Folder sessions can read") {
-                HStack {
-                    Text(readableFolder.isEmpty ? "None" : readableFolder).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Section {
+            StatusRow(
+                "Sessions' folder", symbol: "folder.fill", state: readableFolder.isEmpty ? "None" : "Readable",
+                stateTone: readableFolder.isEmpty ? .neutral : .positive,
+                detail: readableFolder.isEmpty ? nil : (readableFolder as NSString).abbreviatingWithTildeInPath,
+                help: "Sessions can attach files from this folder, like your CV, to an application form. Keep it to your job-search documents. "
+                    + "It applies to sessions started or resumed after a change."
+            ) {
+                if readableFolder.isEmpty {
                     Button("Choose…") { chooseFolder() }
-                    if !readableFolder.isEmpty {
+                } else {
+                    Menu("Choose…") {
                         Button("Clear") { readableFolder = "" }
+                    } primaryAction: {
+                        chooseFolder()
                     }
+                    .menuStyle(.button)
+                    .fixedSize()
                 }
             }
-            Text("Sessions can attach files from this folder, like your CV, to an application form. Keep it to your job-search documents. It applies to sessions started or resumed after a change.")
-                .font(.hubCaption).foregroundStyle(.secondary)
         }
     }
 

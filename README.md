@@ -69,7 +69,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    To go back before step 6: stop the hub, put `HUB_DATABASE_URL` back in `server.env`, `docker compose start db`, and start the hub. Writes made since step 3 stay only in the database the server owns. To keep them, dump it before stopping the hub, with the engine's `pg_dump` (`engines/postgres-18/bin/pg_dump --format=custom --file=<file> "postgres:///hub?host=$HOME/Library/Application%20Support/JobSearchHub/postgres&user=hub"`), and once Docker's runs, restore the file into it with `pg_restore --clean --no-owner --dbname=<Docker's URL> <file>`.
 
-2. **Install the CLI.** In the Mac app's Settings › Server, click *Install the hub command*. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
+2. **Install the CLI.** In the Mac app's Settings › Server, click *Install* on the *hub command* row. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
 
    ```json
    { "url": "http://localhost:8090", "owner_token": "…" }

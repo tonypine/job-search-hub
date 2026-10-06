@@ -1,16 +1,39 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// Settings › Models: the model servers the hub can call, and the model each
-/// kind of background task runs on, with a fallback.
+/// Settings › Models: the local models' state with Pause, the model servers
+/// the hub can call, and the model each kind of background task runs on,
+/// with a fallback.
 struct ModelsSection: View {
     let client: HubClient
     @State private var providers: [ModelProvider] = []
     @State private var routes: [String: TaskRoute] = [:]
     @State private var failure: HubFailure?
     @State private var editedProvider: ProviderSheetTarget?
+    @State private var modelWork = ModelWorkModel()
 
     var body: some View {
+        Section {
+            StatusRow(
+                "Local models", symbol: "cpu", state: modelWork.work?.stateTitle ?? "Checking…", stateTone: modelWork.work?.stateTone ?? .neutral,
+                detail: modelWork.work?.stateDetail,
+                help: "The hub runs background work, such as reading jobs' facts and sorting mail, on the models below. "
+                    + "Pausing holds that work until you resume it; runs you start still go ahead."
+            ) {
+                if let work = modelWork.work {
+                    AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…") {
+                        await modelWork.setPaused(!work.paused, with: client)
+                    }
+                }
+            }
+            if modelWork.pauseFailure != nil {
+                HubErrorView($modelWork.pauseFailure)
+            }
+            if modelWork.failure != nil {
+                HubErrorView($modelWork.failure)
+            }
+        }
+        .task { await modelWork.watch(with: client) }
         Section("Models") {
             ForEach(providers) { provider in
                 HStack {

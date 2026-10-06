@@ -129,22 +129,25 @@ struct InspectorNavigationBar: View {
 
 /// One job, company or person in the inspector: its header and action bar
 /// on top, its tabs, then the chosen tab, which scrolls, or which a session
-/// fills to the bottom.
+/// fills to the bottom. Setting the scroll target scrolls the tab to the
+/// view with that id, such as a card, then clears it.
 struct EntityInspector<Top: View, Content: View>: View {
     let subject: InspectorSubject
     let tabs: [InspectorTab]
     @Binding var tab: InspectorTab
+    @Binding var scrollTarget: String?
     @ViewBuilder let top: Top
     @ViewBuilder let content: (InspectorTab) -> Content
     private let host = ClaudeSessionHost.shared
 
     init(
-        subject: InspectorSubject, tabs: [InspectorTab], tab: Binding<InspectorTab>, @ViewBuilder top: () -> Top,
-        @ViewBuilder content: @escaping (InspectorTab) -> Content
+        subject: InspectorSubject, tabs: [InspectorTab], tab: Binding<InspectorTab>, scrollTarget: Binding<String?> = .constant(nil),
+        @ViewBuilder top: () -> Top, @ViewBuilder content: @escaping (InspectorTab) -> Content
     ) {
         self.subject = subject
         self.tabs = tabs
         _tab = tab
+        _scrollTarget = scrollTarget
         self.top = top()
         self.content = content
     }
@@ -163,12 +166,21 @@ struct EntityInspector<Top: View, Content: View>: View {
             if shown == .session {
                 content(shown)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Space.l) {
-                        content(shown)
+                ScrollViewReader { scroller in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Space.l) {
+                            content(shown)
+                        }
+                        .padding(Space.l)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(Space.l)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Also on appearing, for a target set from the Session
+                    // tab; one on another tab is there once the tab shows.
+                    .task(id: scrollTarget) {
+                        guard let target = scrollTarget, (try? await Task.sleep(for: .milliseconds(50))) != nil else { return }
+                        withAnimation { scroller.scrollTo(target, anchor: .top) }
+                        scrollTarget = nil
+                    }
                 }
             }
         }

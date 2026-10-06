@@ -31,7 +31,7 @@ Under 600 dp the app is a phone app: a navigation bar, and a job or company open
 
 ## Pairing
 
-On the Mac, open Settings › Phones › Pair a phone. Give the phone a name and the address it reaches the hub at, then scan the QR code in the app, or open its `jobsearchhub://pair?…` link on the phone. Each phone gets a token of its own, which the hub stores only as a hash. Revoke a lost phone in the same place. *Unpair this phone* in the app's Settings forgets the pairing on the phone.
+On the Mac, open Settings › Phones › Pair…. Give the phone a name and the address it reaches the hub at, then scan the QR code in the app, or open its `jobsearchhub://pair?…` link on the phone. Each phone gets a token of its own, which the hub stores only as a hash. Revoke a lost phone in the same place. *Unpair this phone* in the app's Settings forgets the pairing on the phone.
 
 - **Phone:** the hub's Tailscale address, `https://<mac>.<tailnet>.ts.net` (see `tailscale serve`).
 - **Emulator:** `http://10.0.2.2:8090`, the Mac's own `localhost`. It's the only address the app allows without HTTPS.
