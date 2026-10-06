@@ -12,7 +12,9 @@
 # ~/Library/Application Support/JobSearchHub/engines, or in
 # HUB_POSTGRES_ENGINES. The run also gets HUB_TEST_POSTGRES_ENGINE, unless it
 # is set, and the engine's bin/ first on PATH, so the lifecycle tests and the
-# pg_dump backup test run against it too.
+# pg_dump backup test run against it too. The upgrade tests move a cluster
+# from Postgres 17: they get HUB_TEST_POSTGRES_OLD_ENGINE, unless it is set,
+# when the engines folder holds postgres-17, and fail without it.
 
 set -eu
 
@@ -64,6 +66,10 @@ trap 'exit 1' HUP INT TERM
 host=$(printf '%s' "$root" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/&/%26/g' -e 's/#/%23/g' -e 's/+/%2B/g')
 HUB_TEST_DATABASE_URL="postgres:///postgres?host=$host&user=hub"
 HUB_TEST_POSTGRES_ENGINE=${HUB_TEST_POSTGRES_ENGINE:-$engine}
+if [ -z "${HUB_TEST_POSTGRES_OLD_ENGINE:-}" ] && [ -x "$engines/postgres-17/bin/postgres" ]; then
+	HUB_TEST_POSTGRES_OLD_ENGINE=$engines/postgres-17
+	export HUB_TEST_POSTGRES_OLD_ENGINE
+fi
 PATH=$engine/bin:$PATH
 export HUB_TEST_DATABASE_URL HUB_TEST_POSTGRES_ENGINE PATH
 echo "Postgres $("$engine/bin/postgres" --version | awk '{print $NF}') from $engine, in $root"
