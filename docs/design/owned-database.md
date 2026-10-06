@@ -384,10 +384,10 @@ of TP-411, in Backlog until the proposal is approved.
 
 - **Bundled Postgres over SQLite.** The recommendation above. SQLite stays possible later; nothing
   here makes it harder.
-- **Building Postgres ourselves.** Ticket 1 builds it from the official source tarball, pinned by
-  checksum, on a macOS runner. The alternative is to repackage a prebuilt one (zonky's, which
-  `embedded-postgres` uses): faster to start, but a third party's build of the binary that holds the
-  data.
+- **Building Postgres ourselves.** Settled (2026-10-06): build it from the official source
+  tarball, pinned by checksum, on a macOS runner, rather than repackage a prebuilt one (zonky's,
+  which `embedded-postgres` uses), a third party's build of the binary that holds the data. The
+  recipe is `scripts/postgres-engine/`.
 - **Sorting by code point**, with the queries that sort names moved to `lower(…)`. The alternative,
   ICU, adds about 30 MB to the app and a collation version that can change under the indexes.
 - **No Time Machine copy of the live data directory**, with the dumps as the backup.
