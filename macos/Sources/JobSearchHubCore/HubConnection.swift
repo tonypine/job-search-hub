@@ -11,9 +11,10 @@ import Observation
 /// token the Keychain refuses, as in a VM whose login keychain is locked, is
 /// still used until the app quits.
 ///
-/// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
-/// instead, for a QA machine whose Keychain won't keep it. Without the flag
-/// the variable is ignored.
+/// Launched with `--qa-mode`, the app starts from empty connection settings:
+/// it forgets the hub URL and token an earlier run saved, takes the token
+/// from HUB_OWNER_TOKEN, and leaves the Keychain alone, for a QA machine whose
+/// Keychain won't keep it. Without the flag the variable is ignored.
 ///
 /// A build no Apple team signed, such as the ad hoc build in Symphony's QA
 /// VM, keeps the token in its preferences when the Keychain refuses it, and
@@ -52,6 +53,11 @@ public final class HubConnection {
         self.preferences = preferences
         self.saveKeychain = saveKeychain
         self.isTeamSigned = isTeamSigned
+        let isQAMode = arguments.contains(Self.qaModeArgument)
+        if isQAMode {
+            preferences.removeObject(forKey: Self.hubURLPreferenceKey)
+            preferences.removeObject(forKey: Self.ownerTokenPreferenceKey)
+        }
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
         if let importedToken {
             token = keep(importedToken)
@@ -60,6 +66,10 @@ public final class HubConnection {
         if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
             token = .present(qaToken)
             tokenSource = .environment
+            return
+        }
+        if isQAMode {
+            token = .missing
             return
         }
         if !isTeamSigned, let saved = OwnerTokenState(read: preferences.string(forKey: Self.ownerTokenPreferenceKey)).value {

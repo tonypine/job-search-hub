@@ -99,7 +99,7 @@ set -a && . ./.env && set +a
 open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
+On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then starts from empty connection settings, forgetting the hub URL and token an earlier run saved, takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
 
 ```bash
 open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --qa-mode

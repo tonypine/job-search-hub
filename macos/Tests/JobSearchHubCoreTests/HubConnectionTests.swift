@@ -46,17 +46,40 @@ private func makePreferences() -> UserDefaults {
     #expect(connection.makeClient() == nil)
 }
 
-@MainActor @Test func inQAModeWithoutATokenTheKeychainIsReadAsUsual() async {
+@MainActor @Test func inQAModeWithoutATokenTheKeychainIsNotRead() async {
     let environments: [[String: String]] = [[:], ["HUB_OWNER_TOKEN": ""]]
     for environment in environments {
         let connection = HubConnection(
-            arguments: ["JobSearchHub", "--qa-mode"], environment: environment,
-            preferences: makePreferences(), readKeychain: { "keychain-token" }
+            arguments: ["JobSearchHub", "--qa-mode"], environment: environment, preferences: makePreferences(),
+            readKeychain: { Issue.record("read the Keychain in QA mode"); return "keychain-token" }
         )
         await connection.finishReadingToken()
 
-        #expect(connection.makeClient()?.token == "keychain-token")
+        #expect(connection.token == .missing)
+        #expect(connection.makeClient() == nil)
     }
+}
+
+@MainActor @Test func inQAModeTheHubURLAndTokenAnEarlierRunSavedAreForgotten() async {
+    let preferences = makePreferences()
+    let earlierRun = HubConnection(
+        arguments: ["JobSearchHub", "--qa-mode"], environment: [:], preferences: preferences, isTeamSigned: false,
+        readKeychain: { nil }, saveKeychain: { _ in throw RefusedByKeychain() }
+    )
+    earlierRun.hubURLText = "http://localhost:65442"
+    earlierRun.save(newToken: "earlier-token")
+    #expect(earlierRun.makeClient()?.token == "earlier-token")
+
+    let connection = HubConnection(
+        arguments: ["JobSearchHub", "--qa-mode"], environment: [:], preferences: preferences, isTeamSigned: false,
+        readKeychain: { nil }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.hubURLText == HubConnection.defaultHubURL)
+    #expect(connection.token == .missing)
+    #expect(connection.makeClient() == nil)
+    #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == nil)
 }
 
 private struct RefusedByKeychain: Error {}
