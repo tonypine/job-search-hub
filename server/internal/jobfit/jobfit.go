@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
@@ -207,7 +209,13 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if term, found := findTerm(texts, criteria.IneligibleLocationTerms); found {
 		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("says %q", term)}
 	}
-	if term, found := findTerm(texts, getEligibleTerms(criteria)); found {
+	if term, found := findTerm(texts, getSpellings(criteria.HomeCountry)); found {
+		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("names %q", term)}
+	}
+	// A region decides only when no rule beside it narrows it to other
+	// places, as "Mexico only" does in "Latin America (Mexico only)".
+	eligible := getEligibleTerms(criteria)
+	if term, found := findTerm(texts, eligible); found && !hasRuleForAnotherPlace(texts, eligible) {
 		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("names %q", term)}
 	}
 	named := strings.TrimSpace(restriction)
@@ -261,6 +269,76 @@ func getEligibleTerms(criteria store.JobCriteria) []string {
 		pending = append(pending, placeRegions[place]...)
 	}
 	return terms
+}
+
+// getSpellings returns a term with the other spellings of the place it
+// names, as "Brasil" for "Brazil".
+func getSpellings(term string) []string {
+	return append([]string{term}, placeSpellings[getPlace(term)]...)
+}
+
+// nonPlaceWords are the words of a residency rule that name no place, as
+// "must", "based" and "candidates" do, or only a language, as "English" does
+// in "English required".
+var nonPlaceWords = func() map[string]bool {
+	words := map[string]bool{}
+	for _, term := range slices.Concat(requirementWords, residenceWords, softeningWords, hoursOnlyWords, []string{
+		"based", "candidate", "candidates", "applicant", "applicants", "people", "talent", "professionals", "open", "hiring", "hire",
+		"we", "for", "from", "anywhere", "across", "all", "any", "country", "countries", "region", "regions",
+		"english", "spanish", "portuguese", "ingles", "espanol", "portugues", "fluent", "fluency", "speaker", "speakers", "speaking",
+		"candidatos", "candidatas", "pessoas", "profissionais", "paises", "pais", "regiao", "qualquer", "cualquier",
+	}) {
+		for _, word := range getWords(term) {
+			words[word] = true
+		}
+	}
+	for word := range remoteWords {
+		words[word] = true
+	}
+	return words
+}()
+
+// hasRuleForAnotherPlace reports whether a part of the texts has a residency
+// rule naming a place other than the regions, as "LATAM - must reside in
+// Argentina" does. A rule for the region itself, as in "Latin America only",
+// names none. A place is a capitalized word that isn't a rule's own, since
+// "our focus only matters" names none.
+func hasRuleForAnotherPlace(texts, regions []string) bool {
+	for _, text := range texts {
+		for _, part := range getParts(text) {
+			if !hasResidencyRule([]string{part}) {
+				continue
+			}
+			for _, word := range dropTerms(part, regions) {
+				if first, _ := utf8.DecodeRuneInString(word); unicode.IsUpper(first) && !nonPlaceWords[wordmatch.Normalize(word)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// dropTerms returns the words of a text, as written, without the terms it
+// names: "Latin America only" without "Latin America" is "only".
+func dropTerms(text string, terms []string) []string {
+	words := strings.FieldsFunc(text, func(character rune) bool {
+		return !unicode.IsLetter(character) && !unicode.IsDigit(character)
+	})
+	for _, term := range terms {
+		termWords := getWords(term)
+		if len(termWords) == 0 {
+			continue
+		}
+		for index := 0; index+len(termWords) <= len(words); {
+			if slices.Equal(getWords(strings.Join(words[index:index+len(termWords)], " ")), termWords) {
+				words = slices.Delete(words, index, index+len(termWords))
+			} else {
+				index++
+			}
+		}
+	}
+	return words
 }
 
 // getPlace returns the place a term spells, as "Brazil" for "Brasil", or ""
