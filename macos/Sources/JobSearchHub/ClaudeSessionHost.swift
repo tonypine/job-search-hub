@@ -55,6 +55,17 @@ final class ClaudeSessionHost {
             .map { names[$0] ?? "A session" }
     }
 
+    /// The sessions running now, with what each is doing, for the install
+    /// sheet.
+    var runningSessions: [RunningSession] {
+        runningSessionIDs.map { RunningSession(id: $0, name: names[$0] ?? "Session", activity: activities[$0] ?? .idle) }
+    }
+
+    /// What a running session is about.
+    func getSubject(of sessionID: UUID) -> ClaudeSessionSubject? {
+        subjects[sessionID]
+    }
+
     func getTerminal(for sessionID: UUID) -> LocalProcessTerminalView? {
         terminals[sessionID]
     }

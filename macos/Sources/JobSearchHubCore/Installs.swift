@@ -121,6 +121,13 @@ public struct InstallProgress: Equatable, Sendable {
     /// How far along, from 0 to 1.
     public var fraction: Double
 
+    public init(title: String, subtitle: String, rows: [InstallProgressRow], fraction: Double) {
+        self.title = title
+        self.subtitle = subtitle
+        self.rows = rows
+        self.fraction = fraction
+    }
+
     public static func make(_ state: InstallState) -> InstallProgress {
         if state.step.isRollback || state.step == .rolledBack || state.step == .rollbackFailed {
             return makeRollback(state)

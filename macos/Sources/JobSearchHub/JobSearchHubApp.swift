@@ -17,11 +17,17 @@ struct JobSearchHubApp: App {
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        _connection = State(initialValue: HubConnection(importedToken: Self.importOwnerTokenIfAsked()))
+        let connection = HubConnection(importedToken: Self.importOwnerTokenIfAsked())
+        _connection = State(initialValue: connection)
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
-        _taskRunner = State(initialValue: RemoteTaskRunner(jobFinder: jobFinder))
+        let taskRunner = RemoteTaskRunner(jobFinder: jobFinder)
+        _taskRunner = State(initialValue: taskRunner)
+        // The installer pauses the tasks while an install waits, lists them,
+        // and asks the hub through the app's connection.
+        Installer.shared.taskRunner = taskRunner
+        Installer.shared.makeClient = { connection.makeClient() }
     }
 
     var body: some Scene {
@@ -164,6 +170,8 @@ struct ContentView: View {
     @Environment(JobDecisions.self) private var decisions
     @Environment(NewVersionChecker.self) private var newVersions
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    private let installer = Installer.shared
     @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
     @State private var selectedPage: Page?
     /// The sidebar groups folded away, by raw value: the Hub's at first.
@@ -207,10 +215,8 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
-                    if let ready = newVersions.facts.ready {
-                        NewVersionLabel(version: ready.version) { openVersionSettings() }
-                            .padding(.bottom, Space.s)
-                    }
+                    versionLabel
+                        .padding(.bottom, Space.s)
                 }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
@@ -228,8 +234,17 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
+                // How the last install ended gives way to the connection
+                // banner while the hub is unreachable.
                 if let connectionProblem {
                     ConnectionBanner(problem: connectionProblem)
+                } else if let state = installer.installUnderWay {
+                    InstallUnderWayBanner(state: state)
+                } else if let notice = installer.notice {
+                    InstallNoticeBanner(
+                        notice: notice, showWhatsNew: openVersionSettings,
+                        showLog: { NSWorkspace.shared.open(newVersions.updates.logURL) }, dismiss: installer.dismissNotice
+                    )
                 }
             }
             .overlay(alignment: .bottom) {
@@ -302,6 +317,34 @@ struct ContentView: View {
             }
         }
         .focusedSceneValue(\.isShowingPalette, $isShowingPalette)
+        .sheet(isPresented: Binding(get: { installer.isShowingSheet }, set: { installer.isShowingSheet = $0 })) {
+            InstallSheet()
+        }
+        // An unsaved edit's line in the install sheet shows its page.
+        .onChange(of: installer.requestedPage) {
+            if let page = installer.requestedPage {
+                installer.requestedPage = nil
+                leave { selectedPage = page }
+            }
+        }
+        // The Criteria page's form lives here; an install waits for it.
+        .onChange(of: criteria.hasChanges, initial: true) {
+            UnsavedEdits.shared.set("criteria", title: "Criteria", page: .criteria, isUnsaved: criteria.hasChanges)
+        }
+        // Up and connected: hub-update, waiting to hear this version
+        // opened, can end its check.
+        .onChange(of: events.isConnected, initial: true) {
+            if events.isConnected { installer.markLaunchedIfDue() }
+        }
+        // What the app had open when it quit for an install, reopened.
+        .task(id: connection.hasToken) {
+            if let client = connection.makeClient() {
+                await installer.reopen(
+                    with: client, openWindow: { subject in openWindow(value: subject) }, showSession: openSession,
+                    showPage: { page in selectedPage = page }
+                )
+            }
+        }
         .environment(details)
         .environment(replyDraft)
         .environment(requests)
@@ -318,6 +361,7 @@ struct ContentView: View {
         // A page opened in a folded group, from `--page` or a link, unfolds it.
         .onChange(of: selectedPage, initial: true) {
             if let group = selectedPage?.group { isExpanded(group).wrappedValue = true }
+            installer.shownPage = selectedPage
         }
     }
 
@@ -337,6 +381,24 @@ struct ContentView: View {
         case .jobs: JobsPage(initialJobID: initialJobID, opensSession: opensSession)
         case .pipeline: PipelinePage(initialJobID: initialJobID)
         case nil: EmptyView()
+        }
+    }
+
+    /// The foot of the sidebar: a ready version, one that installs at ⌘Q,
+    /// or an install waiting for work, whose sheet it brings back.
+    @ViewBuilder
+    private var versionLabel: some View {
+        if let target = installer.target, installer.phase == .waiting || installer.phase == .reviewing || installer.phase == .starting {
+            NewVersionLabel(
+                title: "Installing \(target.version.description)…", detail: installer.phase == .reviewing ? "Waiting for you" : installer.work.waitingSummary,
+                symbol: "arrow.triangle.2.circlepath.circle.fill", tone: .caution, help: "Show what the install waits for"
+            ) { installer.isShowingSheet = true }
+        } else if let target = installer.target, installer.phase == .whenQuit {
+            NewVersionLabel(
+                title: "Installs when you quit", detail: "New version \(target.version.description)", help: "Show what's new in Settings › Version"
+            ) { openVersionSettings() }
+        } else if let ready = newVersions.facts.ready {
+            NewVersionLabel(version: ready.version) { openVersionSettings() }
         }
     }
 

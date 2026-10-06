@@ -202,3 +202,13 @@ private func makeState(_ step: InstallStep, migrating: Bool = false, toMigration
     #expect(record.isFresh(at: now.addingTimeInterval(60)))
     #expect(!record.isFresh(at: now.addingTimeInterval(ReopenRecord.freshFor + 1)))
 }
+
+@Test func aVersionThatFailedHereIsntOfferedAgain() {
+    let releases = ["mac-v0.1.247", "mac-v0.1.252", "mac-v0.1.250"].map {
+        GitHubRelease(tagName: $0, draft: false, prerelease: false, body: "", htmlURL: nil, assets: [])
+    }
+    let running = HubVersion("0.1.247")!
+    #expect(MacReleases.findNewest(in: releases, above: running)?.version == HubVersion("0.1.252"))
+    #expect(MacReleases.findNewest(in: releases, above: running, excluding: [HubVersion("0.1.252")!])?.version == HubVersion("0.1.250"))
+    #expect(MacReleases.findNewest(in: releases, above: running, excluding: [HubVersion("0.1.252")!, HubVersion("0.1.250")!]) == nil)
+}
