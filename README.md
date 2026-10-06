@@ -131,6 +131,8 @@ Once `ci` passes on a merge to `main`, `.github/workflows/release.yml` releases 
 | both | both, with the same `N` |
 | only docs, CI or scripts | nothing |
 
+A release tags the commit it built, and GitHub lets the workflow's token tag a commit only while its `.github/workflows/` matches `main`'s tip: anything else counts as creating workflows, which takes a permission `GITHUB_TOKEN` can't have, and the release fails with `HTTP 403: Resource not accessible by integration`. So when a later merge changed `.github/workflows/` before a commit's release ran, that commit isn't released, the run says why, and the next release from `main` carries its changes. To release `main`'s tip by hand, use Actions › release › Run workflow with the tag left empty; an app that has never been released gets its first release that way.
+
 Each release's notes list the commits since that app's previous release that touch its paths, under New, Fixed and Other changes, each line tagged with the parts of the hub its commit touched (`Mac`, `Server`, `Phone`) and ending with its pull request. The apps will read that format, so `scripts/release/changelog_test.sh` pins it. `docs/design/updates.md` › Releases from CI and `docs/decisions/0001-android-release-distribution.md` say why it works this way.
 
 Before it publishes the Mac app, `scripts/release/verify-app.sh` refuses a bundle that fails `codesign --verify --strict --deep`, holds an executable signed ad hoc, by another team than `MAC_SIGNING_TEAM_ID` or without the hardened runtime, carries another version in its `Info.plist` or `hub-server --version`, or links a library outside the system and the bundle. The copy unzipped from the zip is checked again. The release isn't notarized: Apple doesn't notarize with a development certificate, so the first install from a browser asks to allow it once in System Settings › Privacy & Security.
@@ -170,7 +172,7 @@ Until an app's signing secrets exist, its release job fails at its first step, n
 
    Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
 
-3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next app change.
+3. **Ship the first release:** Actions › release › Run workflow, with the tag left empty, or merge the next app change.
 
 4. **Swap the debug build for the release**, once: a debug build is signed with another key, so the release can't install over it. Uninstall the app, install the release and pair again. Later releases install over it.
 
@@ -188,7 +190,7 @@ Until an app's signing secrets exist, its release job fails at its first step, n
 
    Then delete `~/job-search-hub-signing.p12`; the password manager keeps it.
 
-3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next server or Mac change.
+3. **Ship the first release:** Actions › release › Run workflow, with the tag left empty, or merge the next server or Mac change.
 
 The job imports the certificate into a keychain of its own, which it deletes once the app is signed, or after a failed step. It signs only with the identity of `MAC_SIGNING_TEAM_ID`'s team, and fails if the `.p12` holds none.
 
