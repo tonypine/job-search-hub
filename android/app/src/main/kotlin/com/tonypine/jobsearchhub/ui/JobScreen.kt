@@ -59,7 +59,7 @@ import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.core.Screen
 import com.tonypine.jobsearchhub.core.SetAside
 import com.tonypine.jobsearchhub.core.Tone
-import com.tonypine.jobsearchhub.core.decisionNotice
+import com.tonypine.jobsearchhub.core.DecisionNotice
 import com.tonypine.jobsearchhub.core.screenRows
 import com.tonypine.jobsearchhub.data.HubFailure
 import com.tonypine.jobsearchhub.ui.design.ActionBar
@@ -102,7 +102,7 @@ fun JobScreen(
     viewModel: HubViewModel,
     onBack: (() -> Unit)?,
     onOpenCompany: (String) -> Unit,
-    onDecided: (next: String?, notice: String?) -> Unit,
+    onDecided: (next: String?, notice: DecisionNotice) -> Unit,
     snackbarClearance: SnackbarClearance? = null,
 ) {
     val context = LocalContext.current
@@ -126,7 +126,7 @@ fun JobScreen(
         error = null
         scope.launch {
             viewModel.decideJob(id, decision, why).fold(
-                { next -> onDecided(next, decisionNotice(details?.job?.title ?: "the job", decision)) },
+                { next -> onDecided(next, DecisionNotice(details?.job?.title ?: "the job", decision)) },
                 { error = HubFailure.of(it) },
             )
             isDeciding = false

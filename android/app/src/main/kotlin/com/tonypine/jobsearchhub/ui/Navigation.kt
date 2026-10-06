@@ -45,6 +45,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.PipelineFocus
+import com.tonypine.jobsearchhub.core.DecisionNotice
 import com.tonypine.jobsearchhub.core.PipelineCard
 import com.tonypine.jobsearchhub.core.PipelinePhase
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
@@ -105,15 +106,17 @@ fun HubNavigation(viewModel: HubViewModel) {
     val clearance = remember { SnackbarClearance() }
     val scope = rememberCoroutineScope()
     val say: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
-    // Later and Skip don't ask first; their snackbar offers Undo, and stays up when the page moves on to the next job.
+    // Every decision's snackbar offers Undo, and stays up when the page moves on to the next job. Undoing a pursue
+    // says so when the job stays on the pipeline because its card changed since.
     // A newer decision's snackbar replaces an older one's, rather than waiting behind it.
-    val decided: (String, String?) -> Unit = { id, notice ->
-        notice?.let {
-            snackbar.currentSnackbarData?.dismiss()
-            scope.launch {
-                if (snackbar.showSnackbar(it, actionLabel = "Undo", duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
-                    viewModel.undoDecision(id).onFailure { error -> say(error.message ?: "Couldn't undo the decision.") }
-                }
+    val decided: (String, DecisionNotice) -> Unit = { id, notice ->
+        snackbar.currentSnackbarData?.dismiss()
+        scope.launch {
+            if (snackbar.showSnackbar(notice.text, actionLabel = "Undo", duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
+                viewModel.undoDecision(id).fold(
+                    { cleared -> notice.afterUndo(cleared)?.let(say) },
+                    { error -> say(error.message ?: "Couldn't undo the decision.") },
+                )
             }
         }
     }
