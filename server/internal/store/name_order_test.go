@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
@@ -83,7 +85,7 @@ func TestMarketGapsAndEndorsedSkillsWithEqualCountsSortIgnoringCase(t *testing.T
 	var gaps []store.MarketGap
 	var endorsements []store.NewLinkedInEndorsement
 	for _, name := range mixedCaseNames {
-		gaps = append(gaps, store.MarketGap{Technology: name, JobCount: 3, ComputedAt: time.Now()})
+		gaps = append(gaps, store.MarketGap{Technology: name, JobCount: 3, JobIDs: []uuid.UUID{}, ComputedAt: time.Now()})
 		endorsements = append(endorsements, store.NewLinkedInEndorsement{
 			Direction: store.VouchedReceived, Skill: name, FirstName: "Ada", LastName: "Lovelace", ProfileURL: "https://www.linkedin.com/in/ada", Status: "accepted",
 		})
