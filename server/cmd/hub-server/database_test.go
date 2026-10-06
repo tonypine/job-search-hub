@@ -23,6 +23,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/postgresprocess"
+	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/migrations"
 )
@@ -298,5 +299,99 @@ func TestPendingMigrationsAreDumpedFirstAndAStartWithNonePendingTakesNoDump(t *t
 	openOwnedDatabase(t, settings).Close()
 	if names := listFolder(t, settings.backupsDir); len(names) != 1 {
 		t.Fatalf("a start with nothing pending dumped: %v", names)
+	}
+}
+
+// addOldEngine puts HUB_TEST_POSTGRES_OLD_ENGINE in settings' engines folder
+// as postgres-17, as a release that moves to a new major ships the old one
+// beside it, and returns it.
+func addOldEngine(t *testing.T, settings config) string {
+	t.Helper()
+	engine := os.Getenv("HUB_TEST_POSTGRES_OLD_ENGINE")
+	if engine == "" {
+		t.Fatal("HUB_TEST_POSTGRES_OLD_ENGINE is not set; point it at a Postgres 17 installation's folder, the one holding bin/postgres, e.g. /usr/lib/postgresql/17")
+	}
+	if err := os.Symlink(engine, filepath.Join(settings.postgresEngines, "postgres-17")); err != nil {
+		t.Fatal(err)
+	}
+	return engine
+}
+
+func getHealth(t *testing.T, database *hubDatabase) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	api.NewHealthHandler(database.pool, database.postgresHealth()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("/v1/health answered %d: %s", recorder.Code, recorder.Body.String())
+	}
+	return strings.TrimSpace(recorder.Body.String())
+}
+
+func TestAnAppUpdateWithANewMajorMovesTheDatabaseAndHealthSaysWhichMajorItIsOn(t *testing.T) {
+	ctx := context.Background()
+	settings, _ := ownedDatabaseSettings(t)
+	settings.backupsDir = t.TempDir()
+	oldEngine := addOldEngine(t, settings)
+
+	// The hub's database on Postgres 17. Every migration runs on it, as a
+	// release that moves to a new major has to keep them. Its dump restores
+	// only partway: the check on guarded names allowed without its schema,
+	// and pg_restore runs with an empty search_path.
+	cluster, err := postgresprocess.Start(ctx, postgresprocess.Settings{Engine: oldEngine, Dir: settings.postgresDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, cluster.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx, pool); err != nil {
+		t.Fatalf("the migrations don't run on Postgres 17: %v", err)
+	}
+	pool.Close()
+	execute(t, cluster.URL(), `
+		CREATE TABLE allowed (note text);
+		INSERT INTO allowed VALUES ('kept');
+		CREATE FUNCTION is_allowed(candidate text) RETURNS boolean LANGUAGE plpgsql
+			AS $$ BEGIN RETURN EXISTS (SELECT 1 FROM allowed WHERE note = candidate); END $$;
+		CREATE TABLE guarded (note text CHECK (is_allowed(note)));
+		INSERT INTO guarded VALUES ('kept')`)
+	cluster.Stop()
+
+	// The move fails, and the server runs on Postgres 17 and says so.
+	stayed := openOwnedDatabase(t, settings)
+	if body := getHealth(t, stayed); body != `{"database":"ok","postgres":{"major":17,"upgrade_failed_to":18}}` {
+		t.Fatalf("/v1/health after a failed upgrade: %s", body)
+	}
+	var companies int
+	if err := stayed.pool.QueryRow(ctx, "SELECT count(*) FROM companies").Scan(&companies); err != nil {
+		t.Fatalf("the old cluster doesn't serve the hub: %v", err)
+	}
+	execute(t, stayed.url, `
+		CREATE OR REPLACE FUNCTION is_allowed(candidate text) RETURNS boolean LANGUAGE plpgsql
+			AS $$ BEGIN RETURN EXISTS (SELECT 1 FROM public.allowed WHERE note = candidate); END $$`)
+	stayed.Close()
+
+	// The next start moves it.
+	moved := openOwnedDatabase(t, settings)
+	if body := getHealth(t, moved); body != `{"database":"ok","postgres":{"major":18}}` {
+		t.Fatalf("/v1/health after the upgrade: %s", body)
+	}
+	var note string
+	if err := moved.pool.QueryRow(ctx, "SELECT note FROM guarded").Scan(&note); err != nil || note != "kept" {
+		t.Fatalf("after the upgrade: %q, %v", note, err)
+	}
+	if want := filepath.Join(settings.postgresDir, "18"); moved.cluster.DataDir() != want {
+		t.Fatalf("DataDir = %s, want %s", moved.cluster.DataDir(), want)
+	}
+	var upgradeDumps []string
+	for _, name := range listFolder(t, settings.backupsDir) {
+		if strings.HasPrefix(name, "hub-pre-upgrade-17-to-18-") {
+			upgradeDumps = append(upgradeDumps, name)
+		}
+	}
+	// Both attempts dumped; on the same day, the second replaced the first.
+	if len(upgradeDumps) == 0 {
+		t.Fatalf("no pre-upgrade dump in %v", listFolder(t, settings.backupsDir))
 	}
 }
