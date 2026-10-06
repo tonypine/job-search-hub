@@ -62,6 +62,8 @@ jobs:
             sed 's/^/  /' "$RUNNER_TEMP/changed"
             while IFS= read -r file; do
               case "$file" in
+                # The Mac's bundle builds the server's commands too.
+                server/cmd/*|server/go.mod|server/go.sum) server=true macos=true ;;
                 server/*|compose.yaml) server=true ;;
                 macos/*) macos=true ;;
                 android/*) android=true ;;
@@ -305,29 +307,37 @@ jobs:
       - name: swift test
         run: swift test
 
-      # make-app.sh builds the bundled hub command.
+      # make-app.sh builds the server and the hub commands into the bundle.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
       # A release's build, with the version code release.yml would pass: the
-      # app's Info.plist, its hub command and hub-cvprint all say 0.1.<N>.
-      # Signed ad hoc, as CI has no signing identity.
-      - name: A stamped app, hub and hub-cvprint report one version
+      # app's Info.plist and every command in its bundle say 0.1.<N>, the
+      # server's agent is there, and the bundle verifies. Signed ad hoc, as CI
+      # has no signing identity.
+      - name: A stamped bundle carries the server and its commands, at one version
         env:
           HUB_VERSION_CODE: "4242"
           CODESIGN_IDENTITY: "-"
         run: |
           want=0.1.4242
           Scripts/make-app.sh
-          Scripts/build-cvprint.sh build/hub-cvprint
-          plist=build/JobSearchHub.app/Contents/Info.plist
+          app=build/JobSearchHub.app
+          plist=$app/Contents/Info.plist
           test "$(plutil -extract CFBundleShortVersionString raw "$plist")" = "$want"
           test "$(plutil -extract CFBundleVersion raw "$plist")" = "$want"
-          test "$(build/JobSearchHub.app/Contents/Resources/hub --version)" = "hub $want"
-          test "$(build/hub-cvprint --version)" = "hub-cvprint $want"
-          echo "The app, hub and hub-cvprint are $want"
+          for command in hub-server hub hub-update hub-cvprint; do
+            "$app/Contents/Helpers/bin/$command" --version > "$RUNNER_TEMP/$command-version"
+            test "$(head -n 1 "$RUNNER_TEMP/$command-version")" = "$command $want"
+            lipo -archs "$app/Contents/Helpers/bin/$command" | grep -qw arm64
+          done
+          agent=$app/Contents/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
+          plutil -lint "$agent"
+          test "$(plutil -extract BundleProgram raw "$agent")" = "Contents/Helpers/bin/hub-server"
+          codesign --verify --strict --deep "$app"
+          echo "The app and its commands are $want"
 
   android:
     needs: changes
