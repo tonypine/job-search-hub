@@ -15,22 +15,36 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-const databaseUsage = "usage: hub-server database restore <dump>"
+const databaseUsage = "usage: hub-server database restore <dump>, or hub-server database import [--replace] <postgres-url>"
 
 // runDatabaseCommand runs hub-server database <command> on the database the
 // server owns. It needs none of the server's settings but where that
-// database is, so it runs from a terminal without server.env.
+// database and its dumps are, so it runs from a terminal without server.env.
 func runDatabaseCommand(arguments []string, lookup func(string) string, out io.Writer) error {
-	if len(arguments) != 2 || arguments[0] != "restore" {
+	var command func(ctx context.Context, engines, dir string) error
+	switch {
+	case len(arguments) == 2 && arguments[0] == "restore":
+		command = func(ctx context.Context, engines, dir string) error {
+			return restoreDatabase(ctx, engines, dir, arguments[1], out)
+		}
+	case len(arguments) > 1 && arguments[0] == "import":
+		source, replace, ok := parseImportArguments(arguments[1:])
+		if !ok {
+			return errors.New(databaseUsage)
+		}
+		command = func(ctx context.Context, engines, dir string) error {
+			return importDatabase(ctx, engines, dir, parseBackupsDir(lookup), source, replace, out)
+		}
+	default:
 		return errors.New(databaseUsage)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if lookup("HUB_DATABASE_URL") != "" {
-		fmt.Fprintln(out, "HUB_DATABASE_URL is set here: a server started with it uses that database, not the one restored now.")
+		fmt.Fprintln(out, "HUB_DATABASE_URL is set here: a server started with it uses that database, not the one the server owns.")
 	}
 	engines, dir := parseDatabasePaths(lookup)
-	return restoreDatabase(ctx, engines, dir, arguments[1], out)
+	return command(ctx, engines, dir)
 }
 
 // restoreDatabase replaces the cluster in dir with one restored from dump by
