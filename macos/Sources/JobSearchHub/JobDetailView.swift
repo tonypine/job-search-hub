@@ -279,7 +279,7 @@ struct JobDetailView: View {
     private func header(_ details: JobDetails) -> some View {
         VStack(alignment: .leading, spacing: Space.m) {
             HStack(alignment: .top, spacing: Space.m) {
-                Monogram(details.companyName ?? details.job.title, size: 40, tone: .accent)
+                Monogram(name: details.companyName ?? details.job.title, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     companyLine(details)
                     Text(details.job.title).font(.hubEntity).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -506,7 +506,7 @@ struct JobDetailView: View {
     /// or are unclear, each with its quote and a link into the posting, then
     /// the ones that pass as a row of chips, with what no rule judges.
     private func screen(_ details: JobDetails) -> some View {
-        let summary = ScreenSummary(details.screenRows, level: details.fit.level)
+        let summary = ScreenBreakdown(details.screenRows, level: details.fit.level)
         let hasPosting = details.job.description?.isEmpty == false
         return HubCard("Screen", meta: summary.title) {
             if summary.exceptions.isEmpty && summary.passes.isEmpty && summary.notes.isEmpty {
@@ -585,7 +585,7 @@ struct JobDetailView: View {
     /// are, opening them on a click, and the message that fits.
     private func personRow(_ person: RelatedPerson, about details: JobDetails) -> some View {
         HStack(alignment: .center, spacing: Space.s) {
-            Monogram(person.name, size: 28)
+            InitialsMonogram(person.name, size: 28)
             Button { inspector.open(.person(person.reference)) } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {

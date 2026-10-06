@@ -57,7 +57,7 @@ private let strongBrief = #"""
         ScreenRow(name: "Where they hire", verdict: .no, reason: "US only"),
         ScreenRow(name: "Stack", verdict: .yes, reason: "React"),
     ]
-    let summary = ScreenSummary(rows, level: .poor)
+    let summary = ScreenBreakdown(rows, level: .poor)
 
     #expect(summary.exceptions.map(\.name) == ["Where they hire", "Years"])
     #expect(summary.passes.map(\.name) == ["Role", "Stack"])
@@ -68,13 +68,13 @@ private let strongBrief = #"""
 }
 
 @Test func aScreenWhereEveryCheckPassesSaysPassesAndHasNoExceptions() {
-    let summary = ScreenSummary([ScreenRow(name: "Role", verdict: .yes, reason: "fits"), ScreenRow(name: "Stack", verdict: .yes, reason: "Go")], level: .good)
+    let summary = ScreenBreakdown([ScreenRow(name: "Role", verdict: .yes, reason: "fits"), ScreenRow(name: "Stack", verdict: .yes, reason: "Go")], level: .good)
 
     #expect(summary.exceptions.isEmpty && summary.passes.count == 2)
     #expect(summary.title == "Passes")
     #expect(summary.verdict.word == "Passes" && summary.verdict.tone == .positive)
-    #expect(ScreenSummary([], level: .unclear).title == nil)
-    #expect(ScreenSummary([], level: .unclear).verdict.word == "Unclear")
+    #expect(ScreenBreakdown([], level: .unclear).title == nil)
+    #expect(ScreenBreakdown([], level: .unclear).verdict.word == "Unclear")
 }
 
 @Test func thePayChecksEstimateReadsAsAShortTakeHome() {

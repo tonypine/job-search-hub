@@ -37,7 +37,7 @@ public extension JobDetails {
     /// match, the screen, the take-home the Pay check estimates, and how many
     /// people the owner knows at the company.
     func getVerdicts(peopleYouKnow: Int) -> [VerdictCell] {
-        [matchVerdict, ScreenSummary(screenRows, level: fit.level).verdict, takeHomeVerdict, Self.makePeopleVerdict(knowing: peopleYouKnow)]
+        [matchVerdict, ScreenBreakdown(screenRows, level: fit.level).verdict, takeHomeVerdict, Self.makePeopleVerdict(knowing: peopleYouKnow)]
     }
 
     private var matchVerdict: VerdictCell {
@@ -78,7 +78,7 @@ public extension FitCheck {
 
 /// A job's Screen, exceptions first: the checks that fail or are unclear,
 /// then the ones that pass, folded into a row, and what no rule judges.
-public struct ScreenSummary: Equatable, Sendable {
+public struct ScreenBreakdown: Equatable, Sendable {
     /// The failing checks, then the unclear ones, each in the screen's order.
     public var exceptions: [ScreenRow]
     public var passes: [ScreenRow]
@@ -123,14 +123,14 @@ public struct ScreenSummary: Equatable, Sendable {
     }
 }
 
-/// The Pay check's estimate of the monthly take-home, as the strip shows it.
-public enum TakeHomeEstimate {
+public extension TakeHomeEstimate {
     private static let suffix = " a month take-home"
 
-    /// "about BRL 31.0k a month take-home, 85% of the target" reads
+    /// The Pay check's estimate of the monthly take-home, as the strip shows
+    /// it: "about BRL 31.0k a month take-home, 85% of the target" reads
     /// "≈ BRL 31k/mo"; "at least" and "at most" read ≥ and ≤, and a range
     /// "BRL 20k–35.5k/mo". Nil for a reason that isn't an estimate.
-    public static func describe(_ reason: String) -> String? {
+    static func describe(_ reason: String) -> String? {
         guard let end = reason.range(of: suffix) else { return nil }
         var amount = String(reason[..<end.lowerBound])
         let qualifiers = [("about ", "≈ "), ("at least ", "≥ "), ("at most ", "≤ ")]
@@ -159,17 +159,6 @@ public extension CitedEntry {
     /// "Experience".
     static func getTag(ofKind kind: String) -> String {
         kind == "role" ? "Experience" : kind.prefix(1).uppercased() + kind.dropFirst()
-    }
-}
-
-public extension JobMatch {
-    var symbolName: String {
-        switch self {
-        case .strong: "star.fill"
-        case .possible: "circle.lefthalf.filled"
-        case .stretch: "arrow.up.right.circle"
-        case .mismatch: "xmark.circle"
-        }
     }
 }
 

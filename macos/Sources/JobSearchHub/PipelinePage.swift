@@ -681,7 +681,7 @@ struct PipelineCardView: View {
         let status = card.getStatus(now: .now)
         VStack(alignment: .leading, spacing: Space.xs) {
             HStack(spacing: Space.s) {
-                Monogram(companyName, size: 16, tone: .accent)
+                CardMonogram(name: companyName)
                 Text(companyName).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 0)
                 if card.unseenUpdates > 0 {
