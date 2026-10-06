@@ -56,6 +56,7 @@ app_swapped=false
 engine_swapped=false
 engine_new=
 previous_plist=
+keep_work=false
 work="$(mktemp -d "${TMPDIR:-/tmp}/install-app.XXXXXX")"
 
 # On SIGTERM the server waits up to 30 seconds for the work still running, 5
@@ -89,20 +90,28 @@ wait_for_health() {
 }
 
 # put_back undoes a swap that failed: the previous app, engine, server.env and
-# agent go back, and the previous server starts.
+# agent go back, and the previous server starts. A server that won't stop
+# keeps them where they are, and says where, so the owner can put them back.
 put_back() {
   set +e
   echo "==> Putting the previous server back" >&2
   if ! stop_agent; then
-    echo "The server didn't stop, so it stays as it is; see $log_file." >&2
+    keep_work=true
+    echo "The server didn't stop, so nothing was put back; see $log_file. Once it stops, put back by hand what the install set aside, before running this again:" >&2
+    if [ -d "$installed.replaced" ]; then echo "  the previous app, $installed.replaced, as $installed" >&2; fi
+    if [ -d "$engine_dir.old" ]; then echo "  the previous engine, $engine_dir.old, as $engine_dir" >&2; fi
+    if [ -n "$previous_plist" ]; then
+      echo "  the previous agent, $previous_plist, as $plist, then load it with: launchctl bootstrap $domain $plist" >&2
+    else
+      echo "  no agent: there was none before, so delete $plist" >&2
+    fi
+    echo "  the previous settings, $work/previous.env, as $env_file" >&2
     return
   fi
   if [ "$app_swapped" = true ]; then rm -rf "$installed"; fi
   if [ -d "$installed.replaced" ]; then mv "$installed.replaced" "$installed"; fi
-  if [ "$engine_swapped" = true ]; then
-    rm -rf "$engine_dir"
-    if [ -d "$engine_dir.old" ]; then mv "$engine_dir.old" "$engine_dir"; fi
-  fi
+  if [ "$engine_swapped" = true ]; then rm -rf "$engine_dir"; fi
+  if [ -d "$engine_dir.old" ] && [ ! -d "$engine_dir" ]; then mv "$engine_dir.old" "$engine_dir"; fi
   if [ -f "$work/previous.env" ]; then cp -p "$work/previous.env" "$env_file"; fi
   if [ -z "$previous_plist" ]; then
     rm -f "$plist"
@@ -124,7 +133,8 @@ on_exit() {
     put_back
     [ "$status" -ne 0 ] || status=1
   fi
-  rm -rf "$work" "$staged" ${engine_new:+"$engine_new"}
+  if [ "$keep_work" != true ]; then rm -rf "$work"; fi
+  rm -rf "$staged" ${engine_new:+"$engine_new"}
   exit "$status"
 }
 trap on_exit EXIT
@@ -279,19 +289,20 @@ if pgrep -x JobSearchHub >/dev/null; then
   fi
 fi
 
-swapping=true
 if [ -f "$plist" ]; then
+  cp -p "$plist" "$work/previous.plist"
   previous_plist="$work/previous.plist"
-  cp -p "$plist" "$previous_plist"
 fi
 cp -p "$env_file" "$work/previous.env"
 
+swapping=true
 echo "==> Stopping the server"
 stop_agent || fail "The server didn't stop; see $log_file."
 
 if [ -n "$engine_new" ]; then
   rm -rf "$engine_dir.old"
   if [ -d "$engine_dir" ]; then mv "$engine_dir" "$engine_dir.old"; fi
+  # Set before the new engine moves in, so an exit from here on removes it.
   engine_swapped=true
   mv "$engine_new/$engine_name" "$engine_dir" || fail "Couldn't install the engine in $engine_dir."
   echo "Installed Postgres $engine_version in $engine_dir"
@@ -310,8 +321,9 @@ fi
 
 echo "==> Installing $installed"
 if [ -d "$installed" ]; then mv "$installed" "$installed.replaced"; fi
-mv "$staged" "$installed" || fail "Couldn't put the app in $installed."
+# Set before the new app moves in, so an exit from here on removes it.
 app_swapped=true
+mv "$staged" "$installed" || fail "Couldn't put the app in $installed."
 
 echo "==> Starting the server from $installed"
 mkdir -p "$(dirname "$plist")" "$(dirname "$log_file")"

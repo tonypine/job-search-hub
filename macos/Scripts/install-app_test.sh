@@ -1,21 +1,33 @@
 #!/bin/bash
 # Tests install-app.sh against a fake Mac: a home folder of its own, and
 # launchctl, curl, codesign, pgrep, osascript, open and sleep on PATH that act
-# out launchd, the server, the signature and the app. The fake launchd keeps
-# the program it runs in a file; the fake server answers as that program's
-# version while one is loaded. Failures are injected by version:
+# out launchd, the server, the engine's download, the signature and the app.
+# The script runs from a fake repository whose lock pins a fake engine, which
+# the fake curl serves. The fake launchd keeps the program it runs in a file;
+# the fake server answers as that program's version while one is loaded.
+# Failures are injected by version:
 #
 #   FAKE_REFUSE_VERSION  launchd refuses to load an agent whose program is it
+#   FAKE_STUCK_VERSION   a server of it doesn't stop when its agent is booted out
 #   FAKE_DEAD_VERSION    a server of it never answers
 #   FAKE_ANSWER_VERSION  every server says it is this version on /v1/version
+#   FAKE_PRINT_PROGRAM   launchd says it runs this program, whatever it loaded
 set -euo pipefail
 
-script="$(cd "$(dirname "$0")" && pwd)/install-app.sh"
-lock="$(cd "$(dirname "$0")/../.." && pwd)/server/postgres-engine.lock"
 work="$(mktemp -d "${TMPDIR:-/tmp}/install-app-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 failures=0
 label=com.tonypine.jobsearchhub.server
+
+mkdir -p "$work/repo/macos/Scripts" "$work/repo/server" "$work/engine/postgres-18/bin"
+cp "$(cd "$(dirname "$0")" && pwd)/install-app.sh" "$work/repo/macos/Scripts/"
+script="$work/repo/macos/Scripts/install-app.sh"
+printf '#!/bin/sh\n' > "$work/engine/postgres-18/bin/postgres"
+chmod +x "$work/engine/postgres-18/bin/postgres"
+tar -czf "$work/engine.tar.gz" -C "$work/engine" postgres-18
+engine_version=18.0
+engine_sha256="$(shasum -a 256 "$work/engine.tar.gz" | cut -d ' ' -f 1)"
+printf 'version=%s\nurl=https://engines.invalid/postgres-18.tar.gz\nsha256=%s\n' "$engine_version" "$engine_sha256" > "$work/repo/server/postgres-engine.lock"
 
 mkdir -p "$work/bin"
 cat > "$work/bin/launchctl" <<'FAKE'
@@ -33,18 +45,29 @@ bootstrap)
   ;;
 bootout)
   [ -f "$FAKE/loaded" ] || exit 3
+  [ "$("$(cat "$FAKE/loaded")" --version | sed -n 's/^hub-server //p')" != "${FAKE_STUCK_VERSION:-}" ] || exit 0
   rm -f "$FAKE/loaded"
   ;;
 print)
   [ -f "$FAKE/loaded" ] || { echo "Could not find service \"$2\"" >&2; exit 113; }
-  printf '%s = {\n\tstate = running\n\n\tprogram = %s\n}\n' "$2" "$(cat "$FAKE/loaded")"
+  printf '%s = {\n\tstate = running\n\n\tprogram = %s\n}\n' "$2" "${FAKE_PRINT_PROGRAM:-$(cat "$FAKE/loaded")}"
   ;;
 *) exit 1 ;;
 esac
 FAKE
 cat > "$work/bin/curl" <<'FAKE'
 #!/bin/sh
-for url; do :; done
+output=
+while [ $# -gt 1 ]; do
+  [ "$1" != -o ] || output="$2"
+  shift
+done
+url="$1"
+if [ -n "$output" ]; then
+  echo "$url" >> "$FAKE/downloads.log"
+  cp "$FAKE_ENGINE" "$output"
+  exit
+fi
 [ -f "$FAKE/loaded" ] || exit 7
 version="$("$(cat "$FAKE/loaded")" --version | sed -n 's/^hub-server //p')"
 [ "$version" != "${FAKE_DEAD_VERSION:-}" ] || exit 7
@@ -80,9 +103,6 @@ FAKE
 printf '#!/bin/sh\n' > "$work/bin/sleep"
 chmod +x "$work/bin"/*
 
-engine_version="$(sed -n 's/^version=//p' "$lock")"
-engine_sha256="$(sed -n 's/^sha256=//p' "$lock")"
-
 # fake_server PATH VERSION writes a hub-server that prints VERSION.
 fake_server() {
   mkdir -p "$(dirname "$1")"
@@ -111,7 +131,7 @@ setup() {
   app_support="$home/Library/Application Support/JobSearchHub"
   plist="$home/Library/LaunchAgents/$label.plist"
   env_file="$home/.config/job-search-hub/server.env"
-  mkdir -p "$fake" "$home/.config/job-search-hub" "$build/Contents/MacOS"
+  mkdir -p "$fake" "$case_dir/tmp" "$home/.config/job-search-hub" "$build/Contents/MacOS"
   fake_server "$build/Contents/Helpers/bin/hub-server" 0.1.0-new
   touch "$build/Contents/MacOS/JobSearchHub"
   engine="$app_support/engines/postgres-${engine_version%%.*}"
@@ -138,7 +158,7 @@ setup() {
 # run [VAR=value...] runs the script on the build, setting status, out and err.
 run() {
   status=0
-  env HOME="$home" FAKE="$fake" PATH="$work/bin:$PATH" CODESIGN_TEAM_ID=OWNERTEAM1 "$@" \
+  env HOME="$home" TMPDIR="$case_dir/tmp" FAKE="$fake" FAKE_ENGINE="$work/engine.tar.gz" PATH="$work/bin:$PATH" CODESIGN_TEAM_ID=OWNERTEAM1 "$@" \
     "$script" "$build" > "$case_dir/out" 2> "$case_dir/err" || status=$?
   out="$(cat "$case_dir/out")"
   err="$(cat "$case_dir/err")"
@@ -250,6 +270,60 @@ expect "an app that never quits: the server was never stopped" "" "$(grep bootou
 expect "an app that never quits: the old server still runs" 0.1.0-old "$(loaded_version)"
 expect "an app that never quits: the old plist stays" same "$(same "$case_dir/plist.before" "$plist")"
 expect "an app that never quits: no staged copy is left" no "$(exists "$installed.installing")"
+
+setup new-engine app
+echo stale > "$engine/.sha256"
+run
+expect "a new engine: installs" 0 "$status"
+expect "a new engine: is downloaded from the lock's URL" https://engines.invalid/postgres-18.tar.gz "$(cat "$fake/downloads.log")"
+expect "a new engine: is in place" "$engine_sha256 yes" "$(cat "$engine/.sha256") $(exists "$engine/bin/postgres")"
+expect "a new engine: no download or old engine is left" "no no" "$(exists "$engine.download") $(exists "$engine.old")"
+
+setup refused-engine app
+echo stale > "$engine/.sha256"
+echo old > "$engine/marker"
+run FAKE_REFUSE_VERSION=0.1.0-new
+expect "refused, with a new engine: fails" 1 "$status"
+expect "refused, with a new engine: the old server runs again" 0.1.0-old "$(loaded_version)"
+expect "refused, with a new engine: the old engine is back" "stale old no" "$(cat "$engine/.sha256") $(cat "$engine/marker") $(exists "$engine/bin/postgres")"
+expect "refused, with a new engine: no download or old engine is left" "no no" "$(exists "$engine.download") $(exists "$engine.old")"
+
+setup tampered-engine app
+echo stale > "$engine/.sha256"
+echo tampered > "$case_dir/tampered.tar.gz"
+run FAKE_ENGINE="$case_dir/tampered.tar.gz"
+expect "an engine that doesn't match the lock: fails" 1 "$status"
+contains "an engine that doesn't match the lock: says so" "doesn't match the SHA-256" "$err"
+expect "an engine that doesn't match the lock: the server was never stopped" "" "$(grep bootout "$fake/launchctl.log" 2>/dev/null || true)"
+expect "an engine that doesn't match the lock: no download is left" no "$(exists "$engine.download")"
+
+setup other-program app
+run FAKE_PRINT_PROGRAM=/usr/local/bin/hub-server
+expect "launchd running another program: fails" 1 "$status"
+contains "launchd running another program: says so" "launchd runs \"/usr/local/bin/hub-server\" as $label, not $installed/Contents/Helpers/bin/hub-server." "$err"
+expect "launchd running another program: the old bundle is back" "hub-server 0.1.0-old" "$("$installed/Contents/Helpers/bin/hub-server" --version | head -n 1)"
+expect "launchd running another program: the old plist is back" same "$(same "$case_dir/plist.before" "$plist")"
+
+setup stuck-old app
+run FAKE_STUCK_VERSION=0.1.0-old
+expect "an old server that won't stop: fails" 1 "$status"
+contains "an old server that won't stop: says so" "The server didn't stop; see" "$err"
+expect "an old server that won't stop: it still runs" 0.1.0-old "$(loaded_version)"
+expect "an old server that won't stop: the new app isn't installed" "hub-server 0.1.0-old" "$("$installed/Contents/Helpers/bin/hub-server" --version | head -n 1)"
+expect "an old server that won't stop: the plist and server.env are as they were" "same same" "$(same "$case_dir/plist.before" "$plist") $(same "$case_dir/env.before" "$env_file")"
+
+setup stuck-new app
+echo stale > "$engine/.sha256"
+run FAKE_DEAD_VERSION=0.1.0-new FAKE_STUCK_VERSION=0.1.0-new
+kept_plist="$(echo "$err" | sed -n 's/^  the previous agent, \(.*\), as .*/\1/p')"
+kept_env="$(echo "$err" | sed -n 's/^  the previous settings, \(.*\), as .*/\1/p')"
+expect "a new server that won't stop: fails" 1 "$status"
+contains "a new server that won't stop: says nothing was put back" "The server didn't stop, so nothing was put back" "$err"
+contains "a new server that won't stop: says where the previous app is" "the previous app, $installed.replaced, as $installed" "$err"
+contains "a new server that won't stop: says where the previous engine is" "the previous engine, $engine.old, as $engine" "$err"
+expect "a new server that won't stop: the previous app and engine are kept" "hub-server 0.1.0-old stale" "$("$installed.replaced/Contents/Helpers/bin/hub-server" --version | head -n 1) $(cat "$engine.old/.sha256")"
+expect "a new server that won't stop: the previous agent is kept" same "$(same "$case_dir/plist.before" "$kept_plist")"
+expect "a new server that won't stop: the previous server.env is kept" same "$(same "$case_dir/env.before" "$kept_env")"
 
 [ "$failures" -eq 0 ] || {
   echo "$failures failed"
