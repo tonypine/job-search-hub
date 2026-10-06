@@ -16,7 +16,7 @@ final class ProfileAudit {
     private(set) var state: State = .idle
 
     func audit(with client: HubClient) async {
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
+        guard let command = ServerAgent.hubCommand else {
             state = .failed("The app has no bundled hub command. Build it with Scripts/make-app.sh.")
             return
         }

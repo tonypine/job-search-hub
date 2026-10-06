@@ -1,33 +1,46 @@
 import Foundation
 
-/// The hub server's launch agent on this Mac: what launchd is asked to do
-/// with it, and how its state reads.
+/// The hub server's launch agent on this Mac: where it lives in the app's
+/// bundle, what launchd is asked to do with it, and how its state reads.
 public enum ServerLaunchAgent {
     public static let label = "com.tonypine.jobsearchhub.server"
+    /// The agent's plist in the bundle's Contents/Library/LaunchAgents, which
+    /// `SMAppService.agent(plistName:)` registers.
+    public static let plistName = "\(label).plist"
 
-    public static func makePlistURL(home: URL) -> URL {
-        home.appending(path: "Library/LaunchAgents/\(label).plist")
+    /// The app as `install-app.sh`, and later updates, put it: the copy whose
+    /// server the agent runs.
+    public static func makeInstalledAppURL(home: URL) -> URL {
+        home.appending(path: "Applications/Job Search Hub.app")
     }
 
+    /// The command named `name` in the bundle's Helpers/bin, beside the
+    /// server: `hub-server`, `hub`, `hub-cvprint` or `hub-update`.
+    public static func makeCommandURL(_ name: String, bundle: URL) -> URL {
+        bundle.appending(path: "Contents/Helpers/bin/\(name)")
+    }
+
+    /// The log the server writes, from HUB_LOG_FILE in the agent's plist.
     public static func makeLogURL(home: URL) -> URL {
         home.appending(path: "Library/Logs/JobSearchHub/server.log")
     }
 
-    public enum Action: Sendable {
+    /// What launchd is asked to do with the agent. Starting it again once
+    /// stopped goes through `SMAppService` instead, which loads it from the
+    /// bundle.
+    public enum Command: Sendable {
         case readState
-        case start
         case stop
         case restart
     }
 
-    /// The `launchctl` arguments for the action, in the user's GUI domain.
-    public static func makeArguments(_ action: Action, userID: uid_t, plist: URL) -> [String] {
-        let domain = "gui/\(userID)"
-        switch action {
-        case .readState: return ["print", "\(domain)/\(label)"]
-        case .start: return ["bootstrap", domain, plist.path]
-        case .stop: return ["bootout", "\(domain)/\(label)"]
-        case .restart: return ["kickstart", "-k", "\(domain)/\(label)"]
+    /// The `launchctl` arguments for the command, in the user's GUI domain.
+    public static func makeArguments(_ command: Command, userID: uid_t) -> [String] {
+        let service = "gui/\(userID)/\(label)"
+        switch command {
+        case .readState: return ["print", service]
+        case .stop: return ["bootout", service]
+        case .restart: return ["kickstart", "-k", service]
         }
     }
 

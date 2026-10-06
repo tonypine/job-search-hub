@@ -23,19 +23,23 @@ It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions t
 
 You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use your subscription).
 
-1. **Configure and start the server.** It runs natively on the Mac as a LaunchAgent, so it can run local models on the GPU, and runs its own Postgres 18 beside it: nothing else to install or keep running.
+1. **Configure and install the hub.** The server ships inside the Mac app's bundle and runs natively as a LaunchAgent, so it can run local models on the GPU, and runs its own Postgres 18 beside it: nothing else to install or keep running.
 
    ```bash
    cp .env.example .env    # then fill in HUB_OWNER_TOKEN; the line says how to generate it
-   server/scripts/install-native-server.sh  # installs the Postgres engine, builds hub-server, installs and starts the LaunchAgent
+   macos/Scripts/install-app.sh   # builds the app with the server, installs it in ~/Applications and starts the server
    curl -fsS localhost:8090/v1/health
    ```
 
-   The script downloads the Postgres engine pinned in `server/postgres-engine.lock`, refuses it unless its SHA-256 matches, and installs it in `~/Library/Application Support/JobSearchHub/engines/postgres-18/`. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes, and `--uninstall` to remove the agent.
+   The script builds the bundle with `macos/Scripts/make-app.sh` (see [The macOS app](#the-macos-app)) and installs it as `~/Applications/Job Search Hub.app`. The app registers the server's LaunchAgent from its bundle, so launchd runs `Contents/Helpers/bin/hub-server` from the installed app, starts it at login, and restarts it if it crashes; System Settings › General › Login Items lists it under Job Search Hub. Settings › Server in the app starts, stops and restarts it.
+
+   The script also downloads the Postgres engine pinned in `server/postgres-engine.lock`, refuses it unless its SHA-256 matches, and installs it in `~/Library/Application Support/JobSearchHub/engines/postgres-18/`. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. The server reads that file itself at start (a variable already in its environment wins), puts Homebrew's and `~/.local/bin` on its `PATH`, and prints CVs with the `hub-cvprint` beside it in the bundle (`HUB_CV_PRINT_BIN` overrides). Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes. To remove the hub, stop the server in Settings › Server, turn Job Search Hub off in Login Items, and delete the app.
+
+   On a Mac set up with the old `server/scripts/install-native-server.sh`, the first `install-app.sh` moves it over: it removes that script's agent from `~/Library/LaunchAgents`, its binaries in `~/Library/Application Support/JobSearchHub/bin/`, and a `HUB_CV_PRINT_BIN` in `server.env` that points at them.
 
    The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
 
-   - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in `engines/` (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both. When an update brings a new Postgres major, the server moves the database to it at start (see [Moving to a new Postgres major](#moving-to-a-new-postgres-major)).
+   - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in the bundle's `Contents/Helpers/engines/` once the bundle carries one, and in `~/Library/Application Support/JobSearchHub/engines/` until then (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both. When an update brings a new Postgres major, the server moves the database to it at start (see [Moving to a new Postgres major](#moving-to-a-new-postgres-major)).
    - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
 
    Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
@@ -43,7 +47,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    To restore a dump into the database the server owns, stop the hub in Settings › Server, then run:
 
    ```bash
-   ~/Library/Application\ Support/JobSearchHub/bin/hub-server database restore ~/Library/Application\ Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump
+   ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database restore ~/Library/Application\ Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump
    ```
 
    It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
@@ -54,7 +58,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    2. Import Docker's database, with the password from `.env`'s `HUB_DATABASE_PASSWORD`:
 
       ```bash
-      ~/Library/Application\ Support/JobSearchHub/bin/hub-server database import "postgres://hub:<password>@localhost:5434/hub"
+      ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database import "postgres://hub:<password>@localhost:5434/hub"
       ```
 
       It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in Docker's database and in the new one. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`.
@@ -65,13 +69,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    To go back before step 6: stop the hub, put `HUB_DATABASE_URL` back in `server.env`, `docker compose start db`, and start the hub. Writes made since step 3 stay only in the database the server owns. To keep them, dump it before stopping the hub, with the engine's `pg_dump` (`engines/postgres-18/bin/pg_dump --format=custom --file=<file> "postgres:///hub?host=$HOME/Library/Application%20Support/JobSearchHub/postgres&user=hub"`), and once Docker's runs, restore the file into it with `pg_restore --clean --no-owner --dbname=<Docker's URL> <file>`.
 
-2. **Install the CLI.**
-
-   ```bash
-   cd server && go install ./cmd/hub
-   ```
-
-   It lands in `$(go env GOPATH)/bin`, which needs to be on your `PATH`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
+2. **Install the CLI.** In the Mac app's Settings › Server, click *Install the hub command*. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
 
    ```json
    { "url": "http://localhost:8090", "owner_token": "…" }
@@ -94,18 +92,21 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 ## The macOS app
 
 ```bash
-cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app
-open build/JobSearchHub.app
+cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app, the whole bundle
+./Scripts/install-app.sh               # builds it and installs it in ~/Applications, as in Setup
+open ~/Applications/Job\ Search\ Hub.app
 ```
+
+`make-app.sh` builds one bundle per version: the app, and in `Contents/Helpers/bin/` the server (`hub-server`), the CV printer (`hub-cvprint`), the `hub` command and the installer (`hub-update`, which only reports its version for now), for Apple silicon, with the server's LaunchAgent in `Contents/Library/LaunchAgents/`. Without Go, as in Symphony's QA VM, it builds the app alone, and Settings › Server says the build has no server. A build in `macos/build/` runs too, for trying a change: it leaves the installed app's server alone, and `Scripts/screenshot-page.sh` captures its pages without touching the installed app.
 
 In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a
-open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
+open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds. Without one in the keychain, or with `CODESIGN_IDENTITY=-`, it signs ad hoc. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
+The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
 
 The app works from the keyboard. **⌘K** (Go › Jump to…) finds a job, company, person or page, and runs the rare actions kept out of the toolbars: add a company or a job by URL, generate missing CVs, pause or resume the local models. A job, company or person opens in the inspector over the page you're on. In Decide, and in Today's Decide card, ↑↓ move through the jobs, Return opens one, and **P**, **L** and **S** pursue it, leave it for later or skip it, then bring up the next. ⌘N is the page's Add, and ⌘[ and ⌘] go back and forward in the inspector.
 
@@ -164,7 +165,7 @@ To build a signed release locally, set the four `RELEASE_*` variables Gradle rea
 
 ### Versions
 
-Every part of the hub carries one version, `0.1.<N>`, where `N` is the commit count on `main`, as the APK's `versionCode` is: the Mac app (`CFBundleShortVersionString` and `CFBundleVersion`), `hub-server`, `hub` and `hub-cvprint`. `scripts/release/version.sh` prints it. A release build passes `HUB_VERSION_CODE=<N>`, as `release.yml` passes `-PversionCode` to Gradle; any other build is `0.1.0-dev.<short commit>`. `macos/Scripts/make-app.sh`, `macos/Scripts/build-cvprint.sh` and `server/scripts/install-native-server.sh` stamp it, the Go commands with `version.sh --go-ldflags`.
+Every part of the hub carries one version, `0.1.<N>`, where `N` is the commit count on `main`, as the APK's `versionCode` is: the Mac app (`CFBundleShortVersionString` and `CFBundleVersion`), `hub-server`, `hub`, `hub-update` and `hub-cvprint`. `scripts/release/version.sh` prints it. A release build passes `HUB_VERSION_CODE=<N>`, as `release.yml` passes `-PversionCode` to Gradle; any other build is `0.1.0-dev.<short commit>`. `macos/Scripts/make-app.sh` stamps them all, `hub-cvprint` through `macos/Scripts/build-cvprint.sh`, the Go commands with `version.sh --go-ldflags`.
 
 - **About Job Search Hub** shows the app's version, and Settings › Phones each phone's, once it has called the hub.
 - `hub-server --version` prints the version, the commit and the newest migration it knows; `hub --version` and `hub-cvprint --version` print theirs.

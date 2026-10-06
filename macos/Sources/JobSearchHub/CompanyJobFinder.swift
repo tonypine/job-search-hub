@@ -34,7 +34,7 @@ final class CompanyJobFinder {
             }
             return states[companyID] ?? .failed("The run ended without a result.")
         }
-        guard let command = Bundle.main.url(forResource: "hub", withExtension: nil) else {
+        guard let command = ServerAgent.hubCommand else {
             return finish(companyID, .failed("The app has no bundled hub command. Build it with Scripts/make-app.sh."))
         }
         guard let claude = ClaudeLaunch.findClaudeExecutable() else {

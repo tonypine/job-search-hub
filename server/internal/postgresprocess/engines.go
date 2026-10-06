@@ -46,7 +46,7 @@ func NewestEngine(engines string) (string, error) {
 		newest, newestMajor = engine, major
 	}
 	if newest == "" {
-		return "", fmt.Errorf("no Postgres engine in %s: install one with server/scripts/install-native-server.sh, set HUB_POSTGRES_ENGINES to the folder holding postgres-<major>/, or set HUB_DATABASE_URL to use another Postgres", engines)
+		return "", fmt.Errorf("no Postgres engine in %s: install one with macos/Scripts/install-app.sh, set HUB_POSTGRES_ENGINES to the folder holding postgres-<major>/, or set HUB_DATABASE_URL to use another Postgres", engines)
 	}
 	resolved, err := filepath.EvalSymlinks(newest)
 	if err != nil {

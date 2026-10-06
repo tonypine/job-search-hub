@@ -126,6 +126,16 @@ func main() {
 		printVersion(os.Stdout)
 		return
 	}
+	if len(os.Args) == 1 {
+		if err := logToFile(os.Getenv("HUB_LOG_FILE")); err != nil {
+			slog.Error("hub-server couldn't open its log", "error", err)
+			os.Exit(1)
+		}
+	}
+	if err := prepareEnvironment(); err != nil {
+		slog.Error("hub-server couldn't read its settings", "error", err)
+		os.Exit(1)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := runHealthcheck(os.Getenv("HUB_ADDR")); err != nil {
 			slog.Error("healthcheck failed", "error", err)

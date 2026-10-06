@@ -1,8 +1,24 @@
 #!/bin/bash
-# Builds JobSearchHub.app. SwiftPM only emits a bare executable, so the bundle
-# macOS needs is assembled here, then signed. The app and its hub command carry
-# the hub's one version, from scripts/release/version.sh: 0.1.<HUB_VERSION_CODE>
-# for a release, 0.1.0-dev.<short commit> otherwise.
+# Builds JobSearchHub.app, the bundle one version of the hub is. SwiftPM only
+# emits bare executables, so the bundle macOS needs is assembled here, then
+# signed:
+#
+#   Contents/MacOS/JobSearchHub                    the app
+#   Contents/Helpers/bin/hub-server                the server, which launchd runs from here
+#   Contents/Helpers/bin/hub-cvprint               the CV printer, which the server finds beside itself
+#   Contents/Helpers/bin/hub                       the hub command
+#   Contents/Helpers/bin/hub-update                the installer
+#   Contents/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
+#                                                  the server's agent, which the app registers
+#
+# Contents/Helpers/engines/ is left for the owned database's engine, which
+# the server looks for beside its own folder; until the bundle carries it, the
+# server uses the one installed in ~/Library/Application Support/JobSearchHub.
+#
+# Every part carries the hub's one version, from scripts/release/version.sh:
+# 0.1.<HUB_VERSION_CODE> for a release, 0.1.0-dev.<short commit> otherwise.
+# The Go commands are built for darwin/arm64. macos/Scripts/install-app.sh
+# installs the result in ~/Applications.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,6 +27,8 @@ APP_NAME="JobSearchHub"
 BUNDLE_ID="com.tonypine.JobSearchHub"
 VERSION="$(sh ../scripts/release/version.sh)"
 APP_DIR="build/$APP_NAME.app"
+HELPERS="$APP_DIR/Contents/Helpers/bin"
+AGENT_LABEL="com.tonypine.jobsearchhub.server"
 
 echo "==> Building"
 swift build -c release --product "$APP_NAME"
@@ -21,16 +39,61 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
-# The hub's command runs the company triage agent for "Add company"; the app
-# starts it because the agent needs Claude Code on this Mac. Without Go, as in
-# Symphony's QA VM, the app is built without it, and those features say so.
 mkdir -p "$APP_DIR/Contents/Resources"
+
+# The server and its commands. The app also runs hub, for the company triage
+# agent behind "Add company" and other work that needs Claude Code on this
+# Mac. Without Go, as in Symphony's QA VM, the app is built alone: Settings ›
+# Server says this build has no server, and the features that run hub say so.
 if command -v go >/dev/null; then
-  echo "==> Building the hub command"
   GO_LDFLAGS="$(sh ../scripts/release/version.sh --go-ldflags)"
-  (cd ../server && go build -ldflags "$GO_LDFLAGS" -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
+  mkdir -p "$HELPERS"
+  for command in hub-server hub hub-update; do
+    echo "==> Building $command"
+    (cd ../server && GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$GO_LDFLAGS" -o "../macos/$HELPERS/$command" "./cmd/$command")
+  done
+  echo "==> Building hub-cvprint"
+  Scripts/build-cvprint.sh "$HELPERS/hub-cvprint"
+
+  # The app registers this agent with SMAppService, which reads it from the
+  # bundle, so launchd runs whichever server the bundle at that path holds.
+  # BundleProgram is relative to the bundle, and launchd can't expand a home
+  # folder here, so the server opens the log HUB_LOG_FILE names itself. It
+  # restarts after a crash, not after a clean exit, as when an update stops
+  # it to swap the bundle. On SIGTERM the server waits up to 30 seconds for
+  # the work still running, 5 for open requests, then up to 30 for its
+  # Postgres to stop: ExitTimeOut leaves room for all of it.
+  mkdir -p "$APP_DIR/Contents/Library/LaunchAgents"
+  AGENT_PLIST="$APP_DIR/Contents/Library/LaunchAgents/$AGENT_LABEL.plist"
+  cat > "$AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$AGENT_LABEL</string>
+	<key>BundleProgram</key>
+	<string>Contents/Helpers/bin/hub-server</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HUB_LOG_FILE</key>
+		<string>~/Library/Logs/JobSearchHub/server.log</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ExitTimeOut</key>
+	<integer>70</integer>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$AGENT_PLIST" >/dev/null
 else
-  echo "No Go toolchain: building without the bundled hub CLI; features that run it won't work in this build." >&2
+  echo "No Go toolchain: building the app without the server and the hub command; features that run them won't work in this build." >&2
 fi
 
 # Scripts/make-icon.swift draws the mark; iconutil packs its sizes.
@@ -86,32 +149,36 @@ PLIST
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
 echo "==> Signing"
-# An Apple-issued identity keeps the app's designated requirement stable across
-# rebuilds, so its Keychain access survives them; a self-signed or ad-hoc
-# signature makes macOS ask again after every build. CODESIGN_IDENTITY picks
-# one; otherwise the first Apple Development identity in the keychain is used.
-# Without one, as in Symphony's QA VM, or with CODESIGN_IDENTITY=-, the app is
-# signed ad hoc, and without the hardened runtime, which only notarization needs.
-IDENTITIES="$(security find-identity -v -p codesigning)"
-IDENTITY="${CODESIGN_IDENTITY:-$(awk -F'"' '/"Apple Development: /{print $2; exit}' <<<"$IDENTITIES")}"
-if [ -z "$IDENTITY" ]; then
-  echo "No Apple Development identity in the keychain, so signing ad hoc: the Keychain will ask for access after" >&2
-  echo "every build. Create one in Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY." >&2
-  IDENTITY="-"
-fi
+# Scripts/signing-identity.sh picks the owner's team and its identity: pinned
+# by CODESIGN_TEAM_ID or ~/.config/job-search-hub/codesign-team-id, else the
+# keychain's one Apple Development identity, whose team it pins. Without one,
+# as in CI and Symphony's QA VM, or with CODESIGN_IDENTITY=-, it's ad hoc,
+# without the hardened runtime.
+SIGNING="$(Scripts/signing-identity.sh)"
+read -r IDENTITY TEAM_ID <<<"$SIGNING"
 if [ "$IDENTITY" = "-" ]; then
   SIGN_OPTIONS=(--sign -)
-elif grep -qF "$IDENTITY" <<<"$IDENTITIES"; then
-  SIGN_OPTIONS=(--options runtime --sign "$IDENTITY")
 else
-  echo "No signing identity matching \"$IDENTITY\". Create an Apple Development certificate in" >&2
-  echo "Xcode > Settings > Accounts > Manage Certificates, or set CODESIGN_IDENTITY (- signs ad hoc)." >&2
-  exit 1
+  SIGN_OPTIONS=(--options runtime --sign "$IDENTITY")
 fi
-if [ -f "$APP_DIR/Contents/Resources/hub" ]; then
-  codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR/Contents/Resources/hub"
-fi
+
+# Inside out: the helpers, then the bundle, which seals them.
+for executable in "$HELPERS"/*; do
+  if [ -f "$executable" ]; then
+    codesign --force "${SIGN_OPTIONS[@]}" "$executable"
+  fi
+done
 codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR"
-codesign --verify --strict "$APP_DIR"
+codesign --verify --strict --deep "$APP_DIR"
+if [ -n "$TEAM_ID" ]; then
+  for executable in "$APP_DIR/Contents/MacOS/$APP_NAME" "$HELPERS"/*; do
+    [ -f "$executable" ] || continue
+    team="$(codesign --display --verbose=2 "$executable" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    if [ "$team" != "$TEAM_ID" ]; then
+      echo "$executable is signed by team \"$team\", not $TEAM_ID." >&2
+      exit 1
+    fi
+  done
+fi
 
 echo "==> Built $APP_DIR $VERSION"
