@@ -31,3 +31,15 @@ private let workJSON = #"""
     #expect(work.getFactsReadState(for: UUID()) == .notQueued)
     #expect(work.waitingCountsByKind.map(\.title) == ["Job facts", "Mail sorting"])
 }
+
+@Test func theStatusLineSaysWhatTheLocalModelsAreDoing() throws {
+    var work = try HubJSON.makeDecoder().decode(ModelWork.self, from: Data(workJSON.utf8))
+
+    #expect(work.statusLine == "Local models paused · 2 waiting")
+    work.paused = false
+    #expect(work.statusLine == "Job facts · 2 waiting")
+    work.waiting = []
+    #expect(work.statusLine == "Job facts")
+    work.running = nil
+    #expect(work.statusLine == "Local models idle")
+}

@@ -9,6 +9,7 @@ import SwiftUI
 final class SidebarCounts {
     private(set) var toDecide = 0
     private(set) var followUpsDue = 0
+    private(set) var followUpsOverdue = 0
 
     func refresh(with client: HubClient) async {
         async let queue = try? client.getDecisionQueue()
@@ -17,8 +18,16 @@ final class SidebarCounts {
             toDecide = queue.items.count
         }
         if let pipeline = await pipeline {
-            followUpsDue = PipelineBoard(pipeline).getDueCount(now: .now)
+            let board = PipelineBoard(pipeline)
+            followUpsDue = board.getDueCount(now: .now)
+            followUpsOverdue = board.getOverdueCount(now: .now)
         }
+    }
+
+    /// Only the Pipeline's badge is red, and only while a follow-up is
+    /// overdue; every other count is a grey number.
+    func isUrgent(_ page: Page) -> Bool {
+        page == .pipeline && followUpsOverdue > 0
     }
 
     func getCount(for page: Page, unseen: Int) -> Int {

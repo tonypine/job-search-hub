@@ -297,3 +297,14 @@ private func makeTallyCalendar() -> Calendar {
 
     #expect(board.getDueCount(now: tallyNow, calendar: makeTallyCalendar()) == 2)
 }
+
+@Test func onlyFollowUpsPastTheirDayAreOverdue() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false, followUpDays: 7)
+    let board = PipelineBoard(phases: [applied], cards: [
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+    ])
+
+    #expect(board.getOverdueCount(now: tallyNow, calendar: makeTallyCalendar()) == 1)
+}
