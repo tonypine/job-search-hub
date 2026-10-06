@@ -337,7 +337,7 @@ func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
 	facts := `{"location":{"evidence":"Remote in LATAM","restriction":"LATAM","open_to_brazil":"yes","reason":"LATAM"},
 		"seniority":{"evidence":"Senior engineer","as_written":"Senior","levels":["senior"]},
 		"contract":{"evidence":"as a contractor","as_written":"contractor","kinds":["contractor"]},
-		"years_of_experience":{"evidence":"5+ years with React","value":5},
+		"years_of_experience":{"evidence":"- **5+ years** with React","value":5},
 		"languages":{"evidence":"fluent English","value":["English"]}}`
 	if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: "m", TextHash: awaiting[0].TextHash, Facts: json.RawMessage(facts)}); err != nil {
 		t.Fatal(err)
