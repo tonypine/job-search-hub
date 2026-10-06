@@ -198,6 +198,21 @@ private func makeRelease(_ tag: String, draft: Bool = false, prerelease: Bool = 
     #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: environment, isQABuild: true) == URL(string: "http://localhost:8765/releases.json"))
 }
 
+@Test func aQABuildReadsTheFeedURLItWasBuiltWithWhenLaunchedWithoutTheVariable() {
+    let bundled = "http://localhost:8765/releases.json"
+
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [:], isQABuild: true, bundledURL: bundled) == URL(string: bundled))
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [:], bundledURL: bundled) == URL(string: bundled))
+    // Outside QA mode the bundled URL is ignored.
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [:], bundledURL: bundled) == GitHubRepository.releasesAPIURL)
+    // The launch environment wins over the bundle.
+    let environment = [ReleaseFeed.urlVariable: "http://localhost:9000/releases.json"]
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: environment, isQABuild: true, bundledURL: bundled) == URL(string: "http://localhost:9000/releases.json"))
+    // A variable that isn't an http(s) URL falls back to the bundle, and a bundled one that isn't to GitHub.
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [ReleaseFeed.urlVariable: "not a url"], isQABuild: true, bundledURL: bundled) == URL(string: bundled))
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [:], isQABuild: true, bundledURL: "file:///tmp/releases.json") == GitHubRepository.releasesAPIURL)
+}
+
 @Test func aHUB_RELEASES_URLThatIsntAnHTTPURLLeavesTheFeedOnGitHub() {
     for value in ["", "localhost:8765/releases.json", "file:///tmp/releases.json", "not a url"] {
         let url = ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [ReleaseFeed.urlVariable: value])
