@@ -207,7 +207,7 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if term, found := findTerm(texts, criteria.IneligibleLocationTerms); found {
 		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("says %q", term)}
 	}
-	if term, found := findTerm(texts, criteria.EligibleLocationTerms); found {
+	if term, found := findTerm(texts, getEligibleTerms(criteria)); found {
 		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("names %q", term)}
 	}
 	named := strings.TrimSpace(restriction)
@@ -224,6 +224,56 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 		named = job.Location
 	}
 	return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("names only %q", named)}
+}
+
+// placeSpellings are the ways postings write a place, in English,
+// Portuguese and Spanish.
+var placeSpellings = map[string][]string{
+	"Brazil":        {"Brazil", "Brasil"},
+	"Latin America": {"Latin America", "LATAM", "América Latina", "Latinoamérica"},
+	"South America": {"South America", "América do Sul", "América del Sur", "Sudamérica", "Suramérica"},
+	"Americas":      {"Americas", "Américas"},
+}
+
+// placeRegions are the regions that include a place.
+var placeRegions = map[string][]string{
+	"Brazil":        {"Latin America", "South America"},
+	"Latin America": {"Americas"},
+	"South America": {"Americas"},
+}
+
+// getEligibleTerms returns the owner's eligible terms and home country, with
+// every spelling of the places they name and of the regions that include
+// them: a posting for "Latin America only" or "Brasil" is open to someone
+// in Brazil.
+func getEligibleTerms(criteria store.JobCriteria) []string {
+	terms := append(slices.Clone(criteria.EligibleLocationTerms), criteria.HomeCountry)
+	pending := slices.Clone(terms)
+	seen := map[string]bool{}
+	for len(pending) > 0 {
+		place := getPlace(pending[0])
+		pending = pending[1:]
+		if place == "" || seen[place] {
+			continue
+		}
+		seen[place] = true
+		terms = append(terms, placeSpellings[place]...)
+		pending = append(pending, placeRegions[place]...)
+	}
+	return terms
+}
+
+// getPlace returns the place a term spells, as "Brazil" for "Brasil", or ""
+// for a term that spells none of placeSpellings.
+func getPlace(term string) string {
+	for place, spellings := range placeSpellings {
+		for _, spelling := range spellings {
+			if wordmatch.Normalize(spelling) == wordmatch.Normalize(term) {
+				return place
+			}
+		}
+	}
+	return ""
 }
 
 // A place a posting names reads as a residency rule, unless it is only
