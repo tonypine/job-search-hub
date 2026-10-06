@@ -8,7 +8,8 @@ private let jobsJSON = #"""
                  "title":"Senior Product Engineer","location":"Americas","workplace_type":"Remote",
                  "url":"https://jobs.ashbyhq.com/acme/x1","description":"Build things.",
                  "first_seen_at":"2026-09-28T13:57:13.161025Z","last_seen_at":"2026-09-28T13:57:13.161025Z"},
-          "company_name":"Acme","fit":{"level":"good","checks":[{"name":"Stack","verdict":"yes","reason":"React"}]},"unseen_updates":2},
+          "company_name":"Acme","fit":{"level":"good","checks":[{"name":"Stack","verdict":"yes","reason":"React"}]},"unseen_updates":2,
+          "match":"strong","pipeline_phase":"Applied"},
          {"job":{"id":"8d9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Staff Engineer",
                  "url":"https://other.com/jobs/9","first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z",
                  "closed_at":"2026-09-29T10:00:00Z"},"fit":{"level":"poor","checks":[]},"unseen_updates":0}],
@@ -25,6 +26,8 @@ private let jobsJSON = #"""
     #expect(response.jobs[1].job.companyID == nil && response.jobs[1].companyName == nil)
     #expect(response.jobs[1].job.closedAt != nil)
     #expect(response.jobs.map(\.unseenUpdates) == [2, 0])
+    #expect(response.jobs.map(\.match) == [.strong, nil])
+    #expect(response.jobs.map(\.pipelinePhase) == ["Applied", nil])
 }
 
 @Test func theJobsQueryCarriesTheSearchOnlyWhenThereIsOne() {
@@ -110,6 +113,19 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     let restoreBody = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
     #expect(recording.lastRequest?.url?.path == "/v1/jobs/restore")
     #expect(restoreBody?["reason"] == nil)
+}
+
+@Test func aDecisionIsTakenBackWithADelete() async throws {
+    let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/jobs/\(jobID.uuidString)/decision": StubHub.Answer(status: 204, body: ""),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    try await client.clearJobDecision(jobID)
+
+    #expect(recording.lastRequest?.httpMethod == "DELETE")
+    #expect(recording.lastRequest?.url?.path == "/v1/jobs/\(jobID.uuidString)/decision")
 }
 
 @Test func skippedJobsAreAStatusOfTheirOwnThatTheHubCallsDismissed() {

@@ -1,8 +1,9 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The Jobs table's optional columns: board facts, each screen check, and
-/// the facts read from postings.
+/// The Jobs table's optional columns: the job's company, location and first
+/// sighting, which the job column already says, board facts, each screen
+/// check, and the facts read from postings.
 enum JobsColumns {
     struct FitCheckColumn: Identifiable, Sendable {
         /// The check's name in the hub's fit, the job's screen.
@@ -30,6 +31,17 @@ enum JobsColumns {
         let sortComparator: JobsSortComparator
         let getText: @Sendable (JobListItem) -> String?
     }
+
+    /// The job's details as columns of their own, to sort or read apart.
+    /// Their IDs are new, so a layout saved when they showed by default
+    /// doesn't bring them back.
+    static let jobDetails = [
+        BoardFactColumn(id: "job.company", title: "Company", sortComparator: JobsSortComparator(.company)) { $0.companyName },
+        BoardFactColumn(id: "job.location", title: "Location", sortComparator: JobsSortComparator(.location)) { $0.job.location },
+        BoardFactColumn(id: "job.firstSeen", title: "First seen", sortComparator: JobsSortComparator(.firstSeen)) {
+            $0.job.firstSeenAt.formatted(date: .abbreviated, time: .omitted)
+        },
+    ]
 
     /// The facts the job's board or feed gave, and where it came from.
     static let boardFacts = [
@@ -74,6 +86,9 @@ struct ColumnsMenu: View {
 
     var body: some View {
         Menu("Columns", systemImage: "tablecells") {
+            Section("Job") {
+                ForEach(JobsColumns.jobDetails) { column in toggle(column.title, id: column.id) }
+            }
             Section("From the board") {
                 ForEach(JobsColumns.boardFacts) { column in toggle(column.title, id: column.id) }
             }
