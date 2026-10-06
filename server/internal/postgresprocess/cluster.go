@@ -1,8 +1,9 @@
 // Package postgresprocess runs one Postgres cluster as a child of the server:
 // it creates the cluster, starts it, waits for it, stops one an earlier server
 // left behind, and stops it again. It moves an older major's cluster to the
-// engine's major, and replaces the cluster with one restored from a dump. The cluster listens only on a Unix socket in its
-// folder, and only the owner's user can reach it.
+// engine's major, and replaces the cluster with one restored from a dump. The
+// cluster listens only on a Unix socket in its folder, and only the owner's
+// user can reach it.
 package postgresprocess
 
 import (
