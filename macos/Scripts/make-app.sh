@@ -95,10 +95,11 @@ if [ "$QA_BUILD" = "1" ]; then
   QA_BUILD_PLIST="<key>HubQABuild</key>
 	<true/>"
   # The stub release feed QA serves (README › Releases), since Symphony's
-  # launcher passes the app no environment: the app reads it from Info.plist
-  # when HUB_RELEASES_URL isn't set at launch. HUB_RELEASES_URL at build time
-  # names another, and an empty one leaves the build on GitHub's releases.
-  RELEASES_URL="${HUB_RELEASES_URL-http://localhost:8765/releases.json}"
+  # launcher passes the app no environment: HUB_RELEASES_URL at build time
+  # goes in Info.plist, where the app reads it when the variable isn't set at
+  # launch. QA's ports change on every pass, so the build that knows the port
+  # names the URL; without one the build reads GitHub's releases.
+  RELEASES_URL="${HUB_RELEASES_URL:-}"
   if [ -n "$RELEASES_URL" ]; then
     case "$RELEASES_URL" in
       http://*|https://*) ;;

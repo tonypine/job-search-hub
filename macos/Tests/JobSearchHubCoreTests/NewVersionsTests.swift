@@ -199,7 +199,7 @@ private func makeRelease(_ tag: String, draft: Bool = false, prerelease: Bool = 
 }
 
 @Test func aQABuildReadsTheFeedURLItWasBuiltWithWhenLaunchedWithoutTheVariable() {
-    let bundled = "http://localhost:8765/releases.json"
+    let bundled = "http://localhost:54074/releases.json"
 
     #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [:], isQABuild: true, bundledURL: bundled) == URL(string: bundled))
     #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [:], bundledURL: bundled) == URL(string: bundled))
