@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -27,6 +29,7 @@ type apiUnderTest struct {
 	pool     *pgxpool.Pool
 	hub      *store.Store
 	verifier auth.TokenVerifier
+	drainer  *drain.Drain
 	url      string
 }
 
@@ -39,7 +42,9 @@ func startAPI(t *testing.T) apiUnderTest {
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	})
 	routes := http.NewServeMux()
-	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	drainer := drain.New(time.Hour)
+	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
+	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
@@ -69,7 +74,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterCVRoutes(routes, hub, nil, nil, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
-	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, url: server.URL}
+	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, drainer: drainer, url: server.URL}
 }
 
 func send(t *testing.T, method, url, token, body string) (int, []byte) {

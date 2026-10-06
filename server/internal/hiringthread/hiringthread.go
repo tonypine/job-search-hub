@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
@@ -67,11 +68,13 @@ func (reader *Reader) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := reader.ReadOnce(ctx)
-		if err != nil {
-			slog.Error("hiring thread pass stopped", "error", err)
-		} else if summary != (PassSummary{}) {
-			slog.Info("hiring thread pass done", "read", summary.Read, "left out", summary.LeftOut, "stored", summary.Stored, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			summary, err := reader.ReadOnce(ctx)
+			if err != nil {
+				slog.Error("hiring thread pass stopped", "error", err)
+			} else if summary != (PassSummary{}) {
+				slog.Info("hiring thread pass done", "read", summary.Read, "left out", summary.LeftOut, "stored", summary.Stored, "failed", summary.Failed)
+			}
 		}
 		select {
 		case <-ctx.Done():

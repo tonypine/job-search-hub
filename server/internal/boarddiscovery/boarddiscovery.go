@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -101,12 +102,14 @@ func (discoverer *Discoverer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := discoverer.DiscoverOnce(ctx)
-		if err != nil {
-			slog.Error("board discovery pass stopped", "error", err)
-		} else if summary != (PassSummary{}) {
-			slog.Info("board discovery pass done", "index pages read", summary.IndexPagesRead, "tokens found", summary.TokensFound,
-				"checked", summary.Checked, "kept", summary.Kept, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			summary, err := discoverer.DiscoverOnce(ctx)
+			if err != nil {
+				slog.Error("board discovery pass stopped", "error", err)
+			} else if summary != (PassSummary{}) {
+				slog.Info("board discovery pass done", "index pages read", summary.IndexPagesRead, "tokens found", summary.TokensFound,
+					"checked", summary.Checked, "kept", summary.Kept, "failed", summary.Failed)
+			}
 		}
 		select {
 		case <-ctx.Done():

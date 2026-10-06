@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -47,10 +48,12 @@ func (reminder *Reminder) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if reminded, err := reminder.RemindOnce(ctx); err != nil {
-			slog.Error("follow-up reminders stopped", "error", err, "reminded", reminded)
-		} else if reminded > 0 {
-			slog.Info("follow-up reminders sent", "reminded", reminded)
+		if !drain.IsDraining(ctx) {
+			if reminded, err := reminder.RemindOnce(ctx); err != nil {
+				slog.Error("follow-up reminders stopped", "error", err, "reminded", reminded)
+			} else if reminded > 0 {
+				slog.Info("follow-up reminders sent", "reminded", reminded)
+			}
 		}
 		select {
 		case <-ctx.Done():

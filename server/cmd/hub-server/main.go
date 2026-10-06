@@ -30,6 +30,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/cvpdfs"
 	"github.com/tonypine/job-search-hub/server/internal/cvscreens"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
 	"github.com/tonypine/job-search-hub/server/internal/followupreminders"
@@ -60,7 +61,12 @@ import (
 
 const (
 	readHeaderTimeout = 10 * time.Second
-	shutdownTimeout   = 5 * time.Second
+	// shutdownTimeout is how long a stopping server waits for the model call
+	// and `claude -p` runs still running; launchd's ExitTimeOut leaves room
+	// for it and closeTimeout.
+	shutdownTimeout = 30 * time.Second
+	// closeTimeout is how long the requests still open then get to end.
+	closeTimeout = 5 * time.Second
 	// mailTriageInterval retries mail the model couldn't read; new mail
 	// nudges a pass at once.
 	mailTriageInterval = 5 * time.Minute
@@ -154,6 +160,12 @@ func run() error {
 	if err := seedAgentPrompts(ctx, hub, settings.agentPromptsDir); err != nil {
 		return err
 	}
+	// The workers and the requests outlive the signal to stop: they run on
+	// workCtx, which ends once the work running then finished, or the wait
+	// for it ran out. Until then, the drain keeps new work from starting.
+	drainer := drain.New(drain.DefaultTimeout)
+	workCtx, stopWork := context.WithCancel(drain.NewContext(context.Background(), drainer))
+	defer stopWork()
 	verifier := tokens.NewVerifier(settings.ownerToken, hub)
 	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
@@ -162,8 +174,9 @@ func run() error {
 	rates := exchangerates.NewCache(exchangerates.DefaultAPIBase)
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool, database.postgresHealth()))
-	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
-	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
+	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
+	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
+	go abandonedruns.NewCloser(hub).Run(workCtx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
@@ -186,11 +199,11 @@ func run() error {
 	api.RegisterUpdateRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterTaskRoutes(routes, hub, updateRecorder, requireOwner)
 	api.RegisterEventRoutes(routes, hub, broadcaster, requireOwner)
-	if sender := makePushSender(ctx, settings); sender != nil {
-		go push.NewNotifier(hub, sender, broadcaster).Run(ctx)
+	if sender := makePushSender(workCtx, settings); sender != nil {
+		go push.NewNotifier(hub, sender, broadcaster).Run(workCtx)
 	}
-	go followupreminders.NewReminder(hub, updateRecorder).Run(ctx, followUpReminderInterval)
-	go freshmatches.NewTeller(hub, updateRecorder).Run(ctx, freshMatchInterval)
+	go followupreminders.NewReminder(hub, updateRecorder).Run(workCtx, followUpReminderInterval)
+	go freshmatches.NewTeller(hub, updateRecorder).Run(workCtx, freshMatchInterval)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	boards.SearchTerms = func(ctx context.Context) []string {
@@ -208,18 +221,18 @@ func run() error {
 	routes.Handle("/mcp", mcptools.NewHandler(ownerTools, mcptools.NewAgentServer(hub, boards, boardPoller, rates), verifier))
 
 	if settings.boardPollInterval > 0 {
-		go boardPoller.Run(ctx, settings.boardPollInterval)
+		go boardPoller.Run(workCtx, settings.boardPollInterval)
 	}
 	if settings.feedPollInterval > 0 {
-		go feedpoller.New(hub, boards).Run(ctx, settings.feedPollInterval)
+		go feedpoller.New(hub, boards).Run(workCtx, settings.feedPollInterval)
 	}
 	if settings.boardSearchInterval > 0 {
-		go boardfinder.New(hub, boards, rates).Run(ctx, settings.boardSearchInterval)
+		go boardfinder.New(hub, boards, rates).Run(workCtx, settings.boardSearchInterval)
 	}
 	if settings.boardDiscoveryInterval > 0 {
-		go boarddiscovery.New(hub, boards).Run(ctx, settings.boardDiscoveryInterval)
+		go boarddiscovery.New(hub, boards).Run(workCtx, settings.boardDiscoveryInterval)
 	}
-	go startupsgallery.NewReader(hub, boards).Run(ctx, galleryCheckInterval)
+	go startupsgallery.NewReader(hub, boards).Run(workCtx, galleryCheckInterval)
 	// Alert jobs no board gave text to get it from Google for Jobs when a
 	// JSearch key is set; without one they only get the reason they have none.
 	var jsearch *postingtexts.JSearch
@@ -227,7 +240,7 @@ func run() error {
 		jsearch = postingtexts.NewJSearch(settings.jsearchURL, settings.jsearchAPIKey)
 		slog.Info("Google for Jobs search on", "monthly requests", settings.jsearchMonthlyRequests)
 	}
-	go postingtexts.New(hub, jsearch, settings.jsearchMonthlyRequests).Run(ctx, postingTextInterval)
+	go postingtexts.New(hub, jsearch, settings.jsearchMonthlyRequests).Run(workCtx, postingTextInterval)
 	// Each kind of task runs on the model it's routed to. The settings' model
 	// server seeds the routes of a fresh database; routes changed since stay.
 	// Errors return rather than exit, so the database closes on the way out.
@@ -249,7 +262,7 @@ func run() error {
 		LlamaServer: settings.llamaServer, ModelsDir: settings.modelsDir, Port: settings.runtimePort,
 		IdleTimeout: settings.runtimeIdleTimeout, LogPath: filepath.Join(logDirectory, "llama-server.log"),
 	})
-	go modelRuntime.Run(ctx)
+	go modelRuntime.Run(workCtx)
 	// Model calls take turns through one queue, which starts paused if the
 	// owner left it paused.
 	paused, err := hub.GetModelWorkPaused(ctx)
@@ -261,6 +274,8 @@ func run() error {
 		UnloadModel:    modelRuntime.Unload,
 	})
 	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime}
+	drainer.OnChange(modelQueue.SetDraining)
+	drainer.AddLister(func() []drain.Work { return listRunningModelCall(modelQueue) })
 
 	recordTaskRun := func(ctx context.Context, record chatcompletions.RunRecord) {
 		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
@@ -280,7 +295,7 @@ func run() error {
 		modelClient.RecordRun = recordTaskRun
 	}
 	if modelClient != nil {
-		go conversationtriage.NewClassifier(hub, modelClient).Run(ctx, conversationTriageInterval)
+		go conversationtriage.NewClassifier(hub, modelClient).Run(workCtx, conversationTriageInterval)
 	}
 	var cvPrinter *cvpdfs.Printer
 	if _, err := os.Stat(settings.cvPrintCommand); err != nil {
@@ -293,17 +308,17 @@ func run() error {
 	var newClaudeClient func(model string) comparisons.ModelClient
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
-		go briefWriter.Run(ctx, jobBriefInterval)
-		go cvscreens.NewScreener(hub, modelClient).Run(ctx, cvScreenInterval)
-		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(ctx, marketGapsCheckInterval)
-		go interviewpacks.NewPreparer(hub, modelClient).Run(ctx, interviewPackInterval)
-		go hiringthread.NewReader(hub, modelClient).Run(ctx, hiringThreadInterval)
+		go briefWriter.Run(workCtx, jobBriefInterval)
+		go cvscreens.NewScreener(hub, modelClient).Run(workCtx, cvScreenInterval)
+		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(workCtx, marketGapsCheckInterval)
+		go interviewpacks.NewPreparer(hub, modelClient).Run(workCtx, interviewPackInterval)
+		go hiringthread.NewReader(hub, modelClient).Run(workCtx, hiringThreadInterval)
 		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
 			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
 		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
 			slog.Warn("full briefs off: no folder to run Claude in", "error", err)
 		} else {
-			claude := &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun}
+			claude := &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun, Drain: drainer}
 			briefWriter.FullClient = claude
 			fullBriefs = briefWriter
 			cvDrafter = cvdrafts.NewDrafter(hub, claude)
@@ -311,10 +326,10 @@ func run() error {
 			if cvPrinter != nil {
 				cvDrafter.Printer = cvPrinter
 			}
-			go cvDrafter.Run(ctx, cvDraftInterval)
-			go briefWriter.RunNightly(ctx, fullBriefCheckInterval)
+			go cvDrafter.Run(workCtx, cvDraftInterval)
+			go briefWriter.RunNightly(workCtx, fullBriefCheckInterval)
 			newClaudeClient = func(model string) comparisons.ModelClient {
-				return &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: model, RecordRun: recordTaskRun}
+				return &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: model, RecordRun: recordTaskRun, Drain: drainer}
 			}
 			slog.Info("full briefs on", "model", settings.fullBriefModel)
 		}
@@ -329,7 +344,7 @@ func run() error {
 		extractor := jobfacts.NewExtractor(hub, modelClient)
 		modelWork.Facts = extractor
 		if settings.jobFactsInterval > 0 {
-			go extractor.Run(ctx, settings.jobFactsInterval)
+			go extractor.Run(workCtx, settings.jobFactsInterval)
 			slog.Info("job facts reading on", "every", settings.jobFactsInterval.String(), "paused", paused)
 		}
 	}
@@ -337,7 +352,7 @@ func run() error {
 	if modelClient != nil {
 		comparisonRunner := comparisons.NewRunner(hub, modelClient)
 		comparisonRunner.NewClaudeClient = newClaudeClient
-		go comparisonRunner.RunUnfinished(ctx)
+		go comparisonRunner.RunUnfinished(workCtx)
 		api.RegisterComparisonRoutes(routes, hub, comparisonRunner, requireOwner)
 	} else {
 		api.RegisterComparisonRoutes(routes, hub, nil, requireOwner)
@@ -377,11 +392,11 @@ func run() error {
 				mailHandler.Nudge()
 				alertReader.Nudge()
 			}
-			go classifier.Run(ctx, mailTriageInterval)
-			go mailHandler.Run(ctx, mailTriageInterval)
-			go alertReader.Run(ctx, mailTriageInterval)
+			go classifier.Run(workCtx, mailTriageInterval)
+			go mailHandler.Run(workCtx, mailTriageInterval)
+			go alertReader.Run(workCtx, mailTriageInterval)
 		}
-		go watcher.Run(ctx)
+		go watcher.Run(workCtx)
 		slog.Info("gmail changes on", "topic", settings.gmailTopic)
 	}
 	api.RegisterMailRoutes(routes, hub, mailBackfiller, requireOwner)
@@ -389,7 +404,7 @@ func run() error {
 	if pgDump, err := exec.LookPath(database.pgDump); err != nil {
 		slog.Warn("database backups off: pg_dump not found", "pg_dump", database.pgDump)
 	} else {
-		go databasebackup.NewDumper(database.url, settings.backupsDir, pgDump).Run(ctx, databaseBackupCheckInterval)
+		go databasebackup.NewDumper(database.url, settings.backupsDir, pgDump).Run(workCtx, databaseBackupCheckInterval)
 		slog.Info("database backups on", "folder", settings.backupsDir)
 	}
 
@@ -397,9 +412,9 @@ func run() error {
 		Addr:              settings.address,
 		Handler:           routes,
 		ReadHeaderTimeout: readHeaderTimeout,
-		// Requests end with the server, so open event streams don't hold up
+		// Requests end with the work, so open event streams don't hold up
 		// a shutdown.
-		BaseContext: func(net.Listener) context.Context { return ctx },
+		BaseContext: func(net.Listener) context.Context { return workCtx },
 	}
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.ListenAndServe() }()
@@ -414,14 +429,41 @@ func run() error {
 		return fmt.Errorf("the database stopped by itself: %w", database.ExitError())
 	case <-ctx.Done():
 	}
+	shutDown(server, drainer, stopWork, shutdownTimeout)
+	return nil
+}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("shut down: %w", err)
+// shutDown drains, so no new work starts, and waits up to workTimeout for
+// the work running in the server to finish. It then stops the workers and
+// the server, giving open requests closeTimeout to end.
+func shutDown(server *http.Server, drainer *drain.Drain, stopWork context.CancelFunc, workTimeout time.Duration) {
+	drainer.Start()
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), workTimeout)
+	defer cancelWait()
+	if !drainer.WaitIdle(waitCtx) {
+		slog.Warn("stopping with work still running", "running", drainer.Running(), "waited", workTimeout.String())
+	}
+	stopWork()
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
+	defer cancelClose()
+	if err := server.Shutdown(closeCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Warn("requests still open were cut", "error", err)
+		_ = server.Close()
 	}
 	slog.Info("hub-server shut down")
-	return nil
+}
+
+// listRunningModelCall is the model queue's running call, as a drain lists it.
+func listRunningModelCall(queue *modelqueue.Queue) []drain.Work {
+	running := queue.Status().Running
+	if running == nil {
+		return nil
+	}
+	work := drain.Work{Type: drain.TypeModelCall, Kind: running.Kind, StartedAt: running.Since}
+	if running.SubjectID != nil {
+		work.Subject = running.SubjectID.String()
+	}
+	return []drain.Work{work}
 }
 
 // makeGoogleClient reads the hub's Google OAuth client, or returns nil,

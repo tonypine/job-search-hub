@@ -82,6 +82,23 @@ func TestOnlyRunningUnexpiredRunsAreFoundByTokenHash(t *testing.T) {
 	}
 }
 
+func TestOnlyRunningUnexpiredRunsAreListedAsRunning(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	first := startRun(t, hub, "first", time.Now().Add(time.Hour))
+	second := startRun(t, hub, "second", time.Now().Add(time.Hour))
+	startRun(t, hub, "expired", time.Now().Add(-time.Minute))
+	finished := startRun(t, hub, "finished", time.Now().Add(time.Hour))
+	if _, err := hub.FinishAgentRun(ctx, finished.ID, store.AgentRunOutcome{Status: store.AgentRunSucceeded}); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	running, err := hub.ListRunningAgentRuns(ctx)
+	if err != nil || len(running) != 2 || running[0].ID != first.ID || running[1].ID != second.ID {
+		t.Fatalf("running = %+v, err = %v, want the two unexpired runs, oldest first", running, err)
+	}
+}
+
 func TestCloseAbandonedAgentRunsFailsOnlyExpiredRunningRuns(t *testing.T) {
 	hub := store.New(testdatabase.New(t))
 	ctx := context.Background()

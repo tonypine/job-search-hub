@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -28,7 +29,9 @@ func (closer *Closer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		closer.CloseOnce(ctx)
+		if !drain.IsDraining(ctx) {
+			closer.CloseOnce(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return

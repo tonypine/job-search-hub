@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
@@ -87,6 +89,39 @@ func TestARunAnswersEachStackOnceAndKeepsFailures(t *testing.T) {
 	}
 	if len(local.models) != 1 || len(claude.models) != 1 {
 		t.Errorf("a second run asked again: local %v, claude %v", local.models, claude.models)
+	}
+}
+
+func TestAClaudeRunRefusedByADrainLeavesTheComparisonToResume(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Product Engineer", URL: "https://acme.com/jobs/1", Description: "Build things."})
+	comparison, err := hub.CreateComparison(ctx, owner, store.NewComparison{
+		TaskKind: store.AgentPromptKindJobFacts, Title: "Sonnet", JobIDs: []uuid.UUID{job.ID},
+		Stacks: []store.ComparisonStack{{Label: "Sonnet", Source: store.ComparisonSourceClaude, Model: "sonnet"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := &fakeModel{err: fmt.Errorf("%w: %w", chatcompletions.ErrUnreachable, drain.ErrDraining)}
+	runner := NewRunner(hub, &fakeModel{})
+	runner.NewClaudeClient = func(string) ModelClient { return claude }
+
+	if err := runner.Run(ctx, comparison.ID); !errors.Is(err, drain.ErrDraining) {
+		t.Fatalf("run while draining = %v, want ErrDraining", err)
+	}
+	record, _ := hub.GetComparison(ctx, comparison.ID)
+	if record.Status == store.ComparisonStatusDone || len(record.Answers) != 0 {
+		t.Fatalf("record = %+v, answers = %+v, want it running without answers", record.Comparison, record.Answers)
+	}
+
+	claude.err, claude.answer = nil, `{"stack":"Go"}`
+	if err := runner.Run(ctx, comparison.ID); err != nil {
+		t.Fatal(err)
+	}
+	record, _ = hub.GetComparison(ctx, comparison.ID)
+	if record.Status != store.ComparisonStatusDone || len(record.Answers) != 1 || record.Answers[0].Error != "" {
+		t.Fatalf("record after the restart = %+v, answers = %+v", record.Comparison, record.Answers)
 	}
 }
 

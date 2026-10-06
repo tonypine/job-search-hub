@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -51,11 +52,13 @@ func (reader *Reader) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := reader.ReadOnce(ctx)
-		if err != nil {
-			slog.Error("job alert reading stopped", "error", err, "alerts", summary.Alerts)
-		} else if summary.Alerts > 0 {
-			slog.Info("job alerts read", "alerts", summary.Alerts, "added", summary.Added, "already listed", summary.AlreadyListed)
+		if !drain.IsDraining(ctx) {
+			summary, err := reader.ReadOnce(ctx)
+			if err != nil {
+				slog.Error("job alert reading stopped", "error", err, "alerts", summary.Alerts)
+			} else if summary.Alerts > 0 {
+				slog.Info("job alerts read", "alerts", summary.Alerts, "added", summary.Added, "already listed", summary.AlreadyListed)
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -52,11 +53,13 @@ func (preparer *Preparer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := preparer.PrepareOnce(ctx)
-		if err != nil {
-			slog.Error("interview packs pass stopped", "error", err, "prepared", summary.Prepared, "failed", summary.Failed)
-		} else if summary.Prepared > 0 || summary.Failed > 0 {
-			slog.Info("interview packs pass done", "prepared", summary.Prepared, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			summary, err := preparer.PrepareOnce(ctx)
+			if err != nil {
+				slog.Error("interview packs pass stopped", "error", err, "prepared", summary.Prepared, "failed", summary.Failed)
+			} else if summary.Prepared > 0 || summary.Failed > 0 {
+				slog.Info("interview packs pass done", "prepared", summary.Prepared, "failed", summary.Failed)
+			}
 		}
 		select {
 		case <-ctx.Done():

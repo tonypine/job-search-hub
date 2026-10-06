@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -108,6 +109,12 @@ func (runner *Runner) answerJobs(ctx context.Context, comparisonID uuid.UUID, st
 		result := store.ComparisonAnswer{StackID: stack.ID, JobID: jobID}
 		answer, err := runner.answer(ctx, stack, requests[jobID])
 		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, drain.ErrDraining) {
+			// No answer: the comparison stays running, and resumes when
+			// the server starts again.
+			saveErrors[index] = err
 			return
 		}
 		if err != nil {
