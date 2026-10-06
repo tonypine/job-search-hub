@@ -111,10 +111,11 @@ func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, er
 	if err := createIfMissing(ctx, engine, dataDir); err != nil {
 		return nil, err
 	}
-	if err := stopOrphan(ctx, engine, dataDir); err != nil {
+	socketLock := filepath.Join(dir, socketName+".lock")
+	if err := stopOrphan(ctx, engine, dataDir, socketLock); err != nil {
 		return nil, err
 	}
-	if err := clearStaleSocketLock(engine, filepath.Join(dir, socketName+".lock")); err != nil {
+	if err := clearStaleSocketLock(engine, socketLock); err != nil {
 		return nil, err
 	}
 
@@ -227,35 +228,48 @@ func (cluster *Cluster) stopPostgres() {
 	}
 }
 
+// waitUntilReady waits for postgres to take a connection, then creates the
+// hub's database once. Only the connection is retried: a first start's
+// CREATE DATABASE copies template1, which on a slow disk can take longer than
+// an attempt, and cancelling it would only start the copy over.
 func (cluster *Cluster) waitUntilReady(ctx context.Context) error {
+	connection, err := cluster.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close(context.Background())
+	if err := createHubDatabase(ctx, connection); err != nil {
+		return fmt.Errorf("create the %s database: %w%s", DatabaseName, err, cluster.log.String())
+	}
+	return nil
+}
+
+// connect connects to the maintenance database as soon as postgres takes
+// connections, giving each attempt 2 seconds.
+func (cluster *Cluster) connect(ctx context.Context) (*pgx.Conn, error) {
 	deadline := time.After(startTimeout)
 	for {
 		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := createHubDatabase(attempt, cluster.dir)
+		connection, err := pgx.Connect(attempt, databaseURL(cluster.dir, "postgres"))
 		cancel()
 		if err == nil {
-			return nil
+			return connection, nil
 		}
 		select {
 		case <-cluster.exited:
-			return fmt.Errorf("postgres exited while starting: %w", cluster.exitErr)
+			return nil, fmt.Errorf("postgres exited while starting: %w", cluster.exitErr)
 		case <-deadline:
-			return fmt.Errorf("postgres didn't accept connections within %s: %v%s", startTimeout, err, cluster.log.String())
+			return nil, fmt.Errorf("postgres didn't accept connections within %s: %v%s", startTimeout, err, cluster.log.String())
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
 
-// createHubDatabase connects to the maintenance database and creates the
-// hub's, which initdb doesn't, if it isn't there yet.
-func createHubDatabase(ctx context.Context, dir string) error {
-	connection, err := pgx.Connect(ctx, databaseURL(dir, "postgres"))
-	if err != nil {
-		return err
-	}
-	defer connection.Close(context.Background())
+// createHubDatabase creates the hub's database, which initdb doesn't, if it
+// isn't there yet.
+func createHubDatabase(ctx context.Context, connection *pgx.Conn) error {
 	var exists bool
 	if err := connection.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", DatabaseName).Scan(&exists); err != nil {
 		return err
@@ -263,7 +277,7 @@ func createHubDatabase(ctx context.Context, dir string) error {
 	if exists {
 		return nil
 	}
-	_, err = connection.Exec(ctx, "CREATE DATABASE "+DatabaseName)
+	_, err := connection.Exec(ctx, "CREATE DATABASE "+DatabaseName)
 	return err
 }
 

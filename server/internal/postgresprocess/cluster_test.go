@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,16 +79,90 @@ func start(t *testing.T, dir string) *postgresprocess.Cluster {
 	return cluster
 }
 
+// startExpectingFailure is Start where the test wants a refusal.
+func startExpectingFailure(t *testing.T, dir string) error {
+	t.Helper()
+	cluster, err := postgresprocess.Start(context.Background(), postgresprocess.Settings{Engine: getEngine(t), Dir: dir})
+	if err == nil {
+		cluster.Stop()
+		t.Fatal("the cluster started")
+	}
+	return err
+}
+
+// newStoppedCluster creates a cluster and stops it, for a test that leaves
+// files in its way before the next start.
+func newStoppedCluster(t *testing.T) (dir, dataDir string) {
+	t.Helper()
+	dir = newDir(t)
+	cluster := start(t, dir)
+	cluster.Stop()
+	return dir, cluster.DataDir()
+}
+
 func connect(t *testing.T, cluster *postgresprocess.Cluster) *pgx.Conn {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	connection, err := pgx.Connect(ctx, cluster.URL())
-	if err != nil {
-		t.Fatalf("connect to %s: %v", cluster.URL(), err)
+	return connectTo(t, cluster.URL())
+}
+
+// connectTo connects to databaseURL, retrying while postgres starts.
+func connectTo(t *testing.T, databaseURL string) *pgx.Conn {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		connection, err := pgx.Connect(ctx, databaseURL)
+		cancel()
+		if err == nil {
+			t.Cleanup(func() { connection.Close(context.Background()) })
+			return connection
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("connect to %s: %v", databaseURL, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	t.Cleanup(func() { connection.Close(context.Background()) })
-	return connection
+}
+
+// maintenanceURL is the URL of the cluster's postgres database, which is
+// there before Start creates the hub's.
+func maintenanceURL(dir string) string {
+	return "postgres:///postgres?host=" + url.QueryEscape(dir) + "&user=hub"
+}
+
+func execute(t *testing.T, connection *pgx.Conn, statement string) {
+	t.Helper()
+	if _, err := connection.Exec(context.Background(), statement); err != nil {
+		t.Fatalf("%s: %v", statement, err)
+	}
+}
+
+func appendSetting(t *testing.T, dataDir, setting string) {
+	t.Helper()
+	settings, err := os.OpenFile(filepath.Join(dataDir, "postgresql.conf"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer settings.Close()
+	if _, err := settings.WriteString(setting + "\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pidFileContent is a postmaster.pid as Postgres writes it.
+func pidFileContent(pid int, dataDir, dir string) string {
+	return fmt.Sprintf("%d\n%s\n%d\n5432\n%s\n\n  5432001         0\nready   \n", pid, dataDir, time.Now().Unix(), dir)
+}
+
+func assertContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%s is gone: %v", path, err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
 }
 
 func queryString(t *testing.T, connection *pgx.Conn, query string) string {
@@ -244,7 +319,7 @@ func TestAPidFileNamingAnotherLiveProcessIsLeftAloneAndTheClusterStarts(t *testi
 		sleeper.Process.Kill()
 		<-exited
 	})
-	lockFile := fmt.Sprintf("%d\n%s\n%d\n5432\n%s\n\n  5432001         0\nready   \n", sleeper.Process.Pid, dataDir, time.Now().Unix(), dir)
+	lockFile := pidFileContent(sleeper.Process.Pid, dataDir, dir)
 	for _, path := range []string{filepath.Join(dataDir, "postmaster.pid"), filepath.Join(dir, ".s.PGSQL.5432.lock")} {
 		if err := os.WriteFile(path, []byte(lockFile), 0o600); err != nil {
 			t.Fatal(err)
@@ -281,14 +356,9 @@ func TestAChildThatFailsToStartIsReportedWithItsLastLogLines(t *testing.T) {
 	dir := newDir(t)
 	cluster := start(t, dir)
 	cluster.Stop()
-	settings, err := os.OpenFile(filepath.Join(cluster.DataDir(), "postgresql.conf"), os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings.WriteString("this is not a setting\n")
-	settings.Close()
+	appendSetting(t, cluster.DataDir(), "this is not a setting")
 
-	_, err = postgresprocess.Start(context.Background(), postgresprocess.Settings{Engine: getEngine(t), Dir: dir})
+	_, err := postgresprocess.Start(context.Background(), postgresprocess.Settings{Engine: getEngine(t), Dir: dir})
 	if err == nil || !strings.Contains(err.Error(), "postgresql.conf") {
 		t.Fatalf("a postgres that can't read its settings: %v", err)
 	}
@@ -339,5 +409,170 @@ func TestAnInitdbLeftUnfinishedIsReplacedByAWorkingCluster(t *testing.T) {
 	}
 	if _, err := os.Stat(unfinished); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the unfinished folder is left: %v", err)
+	}
+}
+
+func TestAnUnreadablePidFileStopsTheStartAndIsKept(t *testing.T) {
+	dir, dataDir := newStoppedCluster(t)
+	path := filepath.Join(dataDir, "postmaster.pid")
+	content := pidFileContent(os.Getpid(), dataDir, dir)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := startExpectingFailure(t, dir); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("a postmaster.pid that can't be read: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("the file is gone: %v", err)
+	}
+	assertContent(t, path, content)
+}
+
+func TestAPidFileNamingAProcessThatCantBeInspectedIsRefusedAndKept(t *testing.T) {
+	dir, dataDir := newStoppedCluster(t)
+	// PID 1 is root's, on Linux and on the Mac; the test's user can see that
+	// it is alive, but not what it runs or when it started.
+	path := filepath.Join(dataDir, "postmaster.pid")
+	content := pidFileContent(1, dataDir, dir)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := startExpectingFailure(t, dir); !strings.Contains(err.Error(), "process 1,") {
+		t.Fatalf("a postmaster.pid naming a process that can't be inspected: %v", err)
+	}
+	assertContent(t, path, content)
+}
+
+func TestASocketLockNamingAnotherLivePostgresIsRefusedAndKept(t *testing.T) {
+	other := start(t, newDir(t))
+	theirs, err := os.ReadFile(filepath.Join(other.DataDir(), "postmaster.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := newDir(t)
+	socketLock := filepath.Join(dir, ".s.PGSQL.5432.lock")
+	if err := os.WriteFile(socketLock, theirs, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = startExpectingFailure(t, dir)
+	if want := fmt.Sprintf("another Postgres (PID %d)", other.PID()); !strings.Contains(err.Error(), want) {
+		t.Fatalf("a socket held by a live Postgres: %v, want %q", err, want)
+	}
+	assertContent(t, socketLock, string(theirs))
+	if got := queryString(t, connect(t, other), "SELECT 'serving'"); got != "serving" {
+		t.Fatal("the other Postgres stopped serving")
+	}
+}
+
+func TestAMalformedPidFileIsKeptWhileAPostgresHoldsTheSocket(t *testing.T) {
+	other := start(t, newDir(t))
+	theirs, err := os.ReadFile(filepath.Join(other.DataDir(), "postmaster.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, dataDir := newStoppedCluster(t)
+	// What a crash while Postgres wrote it can leave.
+	pidFile := filepath.Join(dataDir, "postmaster.pid")
+	if err := os.WriteFile(pidFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socketLock := filepath.Join(dir, ".s.PGSQL.5432.lock")
+	if err := os.WriteFile(socketLock, theirs, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = startExpectingFailure(t, dir)
+	if want := fmt.Sprintf("a Postgres (PID %d) is using the socket", other.PID()); !strings.Contains(err.Error(), want) {
+		t.Fatalf("a malformed postmaster.pid beside a live Postgres: %v, want %q", err, want)
+	}
+	assertContent(t, pidFile, "")
+
+	// With no Postgres on the socket, nothing can be using the cluster.
+	if err := os.Remove(socketLock); err != nil {
+		t.Fatal(err)
+	}
+	if got := queryString(t, connect(t, start(t, dir)), "SELECT 'serving'"); got != "serving" {
+		t.Fatal("the cluster isn't serving")
+	}
+}
+
+func TestACreateDatabaseSlowerThanAConnectionAttemptDoesntFailTheStart(t *testing.T) {
+	dir, dataDir := newStoppedCluster(t)
+	appendSetting(t, dataDir, "max_prepared_transactions = 1")
+	cluster := start(t, dir)
+	maintenance := connectTo(t, maintenanceURL(dir))
+	execute(t, maintenance, "DROP DATABASE hub WITH (FORCE)")
+	// A prepared transaction keeps its locks across a restart. This one
+	// holds template1, which CREATE DATABASE copies, until the test lets go.
+	execute(t, maintenance, "BEGIN")
+	execute(t, maintenance, "COMMENT ON DATABASE template1 IS 'held'")
+	execute(t, maintenance, "PREPARE TRANSACTION 'hold_template1'")
+	maintenance.Close(context.Background())
+	cluster.Stop()
+
+	engine := getEngine(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	var again *postgresprocess.Cluster
+	var startErr error
+	done := make(chan struct{})
+	go func() {
+		again, startErr = postgresprocess.Start(ctx, postgresprocess.Settings{Engine: engine, Dir: dir})
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		if again != nil {
+			again.Stop()
+		}
+	})
+
+	watcher := connectTo(t, maintenanceURL(dir))
+	var creator int
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		err := watcher.QueryRow(context.Background(), "SELECT pid FROM pg_stat_activity WHERE query LIKE 'CREATE DATABASE%' AND wait_event_type = 'Lock'").Scan(&creator)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+			t.Fatalf("Start returned before creating the database: %v", startErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Start never waited on CREATE DATABASE")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Longer than a connection attempt's 2 seconds.
+	time.Sleep(3 * time.Second)
+	var stillWaiting bool
+	if err := watcher.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')", creator).Scan(&stillWaiting); err != nil {
+		t.Fatal(err)
+	}
+	if !stillWaiting {
+		t.Fatal("the slow CREATE DATABASE was cancelled")
+	}
+	execute(t, watcher, "ROLLBACK PREPARED 'hold_template1'")
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Start didn't return once CREATE DATABASE could go ahead")
+	}
+	if startErr != nil {
+		t.Fatal(startErr)
+	}
+	if got := queryString(t, connect(t, again), "SELECT current_database()"); got != "hub" {
+		t.Fatalf("current_database() = %q", got)
 	}
 }

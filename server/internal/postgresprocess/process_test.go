@@ -1,6 +1,7 @@
 package postgresprocess
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,8 +35,8 @@ func TestProcessInfoNamesTheExecutableAndWhenItStarted(t *testing.T) {
 	if started.Sub(before).Abs() > startTimeSlack {
 		t.Errorf("started %s, %s from when it was started", started, started.Sub(before))
 	}
-	if isPostmaster(filepath.Dir(filepath.Dir(sleep)), lockFile{pid: sleeper.Process.Pid, started: started}) {
-		t.Error("sleep passes for a postmaster")
+	if postmaster, err := isPostmaster(filepath.Dir(filepath.Dir(sleep)), lockFile{pid: sleeper.Process.Pid, started: started}); err != nil || postmaster {
+		t.Errorf("sleep: postmaster %t, err %v", postmaster, err)
 	}
 }
 
@@ -49,9 +50,13 @@ func TestALockFileIsReadOnlyWhenPostgresCouldHaveWrittenIt(t *testing.T) {
 	} {
 		path := filepath.Join(dir, "postmaster.pid")
 		os.WriteFile(path, []byte(content), 0o600)
-		if _, found, err := readLockFile(path); !found || err == nil {
+		if _, found, err := readLockFile(path); !found || !errors.Is(err, errMalformedLockFile) {
 			t.Errorf("%s: found %t, err %v", name, found, err)
 		}
+	}
+	// A file that can't be read says nothing about what it holds.
+	if _, found, err := readLockFile(dir); !found || err == nil || errors.Is(err, errMalformedLockFile) {
+		t.Errorf("a file that can't be read: found %t, err %v", found, err)
 	}
 	path := filepath.Join(dir, "postmaster.pid")
 	os.WriteFile(path, []byte("123\n/data\n1700000000\n5432\n"), 0o600)
