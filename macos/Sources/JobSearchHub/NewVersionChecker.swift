@@ -121,6 +121,8 @@ final class NewVersionChecker {
         let whatsNew = WhatsNew.merge(MacReleases.findBetween(in: releases, running: running, through: newest.version))
         if facts.ready?.version == newest.version {
             facts.ready?.whatsNew = whatsNew
+            // A newer version refused earlier was withdrawn since.
+            facts.failed = nil
             return
         }
         // A version refused once isn't downloaded again until the next
