@@ -50,6 +50,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import com.tonypine.jobsearchhub.HubViewModel
+import com.tonypine.jobsearchhub.core.DecisionNotice
 import com.tonypine.jobsearchhub.core.JobBrief
 import com.tonypine.jobsearchhub.core.JobBriefPoint
 import com.tonypine.jobsearchhub.core.JobDecision
@@ -59,7 +60,6 @@ import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.core.Screen
 import com.tonypine.jobsearchhub.core.SetAside
 import com.tonypine.jobsearchhub.core.Tone
-import com.tonypine.jobsearchhub.core.DecisionNotice
 import com.tonypine.jobsearchhub.core.screenRows
 import com.tonypine.jobsearchhub.data.HubFailure
 import com.tonypine.jobsearchhub.ui.design.ActionBar
