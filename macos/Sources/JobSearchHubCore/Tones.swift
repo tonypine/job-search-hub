@@ -77,6 +77,28 @@ public extension FollowUpStatus {
     }
 }
 
+public extension DueTally {
+    /// Red while one is overdue, else the caution of due today.
+    var tone: Tone { overdue > 0 ? .negative : .caution }
+}
+
+public extension PipelineCardStatus {
+    var tone: Tone {
+        switch self {
+        case let .followUp(status): status.tone
+        case .heardBack: .positive
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .followUp(.dueIn): "clock"
+        case .followUp: "bell.fill"
+        case .heardBack: "arrowshape.turn.up.left.fill"
+        }
+    }
+}
+
 /// A job or pipeline card out of the way: skipped as not for you, or closed
 /// with an outcome. Each reads as neutral, told apart by its symbol.
 public enum SetAside: CaseIterable, Sendable {

@@ -308,3 +308,88 @@ private func makeTallyCalendar() -> Calendar {
 
     #expect(board.getOverdueCount(now: tallyNow, calendar: makeTallyCalendar()) == 1)
 }
+
+@Test func aCardsStatusIsItsMostUrgentState() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false, followUpDays: 7)
+    let calendar = makeTallyCalendar()
+    let wroteBack = tallyNow.addingTimeInterval(-86_400)
+    let overdue = makeTallyCard(in: applied, contactedAt: wroteBack, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400))
+    let dueToday = makeTallyCard(in: applied, contactedAt: wroteBack, followUpDueAt: tallyNow)
+    let heardBack = makeTallyCard(in: applied, contactedAt: wroteBack, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400))
+    let waiting = makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(7 * 86_400))
+    let quiet = makeTallyCard(in: applied)
+
+    #expect(overdue.getStatus(now: tallyNow, calendar: calendar) == .followUp(.overdue(days: 2)))
+    #expect(dueToday.getStatus(now: tallyNow, calendar: calendar) == .followUp(.dueToday))
+    #expect(heardBack.getStatus(now: tallyNow, calendar: calendar) == .heardBack(wroteBack))
+    #expect(waiting.getStatus(now: tallyNow, calendar: calendar) == .followUp(.dueIn(days: 7)))
+    #expect(quiet.getStatus(now: tallyNow, calendar: calendar) == nil)
+    #expect(PipelineCardStatus.followUp(.overdue(days: 2)).isOverdue && PipelineCardStatus.followUp(.overdue(days: 2)).isDue)
+    #expect(PipelineCardStatus.followUp(.dueToday).isDue && !PipelineCardStatus.followUp(.dueToday).isOverdue)
+    #expect(!PipelineCardStatus.heardBack(wroteBack).isDue && !PipelineCardStatus.followUp(.dueIn(days: 7)).isDue)
+}
+
+@Test func aFollowUpReadsInTheCardsWords() {
+    #expect(FollowUpStatus.overdue(days: 2).text == "Follow-up overdue 2 days")
+    #expect(FollowUpStatus.overdue(days: 1).text == "Follow-up overdue 1 day")
+    #expect(FollowUpStatus.dueToday.text == "Follow-up due today")
+    #expect(FollowUpStatus.dueIn(days: 7).text == "Follow up in 7 days")
+    #expect(FollowUpStatus.dueIn(days: 1).text == "Follow up tomorrow")
+}
+
+@Test func aPhasesDueTallyCountsTodayAndOverdueAndTurnsRedOnOverdue() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false, followUpDays: 7)
+    let interviewing = PipelinePhase(id: UUID(), name: "Interviewing", position: 2, isClosed: false, followUpDays: 7)
+    let offer = PipelinePhase(id: UUID(), name: "Offer", position: 3, isClosed: false)
+    let board = PipelineBoard(phases: [applied, interviewing, offer], cards: [
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: interviewing, followUpDueAt: tallyNow),
+    ])
+    let calendar = makeTallyCalendar()
+
+    let appliedTally = board.getDueTally(in: applied, now: tallyNow, calendar: calendar)
+    let interviewingTally = board.getDueTally(in: interviewing, now: tallyNow, calendar: calendar)
+    let offerTally = board.getDueTally(in: offer, now: tallyNow, calendar: calendar)
+
+    #expect(appliedTally == DueTally(due: 2, overdue: 1) && appliedTally.text == "2 due" && appliedTally.tone == .negative)
+    #expect(interviewingTally == DueTally(due: 1, overdue: 0) && interviewingTally.tone == .caution)
+    #expect(offerTally.text == nil)
+}
+
+@Test func closedCardsLeaveTheOpenPhasesForTheDrawer() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 2, isClosed: true)
+    let open = makeTallyCard(in: applied)
+    let ended = makeTallyCard(in: closed)
+    let board = PipelineBoard(phases: [closed, applied], cards: [open, ended])
+
+    #expect(board.openPhases == [applied])
+    #expect(board.closedPhase == closed)
+    #expect(board.openCards.map(\.id) == [open.id])
+    #expect(board.closedCards.map(\.id) == [ended.id])
+    #expect(PipelineBoard(phases: [applied], cards: [open]).closedPhase == nil)
+}
+
+@Test func anEmptyPhaseSaysWhatGoesThere() {
+    let offer = PipelinePhase(id: UUID(), name: "Offer", position: 5, isClosed: false)
+    let custom = PipelinePhase(id: UUID(), name: "Take-home", position: 6, isClosed: false)
+
+    #expect(offer.emptyHint == "Drop a card here when an offer comes in")
+    #expect(custom.emptyHint == "Drop a card here when it reaches Take-home")
+}
+
+@Test func aCardsTooltipHoldsItsNotesAndWhyItEndedOrWasSkipped() throws {
+    var card = try decodeBoard().cards[0]
+    #expect(card.tooltip == "Ask about the team.")
+
+    card.application.closedReason = "Role filled internally"
+    card.dismissalReason = "agency"
+    #expect(card.tooltip == "Ask about the team.\nClosed: Role filled internally\nSkipped: agency")
+
+    card.application.notes = " "
+    card.application.closedReason = nil
+    card.dismissalReason = ""
+    #expect(card.tooltip.isEmpty)
+}
