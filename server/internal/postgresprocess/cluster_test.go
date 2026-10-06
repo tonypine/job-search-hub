@@ -294,7 +294,7 @@ func TestAnOrphanLeftByAKilledServerIsStoppedAndReplaced(t *testing.T) {
 	if cluster.PID() == orphan {
 		t.Fatal("the orphan was kept")
 	}
-	if got := queryString(t, connect(t, cluster), "SELECT pg_postmaster_start_time() > now() - interval '1 minute'"); got != "true" {
+	if got := queryString(t, connect(t, cluster), "SELECT (pg_postmaster_start_time() > now() - interval '1 minute')::text"); got != "true" {
 		t.Fatal("not served by the new postgres")
 	}
 }
