@@ -104,12 +104,17 @@ if [ ! -f "$env_file" ]; then
     # shellcheck source=/dev/null
     source "$repo/.env"
     set +a
+    [ -n "${HUB_OWNER_TOKEN:-}" ] || fail "Set HUB_OWNER_TOKEN in $repo/.env."
     umask 077
+    # Written beside it and moved into place, so a run that fails partway
+    # leaves no server.env for the next run to keep.
+    written="$(mktemp "$env_file.XXXXXX")"
+    trap 'rm -f "$written"' EXIT
     {
       echo "# hub-server's settings, which every installed version reads. Written by install-app.sh; edit freely."
       echo "# Without HUB_DATABASE_URL the server runs its own Postgres, in $app_support/postgres."
       echo "HUB_ADDR=127.0.0.1:8090"
-      echo "HUB_OWNER_TOKEN=${HUB_OWNER_TOKEN:?set HUB_OWNER_TOKEN in $repo/.env}"
+      echo "HUB_OWNER_TOKEN=$HUB_OWNER_TOKEN"
       echo "HUB_PUBLIC_URL=${HUB_PUBLIC_URL:-http://localhost:8090}"
       model_url="${HUB_JOB_FACTS_MODEL_URL-http://localhost:1234/v1}"
       echo "HUB_JOB_FACTS_MODEL_URL=${model_url//host.docker.internal/localhost}"
@@ -121,7 +126,8 @@ if [ ! -f "$env_file" ]; then
           HUB_JSEARCH_API_KEY HUB_JSEARCH_URL HUB_JSEARCH_MONTHLY_REQUESTS; do
         if [ -n "${!name:-}" ]; then echo "$name=${!name}"; fi
       done
-    } > "$env_file"
+    } > "$written"
+    mv "$written" "$env_file"
   )
 fi
 # The server finds hub-cvprint beside itself now; a setting that points at

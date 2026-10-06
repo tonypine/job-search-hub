@@ -75,14 +75,16 @@ final class ServerControl {
     }
 }
 
-/// `~/.local/bin/hub`, and linking it to this bundle's `hub`.
+/// `~/.local/bin/hub`, and linking it to this bundle's `hub`. Only the
+/// installed app offers it: a build in macos/build/ is deleted by the next
+/// build, which would leave the link pointing at nothing.
 @MainActor
 @Observable
 final class HubCommandControl {
     private(set) var state: HubCommandLink.State = .missing
     var failure: HubFailure?
     @ObservationIgnored private let link = HubCommandLink.makeLinkURL(home: FileManager.default.homeDirectoryForCurrentUser)
-    @ObservationIgnored let target = ServerAgent.hubCommand
+    @ObservationIgnored let target = ServerAgent.isInstalledCopy ? ServerAgent.hubCommand : nil
 
     func readState() {
         guard let target else { return }
