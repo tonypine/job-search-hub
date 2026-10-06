@@ -35,6 +35,8 @@ public struct ErrorReport: Equatable, Sendable {
                 "The hub ran into a problem. Try again; if it keeps happening, the hub's log says why."
             case .undecodable:
                 "The hub's answer didn't make sense to the app. The app and the hub may be different versions."
+            case let .upgradeRequired(message):
+                message
             }
         case is CancellationError:
             "It was cancelled."

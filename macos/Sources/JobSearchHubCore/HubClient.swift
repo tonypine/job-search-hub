@@ -7,17 +7,32 @@ public enum HubError: Error, Equatable, Sendable {
     case notFound
     case server(status: Int, message: String)
     case undecodable(String)
+    /// The hub no longer serves this version of the app (426); the message
+    /// is the hub's, saying what to install.
+    case upgradeRequired(String)
 }
 
 /// Talks to the hub's REST API as the owner.
 public struct HubClient: Sendable {
+    /// Names the app and its version on every request, as
+    /// `macos/0.1.252`, so the hub can turn away a version it no longer serves.
+    public static let clientHeader = "X-Hub-Client"
+
+    /// The app's version, which Scripts/make-app.sh stamps into its
+    /// Info.plist; a build run outside the bundle has none.
+    public static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0-dev"
+    }
+
     public let baseURL: URL
     public let token: String
+    public let appVersion: String
     private let session: URLSession
 
-    public init(baseURL: URL, token: String, session: URLSession = .shared) {
+    public init(baseURL: URL, token: String, appVersion: String = HubClient.appVersion, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.token = token
+        self.appVersion = appVersion
         self.session = session
     }
 
@@ -91,6 +106,7 @@ public struct HubClient: Sendable {
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("macos/\(appVersion)", forHTTPHeaderField: Self.clientHeader)
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -134,6 +150,9 @@ public struct HubClient: Sendable {
         default:
             let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.error
                 ?? String(decoding: body, as: UTF8.self)
+            if status == 426 {
+                return .upgradeRequired(message.isEmpty ? "The hub no longer serves this version of the app. Install a newer one." : message)
+            }
             return .server(status: status, message: message)
         }
     }

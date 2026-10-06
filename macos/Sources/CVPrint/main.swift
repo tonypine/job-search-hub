@@ -3,6 +3,7 @@ import WebKit
 
 // hub-cvprint <html-file> <pdf-file>: prints the HTML to a paginated A4 PDF through WebKit, offscreen, with no window
 // shown. The hub server prints CVs with it; the page's own @page rule sets the margins.
+// hub-cvprint --version: prints the version Scripts/build-cvprint.sh linked into its Info.plist.
 @MainActor
 final class Printer: NSObject, WKNavigationDelegate {
     let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: 595, height: 842), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -34,6 +35,10 @@ final class Printer: NSObject, WKNavigationDelegate {
 }
 
 let arguments = CommandLine.arguments
+if arguments.count == 2, arguments[1] == "--version" {
+    print("hub-cvprint \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")")
+    exit(0)
+}
 guard arguments.count == 3, let html = try? String(contentsOfFile: arguments[1], encoding: .utf8) else {
     FileHandle.standardError.write("usage: cvprint <html-file> <pdf-file>\n".data(using: .utf8)!); exit(2)
 }

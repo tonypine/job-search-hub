@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/tonypine/job-search-hub/server/internal/buildinfo"
 	"github.com/tonypine/job-search-hub/server/migrations"
 )
 
@@ -26,8 +27,36 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// Migrate applies every pending migration.
+// DatabaseAheadError is a database migrated past the newest migration this
+// build knows, by a newer release: the server can't serve it.
+type DatabaseAheadError struct {
+	// Version is the database's migration, and Newest this build's.
+	Version, Newest int64
+	// Release first migrated the database to Version; empty when no release
+	// recorded it, as after a dev build.
+	Release string
+}
+
+func (e *DatabaseAheadError) Error() string {
+	install := "Install a newer release"
+	if e.Release != "" {
+		install = "Install " + e.Release + " or later"
+	}
+	return fmt.Sprintf("The database is at migration %d; this server knows up to %d. %s, or restore a backup from before it.", e.Version, e.Newest, install)
+}
+
+// Migrate applies every pending migration, and records this build's release
+// as the first to know the newest one. It refuses, with a
+// *DatabaseAheadError, a database a newer release migrated further.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	release := ""
+	if buildinfo.IsRelease() {
+		release = buildinfo.Version()
+	}
+	return migrate(ctx, pool, release)
+}
+
+func migrate(ctx context.Context, pool *pgxpool.Pool, release string) error {
 	database := stdlib.OpenDBFromPool(pool)
 	defer database.Close()
 
@@ -35,12 +64,31 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return fmt.Errorf("load migrations: %w", err)
 	}
+	version, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read the database's migration version: %w", err)
+	}
+	if newest := migrations.Newest(); version > newest {
+		ahead := &DatabaseAheadError{Version: version, Newest: newest}
+		// A database that far ahead has migration_releases; a row may be
+		// missing.
+		if err := pool.QueryRow(ctx, `SELECT release FROM migration_releases WHERE migration = $1`, version).Scan(&ahead.Release); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("read which release migrated the database", "error", err)
+		}
+		return ahead
+	}
 	results, err := provider.Up(ctx)
 	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	for _, result := range results {
 		slog.Info("migration applied", "version", result.Source.Version)
+	}
+	if release == "" {
+		return nil
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO migration_releases (migration, release) VALUES ($1, $2) ON CONFLICT (migration) DO NOTHING`, migrations.Newest(), release); err != nil {
+		return fmt.Errorf("record the release that migrated the database: %w", err)
 	}
 	return nil
 }

@@ -51,3 +51,57 @@ func TestAPairedPhoneActsAsTheOwnerUntilItIsRevoked(t *testing.T) {
 		t.Errorf("a revoked phone: %d, want 401", status)
 	}
 }
+
+func TestTheHubKeepsTheAppVersionEachPhoneLastCalledWith(t *testing.T) {
+	service := startAPI(t)
+	status, body := send(t, http.MethodPost, service.url+"/v1/devices", ownerToken, `{"name":"Sam's phone"}`)
+	var paired struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &paired); status != http.StatusCreated || err != nil {
+		t.Fatalf("pair: %d %s", status, body)
+	}
+
+	listVersions := func() string {
+		t.Helper()
+		status, body := send(t, http.MethodGet, service.url+"/v1/devices", ownerToken, "")
+		var listed struct {
+			Devices []struct {
+				AppVersion *string `json:"app_version"`
+			} `json:"devices"`
+		}
+		if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Devices) != 1 {
+			t.Fatalf("list: %d %s", status, body)
+		}
+		if listed.Devices[0].AppVersion == nil {
+			return "none"
+		}
+		return *listed.Devices[0].AppVersion
+	}
+	if version := listVersions(); version != "none" {
+		t.Fatalf("a phone that hasn't called: %s", version)
+	}
+
+	for _, client := range []string{"android/0.1.252", "", "android/0.1.253"} {
+		request, err := http.NewRequest(http.MethodGet, service.url+"/v1/jobs", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+paired.Token)
+		if client != "" {
+			request.Header.Set("X-Hub-Client", client)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("the phone reading jobs as %q: %d", client, response.StatusCode)
+		}
+		// A call without the header keeps the version the phone last sent.
+		if want := map[string]string{"android/0.1.252": "0.1.252", "": "0.1.252", "android/0.1.253": "0.1.253"}[client]; listVersions() != want {
+			t.Fatalf("after a call as %q: version %s, want %s", client, listVersions(), want)
+		}
+	}
+}

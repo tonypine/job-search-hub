@@ -56,6 +56,7 @@ import Testing
     #expect(ConnectionStatus.unchecked.tone == .neutral)
     #expect(ConnectionStatus.serverUnreachable("down").tone == .caution)
     #expect(ConnectionStatus.tokenRefused.tone == .negative)
+    #expect(ConnectionStatus.upgradeRequired("Update the app.").tone == .negative)
 }
 
 @Test func theServerRunsWaitsOrIsStopped() {

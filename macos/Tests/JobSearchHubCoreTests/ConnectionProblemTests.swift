@@ -18,6 +18,7 @@ import Testing
     #expect(diagnose(.serverUnreachable("Could not connect to the server.")) == .unreachable)
     #expect(diagnose(.tokenRefused) == .tokenRefused)
     #expect(diagnose(.failed("decoding")) == .failed("decoding"))
+    #expect(diagnose(.upgradeRequired("Update the app to 0.1.200 or later.")) == .upgradeRequired("Update the app to 0.1.200 or later."))
     #expect(diagnose(.connected) == nil)
     #expect(diagnose(.unchecked) == nil)
 }
@@ -37,4 +38,5 @@ import Testing
     #expect(ConnectionProblem.describeAddress(URL(string: "https://mac.tailnet.ts.net"), typed: "https://mac.tailnet.ts.net") == "mac.tailnet.ts.net")
     #expect(ConnectionProblem.describeAddress(nil, typed: "not a url") == "not a url")
     #expect(ConnectionProblem.unreachable.describe(hubAddress: "localhost:8090") == "Can't reach the hub at localhost:8090")
+    #expect(ConnectionProblem.upgradeRequired("Update the app.").describe(hubAddress: "localhost:8090") == "Update the app.")
 }

@@ -70,12 +70,14 @@ if [[ "$(cat "$engine_dir/.sha256" 2>/dev/null)" != "$engine_sha256" ]]; then
   echo "Postgres $engine_version verified"
 fi
 
-echo "==> Building hub-server"
-(cd "$repo/server" && go build -trimpath -o "$app_dir/bin/hub-server" ./cmd/hub-server)
+# Both carry the hub's one version, from scripts/release/version.sh, which
+# runs inside the repository.
+echo "==> Building hub-server $(cd "$repo" && sh scripts/release/version.sh)"
+go_ldflags=$(cd "$repo" && sh scripts/release/version.sh --go-ldflags)
+(cd "$repo/server" && go build -trimpath -ldflags "$go_ldflags" -o "$app_dir/bin/hub-server" ./cmd/hub-server)
 
 echo "==> Building hub-cvprint, which the server prints CVs with"
-(cd "$repo/macos" && swift build -c release --product hub-cvprint >/dev/null)
-cp "$(cd "$repo/macos" && swift build -c release --product hub-cvprint --show-bin-path)/hub-cvprint" "$app_dir/bin/hub-cvprint"
+"$repo/macos/Scripts/build-cvprint.sh" "$app_dir/bin/hub-cvprint"
 
 env_file="$config_dir/server.env"
 if [[ ! -f "$env_file" ]]; then

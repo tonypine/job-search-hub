@@ -20,6 +20,7 @@ import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.core.RecruiterConversation
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
+import com.tonypine.jobsearchhub.data.HubFailure
 import com.tonypine.jobsearchhub.push.UpdateNotifications
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +50,7 @@ data class HubState(
     val recruiters: List<RecruiterConversation> = emptyList(),
     val includesUnclear: Boolean = false,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: HubFailure? = null,
     /** When the lists last read the hub without an error. */
     val readAt: Instant? = null,
 ) {
@@ -77,7 +78,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     private val mutablePipelineFocus = MutableStateFlow<PipelineFocus?>(null)
     val pipelineFocus: StateFlow<PipelineFocus?> = mutablePipelineFocus.asStateFlow()
 
-    private val client: HubClient? get() = state.value.pairing?.let { HubClient(it) }
+    private val client: HubClient? get() = state.value.pairing?.let { HubClient(it, BuildConfig.VERSION_NAME) }
 
     init {
         refresh()
@@ -127,7 +128,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     /** Pairs from a scanned or pasted link; says why a link isn't one. */
     fun pair(link: String): Boolean {
         val pairing = PairingLink.parse(link) ?: run {
-            mutableState.update { it.copy(error = "That isn't a pairing link. Use the QR code in the Mac app's Settings › Phones.") }
+            mutableState.update { it.copy(error = HubFailure("That isn't a pairing link. Use the QR code in the Mac app's Settings › Phones.")) }
             return false
         }
         store.save(pairing)
@@ -155,7 +156,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun refresh() {
         val pairing = state.value.pairing ?: return
-        val client = HubClient(pairing)
+        val client = HubClient(pairing, BuildConfig.VERSION_NAME)
         mutableState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
@@ -172,7 +173,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (error: HubException) {
-                mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = error.message) }
+                mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = HubFailure.of(error)) }
             }
         }
     }

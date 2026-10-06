@@ -12,8 +12,14 @@ if (file("google-services.json").exists()) {
 
 // Releases are <versionMajorMinor>.<versionCode>, and the release workflow passes
 // -PversionCode (the commit count on main) and -PversionName. Raise this by hand for
-// a new major or minor version.
+// a new major or minor version. scripts/release/version.sh reads it from here, so the
+// Mac app and the server carry the same version.
 val versionMajorMinor = "0.1"
+
+// Any other build is a dev version of its commit, as version.sh names it.
+val devVersionName = runCatching {
+    providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }.standardOutput.asText.get().trim()
+}.getOrNull()?.takeIf { it.isNotEmpty() }.let { commit -> "$versionMajorMinor.0-dev" + (commit?.let { ".$it" } ?: "") }
 
 // The release key comes from the environment, all four values or none. With none the
 // release APK is unsigned, which the release workflow refuses to publish.
@@ -40,7 +46,7 @@ android {
         minSdk = 30
         targetSdk = 36
         versionCode = providers.gradleProperty("versionCode").map(String::toInt).getOrElse(1)
-        versionName = providers.gradleProperty("versionName").getOrElse("$versionMajorMinor.0")
+        versionName = providers.gradleProperty("versionName").getOrElse(devVersionName)
     }
 
     signingConfigs {
@@ -62,6 +68,8 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.VERSION_NAME, which the app names itself to the hub with.
+        buildConfig = true
     }
 
     // Findings from before CI ran lint. New ones still fail `lintDebug`.

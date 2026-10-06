@@ -183,6 +183,27 @@ func TestADatabaseURLKeepsTheServerOnThatPostgres(t *testing.T) {
 	}
 }
 
+func TestTheServerRefusesADatabaseMigratedPastItsNewestMigration(t *testing.T) {
+	databaseURL := externalDatabaseURL(t)
+	ahead := migrations.Newest() + 3
+	execute(t, databaseURL, fmt.Sprintf(`
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (%d, true);
+		INSERT INTO migration_releases (migration, release) VALUES (%d, '0.1.320')`, ahead, ahead))
+
+	database, err := openDatabase(context.Background(), config{databaseURL: databaseURL})
+	want := fmt.Sprintf("The database is at migration %d; this server knows up to %d. Install 0.1.320 or later, or restore a backup from before it.", ahead, migrations.Newest())
+	if err == nil || err.Error() != want {
+		if database != nil {
+			database.Close()
+		}
+		t.Fatalf("open = %v, want %q", err, want)
+	}
+
+	// Back at the server's newest migration, it starts.
+	execute(t, databaseURL, fmt.Sprintf(`DELETE FROM goose_db_version WHERE version_id = %d`, ahead))
+	openOwnedDatabase(t, config{databaseURL: databaseURL})
+}
+
 func TestTheServersPostgresStoppingByItselfIsSignalled(t *testing.T) {
 	settings, _ := ownedDatabaseSettings(t)
 	database := openOwnedDatabase(t, settings)

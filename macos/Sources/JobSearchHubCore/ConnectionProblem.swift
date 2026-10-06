@@ -10,6 +10,8 @@ public enum ConnectionProblem: Equatable, Sendable {
     /// Nothing answers at the hub's address.
     case unreachable
     case tokenRefused
+    /// The hub no longer serves this version of the app, in its words.
+    case upgradeRequired(String)
     /// The check failed some other way, with the raw reason.
     case failed(String)
 
@@ -28,6 +30,7 @@ public enum ConnectionProblem: Equatable, Sendable {
         case .missingToken: return .notSetUp
         case .serverUnreachable: return .unreachable
         case .tokenRefused: return .tokenRefused
+        case let .upgradeRequired(message): return .upgradeRequired(message)
         case let .failed(reason): return .failed(reason)
         }
     }
@@ -39,6 +42,7 @@ public enum ConnectionProblem: Equatable, Sendable {
         case .notSetUp: "Set the hub's address and owner token in Settings"
         case .unreachable: "Can't reach the hub at \(hubAddress)"
         case .tokenRefused: "The hub at \(hubAddress) refused the owner token"
+        case let .upgradeRequired(message): message
         case .failed: "Can't connect to the hub at \(hubAddress)"
         }
     }

@@ -20,13 +20,16 @@ type Device struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// AppVersion is the version of the app the phone last called the hub
+	// with; nil until it sends one.
+	AppVersion *string `json:"app_version,omitempty"`
 }
 
-const deviceColumns = `id, name, created_at, last_seen_at, revoked_at`
+const deviceColumns = `id, name, created_at, last_seen_at, revoked_at, app_version`
 
 func scanDevice(row pgx.Row) (Device, error) {
 	var device Device
-	err := row.Scan(&device.ID, &device.Name, &device.CreatedAt, &device.LastSeenAt, &device.RevokedAt)
+	err := row.Scan(&device.ID, &device.Name, &device.CreatedAt, &device.LastSeenAt, &device.RevokedAt, &device.AppVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Device{}, ErrDeviceNotFound
 	}
@@ -56,14 +59,21 @@ func (s *Store) CreateDevice(ctx context.Context, actor Actor, name string, toke
 const deviceSeenInterval = time.Minute
 
 // GetActiveDeviceByTokenHash returns the paired, unrevoked device whose
-// token hashes to tokenHash, and notes that it was seen.
-func (s *Store) GetActiveDeviceByTokenHash(ctx context.Context, tokenHash []byte) (Device, error) {
+// token hashes to tokenHash, and notes that it was seen, with appVersion, the
+// version of the app it calls from, when it sends one.
+func (s *Store) GetActiveDeviceByTokenHash(ctx context.Context, tokenHash []byte, appVersion string) (Device, error) {
 	device, err := scanDevice(s.pool.QueryRow(ctx, `SELECT `+deviceColumns+` FROM devices WHERE token_hash = $1 AND revoked_at IS NULL`, tokenHash))
 	if err != nil {
 		return Device{}, err
 	}
-	if device.LastSeenAt == nil || time.Since(*device.LastSeenAt) > deviceSeenInterval {
-		if _, err := s.pool.Exec(ctx, `UPDATE devices SET last_seen_at = now() WHERE id = $1`, device.ID); err != nil {
+	updated := appVersion != "" && (device.AppVersion == nil || *device.AppVersion != appVersion)
+	if updated || device.LastSeenAt == nil || time.Since(*device.LastSeenAt) > deviceSeenInterval {
+		if appVersion == "" {
+			device, err = scanDevice(s.pool.QueryRow(ctx, `UPDATE devices SET last_seen_at = now() WHERE id = $1 RETURNING `+deviceColumns, device.ID))
+		} else {
+			device, err = scanDevice(s.pool.QueryRow(ctx, `UPDATE devices SET last_seen_at = now(), app_version = $2 WHERE id = $1 RETURNING `+deviceColumns, device.ID, appVersion))
+		}
+		if err != nil {
 			return Device{}, err
 		}
 	}
