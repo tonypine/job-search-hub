@@ -26,7 +26,7 @@ import Observation
 @Observable
 public final class HubConnection {
     public static let defaultHubURL = "http://localhost:8090"
-    public static let qaModeArgument = "--qa-mode"
+    public nonisolated static let qaModeArgument = "--qa-mode"
     /// The Info.plist key make-app.sh sets on a QA build.
     public nonisolated static let qaBuildInfoKey = "HubQABuild"
     private static let hubURLPreferenceKey = "hubURL"

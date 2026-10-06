@@ -189,3 +189,22 @@ private func readLogLines(_ updates: UpdatesFolder, naming version: HubVersion) 
     #expect(checker.facts.ready?.version == ready)
     #expect(checker.facts.failed == nil)
 }
+
+@MainActor
+@Test func inQAModeTheCheckerReadsTheReleasesFromHUB_RELEASES_URL() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    // Only the stub feed answers; GitHub's path would get a 404.
+    let (session, recording) = StubHub.makeSession(answers: ["/releases.json": makeFeed(makeRelease("0.1.252"))])
+    let feed = ReleaseFeed(
+        session: session, appVersion: "0.1.250", arguments: ["JobSearchHub", "--qa-mode"],
+        environment: [ReleaseFeed.urlVariable: "http://localhost:8765/releases.json"]
+    )
+    let checker = NewVersionChecker(updates: UpdatesFolder(root: root), inspector: UnsignedInspector(), feed: feed, running: HubVersion("0.1.250")!)
+
+    await checker.checkAndWait()
+
+    #expect(recording.lastRequest?.url == URL(string: "http://localhost:8765/releases.json"))
+    #expect(checker.facts.failingSince == nil)
+    #expect(checker.facts.newestRelease == HubVersion("0.1.252"))
+}
