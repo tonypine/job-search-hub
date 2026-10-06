@@ -353,6 +353,7 @@ func run() error {
 		comparisonRunner := comparisons.NewRunner(hub, modelClient)
 		comparisonRunner.NewClaudeClient = newClaudeClient
 		go comparisonRunner.RunUnfinished(workCtx)
+		comparisonRunner.ResumeAfterDrains(workCtx, drainer)
 		api.RegisterComparisonRoutes(routes, hub, comparisonRunner, requireOwner)
 	} else {
 		api.RegisterComparisonRoutes(routes, hub, nil, requireOwner)

@@ -125,6 +125,105 @@ func TestAClaudeRunRefusedByADrainLeavesTheComparisonToResume(t *testing.T) {
 	}
 }
 
+// drainedModel is a Claude stack refused while its drain drains, as the
+// Claude CLI client is; until released, each request waits first.
+type drainedModel struct {
+	drain   *drain.Drain
+	release chan struct{}
+	asked   chan struct{}
+}
+
+func (model *drainedModel) CompleteJSON(context.Context, chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+	if model.asked != nil {
+		model.asked <- struct{}{}
+		<-model.release
+	}
+	end, err := model.drain.Begin(drain.TypeClaudeRun, store.AgentPromptKindJobFacts, "")
+	if err != nil {
+		return chatcompletions.Answer{}, fmt.Errorf("%w: %w", chatcompletions.ErrUnreachable, err)
+	}
+	end()
+	return chatcompletions.Answer{Object: json.RawMessage(`{"stack":"Go"}`)}, nil
+}
+
+func createClaudeComparison(t *testing.T, hub *store.Store) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Product Engineer", URL: "https://acme.com/jobs/1", Description: "Build things."})
+	comparison, err := hub.CreateComparison(ctx, owner, store.NewComparison{
+		TaskKind: store.AgentPromptKindJobFacts, Title: "Sonnet", JobIDs: []uuid.UUID{job.ID},
+		Stacks: []store.ComparisonStack{{Label: "Sonnet", Source: store.ComparisonSourceClaude, Model: "sonnet"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return comparison.ID
+}
+
+func waitForDone(t *testing.T, hub *store.Store, comparisonID uuid.UUID) {
+	t.Helper()
+	for range 400 {
+		record, err := hub.GetComparison(context.Background(), comparisonID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Status == store.ComparisonStatusDone {
+			if len(record.Answers) != 1 || record.Answers[0].Error != "" {
+				t.Fatalf("answers = %+v, want one without an error", record.Answers)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the comparison never finished")
+}
+
+func TestAComparisonADrainRefusedResumesWhenTheDrainIsCancelled(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	comparisonID := createClaudeComparison(t, hub)
+	drainer := drain.New(time.Hour)
+	runner := NewRunner(hub, &fakeModel{})
+	runner.NewClaudeClient = func(string) ModelClient { return &drainedModel{drain: drainer} }
+	runner.ResumeAfterDrains(ctx, drainer)
+
+	drainer.Start()
+	if err := runner.Run(ctx, comparisonID); !errors.Is(err, drain.ErrDraining) {
+		t.Fatalf("run while draining = %v, want ErrDraining", err)
+	}
+	drainer.Cancel()
+	waitForDone(t, hub, comparisonID)
+}
+
+func TestARunAskedWhileOneRunsMakesItGoOnceMore(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	comparisonID := createClaudeComparison(t, hub)
+	drainer := drain.New(time.Hour)
+	model := &drainedModel{drain: drainer, release: make(chan struct{}), asked: make(chan struct{})}
+	runner := NewRunner(hub, &fakeModel{})
+	runner.NewClaudeClient = func(string) ModelClient { return model }
+
+	drainer.Start()
+	first := make(chan error, 1)
+	go func() { first <- runner.Run(ctx, comparisonID) }()
+	<-model.asked
+	drainer.Cancel()
+	if err := runner.Run(ctx, comparisonID); err != nil {
+		t.Fatalf("run asked while one runs = %v, want nil", err)
+	}
+	drainer.Start()
+	model.release <- struct{}{}
+	// The refused first pass goes once more, with the drain cancelled.
+	<-model.asked
+	drainer.Cancel()
+	model.release <- struct{}{}
+	if err := <-first; err != nil {
+		t.Fatalf("first run = %v", err)
+	}
+	waitForDone(t, hub, comparisonID)
+}
+
 // gatheringModel answers only once expected requests are waiting at the
 // same time, and fails them all when they don't arrive together.
 type gatheringModel struct {

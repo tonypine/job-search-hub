@@ -42,19 +42,53 @@ type Runner struct {
 	// NewClaudeClient returns a Claude client for a model; nil leaves Claude
 	// stacks off.
 	NewClaudeClient func(model string) ModelClient
+
+	mutex sync.Mutex
+	// running holds the comparisons a Run answers now; true asks that Run
+	// to go once more when it ends.
+	running map[uuid.UUID]bool
 }
 
 func NewRunner(hub *store.Store, router routeClient) *Runner {
-	return &Runner{hub: hub, router: router}
+	return &Runner{hub: hub, router: router, running: map[uuid.UUID]bool{}}
 }
 
 // Run answers every job the comparison's stacks haven't answered yet, with
 // the latest job_facts prompt, then marks the comparison done. An answer that
-// fails is kept as its error and the others go on.
+// fails is kept as its error and the others go on. A Run asked for a
+// comparison another Run answers returns at once, and that Run goes once
+// more when it ends, so an answer refused meanwhile isn't left behind.
 func (runner *Runner) Run(ctx context.Context, comparisonID uuid.UUID) error {
+	runner.mutex.Lock()
+	_, busy := runner.running[comparisonID]
+	runner.running[comparisonID] = busy
+	runner.mutex.Unlock()
+	if busy {
+		return nil
+	}
+	for {
+		err := runner.run(ctx, comparisonID)
+		runner.mutex.Lock()
+		again := runner.running[comparisonID] && ctx.Err() == nil
+		if again {
+			runner.running[comparisonID] = false
+		} else {
+			delete(runner.running, comparisonID)
+		}
+		runner.mutex.Unlock()
+		if !again {
+			return err
+		}
+	}
+}
+
+func (runner *Runner) run(ctx context.Context, comparisonID uuid.UUID) error {
 	record, err := runner.hub.GetComparison(ctx, comparisonID)
 	if err != nil {
 		return err
+	}
+	if record.Status == store.ComparisonStatusDone {
+		return nil
 	}
 	if record.TaskKind != store.AgentPromptKindJobFacts {
 		return fmt.Errorf("comparisons run %s only, not %s", store.AgentPromptKindJobFacts, record.TaskKind)
@@ -113,7 +147,7 @@ func (runner *Runner) answerJobs(ctx context.Context, comparisonID uuid.UUID, st
 		}
 		if errors.Is(err, drain.ErrDraining) {
 			// No answer: the comparison stays running, and resumes when
-			// the server starts again.
+			// the drain ends or the server starts again.
 			saveErrors[index] = err
 			return
 		}
@@ -142,7 +176,8 @@ func (runner *Runner) answerJobs(ctx context.Context, comparisonID uuid.UUID, st
 	return errors.Join(saveErrors...)
 }
 
-// RunUnfinished resumes the comparisons a stopped server left running.
+// RunUnfinished resumes the comparisons left running: by a stopped server,
+// or by a drain that refused their Claude stacks.
 func (runner *Runner) RunUnfinished(ctx context.Context) {
 	ids, err := runner.hub.ListRunningComparisonIDs(ctx)
 	if err != nil {
@@ -154,6 +189,16 @@ func (runner *Runner) RunUnfinished(ctx context.Context) {
 			slog.Warn("comparison stopped", "comparison", id, "error", err)
 		}
 	}
+}
+
+// ResumeAfterDrains runs RunUnfinished each time drainer stops draining,
+// for the comparisons whose Claude stacks it refused.
+func (runner *Runner) ResumeAfterDrains(ctx context.Context, drainer *drain.Drain) {
+	drainer.OnChange(func(draining bool) {
+		if !draining {
+			go runner.RunUnfinished(ctx)
+		}
+	})
 }
 
 func (runner *Runner) answer(ctx context.Context, stack store.ComparisonStack, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
