@@ -43,13 +43,11 @@ git config core.hooksPath .githooks
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and reports one check, `ci`, which `main` requires. Its jobs are `server-static` (gofmt, go vet, staticcheck, go mod tidy), `server-test` (the whole Go suite against Postgres 18), `macos` (`swift build` and `swift test`) and `android` (`:core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug`). Jobs for parts of the repo a PR doesn't touch skip.
 
-Running the full suite locally is optional, for a change to shared infrastructure (migrations, `internal/testdatabase`, the store, the build) where waiting on CI is slow:
+Running the full suite locally is optional, for a change to shared infrastructure (migrations, `internal/testdatabase`, the store, the build) where waiting on CI is slow. `server/scripts/test-with-postgres.sh` runs `go test` against a throwaway Postgres it creates from the installed hub's engine (`~/Library/Application Support/JobSearchHub/engines/postgres-18`, or `HUB_POSTGRES_ENGINES`) in a temporary folder, and deletes it on exit, Ctrl-C included. No Docker, no `.env`:
 
 ```bash
-docker compose up -d db
-set -a && . ./.env && set +a
-export HUB_TEST_DATABASE_URL="postgres://hub:${HUB_DATABASE_PASSWORD}@localhost:5434/postgres"
-cd server && go test ./...
+server/scripts/test-with-postgres.sh ./...   # any go test arguments, as in server/
+cd server
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...   # the version CI pins in .github/workflows/ci.yml
 cd ../macos && swift build && swift test
 ```
