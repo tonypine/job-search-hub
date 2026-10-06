@@ -3,7 +3,9 @@ package store_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -60,6 +62,41 @@ func TestEachDecisionActsAndIsRecorded(t *testing.T) {
 	}
 	if _, err := hub.DecideJob(ctx, owner, later, "maybe", ""); err == nil {
 		t.Error("expected an error for an unknown decision")
+	}
+}
+
+func TestOnlyOpenJobsStayLeftForLater(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	board := createBoard(t, hub)
+	seenAt := time.Now()
+	postings := []store.JobPosting{posting("1", "Still Open"), posting("2", "Closing")}
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, postings, seenAt); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := hub.ListJobs(ctx, store.JobFilter{Status: store.JobStatusOpen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOf := map[string]uuid.UUID{}
+	for _, item := range items {
+		idOf[item.Job.Title] = item.Job.ID
+		if _, err := hub.DecideJob(ctx, owner, item.Job.ID, store.JobDecisionLater, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, postings[:1], seenAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if leftForLater := listJobTitles(t, hub, store.JobStatusLater); !slices.Equal(leftForLater, []string{"Still Open"}) {
+		t.Errorf("later = %v, want the closed job left out", leftForLater)
+	}
+	if _, err := hub.DismissJobs(ctx, owner, []uuid.UUID{idOf["Still Open"]}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if leftForLater := listJobTitles(t, hub, store.JobStatusLater); len(leftForLater) != 0 {
+		t.Errorf("later = %v, want the dismissed job left out", leftForLater)
 	}
 }
 

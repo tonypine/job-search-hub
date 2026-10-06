@@ -38,8 +38,18 @@ private let workJSON = #"""
     #expect(work.statusLine == "Local models paused · 2 waiting")
     work.paused = false
     #expect(work.statusLine == "Job facts · 2 waiting")
+    work.running = nil
+    #expect(work.statusLine == "2 waiting")
+    work.waiting = []
+    #expect(work.statusLine == "Local models idle")
+    work.paused = true
+    #expect(work.statusLine == "Local models paused")
+}
+
+@Test func theStatusLineNamesTheRunningCallWhenNothingWaits() throws {
+    var work = try HubJSON.makeDecoder().decode(ModelWork.self, from: Data(workJSON.utf8))
+
+    work.paused = false
     work.waiting = []
     #expect(work.statusLine == "Job facts")
-    work.running = nil
-    #expect(work.statusLine == "Local models idle")
 }
