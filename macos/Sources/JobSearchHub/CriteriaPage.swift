@@ -40,6 +40,15 @@ struct CriteriaPage: View {
                     } trailing: {
                         EmptyView()
                     }
+                    // Above the scopes, so a refused save says why on every
+                    // one, Pipeline phases included, and after the leave
+                    // dialog's Save.
+                    if let error = editor.error {
+                        HubErrorView(title: "Couldn't load or save the criteria", report: error)
+                            .frame(maxWidth: 820, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding([.horizontal, .top], Space.xl)
+                    }
                     switch scope {
                     case .search, .pay:
                         JobCriteriaForm(scope: scope, editor: editor)

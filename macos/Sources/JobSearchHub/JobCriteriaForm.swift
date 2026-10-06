@@ -13,9 +13,6 @@ struct JobCriteriaForm: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
-                if let error = editor.error {
-                    HubErrorView(title: "Couldn't load or save the criteria", report: error)
-                }
                 if scope == .pay {
                     pay
                 } else {

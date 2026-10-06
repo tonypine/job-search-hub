@@ -153,8 +153,8 @@ struct ServerSection: View {
         }
     }
 
-    /// Start while stopped; Restart while loaded, with Stop and the log in
-    /// its menu.
+    /// Start while stopped, with the log in its menu; Restart while loaded,
+    /// with Stop and the log in its menu.
     @ViewBuilder
     private var serverAction: some View {
         if control.bundleCarriesServer {
@@ -162,7 +162,13 @@ struct ServerSection: View {
                 ProgressView().controlSize(.small)
             } else if control.state == .stopped {
                 if control.canRegister {
-                    Button("Start") { Task { await control.start() } }
+                    Menu("Start") {
+                        Button("Show log") { NSWorkspace.shared.open(control.logURL) }
+                    } primaryAction: {
+                        Task { await control.start() }
+                    }
+                    .menuStyle(.button)
+                    .fixedSize()
                 } else {
                     Button("Show log") { NSWorkspace.shared.open(control.logURL) }
                         .help("Start it from the installed app in ~/Applications.")

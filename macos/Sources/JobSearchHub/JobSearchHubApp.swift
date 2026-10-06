@@ -392,9 +392,12 @@ struct ContentView: View {
     }
 
     /// Saves the criteria, then leaves; a refused save stays on the page,
-    /// which says why.
+    /// which says why, and so does a hub this app can't reach yet.
     private func saveCriteria(thenRun leaving: PendingLeave) async {
-        guard let client = connection.makeClient() else { return }
+        guard let client = connection.makeClient() else {
+            actionError = HubFailure("Couldn't save the criteria", advice: "The hub's address or token isn't set. Set them in Settings, then save again.")
+            return
+        }
         if await criteria.save(with: client) {
             toast = ToastMessage(text: "Saved your criteria")
             leaving.go()
