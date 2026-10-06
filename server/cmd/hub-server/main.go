@@ -192,7 +192,7 @@ func run() error {
 	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
 	go abandonedruns.NewCloser(hub).Run(workCtx, abandonedRunInterval)
-	api.RegisterCompanyRoutes(routes, hub, requireOwner)
+	api.RegisterCompanyRoutes(routes, hub, rates, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
