@@ -7,6 +7,7 @@ import mockwebserver3.MockWebServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HubClientTest {
@@ -15,7 +16,7 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().body("""{"jobs":[{"job":{"id":"1","source":"x","title":"Engineer","url":"https://x","first_seen_at":"2026-09-29T10:00:00Z"},"fit":{"level":"good"}}],"total":1}""").build())
             server.start()
-            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252")
 
             val jobs = client.getJobs()
 
@@ -33,7 +34,7 @@ class HubClientTest {
             server.enqueue(MockResponse.Builder().body(jobsPage(listOf("a", "b"), total = 3)).build())
             server.enqueue(MockResponse.Builder().body(jobsPage(listOf("c"), total = 3)).build())
             server.start()
-            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252")
 
             val jobs = client.getJobs()
 
@@ -51,7 +52,7 @@ class HubClientTest {
             server.enqueue(MockResponse.Builder().body(jobsPage(listOf("a"), total = 2)).build())
             server.enqueue(MockResponse.Builder().body(jobsPage(emptyList(), total = 2)).build())
             server.start()
-            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252")
 
             val jobs = client.getJobs()
 
@@ -65,7 +66,7 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(204).build())
             server.start()
-            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).setPushToken("fcm-token")
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").setPushToken("fcm-token")
 
             val request = server.takeRequest()
             assertEquals("PUT", request.method)
@@ -79,7 +80,7 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().body("""{"decision":"skip","reason":"agency","decided_at":"2026-09-30T21:00:00Z"}""").build())
             server.start()
-            val decision = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).decideJob("7", "skip", "  agency ")
+            val decision = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").decideJob("7", "skip", "  agency ")
 
             val request = server.takeRequest()
             assertEquals("POST", request.method)
@@ -94,7 +95,7 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(204).build())
             server.start()
-            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).clearJobDecision("7")
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").clearJobDecision("7")
 
             val request = server.takeRequest()
             assertEquals("DELETE", request.method)
@@ -108,7 +109,7 @@ class HubClientTest {
             server.enqueue(MockResponse.Builder().body("""{"items":[{"job":{"id":"1","source":"x","title":"Engineer","url":"https://x","first_seen_at":"2026-09-29T10:00:00Z"},
                 "company_name":"Acme","match":"strong","reason":"React.","brief_tier":"pre","fit":{"level":"good"}}],"total":1}""").build())
             server.start()
-            val queue = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).getDecisionQueue()
+            val queue = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").getDecisionQueue()
 
             assertEquals("strong", queue.items.single().match)
             assertEquals("/v1/decision-queue", server.takeRequest().target)
@@ -120,7 +121,7 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().body("{}").build())
             server.start()
-            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test")).recordFollowUp("a1", " Wrote to the recruiter ")
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").recordFollowUp("a1", " Wrote to the recruiter ")
 
             val request = server.takeRequest()
             assertEquals("POST", request.method)
@@ -135,7 +136,7 @@ class HubClientTest {
             server.enqueue(MockResponse.Builder().body("{}").build())
             server.enqueue(MockResponse.Builder().body("{}").build())
             server.start()
-            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252")
             client.moveApplication("a1", "screening")
             client.moveApplication("a1", "closed", "Took another offer")
 
@@ -153,7 +154,7 @@ class HubClientTest {
             server.enqueue(MockResponse.Builder().body("""{"recruiters":[{"id":"r1","started_by_name":"Sam","owner_wrote":false,"fitting_jobs":2}]}""").build())
             server.enqueue(MockResponse.Builder().body("""{"marked":1}""").build())
             server.start()
-            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"))
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252")
 
             assertTrue(client.getRecruiters().recruiters.single().isWaiting)
             assertEquals("/v1/recruiters", server.takeRequest().target)
@@ -169,8 +170,34 @@ class HubClientTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(401).build())
             server.start()
-            val error = assertFailsWith<HubException> { HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_old")).getUpdates() }
+            val error = assertFailsWith<HubException> { HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_old"), "0.1.252").getUpdates() }
             assertTrue(error.isRefused)
+        }
+    }
+
+    @Test
+    fun everyCallNamesTheAppAndItsVersion() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("""{"updates":[]}""").build())
+            server.start()
+            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").getUpdates()
+            assertEquals("android/0.1.252", server.takeRequest().headers["X-Hub-Client"])
+        }
+    }
+
+    @Test
+    fun aHubThatNoLongerServesTheAppShowsItsOwnWords() = runTest {
+        val message = "This app (0.1.199) is too old for the hub, which runs 0.1.250. Update the app to 0.1.200 or later."
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(426).body("""{"error":"$message"}""").build())
+            server.enqueue(MockResponse.Builder().code(426).build())
+            server.start()
+            val client = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.199")
+            val error = assertFailsWith<HubException> { client.getUpdates() }
+            assertEquals(message, error.message)
+            assertFalse(error.isRefused)
+            val withoutBody = assertFailsWith<HubException> { client.getUpdates() }
+            assertEquals("The hub no longer serves this version of the app. Install a newer one.", withoutBody.message)
         }
     }
 

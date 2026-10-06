@@ -2,6 +2,7 @@ package com.tonypine.jobsearchhub.push
 
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.tonypine.jobsearchhub.BuildConfig
 import com.tonypine.jobsearchhub.HubApp
 import com.tonypine.jobsearchhub.core.PushedUpdate
 import com.tonypine.jobsearchhub.data.HubClient
@@ -26,7 +27,7 @@ class HubMessagingService : FirebaseMessagingService() {
         val pairing = app.pairingStore.load() ?: return
         app.scope.launch {
             try {
-                HubClient(pairing).setPushToken(token)
+                HubClient(pairing, BuildConfig.VERSION_NAME).setPushToken(token)
             } catch (_: HubException) {
                 // The app registers its token again each time it starts.
             }

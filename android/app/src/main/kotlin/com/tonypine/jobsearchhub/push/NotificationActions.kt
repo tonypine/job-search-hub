@@ -10,6 +10,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.tonypine.jobsearchhub.BuildConfig
 import com.tonypine.jobsearchhub.HubApp
 import com.tonypine.jobsearchhub.core.NoticeAction
 import com.tonypine.jobsearchhub.core.NoticeChannel
@@ -84,7 +85,7 @@ class HubActionWorker(context: Context, parameters: WorkerParameters) : Coroutin
             UpdateNotifications.showFailure(app, update, action, NoticeAction.NOT_PAIRED)
             return Result.success()
         }
-        val client = HubClient(pairing)
+        val client = HubClient(pairing, BuildConfig.VERSION_NAME)
         try {
             when (action) {
                 NoticeAction.FOLLOWED_UP -> {
@@ -138,7 +139,7 @@ class SnoozedReminderWorker(context: Context, parameters: WorkerParameters) : Co
         val pairing = app.pairingStore.load() ?: return Result.success()
         if (update.jobId != null || update.companyId != null) {
             val wantsFollowUp = try {
-                HubClient(pairing).getPipeline().wantsFollowUp(update.jobId, update.companyId, Instant.now(), ZoneId.systemDefault())
+                HubClient(pairing, BuildConfig.VERSION_NAME).getPipeline().wantsFollowUp(update.jobId, update.companyId, Instant.now(), ZoneId.systemDefault())
             } catch (_: HubException) {
                 true
             } catch (_: SerializationException) {

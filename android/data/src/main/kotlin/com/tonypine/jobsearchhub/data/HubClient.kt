@@ -19,6 +19,8 @@ import com.tonypine.jobsearchhub.core.UpdatesResponse
 import com.tonypine.jobsearchhub.core.hubJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -29,9 +31,13 @@ import java.util.concurrent.TimeUnit
 /** Why a call to the hub failed, in words the app can show. */
 class HubException(message: String, val isRefused: Boolean = false) : IOException(message)
 
-/** Reads the hub's REST API with the phone's device token. */
+/**
+ * Reads the hub's REST API with the phone's device token, naming the app's [appVersion] on every call, so the hub
+ * keeps it beside the phone's name and can turn away a version it no longer serves.
+ */
 class HubClient(
     private val pairing: Pairing,
+    private val appVersion: String,
     private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build(),
 ) {
     suspend fun getUpdates(): UpdatesResponse = get("/v1/updates?limit=100")
@@ -104,6 +110,7 @@ class HubClient(
         val request = Request.Builder()
             .url(pairing.hubUrl + path)
             .header("Authorization", "Bearer ${pairing.token}")
+            .header(CLIENT_HEADER, "android/$appVersion")
             .method(method, json?.toRequestBody("application/json".toMediaType()))
             .build()
         try {
@@ -111,6 +118,8 @@ class HubClient(
                 when {
                     response.code == 401 || response.code == 403 ->
                         throw HubException("The hub refused this phone's token; pair it again from the Mac.", isRefused = true)
+                    response.code == UPGRADE_REQUIRED ->
+                        throw HubException(readError(response.body.string()) ?: "The hub no longer serves this version of the app. Install a newer one.")
                     !response.isSuccessful -> throw HubException("The hub answered ${response.code}.")
                     else -> response.body.string()
                 }
@@ -122,8 +131,19 @@ class HubClient(
         }
     }
 
+    /** The message of the hub's `{"error": …}` answer, or null for any other body. */
+    private fun readError(body: String): String? = runCatching {
+        hubJson.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.content
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
     private companion object {
         /** The most jobs the hub returns in one page. */
         const val JOBS_PAGE_SIZE = 500
+
+        /** Names the app and its version, as `android/0.1.252`. */
+        const val CLIENT_HEADER = "X-Hub-Client"
+
+        /** The hub's answer to a version of the app it no longer serves, with a message saying what to install. */
+        const val UPGRADE_REQUIRED = 426
     }
 }

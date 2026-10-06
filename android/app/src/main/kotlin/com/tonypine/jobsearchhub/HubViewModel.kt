@@ -77,7 +77,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     private val mutablePipelineFocus = MutableStateFlow<PipelineFocus?>(null)
     val pipelineFocus: StateFlow<PipelineFocus?> = mutablePipelineFocus.asStateFlow()
 
-    private val client: HubClient? get() = state.value.pairing?.let { HubClient(it) }
+    private val client: HubClient? get() = state.value.pairing?.let { HubClient(it, BuildConfig.VERSION_NAME) }
 
     init {
         refresh()
@@ -155,7 +155,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun refresh() {
         val pairing = state.value.pairing ?: return
-        val client = HubClient(pairing)
+        val client = HubClient(pairing, BuildConfig.VERSION_NAME)
         mutableState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
