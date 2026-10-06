@@ -184,6 +184,27 @@ func TestParsePostingURL(t *testing.T) {
 	}
 }
 
+func TestParseBoardURL(t *testing.T) {
+	for raw, want := range map[string][2]string{
+		"https://job-boards.greenhouse.io/acmecomputing":                       {"greenhouse", "acmecomputing"},
+		"https://boards.greenhouse.io/stripe/jobs/123?gh_src=x":                {"greenhouse", "stripe"},
+		"https://boards.greenhouse.io/embed/job_board?for=initech":             {"greenhouse", "initech"},
+		"https://jobs.lever.co/waveapps/":                                      {"lever", "waveapps"},
+		"https://jobs.ashbyhq.com/acme.io":                                     {"ashby", "acme.io"},
+		"https://jobs.ashbyhq.com/globex/089c4729-a8b3-4a69-98f3-ceecdf17d369": {"ashby", "globex"},
+	} {
+		provider, boardToken, ok := jobboards.ParseBoardURL(raw)
+		if !ok || [2]string{provider, boardToken} != want {
+			t.Errorf("%s: got %s/%s, %v; want %v", raw, provider, boardToken, ok, want)
+		}
+	}
+	for _, raw := range []string{"https://acme.com/careers", "https://jobs.lever.co/", "https://boards.greenhouse.io/embed/job_board", "::"} {
+		if provider, boardToken, ok := jobboards.ParseBoardURL(raw); ok {
+			t.Errorf("%s was recognized as %s/%s", raw, provider, boardToken)
+		}
+	}
+}
+
 func TestFetchPostingReadsOnePostingPerProvider(t *testing.T) {
 	routes := http.NewServeMux()
 	routes.HandleFunc("GET /v1/boards/acme/jobs/7", func(w http.ResponseWriter, _ *http.Request) {

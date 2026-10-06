@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The job criteria in Settings: what the feeds search by, and what each
-/// job's fit is judged against.
+/// The job criteria on the Criteria page: what the feeds search by, what
+/// each job's fit is judged against, and the take-home pay it must reach.
 struct JobCriteriaSection: View {
     let client: HubClient
     @State private var editor = JobCriteriaEditor()
@@ -24,7 +24,7 @@ struct JobCriteriaSection: View {
         } header: {
             Text("Job criteria")
         } footer: {
-            Text("Separate items with commas. Feeds search by the search terms from the home country; each job's fit is judged against the rest.")
+            Text("Separate items with commas. Feeds search by the search terms from the home country; each job is screened against the rest.")
                 .foregroundStyle(.secondary)
         }
 
@@ -38,23 +38,20 @@ struct JobCriteriaSection: View {
                 hiringRow("PJ", hiring: $editor.draft.takeHome.pj)
                 hiringRow("Contractor abroad", hiring: $editor.draft.takeHome.foreignContractor)
             }
+            if let error = editor.error {
+                HubErrorView(title: "Couldn't load or save the criteria", report: error)
+            }
             HStack {
-                if let errorMessage = editor.errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
                 Spacer()
-                if editor.isSaving {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Revert") { editor.revert() }
                     .disabled(!editor.hasChanges || editor.isSaving)
-                Button("Save criteria") { Task { await editor.save(with: client) } }
-                    .disabled(!editor.hasChanges || editor.isSaving)
+                AsyncButton("Save criteria", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
+                    .disabled(!editor.hasChanges)
             }
         } header: {
             Text("Take-home pay")
         } footer: {
-            Text("A job's published pay is converted at the day's rate and reduced by the share of each way you could be hired. Pay under the minimum marks a job a poor fit. The shares are estimates; tune them to your own numbers.")
+            Text("A job's published pay is converted at the day's rate and reduced by the share of each way you could be hired. Pay under the minimum fails a job's screen. The shares are estimates; tune them to your own numbers.")
                 .foregroundStyle(.secondary)
         }
         .task { await editor.load(with: client) }

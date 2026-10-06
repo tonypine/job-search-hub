@@ -65,3 +65,51 @@ private let dossierJSON = ##"""
     let grace = try #require(dossier.connections?.first)
     #expect(grace.fullName == "Grace Hopper" && grace.connectedSince == "Connected since Oct 2026")
 }
+
+private let companyPageJSON = ##"""
+{"company":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Acme","domain":"acme.com",
+            "created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
+ "job_boards":[],"people":[],"connections":[],"warm_paths":[],
+ "applications":[
+   {"application":{"id":"4ee55565-58d2-4247-ba01-cba65060a316","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
+                   "phase_id":"5ff55565-58d2-4247-ba01-cba65060a316","closed_reason":"No answer.",
+                   "phase_entered_at":"2026-09-20T12:00:00Z","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-20T12:00:00Z"},
+    "company_name":"Acme","unseen_updates":0,"phase_name":"Closed","phase_is_closed":true},
+   {"application":{"id":"6aa55565-58d2-4247-ba01-cba65060a316","job_id":"7bb55565-58d2-4247-ba01-cba65060a316",
+                   "company_id":"0aa55565-58d2-4247-ba01-cba65060a316","phase_id":"8cc55565-58d2-4247-ba01-cba65060a316",
+                   "phase_entered_at":"2026-09-28T12:00:00Z","created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
+    "job_title":"Engineer","job_url":"https://acme.com/jobs/1","company_name":"Acme",
+    "follow_up_due_at":"2026-10-05T12:00:00Z","unseen_updates":1,"phase_name":"Applied","phase_is_closed":false}],
+ "mail":[
+   {"id":"9dd55565-58d2-4247-ba01-cba65060a316","gmail_message_id":"m2","thread_id":"t2","direction":"received",
+    "sender":"jobs@acme.com","recipients":"owner@example.com","subject":"Interview with Acme",
+    "sent_at":"2026-10-02T09:00:00Z","label_ids":["INBOX"],"recorded_at":"2026-10-02T09:01:00Z",
+    "company_id":"0aa55565-58d2-4247-ba01-cba65060a316","matched_by":"domain","classification":"interview_invite"},
+   {"id":"1ee55565-58d2-4247-ba01-cba65060a316","gmail_message_id":"m1","thread_id":"t1","direction":"sent",
+    "sender":"owner@example.com","recipients":"jobs@acme.com","subject":"Following up",
+    "sent_at":"2026-10-01T09:00:00Z","label_ids":["SENT"],"recorded_at":"2026-10-01T09:01:00Z",
+    "company_id":"0aa55565-58d2-4247-ba01-cba65060a316","matched_by":"thread"}],
+ "folded_mail_count":3}
+"""##
+
+@Test func aCompanyPageDecodesWithItsApplicationsAndMail() throws {
+    let dossier = try HubJSON.makeDecoder().decode(CompanyDossier.self, from: Data(companyPageJSON.utf8))
+
+    let applications = dossier.applicationsOpenFirst
+    #expect(applications.map(\.phaseName) == ["Applied", "Closed"])
+    #expect(applications[0].card.jobTitle == "Engineer" && applications[0].card.followUpDueAt != nil && !applications[0].phaseIsClosed)
+    #expect(applications[1].card.jobTitle == nil && applications[1].card.application.closedReason == "No answer." && applications[1].phaseIsClosed)
+
+    let mail = try #require(dossier.mail)
+    #expect(mail.map(\.subject) == ["Interview with Acme", "Following up"])
+    #expect(mail[0].fromLine == "jobs@acme.com · interview invite")
+    #expect(mail[1].fromLine == "You wrote")
+    #expect(dossier.foldedMailLine == "3 newsletters and job alerts left out")
+}
+
+@Test func aDossierFromAHubWithoutThreadsHasNone() throws {
+    let dossier = try HubJSON.makeDecoder().decode(CompanyDossier.self, from: Data(dossierJSON.utf8))
+
+    #expect(dossier.applications == nil && dossier.mail == nil && dossier.foldedMailLine == nil)
+    #expect(dossier.applicationsOpenFirst.isEmpty)
+}

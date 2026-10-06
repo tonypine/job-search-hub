@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -51,6 +52,13 @@ type dismissApplicationRequest struct {
 
 type followUpRequest struct {
 	Note string `json:"note"`
+}
+
+// outreachRequest records a cold message to someone at a company; sent_on is
+// the day it went out, as YYYY-MM-DD, now when absent.
+type outreachRequest struct {
+	Note   string `json:"note"`
+	SentOn string `json:"sent_on"`
 }
 
 // setFollowUpDaysRequest sets a phase's follow-up interval; a null days
@@ -180,6 +188,35 @@ func RegisterPipelineRoutes(routes *http.ServeMux, hub *store.Store, requireOwne
 			return
 		}
 		writeJSON(w, http.StatusOK, applicationResponse{Application: application})
+	})
+
+	handle("POST /v1/companies/{id}/outreach", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathIDOrWriteNotFound(w, r)
+		if !ok {
+			return
+		}
+		var request outreachRequest
+		if !decodeBodyOrWriteBadRequest(w, r, &request) {
+			return
+		}
+		sentAt := time.Now()
+		if request.SentOn != "" {
+			var err error
+			if sentAt, err = time.ParseInLocation(time.DateOnly, request.SentOn, time.Local); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorResponse{Error: "sent_on must be a date as YYYY-MM-DD"})
+				return
+			}
+		}
+		application, created, err := hub.RecordOutreach(r.Context(), owner, id, request.Note, sentAt, "")
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, applicationResponse{Application: application, Created: created})
 	})
 
 	handle("PUT /v1/pipeline/phases/{id}/follow-up", func(w http.ResponseWriter, r *http.Request) {

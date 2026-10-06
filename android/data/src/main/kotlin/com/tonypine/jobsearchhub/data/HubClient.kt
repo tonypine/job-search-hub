@@ -3,12 +3,16 @@ package com.tonypine.jobsearchhub.data
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.DecisionQueueResponse
+import com.tonypine.jobsearchhub.core.FollowUpRequest
 import com.tonypine.jobsearchhub.core.JobDecision
 import com.tonypine.jobsearchhub.core.JobDecisionRequest
 import com.tonypine.jobsearchhub.core.JobsResponse
+import com.tonypine.jobsearchhub.core.MarkUpdatesSeenRequest
+import com.tonypine.jobsearchhub.core.MoveApplicationRequest
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.core.RecruitersResponse
 import com.tonypine.jobsearchhub.core.SetPushTokenRequest
 import com.tonypine.jobsearchhub.core.TaskRequest
 import com.tonypine.jobsearchhub.core.UpdatesResponse
@@ -32,7 +36,20 @@ class HubClient(
 ) {
     suspend fun getUpdates(): UpdatesResponse = get("/v1/updates?limit=100")
 
-    suspend fun getJobs(): JobsResponse = get("/v1/jobs?status=open&limit=500")
+    /** Every open job, read a page at a time until the hub's total, so the oldest ones are not left out. */
+    suspend fun getJobs(): JobsResponse {
+        val first = getOpenJobsPage(offset = 0)
+        val jobs = first.jobs.toMutableList()
+        while (jobs.size < first.total) {
+            val page = getOpenJobsPage(offset = jobs.size)
+            if (page.jobs.isEmpty()) break
+            jobs += page.jobs
+        }
+        return first.copy(jobs = jobs)
+    }
+
+    private suspend fun getOpenJobsPage(offset: Int): JobsResponse =
+        get("/v1/jobs?status=open&limit=$JOBS_PAGE_SIZE" + if (offset > 0) "&offset=$offset" else "")
 
     suspend fun getJob(id: String): JobDetails = get("/v1/jobs/$id")
 
@@ -41,6 +58,23 @@ class HubClient(
     suspend fun getCompanyJobs(id: String): JobsResponse = get("/v1/jobs?company_id=$id&status=open&limit=200")
 
     suspend fun getPipeline(): PipelineBoard = get("/v1/pipeline")
+
+    /** Notes that the owner followed up on the application now, which restarts its phase's follow-up count. */
+    suspend fun recordFollowUp(applicationId: String, note: String) {
+        fetch("POST", "/v1/applications/$applicationId/follow-ups", hubJson.encodeToString(FollowUpRequest(note.trim())))
+    }
+
+    /** Moves the application to the phase; a closed phase keeps the reason it ended. */
+    suspend fun moveApplication(applicationId: String, phaseId: String, closedReason: String = "") {
+        fetch("PATCH", "/v1/applications/$applicationId", hubJson.encodeToString(MoveApplicationRequest(phaseId, closedReason.trim())))
+    }
+
+    /** The conversations recruiters started on LinkedIn, the latest first. */
+    suspend fun getRecruiters(): RecruitersResponse = get("/v1/recruiters")
+
+    suspend fun markUpdatesSeen(ids: List<String>) {
+        fetch("POST", "/v1/updates/seen", hubJson.encodeToString(MarkUpdatesSeenRequest(ids)))
+    }
 
     /** Asks the Mac to find a company's jobs, or to research a company by name or link. */
     suspend fun queueTask(request: QueueTaskRequest): TaskRequest = send("/v1/tasks", hubJson.encodeToString(request))
@@ -51,6 +85,11 @@ class HubClient(
     /** Records a decision: pursue puts the job on the pipeline, skip dismisses it with the reason, later only records. */
     suspend fun decideJob(id: String, decision: String, reason: String = ""): JobDecision =
         send("/v1/jobs/$id/decision", hubJson.encodeToString(JobDecisionRequest(decision, reason.trim())))
+
+    /** Takes back the decision on a job, which leaves it undecided: a skipped job comes back to the jobs list. */
+    suspend fun clearJobDecision(id: String) {
+        fetch("DELETE", "/v1/jobs/$id/decision", null)
+    }
 
     /** Registers the token FCM gave this app, so the hub pushes its updates here. */
     suspend fun setPushToken(token: String) {
@@ -81,5 +120,10 @@ class HubClient(
         } catch (error: IOException) {
             throw HubException("Can't reach the hub at ${pairing.hubUrl}: ${error.message}")
         }
+    }
+
+    private companion object {
+        /** The most jobs the hub returns in one page. */
+        const val JOBS_PAGE_SIZE = 500
     }
 }

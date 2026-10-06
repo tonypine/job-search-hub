@@ -94,6 +94,84 @@ public struct CompanyDossier: Codable, Equatable, Sendable {
     public var connections: [Connection]?
     /// People the owner knows who don't work here but can open doors.
     public var warmPaths: [WarmPath]?
+    /// The company's cards on the board. Only the owner's company page gets
+    /// them, with the mail below; nil from a hub that doesn't send them.
+    public var applications: [CompanyApplication]?
+    /// The company's latest matched mail, newest first, without newsletters
+    /// and job alerts.
+    public var mail: [MailMessage]?
+    /// How many newsletters and job alerts the hub left out of `mail`.
+    public var foldedMailCount: Int?
+
+    /// Says how many newsletters and job alerts were left out of the latest
+    /// mail; nil when none were.
+    public var foldedMailLine: String? {
+        switch foldedMailCount ?? 0 {
+        case 0: nil
+        case 1: "1 newsletter or job alert left out"
+        case let count: "\(count) newsletters and job alerts left out"
+        }
+    }
+
+    /// The applications still open, then the closed ones.
+    public var applicationsOpenFirst: [CompanyApplication] {
+        let applications = applications ?? []
+        return applications.filter { !$0.phaseIsClosed } + applications.filter(\.phaseIsClosed)
+    }
+}
+
+/// One of a company's cards on the board, with the phase it sits in. The hub
+/// sends the card's fields and the phase's side by side.
+public struct CompanyApplication: Codable, Equatable, Identifiable, Sendable {
+    public var card: PipelineCard
+    public var phaseName: String
+    public var phaseIsClosed: Bool
+
+    public var id: UUID { card.id }
+
+    enum CodingKeys: String, CodingKey {
+        case phaseName, phaseIsClosed
+    }
+
+    public init(from decoder: Decoder) throws {
+        card = try PipelineCard(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        phaseName = try container.decode(String.self, forKey: .phaseName)
+        phaseIsClosed = try container.decode(Bool.self, forKey: .phaseIsClosed)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try card.encode(to: encoder)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(phaseName, forKey: .phaseName)
+        try container.encode(phaseIsClosed, forKey: .phaseIsClosed)
+    }
+}
+
+/// One message of the owner's mail, matched to a company.
+public struct MailMessage: Codable, Equatable, Identifiable, Sendable {
+    public var id: UUID
+    public var threadID: String
+    /// "received" or "sent".
+    public var direction: String
+    public var sender: String
+    public var subject: String
+    public var sentAt: Date
+    /// What kind of mail it is, such as "interview_invite"; nil until read.
+    public var classification: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, direction, sender, subject, sentAt, classification
+        case threadID = "threadId"
+    }
+
+    /// Who wrote it and what kind of mail it is: "You wrote" or the sender,
+    /// then e.g. "interview invite".
+    public var fromLine: String {
+        let from = direction == "sent" ? "You wrote" : sender
+        guard let classification, !classification.isEmpty else { return from }
+        return "\(from) · \(classification.replacingOccurrences(of: "_", with: " "))"
+    }
 }
 
 /// Someone the owner knows who can open doors at a company without working

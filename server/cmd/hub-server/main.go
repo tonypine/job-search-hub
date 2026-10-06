@@ -18,7 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/tonypine/job-search-hub/server/internal/abandonedruns"
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/boarddiscovery"
 	"github.com/tonypine/job-search-hub/server/internal/boardfinder"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
@@ -31,6 +33,8 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/exchangerates"
 	"github.com/tonypine/job-search-hub/server/internal/feedpoller"
+	"github.com/tonypine/job-search-hub/server/internal/followupreminders"
+	"github.com/tonypine/job-search-hub/server/internal/freshmatches"
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hiringthread"
@@ -48,7 +52,9 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/modelruntime"
 	"github.com/tonypine/job-search-hub/server/internal/modelwork"
+	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 	"github.com/tonypine/job-search-hub/server/internal/push"
+	"github.com/tonypine/job-search-hub/server/internal/startupsgallery"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
@@ -86,6 +92,21 @@ const (
 	// hiringThreadInterval paces the reading of Hacker News' monthly "Who is
 	// hiring?" thread, whose comments keep arriving for days.
 	hiringThreadInterval = 6 * time.Hour
+	// galleryCheckInterval is how often the server checks whether a week
+	// has passed since startups.gallery's remote list was last read.
+	galleryCheckInterval = 6 * time.Hour
+	// postingTextInterval picks up the jobs alerts listed since the last
+	// pass, and the ones whose wait for their company's board is over.
+	postingTextInterval = 30 * time.Minute
+	// followUpReminderInterval is how often the server checks for follow-ups
+	// fallen due since the last pass.
+	followUpReminderInterval = 15 * time.Minute
+	// freshMatchInterval is how often the server checks for jobs briefed a
+	// strong match while still fresh, as briefs are written every few minutes.
+	freshMatchInterval = 5 * time.Minute
+	// abandonedRunInterval is how often the server closes the agent runs
+	// whose token expired before they reported an end.
+	abandonedRunInterval = 5 * time.Minute
 )
 
 func main() {
@@ -137,12 +158,14 @@ func run() error {
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
 	api.RegisterRecruiterRoutes(routes, hub, rates, requireOwner)
+	api.RegisterPeopleRoutes(routes, hub, rates, requireOwner)
 	api.RegisterCompanySuggestionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterLinkedInProfileRoutes(routes, hub, rates, requireOwner)
 	api.RegisterArtifactRoutes(routes, hub, requireOwner)
@@ -161,6 +184,8 @@ func run() error {
 	if sender := makePushSender(ctx, settings); sender != nil {
 		go push.NewNotifier(hub, sender, broadcaster).Run(ctx)
 	}
+	go followupreminders.NewReminder(hub, updateRecorder).Run(ctx, followUpReminderInterval)
+	go freshmatches.NewTeller(hub, updateRecorder).Run(ctx, freshMatchInterval)
 	api.RegisterClaudeSessionRoutes(routes, hub, rates, requireOwner)
 	boards := jobboards.NewVerifier()
 	boards.SearchTerms = func(ctx context.Context) []string {
@@ -186,6 +211,18 @@ func run() error {
 	if settings.boardSearchInterval > 0 {
 		go boardfinder.New(hub, boards, rates).Run(ctx, settings.boardSearchInterval)
 	}
+	if settings.boardDiscoveryInterval > 0 {
+		go boarddiscovery.New(hub, boards).Run(ctx, settings.boardDiscoveryInterval)
+	}
+	go startupsgallery.NewReader(hub, boards).Run(ctx, galleryCheckInterval)
+	// Alert jobs no board gave text to get it from Google for Jobs when a
+	// JSearch key is set; without one they only get the reason they have none.
+	var jsearch *postingtexts.JSearch
+	if settings.jsearchAPIKey != "" {
+		jsearch = postingtexts.NewJSearch(settings.jsearchURL, settings.jsearchAPIKey)
+		slog.Info("Google for Jobs search on", "monthly requests", settings.jsearchMonthlyRequests)
+	}
+	go postingtexts.New(hub, jsearch, settings.jsearchMonthlyRequests).Run(ctx, postingTextInterval)
 	// Each kind of task runs on the model it's routed to. The settings' model
 	// server seeds the routes of a fresh database; routes changed since stay.
 	if err := hub.EnsureDefaultTaskRoutes(ctx, settings.jobFactsModelURL, settings.jobFactsModel, store.RoutedTaskKinds); err != nil {

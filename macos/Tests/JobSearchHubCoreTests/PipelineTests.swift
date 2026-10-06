@@ -147,3 +147,153 @@ private func decodeBoard() throws -> PipelineBoard {
     #expect(recording.lastRequest?.url?.query == "dismissed=true")
     #expect(board.cards.first?.dismissalReason == "not a good fit: agency" && board.cards.first?.dismissedAt != nil)
 }
+
+@Test func aCardDecodesWhenSomeoneAtTheCompanyFirstWroteBack() throws {
+    let body = #"{"application":{"id":"22222222-0000-0000-0000-000000000001","phase_id":"\#(appliedID)","phase_entered_at":"2026-09-20T10:00:00Z","#
+        + #""contacted_at":"2026-09-24T15:30:00Z","applied_at":"2026-09-20T10:00:00Z","created_at":"2026-09-20T10:00:00Z","#
+        + #""updated_at":"2026-09-24T15:30:00Z"}}"#
+
+    let response = try HubJSON.makeDecoder().decode(ApplicationResponse.self, from: Data(body.utf8))
+
+    #expect(response.application.contactedAt == Date(timeIntervalSince1970: 1_790_263_800))
+    #expect(response.application.appliedAt == Date(timeIntervalSince1970: 1_789_898_400))
+    #expect(try decodeBoard().cards.allSatisfy { $0.application.contactedAt == nil })
+}
+
+private let tallyNow = Date(timeIntervalSince1970: 1_790_600_000)
+
+private func makeTallyCard(
+    in phase: PipelinePhase, contactedAt: Date? = nil, appliedAt: Date? = nil, followUpDueAt: Date? = nil
+) -> PipelineCard {
+    let application = Application(
+        id: UUID(), phaseID: phase.id, phaseEnteredAt: tallyNow.addingTimeInterval(-10 * 86_400), contactedAt: contactedAt,
+        appliedAt: appliedAt, createdAt: tallyNow, updatedAt: tallyNow
+    )
+    return PipelineCard(application: application, followUpDueAt: followUpDueAt, unseenUpdates: 0)
+}
+
+private func makeTallyCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Sao_Paulo")!
+    return calendar
+}
+
+@Test func theContactTallyCountsSentApplicationsAndTheOnesAPersonAnswered() {
+    let saved = PipelinePhase(id: UUID(), name: "Saved", position: 1, isClosed: false)
+    let applied = PipelinePhase(id: UUID(), name: "applied", position: 2, isClosed: false, followUpDays: 7)
+    let inContact = PipelinePhase(id: UUID(), name: "In contact", position: 3, isClosed: false)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 4, isClosed: true)
+    let replied = tallyNow.addingTimeInterval(-86_400)
+    let sent = tallyNow.addingTimeInterval(-20 * 86_400)
+    let board = PipelineBoard(phases: [closed, inContact, applied, saved], cards: [
+        makeTallyCard(in: saved),
+        makeTallyCard(in: saved, contactedAt: replied),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied, contactedAt: replied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: inContact),
+        makeTallyCard(in: closed, contactedAt: replied),
+        makeTallyCard(in: closed),
+        makeTallyCard(in: closed, contactedAt: replied, appliedAt: sent),
+        makeTallyCard(in: closed, appliedAt: sent, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+    ])
+
+    let tally = board.getContactTally(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(tally == ContactTally(sent: 7, heardBack: 4, unansweredPastFollowUp: 1))
+    #expect(tally.text == "heard back on 4 of 7 sent · 1 unanswered past follow-up")
+}
+
+@Test func aRejectedApplicationStaysInTheTallyAndOneDroppedWhileSavedNeverJoins() throws {
+    let saved = PipelinePhase(id: UUID(), name: "Saved", position: 1, isClosed: false)
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 2, isClosed: false)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 3, isClosed: true)
+    let sentAt = tallyNow.addingTimeInterval(-5 * 86_400)
+    let rejected = makeTallyCard(in: applied, appliedAt: sentAt)
+    var board = PipelineBoard(phases: [saved, applied, closed], cards: [rejected, makeTallyCard(in: saved)])
+    #expect(board.getContactTally(now: tallyNow).text == "heard back on 0 of 1 sent")
+
+    var closedApplication = rejected.application
+    closedApplication.phaseID = closed.id
+    closedApplication.closedReason = "Rejected by mail: Your application"
+    board.replaceApplication(closedApplication)
+    #expect(board.getContactTally(now: tallyNow).text == "heard back on 0 of 1 sent")
+
+    var dropped = try #require(board.cards.first { $0.application.phaseID == saved.id }).application
+    dropped.phaseID = closed.id
+    board.replaceApplication(dropped)
+    #expect(board.getContactTally(now: tallyNow).text == "heard back on 0 of 1 sent")
+}
+
+@Test func theUnansweredCardsPastFollowUpAreTheOnesTheTallyCounts() {
+    let saved = PipelinePhase(id: UUID(), name: "Saved", position: 1, isClosed: false, followUpDays: 7)
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 2, isClosed: false, followUpDays: 7)
+    let inContact = PipelinePhase(id: UUID(), name: "In contact", position: 3, isClosed: false, followUpDays: 7)
+    let closed = PipelinePhase(id: UUID(), name: "Closed", position: 4, isClosed: true)
+    let overdue = tallyNow.addingTimeInterval(-2 * 86_400)
+    let unanswered = makeTallyCard(in: applied, followUpDueAt: overdue)
+    let board = PipelineBoard(phases: [saved, applied, inContact, closed], cards: [
+        unanswered,
+        makeTallyCard(in: saved, followUpDueAt: overdue),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied, contactedAt: tallyNow.addingTimeInterval(-86_400), followUpDueAt: overdue),
+        makeTallyCard(in: inContact, followUpDueAt: overdue),
+        makeTallyCard(in: closed, followUpDueAt: overdue),
+    ])
+
+    let cardIDs = board.getUnansweredPastFollowUp(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(cardIDs == [unanswered.id])
+    #expect(board.getContactTally(now: tallyNow, calendar: makeTallyCalendar()).unansweredPastFollowUp == cardIDs.count)
+}
+
+@Test func withoutAnAppliedPhaseEveryOpenPhaseAfterTheFirstCountsAsSent() {
+    let wishlist = PipelinePhase(id: UUID(), name: "Wishlist", position: 1, isClosed: false)
+    let sent = PipelinePhase(id: UUID(), name: "Sent", position: 2, isClosed: false)
+    let talking = PipelinePhase(id: UUID(), name: "Talking", position: 3, isClosed: false)
+    let board = PipelineBoard(phases: [wishlist, sent, talking], cards: [
+        makeTallyCard(in: wishlist),
+        makeTallyCard(in: sent),
+        makeTallyCard(in: talking),
+    ])
+
+    let tally = board.getContactTally(now: tallyNow, calendar: makeTallyCalendar())
+
+    #expect(tally == ContactTally(sent: 2, heardBack: 0, unansweredPastFollowUp: 0))
+    #expect(tally.text == "heard back on 0 of 2 sent")
+}
+
+@Test func theContactTallyHasNoTextUntilAnApplicationGoesOut() throws {
+    let board = try decodeBoard()
+
+    #expect(board.getContactTally(now: tallyNow) == ContactTally())
+    #expect(board.getContactTally(now: tallyNow).text == nil)
+}
+
+@Test func outreachToACompanyIsSentWithTheTrimmedNote() async throws {
+    let companyID = UUID(uuidString: "3f2504e0-4f89-41d3-9a0c-0305e82c3301")!
+    let answer = #"{"application":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","phase_id":"0aa55565-58d2-4247-ba01-cba65060a316","#
+        + #""phase_entered_at":"2026-10-04T14:00:00Z","created_at":"2026-10-04T14:00:00Z","updated_at":"2026-10-04T14:00:00Z"},"created":true}"#
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/companies/\(companyID.uuidString)/outreach": StubHub.Answer(status: 201, body: answer),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    let response = try await client.recordOutreach(companyID: companyID, note: " LinkedIn message to the engineering lead ")
+    #expect(response.created)
+    #expect(recording.lastRequest?.httpMethod == "POST")
+    let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
+    #expect(sent?["note"] as? String == "LinkedIn message to the engineering lead")
+}
+
+@Test func theDueCountTakesFollowUpsDueTodayOrOverdue() {
+    let applied = PipelinePhase(id: UUID(), name: "Applied", position: 1, isClosed: false, followUpDays: 7)
+    let board = PipelineBoard(phases: [applied], cards: [
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(-2 * 86_400)),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow),
+        makeTallyCard(in: applied, followUpDueAt: tallyNow.addingTimeInterval(3 * 86_400)),
+        makeTallyCard(in: applied),
+    ])
+
+    #expect(board.getDueCount(now: tallyNow, calendar: makeTallyCalendar()) == 2)
+}

@@ -55,7 +55,7 @@ func NewServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoardSynce
 var ownerOnlyTools = []string{
 	"add_to_watch_list", "remove_from_watch_list", "update_agent_prompt", "update_job_criteria", "update_owner_profile",
 	"save_application_answer", "confirm_profile_entries", "delete_profile_entry", "dismiss_job", "restore_job", "dismiss_application", "restore_application", "decide_job",
-	"fix_job", "move_application",
+	"fix_job", "move_application", "record_follow_up", "record_outreach",
 }
 
 // NewAgentServer is NewServer without the owner-only tools, for agent runs.
@@ -96,17 +96,26 @@ func getOwnerActor(ctx context.Context) (store.Actor, error) {
 }
 
 // addTool registers a typed tool with schemas that describe a uuid.UUID as
-// the string it marshals to, not the byte array it is in Go.
+// the string it marshals to, not the byte array it is in Go. A tool that
+// already carries an input schema, such as one from inputSchema with
+// descriptions filled in, keeps it.
 func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
-	input, err := jsonschema.For[In](schemaOptions)
-	if err != nil {
-		panic(fmt.Sprintf("input schema for %s: %v", tool.Name, err))
+	if tool.InputSchema == nil {
+		tool.InputSchema = inputSchema[In](tool.Name)
 	}
 	output, err := jsonschema.For[Out](schemaOptions)
 	if err != nil {
 		panic(fmt.Sprintf("output schema for %s: %v", tool.Name, err))
 	}
-	tool.InputSchema = input
 	tool.OutputSchema = output
 	mcp.AddTool(server, tool, handler)
+}
+
+// inputSchema is the input schema addTool gives the named tool.
+func inputSchema[In any](name string) *jsonschema.Schema {
+	input, err := jsonschema.For[In](schemaOptions)
+	if err != nil {
+		panic(fmt.Sprintf("input schema for %s: %v", name, err))
+	}
+	return input
 }

@@ -13,6 +13,10 @@ class HubMessagingService : FirebaseMessagingService() {
     private val app get() = application as HubApp
 
     override fun onMessageReceived(message: RemoteMessage) {
+        // An unpaired phone shows nothing, though the hub may push to it until the Mac revokes it.
+        if (app.pairingStore.load() == null) {
+            return
+        }
         val update = PushedUpdate.parse(message.data) ?: return
         UpdateNotifications.show(this, update)
         app.pushes.tryEmit(update)

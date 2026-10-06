@@ -3,6 +3,8 @@ package jobfit_test
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
@@ -178,6 +180,27 @@ func TestAListingWithoutTextSaysSoInsteadOfWaitingForFacts(t *testing.T) {
 	}
 }
 
+func TestAnAlertJobWithoutTextSaysWhyItHasNone(t *testing.T) {
+	reason := "the alert gave no text, and neither a board found nor Google for Jobs has the posting"
+	snippet := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", Description: "Build things.", TextMissingReason: reason}
+	textless := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", TextMissingReason: reason}
+
+	for _, job := range []store.Job{snippet, textless} {
+		if stack := findCheck(t, jobfit.Judge(job, nil, criteria, rates), "Stack"); stack.Verdict != jobfit.VerdictUnclear || stack.Reason != reason {
+			t.Errorf("description %q: stack = %+v, want the reason the text is missing", job.Description, stack)
+		}
+	}
+	read := findCheck(t, jobfit.Judge(snippet, facts(t, map[string]any{"technologies": []string{"React"}}), criteria, rates), "Stack")
+	if read.Verdict != jobfit.VerdictYes {
+		t.Errorf("technologies read from the snippet: stack = %+v, want them judged", read)
+	}
+
+	whole := store.Job{Source: store.JobSourceGlassdoor, Title: "Engineer", Description: strings.Repeat("Build things. ", 40), TextMissingReason: reason}
+	if stack := findCheck(t, jobfit.Judge(whole, nil, criteria, rates), "Stack"); stack.Reason == reason {
+		t.Errorf("a job with its whole text kept the reason it had none: stack = %+v", stack)
+	}
+}
+
 var rates = jobfit.ExchangeRates{Base: "BRL", PerBase: map[string]float64{"USD": 0.2, "CAD": 0.27}}
 
 var takeHome = store.TakeHome{
@@ -246,6 +269,8 @@ func TestAContractorPostingWithoutACurrencyRateStaysUnclear(t *testing.T) {
 }
 
 func TestTheRole(t *testing.T) {
+	withGrowth := criteria
+	withGrowth.Roles = append(slices.Clone(criteria.Roles), "Growth Engineer")
 	for _, test := range []struct {
 		title  string
 		want   jobfit.Verdict
@@ -261,8 +286,18 @@ func TestTheRole(t *testing.T) {
 		{"Senior Software Engineer, Agents", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
 		{"Desenvolvedor(a) Backend Pleno", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
 		{"Content Writer, Investment Research", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Product Design Intern", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Product Management Intern", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Head of Growth", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Growth Marketer Retention", jobfit.VerdictNo, "the title names none of your roles"},
+		{"AI Product Lead", jobfit.VerdictNo, "the title names none of your roles"},
+		{"Growth Engineer (Software Engineer)", jobfit.VerdictYes, "Growth Engineer"},
+		{"Senior AI Product Engineer", jobfit.VerdictYes, "Product Engineer"},
+		{"Desenvolvedor de Produto", jobfit.VerdictUnclear, "an engineering title that names none of your roles"},
+		{"Front-end React Sr", jobfit.VerdictYes, "Senior Front-End Engineer"},
+		{"Fullstack Lead", jobfit.VerdictYes, "Senior Full-Stack Engineer"},
 	} {
-		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, criteria, rates), "Role")
+		check := findCheck(t, jobfit.Judge(store.Job{Title: test.title}, nil, withGrowth, rates), "Role")
 		if check.Verdict != test.want || check.Reason != test.reason {
 			t.Errorf("%q: %+v, want %s %q", test.title, check, test.want, test.reason)
 		}

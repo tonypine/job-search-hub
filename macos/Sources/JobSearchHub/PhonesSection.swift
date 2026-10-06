@@ -4,33 +4,46 @@ import JobSearchHubCore
 import SwiftUI
 
 /// The phones paired with the hub: pair one through a QR code, and revoke
-/// one that is lost.
+/// one that is lost, once the owner confirms.
 struct PhonesSection: View {
     let client: HubClient
     @State private var devices: [Device] = []
-    @State private var errorMessage: String?
+    @State private var failure: HubFailure?
     @State private var isPairing = false
+    @State private var confirmingRevoke: Device?
+    @State private var revokingID: Device.ID?
 
     var body: some View {
-        Section("Phones") {
+        Section("Paired phones") {
             ForEach(devices) { device in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(device.name)
-                        Text(describe(device)).font(.caption).foregroundStyle(.secondary)
+                        Text(describe(device)).font(.hubCaption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if device.revokedAt == nil {
-                        Button("Revoke", role: .destructive) { Task { await revoke(device) } }
+                        AsyncButton("Revoke…", busyTitle: "Revoking…", role: .destructive, isBusy: revokingID == device.id) {
+                            confirmingRevoke = device
+                        }
                     }
                 }
             }
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            if failure != nil {
+                HubErrorView($failure)
             }
             Button("Pair a phone", systemImage: "qrcode") { isPairing = true }
         }
         .task { await load() }
+        .confirmationDialog(
+            "Revoke \(confirmingRevoke?.name ?? "this phone")?",
+            isPresented: Binding(get: { confirmingRevoke != nil }, set: { if !$0 { confirmingRevoke = nil } }),
+            presenting: confirmingRevoke
+        ) { device in
+            Button("Revoke", role: .destructive) { Task { await revoke(device) } }
+        } message: { _ in
+            Text("The phone loses the hub at once. To use it again, pair it again with a new QR code.")
+        }
         .sheet(isPresented: $isPairing, onDismiss: { Task { await load() } }) {
             PairPhoneSheet(client: client)
         }
@@ -49,18 +62,20 @@ struct PhonesSection: View {
     private func load() async {
         do {
             devices = try await client.get("v1/devices", as: DevicesResponse.self).devices
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = "Could not load the phones: \(error)"
+            failure = HubFailure("Couldn't load the phones", error)
         }
     }
 
     private func revoke(_ device: Device) async {
+        revokingID = device.id
+        defer { revokingID = nil }
         do {
             try await client.delete("v1/devices/\(device.id)")
             await load()
         } catch {
-            errorMessage = "Could not revoke \(device.name): \(error)"
+            failure = HubFailure("Couldn't revoke \(device.name)", error)
         }
     }
 }
@@ -73,13 +88,12 @@ struct PairPhoneSheet: View {
     @AppStorage("phoneHubAddress") private var phoneHubAddress = ""
     @State private var name = "My phone"
     @State private var link: String?
-    @State private var errorMessage: String?
-    @State private var isPairing = false
+    @State private var failure: HubFailure?
     @State private var isReadingTailscale = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Pair a phone").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("Pair a phone").font(.hubSection)
             if let link {
                 Text("Scan this with the Job Search Hub app on the phone. The token in it is shown only now.")
                     .foregroundStyle(.secondary)
@@ -87,7 +101,7 @@ struct PairPhoneSheet: View {
                     Image(nsImage: image).interpolation(.none).resizable().frame(width: 260, height: 260)
                         .frame(maxWidth: .infinity)
                 }
-                Text(link).font(.caption.monospaced()).textSelection(.enabled).lineLimit(3)
+                Text(link).font(.hubCaption.monospaced()).textSelection(.enabled).lineLimit(3)
                 HStack {
                     Spacer()
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
@@ -95,20 +109,20 @@ struct PairPhoneSheet: View {
             } else {
                 TextField("Name", text: $name, prompt: Text("e.g. Tony's phone"))
                 TextField("Address the phone uses", text: $phoneHubAddress, prompt: Text("https://<mac>.<tailnet>.ts.net, or http://10.0.2.2:8090 for the emulator"))
-                Text(addressHint).font(.callout).foregroundStyle(.secondary)
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(addressHint).font(.hubSecondary).foregroundStyle(.secondary)
+                if let failure {
+                    HubErrorView(failure)
                 }
                 HStack {
                     Spacer()
                     Button("Cancel") { dismiss() }
-                    Button("Pair") { Task { await pair() } }
+                    AsyncButton("Pair", busyTitle: "Pairing…") { await pair() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(isPairing || name.trimmingCharacters(in: .whitespaces).isEmpty || phoneHubAddress.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || phoneHubAddress.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 520)
         .task { await fillInThisMacAddress() }
     }
@@ -129,14 +143,12 @@ struct PairPhoneSheet: View {
     }
 
     private func pair() async {
-        isPairing = true
-        defer { isPairing = false }
         do {
             let paired = try await client.send("POST", "v1/devices", body: PairDeviceRequest(name: name), as: PairDeviceResponse.self)
             link = PairingLink.make(hubURL: phoneHubAddress.trimmingCharacters(in: .whitespaces), token: paired.token)
-            errorMessage = nil
+            failure = nil
         } catch {
-            errorMessage = "Could not pair the phone: \(error)"
+            failure = HubFailure("Couldn't pair the phone", error)
         }
     }
 

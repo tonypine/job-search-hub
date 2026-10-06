@@ -16,6 +16,14 @@ const (
 	JobSourceGlassdoor = "glassdoor"
 )
 
+// AlertJobSources are the sources whose jobs come from mail alerts, often
+// with no more of the posting than a snippet.
+var AlertJobSources = []string{JobSourceIndeed, JobSourceLinkedIn, JobSourceGlassdoor}
+
+// AlertSnippetLength is the most text an alert gives of a posting: its
+// snippets ran up to 366 characters, and full postings from 621.
+const AlertSnippetLength = 500
+
 // ListUnreadJobAlerts returns received mail classified as a job alert and
 // sent since the given time whose jobs haven't been read, oldest first.
 func (s *Store) ListUnreadJobAlerts(ctx context.Context, since time.Time, limit int) ([]MailMessage, error) {

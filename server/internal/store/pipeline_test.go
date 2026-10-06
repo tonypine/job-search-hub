@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
+	"github.com/tonypine/job-search-hub/server/migrations"
 )
 
 func phaseNames(phases []store.PipelinePhase) []string {
@@ -214,5 +217,207 @@ func TestAFollowUpFallsDueByPhaseAndRestartsWhenRecorded(t *testing.T) {
 	zero := 0
 	if _, err := hub.SetPipelinePhaseFollowUpDays(ctx, owner, byName["Applied"].ID, &zero); err == nil {
 		t.Fatal("zero days was accepted")
+	}
+}
+
+func TestACompanysApplicationsComeWithTheirPhaseAndLeaveOtherCompaniesOut(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	zeta, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.com"})
+	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &acme.ID, Title: "Engineer", URL: "https://acme.com/jobs/1"})
+	if _, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{JobID: &job.ID}); err != nil {
+		t.Fatal(err)
+	}
+	outreach, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &acme.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &zeta.ID}); err != nil {
+		t.Fatal(err)
+	}
+	phases, _ := hub.ListPipelinePhases(ctx)
+	closed := phases[len(phases)-1]
+	if _, err := hub.MoveApplication(ctx, owner, outreach.ID, closed.ID, "No answer."); err != nil {
+		t.Fatal(err)
+	}
+
+	applications, err := hub.ListCompanyApplications(ctx, acme.ID)
+	if err != nil || len(applications) != 2 {
+		t.Fatalf("acme's applications = %+v, %v; want 2", applications, err)
+	}
+	byTitle := map[string]store.CompanyApplication{}
+	for _, application := range applications {
+		if application.Application.CompanyID == nil || *application.Application.CompanyID != acme.ID {
+			t.Fatalf("listed another company's card: %+v", application)
+		}
+		title := "outreach"
+		if application.JobTitle != nil {
+			title = *application.JobTitle
+		}
+		byTitle[title] = application
+	}
+	if saved := byTitle["Engineer"]; saved.PhaseName != "Saved" || saved.PhaseIsClosed {
+		t.Fatalf("the job's card = %+v; want it in Saved", saved)
+	}
+	if ended := byTitle["outreach"]; ended.PhaseName != closed.Name || !ended.PhaseIsClosed || ended.Application.ClosedReason != "No answer." {
+		t.Fatalf("the outreach card = %+v; want it closed", ended)
+	}
+
+	none, err := hub.ListCompanyApplications(ctx, uuid.New())
+	if err != nil || len(none) != 0 {
+		t.Fatalf("an unknown company's applications = %+v, %v; want none", none, err)
+	}
+}
+
+func sameTime(got *time.Time, want time.Time) bool {
+	return got != nil && got.Equal(want)
+}
+
+func TestAnApplicationIsDatedGoneOutTheFirstTimeItReachesApplied(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	phases, _ := hub.ListPipelinePhases(ctx)
+	saved, applied, inContact, closed := phases[0], phases[1], phases[2], phases[5]
+	sentAt := time.Now().Add(-10 * 24 * time.Hour).UTC().Truncate(time.Second)
+
+	sent, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	if sent.AppliedAt != nil {
+		t.Fatalf("a new card went out at %v; it's only saved", sent.AppliedAt)
+	}
+	moved, err := hub.MoveApplicationAsOf(ctx, owner, sent.ID, applied.ID, "", sentAt, "")
+	if err != nil || !sameTime(moved.AppliedAt, sentAt) {
+		t.Fatalf("move to Applied = %+v, %v; want it gone out at %v", moved.AppliedAt, err, sentAt)
+	}
+	for _, phase := range []store.PipelinePhase{inContact, saved, applied, closed} {
+		if moved, err = hub.MoveApplication(ctx, owner, sent.ID, phase.ID, "Rejected."); err != nil || !sameTime(moved.AppliedAt, sentAt) {
+			t.Fatalf("move to %s = %+v, %v; want it still gone out at %v", phase.Name, moved.AppliedAt, err, sentAt)
+		}
+	}
+
+	dropped, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	if dropped, err = hub.MoveApplication(ctx, owner, dropped.ID, closed.ID, "Not for me."); err != nil || dropped.AppliedAt != nil {
+		t.Fatalf("closed from Saved = %+v, %v; want it never gone out", dropped.AppliedAt, err)
+	}
+
+	cards, _ := hub.ListPipelineCards(ctx)
+	for _, card := range cards {
+		if card.Application.ID == sent.ID && !sameTime(card.Application.AppliedAt, sentAt) {
+			t.Fatalf("the board lists the closed card gone out at %v; want %v", card.Application.AppliedAt, sentAt)
+		}
+	}
+}
+
+func TestAMailConfirmationDatesTheApplicationGoneOutByTheMail(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	phases, _ := hub.ListPipelinePhases(ctx)
+	applied := phases[1]
+	mailedAt := time.Now().Add(-3 * 24 * time.Hour).UTC().Truncate(time.Second)
+
+	// A confirmation for a saved card moves it to Applied at the mail's date.
+	saved, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	confirmed, err := hub.MoveApplicationAsOf(ctx, owner, saved.ID, applied.ID, "", mailedAt, "https://mail.google.com/mail/#all/1")
+	if err != nil || !sameTime(confirmed.AppliedAt, mailedAt) {
+		t.Fatalf("confirmed = %+v, %v; want it gone out at %v", confirmed.AppliedAt, err, mailedAt)
+	}
+
+	// One the owner moved to Applied after sending it goes back to the mail's date.
+	late, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	if late, err = hub.MoveApplication(ctx, owner, late.ID, applied.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	corrected, changed, err := hub.CorrectApplicationPhaseEnteredAt(ctx, owner, late.ID, mailedAt, "https://mail.google.com/mail/#all/2")
+	if err != nil || !changed || !sameTime(corrected.AppliedAt, mailedAt) {
+		t.Fatalf("corrected = %+v, %v, %v; want it gone out at %v", corrected.AppliedAt, changed, err, mailedAt)
+	}
+	later := mailedAt.Add(24 * time.Hour)
+	if again, _, err := hub.CorrectApplicationPhaseEnteredAt(ctx, owner, late.ID, later, ""); err != nil || !sameTime(again.AppliedAt, mailedAt) {
+		t.Fatalf("a later mail = %+v, %v; want it still gone out at %v", again.AppliedAt, err, mailedAt)
+	}
+
+	// A card still saved is dated in its phase but hasn't gone out.
+	stillSaved, _, _ := hub.AddApplication(ctx, owner, store.ApplicationInput{CompanyID: &company.ID})
+	if stillSaved, _, err = hub.CorrectApplicationPhaseEnteredAt(ctx, owner, stillSaved.ID, mailedAt, ""); err != nil || stillSaved.AppliedAt != nil {
+		t.Fatalf("a saved card = %+v, %v; want it never gone out", stillSaved.AppliedAt, err)
+	}
+}
+
+// The migration that adds applied_at, which the backfill test rolls back and
+// applies again.
+const appliedAtMigration = 83
+
+func TestExistingApplicationsAreDatedGoneOutFromTheChangeLog(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	database := stdlib.OpenDBFromPool(pool)
+	defer database.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, appliedAtMigration-1); err != nil {
+		t.Fatal(err)
+	}
+
+	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	phases, _ := hub.ListPipelinePhases(ctx)
+	saved, applied, interviewing, closed := phases[0], phases[1], phases[3], phases[5]
+	now := time.Now().UTC().Truncate(time.Second)
+	day := func(daysAgo int) time.Time { return now.AddDate(0, 0, -daysAgo) }
+	addCard := func(phase store.PipelinePhase, enteredAt time.Time) uuid.UUID {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO applications (company_id, phase_id, phase_entered_at) VALUES ($1, $2, $3) RETURNING id`,
+			company.ID, phase.ID, enteredAt).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	logChange := func(id uuid.UUID, operation string, after map[string]any, at time.Time) {
+		recorded, _ := json.Marshal(after)
+		if _, err := pool.Exec(ctx, `INSERT INTO changes (actor_kind, entity_type, entity_id, operation, after, created_at)
+			VALUES ('owner', 'application', $1, $2, $3, $4)`, id, operation, recorded, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	move := func(id uuid.UUID, phase store.PipelinePhase, at time.Time) {
+		logChange(id, "move", map[string]any{"phase_id": phase.ID, "closed_reason": ""}, at)
+	}
+
+	rejected := addCard(closed, day(2))
+	move(rejected, applied, day(20))
+	move(rejected, interviewing, day(10))
+	move(rejected, closed, day(2))
+	dropped := addCard(closed, day(5))
+	move(dropped, closed, day(5))
+	backToSaved := addCard(saved, day(4))
+	move(backToSaved, applied, day(8))
+	move(backToSaved, saved, day(4))
+	// Moved to Applied by hand, then dated back by the confirming mail.
+	confirmed := addCard(applied, day(12))
+	move(confirmed, applied, day(9))
+	unlogged := addCard(interviewing, day(6))
+	imported := addCard(closed, day(200))
+	logChange(imported, "create", map[string]any{"phase_id": closed.ID, "phase_entered_at": day(200)}, day(1))
+
+	if _, err := provider.UpTo(ctx, appliedAtMigration); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[uuid.UUID]time.Time{rejected: day(20), backToSaved: day(8), confirmed: day(12), unlogged: day(6), imported: day(200),
+		dropped: {}} {
+		var got *time.Time
+		if err := pool.QueryRow(ctx, `SELECT applied_at FROM applications WHERE id = $1`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if (want.IsZero() && got != nil) || (!want.IsZero() && !sameTime(got, want)) {
+			t.Errorf("card %s gone out at %v; want %v", id, got, want)
+		}
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -153,11 +153,12 @@ public struct AddJobResponse: Codable, Equatable, Sendable {
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
-    /// All is every job that isn't dismissed; dismissed ones only show under Dismissed.
+    /// All is every job that isn't skipped; skipped ones only show under
+    /// Skipped. The hub calls them dismissed.
     case open, closed, all, dismissed
 
     public var id: String { rawValue }
-    public var title: String { rawValue.capitalized }
+    public var title: String { self == .dismissed ? "Skipped" : rawValue.capitalized }
 }
 
 public enum JobsQuery {
@@ -229,5 +230,16 @@ public extension HubClient {
     /// Brings every dismissed job named back to the jobs list, or none of them.
     func restoreJobs(_ jobIDs: [UUID]) async throws -> [Job] {
         try await send("POST", "v1/jobs/restore", body: JobDismissalRequest(jobIDs: jobIDs), as: JobDismissalResponse.self).jobs
+    }
+}
+
+/// A company's open jobs, which its inspector lists.
+public enum CompanyJobs {
+    /// The query for the company's open jobs, one page of them.
+    public static func makeQuery(companyID: UUID) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "company_id", value: companyID.uuidString), URLQueryItem(name: "status", value: JobStatusFilter.open.rawValue),
+            URLQueryItem(name: "limit", value: String(JobsQuery.pageSize)),
+        ]
     }
 }

@@ -124,15 +124,15 @@ struct AddCompanySheet: View {
     @FocusState private var isCompanyFieldFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Add a company").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("Add a company").font(.hubSection)
             if research.state == .idle {
                 form
             } else {
                 progress
             }
         }
-        .padding(20)
+        .padding(Space.xl)
         .frame(width: 640)
         .onAppear {
             if research.state != .idle {
@@ -143,13 +143,13 @@ struct AddCompanySheet: View {
     }
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Space.m) {
             TextField("Company", text: $company, prompt: Text("A name, its site, or a careers or posting link"))
                 .focused($isCompanyFieldFocused)
                 .onAppear { isCompanyFieldFocused = true }
             TextField("Found via", text: $foundVia, prompt: Text("How you came across it, e.g. a referral (optional)"))
             Text("An agent researches it: what it does, where it lists its jobs, and who to reach there. It takes a few minutes, and its jobs follow.")
-                .font(.callout)
+                .font(.hubSecondary)
                 .foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -162,7 +162,7 @@ struct AddCompanySheet: View {
     }
 
     private var progress: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Space.m) {
             status
             ScrollViewReader { scroller in
                 ScrollView {
@@ -173,10 +173,10 @@ struct AddCompanySheet: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(Space.s)
                 }
                 .frame(height: 320)
-                .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                .background(.quinary, in: RoundedRectangle(cornerRadius: Radius.card))
                 .onChange(of: research.lines.count) { scroller.scrollTo(research.lines.count - 1, anchor: .bottom) }
             }
             HStack {
@@ -215,22 +215,22 @@ struct AddCompanySheet: View {
     private var status: some View {
         switch research.state {
         case .running:
-            HStack(spacing: 8) {
+            HStack(spacing: Space.s) {
                 ProgressView().controlSize(.small)
                 Text("Researching \(research.company)…")
             }
         case let .succeeded(companyID):
             let name = companyID.flatMap(getCompanyName) ?? research.company
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Added \(name).", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Label("Added \(name).", systemImage: "checkmark.circle.fill").foregroundStyle(Tone.positive.color)
                 if companyID != nil {
                     Text("Its jobs are being found in the background; the company's panel shows when they're in.")
-                        .font(.callout)
+                        .font(.hubSecondary)
                         .foregroundStyle(.secondary)
                 }
             }
         case let .failed(reason):
-            Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            HubErrorView(HubFailure("The research stopped", advice: reason))
         case .idle:
             EmptyView()
         }

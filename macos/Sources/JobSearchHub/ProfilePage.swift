@@ -1,8 +1,33 @@
 import JobSearchHubCore
 import SwiftUI
 
+/// The Profile page's tabs: the profile document agents read, and what
+/// sits beside it.
+enum ProfileTab: String, CaseIterable, Identifiable {
+    case profile
+    case knowledgeBase
+    case gaps
+    case linkedIn
+    case answers
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .profile: "Profile"
+        case .knowledgeBase: "Knowledge base"
+        case .gaps: "Gaps"
+        case .linkedIn: "LinkedIn"
+        case .answers: "Answers"
+        }
+    }
+}
+
 struct ProfilePage: View {
     @Environment(HubConnection.self) private var connection
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
+    @State private var tab = ProfileTab.profile
     @State private var editor = ProfileEditor()
     @State private var linkedIn: LinkedInProfileResponse?
     @State private var audit = ProfileAudit()
@@ -13,59 +38,92 @@ struct ProfilePage: View {
                 content(client: client)
                     .task { await editor.load(with: client) }
                     .task { linkedIn = try? await client.get("v1/linkedin/profile", as: LinkedInProfileResponse.self) }
-            } else {
-                ContentUnavailableView("Not connected", systemImage: "network.slash", description: Text("Set the hub URL and owner token in Settings."))
             }
         }
         .navigationTitle("Profile")
     }
 
-    @ViewBuilder
     private func content(client: HubClient) -> some View {
+        Group {
+            switch tab {
+            case .profile: profile(client: client)
+            case .knowledgeBase: scrolling { KnowledgeBaseSection(client: client) }
+            case .gaps: scrolling { MarketGapsSection(client: client) }
+            case .linkedIn: linkedInTab(client: client)
+            case .answers: scrolling { ApplicationAnswersSection(client: client) }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Show", selection: $tab) {
+                    ForEach(ProfileTab.allCases) { tab in Text(tab.title).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(editor.isEditing)
+            }
+            if tab == .profile {
+                ToolbarItemGroup {
+                    if editor.isEditing {
+                        Button("Cancel") { editor.cancelEditing() }
+                            .disabled(editor.isSaving)
+                        AsyncButton("Save", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
+                            .keyboardShortcut("s")
+                    } else {
+                        Button("Edit", systemImage: "pencil") { editor.startEditing() }
+                            .disabled(editor.profile == nil)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func profile(client: HubClient) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let errorMessage = editor.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .padding()
+            if let error = editor.error {
+                HubErrorView(title: editor.isEditing ? "Couldn't save the profile" : "Couldn't load the profile", report: error)
+                    .padding(Space.l)
             }
             if editor.isEditing {
                 TextEditor(text: $editor.draft)
                     .font(.body.monospaced())
-                    .padding()
+                    .padding(Space.l)
                     .disabled(editor.isSaving)
             } else if let profile = editor.profile {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        ProfileDocument(markdown: profile.body)
-                        KnowledgeBaseSection(client: client)
-                        MarketGapsSection(client: client)
-                        if let linkedIn, !linkedIn.profile.isEmpty {
-                            LinkedInProfileSection(response: linkedIn, audit: audit, client: client)
-                        }
-                        ApplicationAnswersSection(client: client)
-                    }
-                    .padding(24)
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                scrolling { ProfileDocument(markdown: profile.body) }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .toolbar {
-            if editor.isEditing {
-                if editor.isSaving {
-                    ProgressView().controlSize(.small)
+    }
+
+    @ViewBuilder
+    private func linkedInTab(client: HubClient) -> some View {
+        if let linkedIn, !linkedIn.profile.isEmpty {
+            scrolling { LinkedInProfileSection(response: linkedIn, audit: audit, client: client) }
+        } else {
+            ContentUnavailableView {
+                Label("No LinkedIn profile yet", systemImage: "person.text.rectangle")
+            } description: {
+                Text("Import your LinkedIn data export in Settings › Accounts. Agents read the profile in it beside yours.")
+            } actions: {
+                Button("Open Settings…") {
+                    settingsTab = .accounts
+                    openSettings()
                 }
-                Button("Cancel") { editor.cancelEditing() }
-                    .disabled(editor.isSaving)
-                Button("Save") { Task { await editor.save(with: client) } }
-                    .keyboardShortcut("s")
-                    .disabled(editor.isSaving)
-            } else {
-                Button("Edit", systemImage: "pencil") { editor.startEditing() }
-                    .disabled(editor.profile == nil)
             }
+        }
+    }
+
+    /// A tab's content in a readable column.
+    private func scrolling<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            content()
+                .padding(Space.xl)
+                .frame(maxWidth: 760, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -75,7 +133,7 @@ struct ProfileDocument: View {
 
     var body: some View {
         let blocks = MarkdownBlocks.parse(markdown)
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Space.s) {
             if blocks.isEmpty {
                 Text("No profile yet. Edit to write one; agents read it as context for every run.")
                     .foregroundStyle(.secondary)
@@ -85,9 +143,9 @@ struct ProfileDocument: View {
                 case .heading(let level, let text):
                     Text(inline(text))
                         .font(level == 1 ? .largeTitle.bold() : .title3.bold())
-                        .padding(.top, level == 1 ? 0 : 8)
+                        .padding(.top, level == 1 ? 0 : Space.s)
                 case .bullet(let text):
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                         Text("•")
                         Text(inline(text))
                     }
@@ -113,43 +171,40 @@ struct LinkedInProfileSection: View {
     let client: HubClient
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("From LinkedIn").font(.title3.bold())
+        HubSection("From LinkedIn") {
             if !response.criteriaDifferences.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("LinkedIn and your criteria differ", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: Space.s) {
+                    Label("LinkedIn and your criteria differ", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Tone.caution.color)
                     ForEach(response.criteriaDifferences, id: \.self) { difference in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                             Text("•")
                             Text(difference)
                         }
                     }
-                    Text("Recruiters find you by what LinkedIn says. Edit it there, or the criteria in Settings.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Recruiters find you by what LinkedIn says. Edit it there, or your criteria on the Criteria page.")
+                        .font(.hubCaption).foregroundStyle(.secondary)
                 }
-                .padding(12)
-                .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                .hubWell()
             }
             if let headline = response.profile.headline {
                 Text(headline).fontWeight(.medium)
             }
             if let positions = response.profile.positions, !positions.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Positions").font(.headline)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("Positions").font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(Array(positions.enumerated()), id: \.offset) { _, position in
-                        Text("\(position.title) at \(position.company)").fontWeight(.medium)
-                            + Text("  \(position.period)").foregroundStyle(.secondary)
+                        Text("\(Text("\(position.title) at \(position.company)").fontWeight(.medium))  \(Text(position.period).foregroundStyle(.secondary))")
                     }
                 }
             }
             if let skills = response.profile.skills, !skills.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Skills").font(.headline)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("Skills").font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
                     Text(skills.joined(separator: " · ")).foregroundStyle(.secondary)
                 }
             }
-            Text("Agents read this with your profile above. Import again from Settings › Network to update it.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text("Agents read this with your profile. Import again from Settings › Accounts to update it.")
+                .font(.hubCaption).foregroundStyle(.secondary)
             auditView
         }
         .textSelection(.enabled)
@@ -158,26 +213,21 @@ struct LinkedInProfileSection: View {
     /// The audit for recruiters: a button, then Claude's suggested edits.
     @ViewBuilder
     private var auditView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Audit for recruiters").font(.headline)
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text("Audit for recruiters").font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
             switch audit.state {
-            case .idle:
-                Button("Audit my LinkedIn profile", systemImage: "wand.and.stars") { Task { await audit.audit(with: client) } }
-                Text("Claude compares your profile with the postings that fit you and what recruiters approached you for, and suggests edits to make on LinkedIn.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .auditing:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Auditing…").foregroundStyle(.secondary)
+            case .idle, .auditing:
+                AsyncButton("Audit my LinkedIn profile", busyTitle: "Auditing…", systemImage: "wand.and.stars", isBusy: audit.state == .auditing) {
+                    await audit.audit(with: client)
                 }
+                Text("Claude compares your profile with the postings that fit you and what recruiters approached you for, and suggests edits to make on LinkedIn.")
+                    .font(.hubCaption).foregroundStyle(.secondary)
             case let .audited(markdown):
                 ProfileDocument(markdown: markdown)
-                    .padding(12)
-                    .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
-                Button("Audit again") { Task { await audit.audit(with: client) } }
+                    .hubWell()
+                AsyncButton("Audit again", busyTitle: "Auditing…") { await audit.audit(with: client) }
             case let .failed(reason):
-                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Button("Try again") { Task { await audit.audit(with: client) } }
+                HubErrorView(HubFailure("Couldn't audit the profile", advice: reason)) { Task { await audit.audit(with: client) } }
             }
         }
     }

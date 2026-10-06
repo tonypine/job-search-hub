@@ -20,11 +20,17 @@ public struct Application: Codable, Equatable, Identifiable, Sendable {
     public var notes: String?
     public var phaseEnteredAt: Date
     public var lastFollowedUpAt: Date?
+    /// When a person at the company first wrote back, as the hub read it in
+    /// the mail; nil until someone does.
+    public var contactedAt: Date?
+    /// When the application went out, the first time it reached Applied or
+    /// a later phase; kept when the card closes, nil for one never sent.
+    public var appliedAt: Date?
     public var createdAt: Date
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, closedReason, notes, phaseEnteredAt, lastFollowedUpAt, createdAt, updatedAt
+        case id, closedReason, notes, phaseEnteredAt, lastFollowedUpAt, contactedAt, appliedAt, createdAt, updatedAt
         case jobID = "jobId"
         case companyID = "companyId"
         case phaseID = "phaseId"
@@ -97,12 +103,113 @@ public struct PipelineBoard: Equatable, Sendable {
         cards.filter { $0.application.phaseID == phase.id }
     }
 
+    /// How many applications went out and how many a person answered, so a
+    /// run of unanswered ones shows before it costs weeks. An open card went
+    /// out once it reached Applied, or every phase after the first when none
+    /// is named so; it was answered when someone at the company wrote back or
+    /// the owner moved it past Applied. A closed card counts when the hub
+    /// dated it gone out, and was answered when someone wrote back, so a
+    /// rejection stays in the tally and a card dropped while saved doesn't.
+    public func getContactTally(now: Date, calendar: Calendar = .current) -> ContactTally {
+        let reading = ContactReading(phases: phases)
+        let closedPhaseIDs = Set(phases.filter(\.isClosed).map(\.id))
+        var tally = ContactTally()
+        for card in cards {
+            if closedPhaseIDs.contains(card.application.phaseID) {
+                guard card.application.appliedAt != nil else { continue }
+                tally.sent += 1
+                if card.application.contactedAt != nil {
+                    tally.heardBack += 1
+                }
+                continue
+            }
+            guard let answer = reading.getAnswer(to: card) else { continue }
+            tally.sent += 1
+            if answer == .heardBack {
+                tally.heardBack += 1
+            } else if card.getFollowUpStatus(now: now, calendar: calendar)?.isDue == true {
+                tally.unansweredPastFollowUp += 1
+            }
+        }
+        return tally
+    }
+
+    /// The cards the tally counts as unanswered past follow-up: they went
+    /// out, nobody answered, and their follow-up is due, so waiting longer
+    /// rarely helps and someone else at the company is the next route.
+    public func getUnansweredPastFollowUp(now: Date, calendar: Calendar = .current) -> Set<UUID> {
+        let reading = ContactReading(phases: phases)
+        return Set(cards.filter { card in
+            reading.getAnswer(to: card) == .unanswered && card.getFollowUpStatus(now: now, calendar: calendar)?.isDue == true
+        }.map(\.id))
+    }
+
+    /// How many cards' follow-ups are due today or overdue: the Pipeline's
+    /// badge in the sidebar, and what *Due only* shows.
+    public func getDueCount(now: Date, calendar: Calendar = .current) -> Int {
+        cards.count { $0.getFollowUpStatus(now: now, calendar: calendar)?.isDue == true }
+    }
+
     /// Puts the server's answer in place of the card's application, keeping
     /// the job and company the card shows.
     public mutating func replaceApplication(_ application: Application) {
         guard let index = cards.firstIndex(where: { $0.id == application.id }) else { return }
         cards[index].application = application
         cards.sort { $0.application.phaseEnteredAt > $1.application.phaseEnteredAt }
+    }
+}
+
+/// Whether an open card went out and was answered, read from the open phases.
+private struct ContactReading {
+    enum Answer {
+        case heardBack
+        case unanswered
+    }
+
+    private let applied: PipelinePhase?
+    private let firstSentPosition: Int?
+    private let positions: [UUID: Int]
+
+    init(phases: [PipelinePhase]) {
+        let openPhases = phases.filter { !$0.isClosed }
+        applied = openPhases.first { $0.name.caseInsensitiveCompare("Applied") == .orderedSame }
+        firstSentPosition = applied?.position ?? openPhases.dropFirst().first?.position
+        positions = Dictionary(uniqueKeysWithValues: openPhases.map { ($0.id, $0.position) })
+    }
+
+    /// How a sent card was answered; nil for a card that hasn't gone out or
+    /// is closed.
+    func getAnswer(to card: PipelineCard) -> Answer? {
+        guard let position = positions[card.application.phaseID] else { return nil }
+        let isPastApplied = applied.map { position > $0.position } ?? false
+        if card.application.contactedAt != nil || isPastApplied {
+            return .heardBack
+        }
+        return firstSentPosition.map { position >= $0 } == true ? .unanswered : nil
+    }
+}
+
+/// The applications that went out, and how they were answered.
+public struct ContactTally: Equatable, Sendable {
+    public var sent: Int
+    /// Sent applications a person at the company answered.
+    public var heardBack: Int
+    /// Open sent applications nobody answered whose follow-up is due.
+    public var unansweredPastFollowUp: Int
+
+    public init(sent: Int = 0, heardBack: Int = 0, unansweredPastFollowUp: Int = 0) {
+        self.sent = sent
+        self.heardBack = heardBack
+        self.unansweredPastFollowUp = unansweredPastFollowUp
+    }
+
+    /// "heard back on 2 of 25 sent · 18 unanswered past follow-up", or nil
+    /// when nothing went out yet.
+    public var text: String? {
+        guard sent > 0 else { return nil }
+        let answered = "heard back on \(heardBack) of \(sent) sent"
+        guard unansweredPastFollowUp > 0 else { return answered }
+        return "\(answered) · \(unansweredPastFollowUp) unanswered past follow-up"
     }
 }
 
@@ -213,6 +320,16 @@ public struct FollowUpRequest: Encodable, Sendable {
     }
 }
 
+/// A cold message to someone at a company, in the owner's words; the hub
+/// dates it today and has its follow-up fall due a week later.
+public struct OutreachRequest: Encodable, Equatable, Sendable {
+    public var note: String
+
+    public init(note: String) {
+        self.note = note
+    }
+}
+
 /// Sets a phase's follow-up interval; no days stops it asking for follow-ups.
 public struct FollowUpDaysRequest: Encodable, Sendable {
     public var days: Int?
@@ -246,6 +363,14 @@ public extension HubClient {
     func dismissApplication(_ id: UUID, note: String) async throws -> Application {
         let request = DismissApplicationRequest(note: note.trimmingCharacters(in: .whitespacesAndNewlines))
         return try await send("POST", "v1/applications/\(id.uuidString)/dismiss", body: request, as: ApplicationResponse.self).application
+    }
+
+    /// Records a cold message to someone at the company: its outreach card
+    /// moves to Applied, added when it has none, or counts a follow-up when
+    /// it is already there or further on.
+    func recordOutreach(companyID: UUID, note: String) async throws -> ApplicationResponse {
+        let request = OutreachRequest(note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+        return try await send("POST", "v1/companies/\(companyID.uuidString)/outreach", body: request, as: ApplicationResponse.self)
     }
 
     /// Puts a dismissed card back on the board, in the phase it left.

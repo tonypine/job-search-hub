@@ -8,18 +8,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 )
 
 const (
-	minimumOwnerTokenLength    = 32
-	defaultBoardPollInterval   = 15 * time.Minute
-	defaultJobFactsModel       = "qwen/qwen3.5-9b"
-	defaultJobFactsInterval    = time.Minute
-	defaultRuntimePort         = 8095
-	defaultRuntimeIdleTimeout  = 10 * time.Minute
-	defaultFeedPollInterval    = time.Hour
-	defaultBoardSearchInterval = 30 * time.Minute
-	defaultPublicURL           = "http://localhost:8090"
+	minimumOwnerTokenLength       = 32
+	defaultBoardPollInterval      = 15 * time.Minute
+	defaultJobFactsModel          = "qwen/qwen3.5-9b"
+	defaultJobFactsInterval       = time.Minute
+	defaultRuntimePort            = 8095
+	defaultRuntimeIdleTimeout     = 10 * time.Minute
+	defaultFeedPollInterval       = time.Hour
+	defaultBoardSearchInterval    = 30 * time.Minute
+	defaultBoardDiscoveryInterval = 6 * time.Hour
+	defaultPublicURL              = "http://localhost:8090"
 )
 
 type config struct {
@@ -31,6 +34,9 @@ type config struct {
 	// boardSearchInterval paces the search for the boards of the employers
 	// behind good and unclear feed jobs.
 	boardSearchInterval time.Duration
+	// boardDiscoveryInterval paces the bulk discovery of boards from
+	// Common Crawl's index.
+	boardDiscoveryInterval time.Duration
 	// jobFactsModelURL and jobFactsModel seed the task routes of a database
 	// that has none: the chat-completions API root and model every routed
 	// task starts on. Empty leaves a fresh database without model work.
@@ -74,6 +80,12 @@ type config struct {
 	// cvFolder where the PDFs go, one folder per job.
 	cvPrintCommand string
 	cvFolder       string
+	// jsearchAPIKey lets alert jobs no board has get their text from Google
+	// for Jobs, through JSearch at jsearchURL, up to jsearchMonthlyRequests
+	// requests a month; empty leaves the search off.
+	jsearchAPIKey          string
+	jsearchURL             string
+	jsearchMonthlyRequests int
 }
 
 // parseEnvironment reads the server's settings through lookup, which is
@@ -113,6 +125,9 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		return config{}, err
 	}
 	if parsed.boardSearchInterval, err = parseInterval(lookup, "HUB_BOARD_SEARCH_INTERVAL", defaultBoardSearchInterval); err != nil {
+		return config{}, err
+	}
+	if parsed.boardDiscoveryInterval, err = parseInterval(lookup, "HUB_BOARD_DISCOVERY_INTERVAL", defaultBoardDiscoveryInterval); err != nil {
 		return config{}, err
 	}
 	if parsed.jobFactsInterval, err = parseInterval(lookup, "HUB_JOB_FACTS_INTERVAL", defaultJobFactsInterval); err != nil {
@@ -173,6 +188,19 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	parsed.fullBriefModel = lookup("HUB_FULL_BRIEF_MODEL")
 	if parsed.fullBriefModel == "" {
 		parsed.fullBriefModel = "sonnet"
+	}
+	parsed.jsearchAPIKey = lookup("HUB_JSEARCH_API_KEY")
+	parsed.jsearchURL = lookup("HUB_JSEARCH_URL")
+	if parsed.jsearchURL == "" {
+		parsed.jsearchURL = postingtexts.DefaultJSearchURL
+	}
+	parsed.jsearchMonthlyRequests = postingtexts.DefaultMonthlySearches
+	if raw := lookup("HUB_JSEARCH_MONTHLY_REQUESTS"); raw != "" {
+		requests, err := strconv.Atoi(raw)
+		if err != nil || requests < 0 {
+			return config{}, fmt.Errorf("HUB_JSEARCH_MONTHLY_REQUESTS must be a count of requests, got %q", raw)
+		}
+		parsed.jsearchMonthlyRequests = requests
 	}
 	parsed.cvPrintCommand = lookup("HUB_CV_PRINT_BIN")
 	parsed.cvFolder = lookup("HUB_CV_FOLDER")

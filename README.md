@@ -8,6 +8,9 @@ It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions t
 
 - **The hub server** (`hub-server`) keeps companies, the watch list, job boards, people, agent runs, agent prompts and the owner's profile in Postgres. Every write is recorded in a change log with who made it: the owner, or one agent run.
 - **MCP tools** at `/mcp` are the hub's interface for Claude Code and agents. Agents can only write through them, and some tools are the owner's alone: the watch list, prompts and the profile.
+- **Follow-ups** fall due by pipeline phase, a week after applying by default. A cold message to a company, recorded with `record_outreach` or *Messaged someone…* on the company in the Mac app, puts its outreach card in Applied, so it falls due the same way. A mail you send that starts a thread with someone at a company in the hub, which has no open card, counts as one by itself, and an update says so. From 08:00 each follow-up due that day becomes an update on the Mac and the paired phones, once per due date. On the Mac's Pipeline page, a card that went out and nobody answered by its follow-up offers a second route: *Write to …* someone the company's dossier lists or who can introduce you, which drafts the message with the outreach prompt in the card's session for you to send, or *Find people*, which researches the company again when nobody is on file. *Followed up…* then restarts the count.
+- **Fresh matches** reach you while a posting is new. Boards are read every 15 minutes, and a job posted in the last three days whose brief judges it a strong match becomes an update on the Mac and the paired phones, once per job, saying how long ago it was posted. Matches found between 22:00 and 08:00 wait for the morning.
+- **Company suggestions** on the Companies page list the companies you follow on LinkedIn, and the ones on [startups.gallery](https://startups.gallery)'s remote list whose board has a fitting job open. The server reads that list once a week, robots.txt first and with spaced requests that name the hub, and keeps only each company's name, site and careers link. *Research* starts Add company for a suggestion.
 - **The `hub` CLI** lists the watch list, prints a dossier, and runs the company triage agent:
 
   ```
@@ -64,14 +67,16 @@ cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app
 open build/JobSearchHub.app
 ```
 
-In Settings, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a
 open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds.
+The build signs with an Apple Development certificate (`CODESIGN_IDENTITY` overrides which), so the Keychain keeps trusting the app across rebuilds. Without one in the keychain, or with `CODESIGN_IDENTITY=-`, it signs ad hoc. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
+
+The app works from the keyboard. **⌘K** (Go › Jump to…) finds a job, company, person or page, and runs the rare actions kept out of the toolbars: add a company or a job by URL, generate missing CVs, pause or resume the local models. A job, company or person opens in the inspector over the page you're on. In Decide, and in Today's Decide card, ↑↓ move through the jobs, Return opens one, and **P**, **L** and **S** pursue it, leave it for later or skip it, then bring up the next. ⌘N is the page's Add, and ⌘[ and ⌘] go back and forward in the inspector.
 
 ## Prompts
 
@@ -82,6 +87,70 @@ The prompts live only in the database; none are in this repo. A fresh database t
 ## Android
 
 `android/` holds the phone companion: updates and good-fit jobs, paired with the hub through a QR code from the Mac app's Settings › Phones. See `android/README.md`.
+
+## Releases
+
+Each merge to `main` that changes `android/` becomes a GitHub Release once `ci` passes: `android-v0.1.<N>`, where `N` is the commit count on `main`, with the signed `job-search-hub-0.1.<N>.apk` and a changelog of the app's commits since the previous release. A merge that touches only the server or the Mac app releases nothing. `.github/workflows/release.yml` does it, and `docs/decisions/0001-android-release-distribution.md` says why it works this way.
+
+To install a release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+
+The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
+
+### One-time setup
+
+Until the signing secrets exist, the release job fails at its first step, naming the missing ones, and publishes nothing.
+
+1. **Make the release key** on the Mac, outside the repository:
+
+   ```bash
+   keytool -genkeypair -v -storetype PKCS12 -keystore ~/job-search-hub-release.keystore \
+     -alias job-search-hub -keyalg RSA -keysize 4096 -validity 10000 \
+     -dname "CN=Job Search Hub"
+   ```
+
+   It asks for a password; with PKCS12 the key's password is the same one. **Store the keystore file and its password in the password manager before anything else.** Every release has to be signed with this key: without it, a new APK can't install over the old one, and the phone has to uninstall the app and pair again.
+
+2. **Add the repository secrets** in Settings › Secrets and variables › Actions › New repository secret:
+
+   | Secret | Value |
+   | --- | --- |
+   | `RELEASE_KEYSTORE_BASE64` | `base64 -i ~/job-search-hub-release.keystore \| pbcopy` |
+   | `RELEASE_KEYSTORE_PASSWORD` | the keystore's password |
+   | `RELEASE_KEY_ALIAS` | `job-search-hub` |
+   | `RELEASE_KEY_PASSWORD` | the same password |
+   | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
+   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each release is posted as a Job Search Hub project update. |
+
+   Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
+
+3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next app change.
+
+4. **Swap the debug build for the release**, once: a debug build is signed with another key, so the release can't install over it. Uninstall the app, install the release and pair again. Later releases install over it.
+
+A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
+
+To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
+
+## Where it runs
+
+The hub stays on the Mac rather than moving to an always-on PC (decided October 2026). The reasons:
+
+- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and Postgres restarts with Docker Desktop, so a locked screen doesn't take the hub down.
+- **Downtime loses nothing.** Gmail catches up from the stored history ID, Pub/Sub holds notifications for 7 days, alert emails of the last 30 days are read on the next pass, and board and feed polls pick up where they stopped. Moving would only add gathering while the Mac is shut or away.
+- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. The nightly `pg_dump` (see Setup) runs only with the native server, because the Docker image has no `pg_dump`. All of that would have to be set up again on a Windows Docker host.
+
+Revisit this if the PC turns out to run the local models well. If it does, move the model worker there first and leave the hub where it is.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and push to `main`. Jobs that only matter for one part of the repo skip when a change doesn't touch it, and one job, `ci`, passes when nothing it needs failed. `ci` is the only check `main` requires, so a skipped job never leaves a PR waiting.
+
+`main` is protected by `.github/rulesets/main.json`: changes land through a pull request with no required approvals, since Symphony opens PRs under the owner's account and the approval is moving the Linear ticket to `Merging`. `ci` from GitHub Actions has to pass, but the branch doesn't have to be up to date with `main`; the push run on `main` catches the rare conflict. Force pushes and deleting `main` are blocked, and nobody can bypass the rules, admins included: in an emergency, turn the ruleset off in Settings › Rules first.
+
+The ruleset and these settings need a repository admin, once:
+
+1. **Settings › Rules › Rulesets › New ruleset › Import a ruleset**, pick `.github/rulesets/main.json`, and create it.
+2. **Settings › General › Pull Requests**: allow squash merging only, since Symphony squash-merges; turn on **Allow auto-merge**, so Symphony can land an approved PR when `ci` goes green; turn on **Automatically delete head branches**.
 
 ## Layout
 

@@ -1,8 +1,9 @@
 import Foundation
 
-/// Where the app stands with the hub, as the Settings page reports it.
+/// Where the app stands with the hub, as Settings › Connection reports it.
 public enum ConnectionStatus: Equatable, Sendable {
     case unchecked
+    case waitingForKeychain
     case missingToken
     case serverUnreachable(String)
     case tokenRefused
@@ -12,6 +13,7 @@ public enum ConnectionStatus: Equatable, Sendable {
     public var message: String {
         switch self {
         case .unchecked: "Not checked yet."
+        case .waitingForKeychain: "Waiting for Keychain access."
         case .missingToken: "No owner token saved."
         case .serverUnreachable(let reason): "The hub is not reachable: \(reason)"
         case .tokenRefused: "The hub refused the token."

@@ -39,7 +39,7 @@ public struct ClaudeSessionContext: Decodable, Sendable {
 }
 
 /// What a session is about.
-public enum ClaudeSessionSubject: Equatable, Hashable, Sendable {
+public enum ClaudeSessionSubject: Codable, Equatable, Hashable, Sendable {
     case company(UUID)
     case job(UUID)
     /// The interview that deepens the owner's knowledge base.

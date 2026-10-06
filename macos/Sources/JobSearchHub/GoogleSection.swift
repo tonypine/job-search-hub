@@ -8,13 +8,13 @@ final class GoogleSectionModel {
     private(set) var status: GoogleStatus?
     private(set) var check: GoogleCheck?
     private(set) var isWorking = false
-    var errorMessage: String?
+    var failure: HubFailure?
 
     func load(with client: HubClient) async {
         do {
             status = try await client.get("v1/google", as: GoogleStatus.self)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't read the Google connection", error)
         }
     }
 
@@ -33,13 +33,13 @@ final class GoogleSectionModel {
                 let latest = try await client.get("v1/google", as: GoogleStatus.self)
                 if let connectedAt = latest.connection?.connectedAt, connectedAt != before {
                     status = latest
-                    errorMessage = nil
+                    failure = nil
                     return
                 }
             }
-            errorMessage = "No sign-in arrived. Finish it in the browser, or connect again."
+            failure = HubFailure("Google didn't connect", advice: "No sign-in arrived. Finish it in the browser, or connect again.")
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't connect Google", error)
         }
     }
 
@@ -48,12 +48,12 @@ final class GoogleSectionModel {
         defer { isWorking = false }
         do {
             check = try await client.get("v1/google/check", as: GoogleCheck.self)
-            errorMessage = nil
+            failure = nil
         } catch HubError.server(_, let message) {
-            errorMessage = message
+            failure = HubFailure("The Google check failed", advice: message)
             await load(with: client)
         } catch {
-            errorMessage = String(describing: error)
+            failure = HubFailure("Couldn't check Google", error)
         }
     }
 }
@@ -68,27 +68,28 @@ struct GoogleSection: View {
         Section {
             if let status = model.status {
                 Label(status.summary, systemImage: status.needsSignIn ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(status.needsSignIn ? AnyShapeStyle(.orange) : AnyShapeStyle(.green))
+                    .foregroundStyle((status.needsSignIn ? Tone.caution : Tone.positive).color)
                 if let check = model.check {
                     Text("Reads \(check.labelCount) Gmail labels and \(check.calendarCount) calendars as \(check.email).")
                         .foregroundStyle(.secondary)
                 }
+                if model.failure != nil {
+                    HubErrorView($model.failure)
+                }
                 HStack {
-                    if let errorMessage = model.errorMessage {
-                        Text(errorMessage).foregroundStyle(.red)
-                    }
                     Spacer()
-                    if model.isWorking {
-                        ProgressView().controlSize(.small)
-                    }
                     if status.connection != nil && !status.needsSignIn {
-                        Button("Check") { Task { await model.runCheck(with: client) } }
+                        AsyncButton("Check", busyTitle: "Checking…") { await model.runCheck(with: client) }
                     }
                     if status.configured {
-                        Button(status.connection == nil ? "Connect Google" : "Connect again") { Task { await model.connect(with: client) } }
+                        AsyncButton(status.connection == nil ? "Connect Google" : "Connect again", busyTitle: "Waiting for Google…") {
+                            await model.connect(with: client)
+                        }
                     }
                 }
                 .disabled(model.isWorking)
+            } else if model.failure != nil {
+                HubErrorView($model.failure) { Task { await model.load(with: client) } }
             } else {
                 ProgressView().controlSize(.small)
             }

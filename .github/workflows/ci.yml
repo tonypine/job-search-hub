@@ -1,0 +1,322 @@
+# One workflow with one required check, `ci`. There is deliberately no
+# workflow-level path filter: a workflow skipped that way never reports, so a
+# required check would wait at "Expected" forever. Jobs that only matter for
+# some paths read the flags from `changes` instead, and `ci` treats a skipped
+# job as passing.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.flags.outputs.server }}
+      macos: ${{ steps.flags.outputs.macos }}
+      android: ${{ steps.flags.outputs.android }}
+      scripts: ${{ steps.flags.outputs.scripts }}
+      ci: ${{ steps.flags.outputs.ci }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          server=false macos=false android=false scripts=false ci=false all=false
+
+          case "$EVENT" in
+            pull_request) base=$PR_BASE ;;
+            push) base=$PUSH_BEFORE ;;
+            *) base= ;;
+          esac
+
+          # A schedule or manual run, a new branch (all-zero before) or a
+          # force push (before no longer in history) has nothing to diff.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "Event $EVENT has no base to diff against; setting every flag."
+            all=true
+          else
+            echo "Files changed since $base:"
+            git diff --name-only "$base...HEAD" > "$RUNNER_TEMP/changed"
+            sed 's/^/  /' "$RUNNER_TEMP/changed"
+            while IFS= read -r file; do
+              case "$file" in
+                server/*|compose.yaml) server=true ;;
+                macos/*) macos=true ;;
+                android/*) android=true ;;
+                scripts/*) scripts=true ;;
+                .github/*) all=true ;;
+              esac
+            done < "$RUNNER_TEMP/changed"
+          fi
+
+          if [ "$all" = true ]; then
+            server=true macos=true android=true scripts=true ci=true
+          fi
+
+          {
+            echo "server=$server"
+            echo "macos=$macos"
+            echo "android=$android"
+            echo "scripts=$scripts"
+            echo "ci=$ci"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  server-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    env:
+      STATICCHECK_VERSION: v0.8.1 # staticcheck 2026.2.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            for file in $unformatted; do
+              echo "::error file=server/$file::not gofmt-formatted"
+            done
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # setup-go only saves its cache when go.sum changes, so it would rarely
+      # hold staticcheck. This cache keeps the binary, in a directory per Go
+      # version, and staticcheck's analysis cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/staticcheck
+            ~/.cache/staticcheck-bin
+          key: staticcheck-${{ runner.os }}-${{ env.STATICCHECK_VERSION }}-${{ hashFiles('server/go.mod', 'server/go.sum') }}
+          restore-keys: staticcheck-${{ runner.os }}-${{ env.STATICCHECK_VERSION }}-
+
+      - name: staticcheck
+        run: |
+          export STATICCHECK_CACHE="$HOME/.cache/staticcheck"
+          bin="$HOME/.cache/staticcheck-bin/$(go env GOVERSION)"
+          if [ ! -x "$bin/staticcheck" ]; then
+            GOBIN="$bin" go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
+          fi
+          "$bin/staticcheck" -version
+          "$bin/staticcheck" ./...
+
+      - name: go mod tidy
+        run: go mod tidy -diff
+
+  # The whole Go suite against a throwaway Postgres 18. Every store and tool
+  # test migrates a brand-new database through testdatabase.New, so a migration
+  # that doesn't apply fails here; there is no separate migration job.
+  server-test:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          # Not a secret: the database lives only as long as the job.
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HUB_TEST_DATABASE_URL: postgres://hub:hub@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # The runner's own client is older, and pg_dump refuses a newer server.
+      # The PATH entry wins over pg_wrapper, which could pick the old one.
+      - name: Install the Postgres 18 client
+        working-directory: .
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $VERSION_CODENAME-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends postgresql-client-18
+          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+
+      - name: Check pg_dump is version 18
+        run: |
+          pg_dump --version
+          pg_dump --version | grep -Eq ' 18(\.|$)'
+
+      # The backup test skips when pg_dump is missing; here it has to run.
+      - name: Backup test runs, not skips
+        run: |
+          go test -count=1 -v -run '^TestADumpIsReadableAndAFailedOneLeavesNoFile$' ./internal/databasebackup \
+            | tee "$RUNNER_TEMP/backup-test.log"
+          grep -q -- '--- PASS: TestADumpIsReadableAndAFailedOneLeavesNoFile' "$RUNNER_TEMP/backup-test.log"
+
+      # -count=1: setup-go restores GOCACHE, and a cached result never touches
+      # the database, so the weekly run would test nothing.
+      - name: go test
+        run: go test -count=1 ./...
+
+  # Runs only when macos/ changes: the Swift tests run against StubHub, not
+  # the server, and macOS minutes cost 10x Linux ones. It never runs
+  # Scripts/make-app.sh, which signs with a Keychain identity CI doesn't have.
+  macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    # Package.swift targets macOS 26. Move both pins together when a newer
+    # image goes GA.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      XCODE_VERSION: "26.6"
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: xcode
+        name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app"
+          xcodebuild -version
+          swift --version
+          echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: macos/.build
+          key: swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-${{ hashFiles('macos/Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Caches Gradle User Home and validates the wrapper. The basic provider is
+      # the open-source one; the default, enhanced, is a commercial service.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+
+      # android/gradle.properties points Gradle at the Mac's Homebrew JDK. A
+      # Gradle User Home property wins over the project's, so the repo keeps it.
+      - name: Point Gradle at the runner's JDK
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.java.home=$JAVA_HOME" >> ~/.gradle/gradle.properties
+
+      # assembleRelease builds the unsigned release APK, so a change that
+      # breaks the release build (lintVitalRelease included) fails here rather
+      # than in release.yml after the merge.
+      - name: Test, lint and build
+        run: ./gradlew :core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
+
+  # The release scripts that release.yml runs after a merge.
+  release-scripts:
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck scripts/release/*.sh
+
+      - name: Test
+        run: scripts/release/test.sh
+
+  # The one check branch protection requires. Add every new job to `needs`.
+  ci:
+    if: always()
+    needs: [changes, server-static, server-test, macos, android, release-scripts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$NEEDS" | jq -e '[.[].result] | any(. == "failure" or . == "cancelled")' > /dev/null; then
+            echo "A needed job failed or was cancelled."
+            exit 1
+          fi

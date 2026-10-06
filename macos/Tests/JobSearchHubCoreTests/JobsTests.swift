@@ -112,7 +112,16 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     #expect(restoreBody?["reason"] == nil)
 }
 
-@Test func dismissedJobsAreAStatusOfTheirOwn() {
+@Test func skippedJobsAreAStatusOfTheirOwnThatTheHubCallsDismissed() {
     #expect(JobsQuery.makeItems(search: "", status: .dismissed, limit: 100).contains(URLQueryItem(name: "status", value: "dismissed")))
-    #expect(JobStatusFilter.dismissed.title == "Dismissed")
+    #expect(JobStatusFilter.dismissed.title == "Skipped")
+}
+
+@Test func aCompanysOpenJobsAreAskedForByItsID() {
+    let companyID = UUID()
+    let query = CompanyJobs.makeQuery(companyID: companyID)
+
+    #expect(query.contains(URLQueryItem(name: "company_id", value: companyID.uuidString)))
+    #expect(query.contains(URLQueryItem(name: "status", value: "open")))
+    #expect(query.contains(URLQueryItem(name: "limit", value: String(JobsQuery.pageSize))))
 }

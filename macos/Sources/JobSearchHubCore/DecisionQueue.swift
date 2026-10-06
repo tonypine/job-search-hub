@@ -20,7 +20,8 @@ public struct DecisionQueueResponse: Decodable, Sendable {
 }
 
 /// How deciding goes over a period: the decisions by kind, how long jobs
-/// waited for them, and how many good or unclear jobs seen got decided.
+/// waited for them, and how many jobs seen that don't fail the screen got
+/// decided.
 public struct DecisionSignals: Decodable, Equatable, Sendable {
     public var since: Date
     public var decisions: [String: Int]
@@ -29,14 +30,15 @@ public struct DecisionSignals: Decodable, Equatable, Sendable {
     public var goodOrUnclearDecided: Int
 
     /// One line for the Decide page: "This week: 1 pursued, 2 skipped, 0 for
-    /// later · median 36 hours to decide · 9 of 127 good or unclear jobs decided".
+    /// later · median 36 hours to decide · 9 of 127 jobs that don't fail the
+    /// screen decided".
     public var summary: String {
         let counts = "This week: \(decisions["pursue"] ?? 0) pursued, \(decisions["skip"] ?? 0) skipped, \(decisions["later"] ?? 0) for later"
         var parts = [counts]
         if let hours = medianHoursToDecide {
             parts.append("median \(Self.formatWait(hours)) to decide")
         }
-        parts.append("\(goodOrUnclearDecided) of \(goodOrUnclearSeen) good or unclear jobs decided")
+        parts.append("\(goodOrUnclearDecided) of \(goodOrUnclearSeen) jobs that don't fail the screen decided")
         return parts.joined(separator: " · ")
     }
 
@@ -64,5 +66,34 @@ public extension HubClient {
 
     func getDecisionSignals() async throws -> DecisionSignals {
         try await get("v1/decision-signals", as: DecisionSignals.self)
+    }
+}
+
+/// Deciding jobs from the keyboard in a list: P, L and S for Pursue, Later
+/// and Skip, after which the next job comes up.
+public enum KeyboardDecision {
+    /// The decision a key makes, in either case; nil for any other key.
+    public static func getDecision(for key: Character) -> JobDecisionKind? {
+        switch key.lowercased() {
+        case "p": .pursue
+        case "l": .later
+        case "s": .skip
+        default: nil
+        }
+    }
+
+    /// The job to bring up once one is decided: the one after it, or the one
+    /// before when it was last; nil when it was the only one or isn't listed.
+    public static func getNextID(after id: UUID, in ids: [UUID]) -> UUID? {
+        guard let index = ids.firstIndex(of: id) else { return nil }
+        if index + 1 < ids.count { return ids[index + 1] }
+        return index > 0 ? ids[index - 1] : nil
+    }
+
+    /// The job a step up or down from the one shown, which stops at either
+    /// end; the first when none is shown.
+    public static func move(from id: UUID?, by step: Int, in ids: [UUID]) -> UUID? {
+        guard let id, let index = ids.firstIndex(of: id) else { return ids.first }
+        return ids[min(max(index + step, 0), ids.count - 1)]
     }
 }

@@ -11,8 +11,8 @@ struct JobsFilterPopover: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                section("Fit") {
+            VStack(alignment: .leading, spacing: Space.l) {
+                section("Screen") {
                     ForEach([FitLevel.good, .unclear, .poor], id: \.self) { level in
                         Toggle(describe(level.title, choices.fitLevelCounts[level, default: 0]), isOn: makeShownBinding(level, hiddenIn: \.hiddenFitLevels))
                     }
@@ -39,16 +39,15 @@ struct JobsFilterPopover: View {
                 }
             }
             .toggleStyle(.checkbox)
-            .padding(16)
+            .padding(Space.l)
         }
         .frame(width: 420)
         .frame(maxHeight: 600)
     }
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
-            LazyVGrid(columns: grid, alignment: .leading, spacing: 6, content: content)
+        HubSection(title) {
+            LazyVGrid(columns: grid, alignment: .leading, spacing: Space.s, content: content)
         }
     }
 

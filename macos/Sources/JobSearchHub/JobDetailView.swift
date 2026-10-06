@@ -6,12 +6,12 @@ import SwiftUI
 @Observable
 final class JobDetailModel {
     private(set) var details: JobDetails?
-    private(set) var loadError: String?
-    var actionError: String?
+    private(set) var loadError: HubFailure?
+    var actionError: HubFailure?
     /// Where a "Read facts now" run stands, while one is going.
     private(set) var factsReadState: JobFactsReadState = .notQueued
     private(set) var isReadingFacts = false
-    var factsError: String?
+    var factsError: HubFailure?
     private(set) var isWritingFullBrief = false
 
     func load(_ jobID: UUID, with client: HubClient) async {
@@ -20,7 +20,7 @@ final class JobDetailModel {
             loadError = nil
         } catch {
             details = nil
-            loadError = String(describing: error)
+            loadError = HubFailure("Couldn't load the job", error)
         }
     }
 }
@@ -46,7 +46,7 @@ extension JobDetailModel {
             await load(jobID, with: client)
         } catch is CancellationError {
         } catch {
-            factsError = String(describing: error)
+            factsError = HubFailure("Couldn't read the facts", error)
         }
     }
 }
@@ -62,7 +62,20 @@ extension JobDetailModel {
             _ = try await decisions.decide(jobID, decision, reason: reason, with: client)
             await load(jobID, with: client)
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't record the decision", error)
+        }
+    }
+
+    /// Counts a follow-up on the job's application, then shows the job as it
+    /// now stands.
+    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, with client: HubClient) async {
+        do {
+            _ = try await client.send(
+                "POST", "v1/applications/\(applicationID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self
+            )
+            await load(jobID, with: client)
+        } catch {
+            actionError = HubFailure("Couldn't record the follow-up", error)
         }
     }
 
@@ -80,120 +93,98 @@ extension JobDetailModel {
                 await load(jobID, with: client)
                 if let brief = details?.brief, brief.isFull, brief.writtenAt != writtenBefore { return }
             }
-            actionError = "Claude hasn't written the brief yet; it shows here once it's saved."
+            actionError = HubFailure("The full brief isn't ready", advice: "Claude hasn't written the brief yet; it shows here once it's saved.")
         } catch is CancellationError {
         } catch {
-            actionError = String(describing: error)
+            actionError = HubFailure("Couldn't ask for the full brief", error)
         }
     }
 }
 
-/// One job's details, read from the hub: what the board publishes, the facts
-/// read from the posting, and the posting itself.
-/// Which side of a job or company panel shows: what the hub knows, or its
-/// Claude session.
-enum PanelSide: String, CaseIterable, Identifiable {
-    case details = "Details"
-    case session = "Session"
-
-    var id: String { rawValue }
-}
-
-/// A job's panel: its details, or its Claude session.
-struct JobPanel: View {
-    let jobID: UUID
-    let client: HubClient
-    /// Opens on the Session side and starts or resumes the session there.
-    var opensSession = false
-    @State private var side: PanelSide = .details
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Show", selection: $side) {
-                ForEach(PanelSide.allCases) { side in Text(side.rawValue).tag(side) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(8)
-            switch side {
-            case .details: JobDetailView(jobID: jobID, client: client)
-            case .session: ClaudeSessionPane(subject: .job(jobID), client: client, startsOnAppear: opensSession)
-            }
-        }
-        .onAppear { if opensSession { side = .session } }
-    }
-}
-
+/// One job in the inspector: its header and actions, then Overview (the
+/// brief, the screen, the people), Prep once pursued (the CV and the
+/// interview pack), Posting (the board's facts, the facts read, the posting)
+/// and its Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
+    @Binding var tab: InspectorTab
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
+    @Environment(DetailsInspector.self) private var inspector
     @State private var model = JobDetailModel()
-    @State private var isAskingForDismissal = false
+    @State private var isAskingToSkip = false
     @State private var isAskingForFix = false
+    @State private var followingUpApplicationID: UUID?
+    @State private var followUpNote = ""
     @Environment(RemoteTaskRunner.self) private var taskRunner
-    @State private var isPostingShown = false
 
     var body: some View {
         Group {
             if let details = model.details, details.job.id == jobID {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        header(details)
-                        actions(details)
-                        brief(details.brief)
-                        if details.decision?.decision == .pursue || details.cvID != nil {
-                            JobCVSection(jobID: jobID, details: details, client: client)
-                        }
+                EntityInspector(tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab) {
+                    header(details)
+                    actions(details)
+                } content: { tab in
+                    if model.actionError != nil {
+                        HubErrorView($model.actionError)
+                    }
+                    switch tab {
+                    case .prep:
+                        JobCVSection(jobID: jobID, details: details, client: client)
                         if details.decision?.decision == .pursue {
                             InterviewPackSection(jobID: jobID, client: client)
                         }
-                        screenOutAnswers(details.screenOut ?? [])
-                        if let connections = details.connections, !connections.isEmpty {
-                            section("People you know at \(details.companyName ?? "this company")") {
-                                ConnectionList(connections: connections)
-                            }
+                    case .posting:
+                        if model.factsError != nil {
+                            HubErrorView($model.factsError)
                         }
-                        fitChecks(details.fit)
                         boardFacts(details.job)
                         readFacts(details.facts)
-                        if let description = details.job.description, !description.isEmpty {
-                            // With a brief to decide from, the posting folds away.
-                            DisclosureGroup(isExpanded: Binding(get: { isPostingShown || details.brief == nil }, set: { isPostingShown = $0 })) {
-                                Text(description).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
-                            } label: {
-                                Text("Posting").font(.headline)
-                            }
-                        }
+                        posting(details.job)
+                    case .session:
+                        InspectorSessionTab(subject: .job(jobID), client: client)
+                    default:
+                        brief(details.brief)
+                        screen(details)
+                        people(details)
                     }
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if let loadError = model.loadError {
-                ContentUnavailableView("Could not load the job", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                HubErrorView(loadError, style: .page) { Task { await model.load(jobID, with: client) } }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
+        .alert("Followed up", isPresented: Binding(get: { followingUpApplicationID != nil }, set: { if !$0 { followingUpApplicationID = nil } })) {
+            TextField("What you did", text: $followUpNote)
+            Button("Record") {
+                guard let applicationID = followingUpApplicationID else { return }
+                let note = followUpNote
+                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, with: client) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Restarts the count to the next follow-up.")
+        }
         .sheet(isPresented: $isAskingForFix) {
             FixJobSheet(jobTitle: model.details?.job.title ?? "this job") { note in
                 do {
                     try await taskRunner.fixJob(jobID, note: note, with: client)
                     return nil
                 } catch {
-                    return String(describing: error)
+                    return HubFailure("Couldn't ask for the fix", error)
                 }
             }
         }
-        .sheet(isPresented: $isAskingForDismissal) {
-            DismissJobsSheet(jobCount: 1, actionName: "Skip") { reason in
+        .sheet(isPresented: $isAskingToSkip) {
+            SkipJobsSheet(jobCount: 1) { reason in
                 do {
                     _ = try await decisions.decide(jobID, .skip, reason: reason, with: client)
                     return nil
                 } catch {
-                    return String(describing: error)
+                    return HubFailure("Couldn't skip the job", error)
                 }
             }
         }
@@ -203,75 +194,109 @@ struct JobDetailView: View {
                 await unseen.markSeen(UpdateSelection(jobID: jobID), with: client)
             }
         }
-        .alert("Could not update the job", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(model.actionError ?? "")
-        }
-        .alert("Could not read the facts", isPresented: Binding(get: { model.factsError != nil }, set: { if !$0 { model.factsError = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(model.factsError ?? "")
-        }
     }
 
+    /// Prep opens once the job is pursued, or once it has a CV.
+    private func hasPrep(_ details: JobDetails) -> Bool {
+        details.decision?.decision == .pursue || details.cvID != nil
+    }
+
+    /// The job's kind and company, its title and location, and up to three
+    /// chips: the brief's match, the screen, and where the job stands.
     private func header(_ details: JobDetails) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(details.job.title).font(.title2.weight(.semibold)).textSelection(.enabled)
-            Text([details.companyName, details.job.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .foregroundStyle(.secondary)
+        EntityHeader(
+            kind: "Job", parent: details.companyName, openParent: details.job.companyID.map { id -> () -> Void in { inspector.open(.company(id)) } },
+            title: details.job.title, facts: [details.job.location, describePosted(details.job)]
+        ) {
+            if let brief = details.brief {
+                ToneChip(brief.match)
+            }
+            ToneChip(screen: details.fit.level)
             if details.job.dismissedAt != nil {
-                let reason = details.job.dismissalReason ?? ""
-                Label(reason.isEmpty ? "Dismissed" : "Dismissed: \(reason)", systemImage: "eye.slash").foregroundStyle(.orange)
+                ToneChip("Skipped", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
+                    .help(details.job.dismissalReason.map { "Skipped: \($0)" } ?? "Skipped")
+            } else if let phase = details.phase {
+                ToneChip("In \(phase.name)", tone: .accent, symbol: "rectangle.split.3x1")
+            } else if details.decision?.decision == .later {
+                ToneChip("Later", tone: .neutral, symbol: "clock")
             }
         }
     }
 
-    /// Open the posting, and decide: Pursue, Skip or Later, with the decision
-    /// already made.
+    /// The decision to make: Pursue, the one primary action, then Later and
+    /// Skip, with the posting and Fix in the overflow. A skipped job's next
+    /// step is Restore, one in an open phase of the pipeline is Followed
+    /// up…, and a closed one's is its posting.
     private func actions(_ details: JobDetails) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                if let url = URL(string: details.job.url) {
-                    Button("Open posting", systemImage: "safari") { NSWorkspace.shared.open(url) }
-                }
-                if let phase = details.phase {
-                    Label("In \(phase.name)", systemImage: "rectangle.split.3x1").foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.s) {
+            ActionBar {
+                if details.job.dismissedAt != nil {
+                    restoreButton
+                } else if let application = details.application, details.phase?.isClosed == false {
+                    Button("Followed up…", systemImage: "arrowshape.turn.up.right") {
+                        followUpNote = ""
+                        followingUpApplicationID = application.id
+                    }
+                    .help("Restarts the count to the next follow-up")
+                } else if details.phase != nil {
+                    openPostingButton(details)
                 } else {
-                    Button("Pursue", systemImage: "arrow.up.forward.circle") {
-                        Task { await model.decide(jobID, .pursue, through: decisions, with: client) }
+                    AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward") {
+                        await model.decide(jobID, .pursue, through: decisions, with: client)
                     }
                     .help("Put it on the pipeline")
                 }
-                if details.job.dismissedAt != nil {
-                    Button("Restore", systemImage: "arrow.uturn.backward") {
-                        Task {
-                            do {
-                                _ = try await decisions.restore([jobID], with: client)
-                            } catch {
-                                model.actionError = String(describing: error)
-                            }
-                        }
-                    }
-                } else {
-                    Button("Skip…", systemImage: "eye.slash") { isAskingForDismissal = true }
-                        .help("Dismiss it, with a reason")
-                }
+            } secondary: {
                 if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
-                    Button("Later", systemImage: "clock") { Task { await model.decide(jobID, .later, through: decisions, with: client) } }
-                        .help("Leave it for another day")
+                    AsyncButton("Later", busyTitle: "Later", systemImage: "clock") {
+                        await model.decide(jobID, .later, through: decisions, with: client)
+                    }
+                    .help("Leave it for another day")
                 }
-                if taskRunner.fixingJobIDs.contains(jobID) {
-                    ProgressView().controlSize(.small)
-                    Text("Fixing…").foregroundStyle(.secondary)
-                } else {
-                    Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
-                        .help("Say what's wrong with its details, and an agent corrects them")
+                if details.phase?.isClosed == false && details.application != nil {
+                    openPostingButton(details)
                 }
+                if details.job.dismissedAt == nil {
+                    Button("Skip…", systemImage: "eye.slash") { isAskingToSkip = true }
+                        .help("Take it out as not for you, with a reason")
+                }
+            } overflow: {
+                if details.phase == nil {
+                    openPostingButton(details)
+                }
+                Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
+                    .disabled(taskRunner.fixingJobIDs.contains(jobID))
+                    .help("Say what's wrong with its details, and an agent corrects them")
             }
             if let decision = details.decision {
-                Text(describeDecision(decision)).font(.caption).foregroundStyle(.secondary)
+                Text(describeDecision(decision)).font(.hubCaption).foregroundStyle(.secondary)
             }
+            if taskRunner.fixingJobIDs.contains(jobID) {
+                Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// "Posted 2 days ago", from the board's date or else when the hub first
+    /// saw it.
+    private func describePosted(_ job: Job) -> String {
+        "Posted \((job.publishedAt ?? job.firstSeenAt).formatted(.relative(presentation: .named)))"
+    }
+
+    private var restoreButton: some View {
+        AsyncButton("Restore", busyTitle: "Restoring…", systemImage: "arrow.uturn.backward") {
+            do {
+                _ = try await decisions.restore([jobID], with: client)
+            } catch {
+                model.actionError = HubFailure("Couldn't restore the job", error)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func openPostingButton(_ details: JobDetails) -> some View {
+        if let url = URL(string: details.job.url) {
+            Button("Open posting", systemImage: "safari") { NSWorkspace.shared.open(url) }
         }
     }
 
@@ -285,120 +310,101 @@ struct JobDetailView: View {
 
     /// The brief the decision rests on: the match and why, then the strengths
     /// and weaknesses with the knowledge-base entries behind them.
-    @ViewBuilder
     private func brief(_ brief: JobBrief?) -> some View {
-        section("Brief") {
+        HubSection("Brief") {
             if let brief {
-                HStack(spacing: 8) {
-                    MatchLabel(match: brief.match)
-                    Text(brief.isFull ? "by Claude" : "by the local model").font(.caption).foregroundStyle(.secondary)
-                    if brief.isStale {
-                        Label("Your knowledge base changed since", systemImage: "clock.arrow.circlepath").font(.caption).foregroundStyle(.orange)
-                    }
+                if brief.isStale {
+                    Label("Your knowledge base changed since", systemImage: "clock.arrow.circlepath")
+                        .font(.hubCaption)
+                        .foregroundStyle(Tone.caution.color)
                 }
                 Text(brief.reason).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                briefPoints("Strengths", brief.strengths, in: brief, symbol: "plus.circle.fill", color: .green)
-                briefPoints("Weaknesses", brief.weaknesses, in: brief, symbol: "minus.circle.fill", color: .orange)
+                briefPoints("Strengths", brief.strengths, in: brief, symbol: "plus.circle.fill", tone: .positive)
+                briefPoints("Weaknesses", brief.weaknesses, in: brief, symbol: "minus.circle.fill", tone: .caution)
             } else {
-                Text("Not briefed yet. The local model briefs good and unclear jobs once their facts are read.").foregroundStyle(.secondary)
+                Text("Not briefed yet. The local model briefs the jobs that don't fail the screen once their facts are read.").foregroundStyle(.secondary)
             }
             if brief?.isFull != true {
-                HStack(spacing: 8) {
-                    Button(model.isWritingFullBrief ? "Writing…" : "Write full brief", systemImage: "sparkles") {
-                        Task { await model.writeFullBrief(jobID, with: client) }
-                    }
-                    .disabled(model.isWritingFullBrief)
-                    .help("Have Claude write a fuller brief now")
-                    if model.isWritingFullBrief {
-                        ProgressView().controlSize(.small)
-                    }
+                AsyncButton("Write full brief", busyTitle: "Writing…", systemImage: "sparkles", isBusy: model.isWritingFullBrief) {
+                    await model.writeFullBrief(jobID, with: client)
                 }
+                .help("Have Claude write a fuller brief now")
+            }
+        } trailing: {
+            if let brief {
+                Text(brief.isFull ? "by Claude" : "by the local model").font(.hubCaption).foregroundStyle(.secondary)
             }
         }
     }
 
     @ViewBuilder
-    private func briefPoints(_ title: String, _ points: [JobBriefPoint], in brief: JobBrief, symbol: String, color: Color) -> some View {
+    private func briefPoints(_ title: String, _ points: [JobBriefPoint], in brief: JobBrief, symbol: String, tone: Tone) -> some View {
         if !points.isEmpty {
-            Text(title).font(.subheadline.weight(.semibold))
+            Text(title).font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
             ForEach(Array(points.enumerated()), id: \.offset) { _, point in
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(point.point).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        let entries = brief.getEntries(of: point)
-                        if !entries.isEmpty {
-                            Text(entries.map(\.label).joined(separator: "; ")).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                } icon: {
-                    Image(systemName: symbol).foregroundStyle(color)
-                }
+                VerdictRow(
+                    symbol: symbol, tone: tone, reason: point.point,
+                    note: brief.getEntries(of: point).map(\.label).joined(separator: "; ")
+                )
             }
         }
     }
 
-    /// What could screen you out at once, answered from the posting's words.
+    /// Whether a rule rules you out: the screen-out answers from the
+    /// posting's words, then the criteria checks they don't repeat.
     @ViewBuilder
-    private func screenOutAnswers(_ answers: [ScreenOutAnswer]) -> some View {
-        if !answers.isEmpty {
-            section("Screen-out checks") {
-                ForEach(answers) { answer in
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(answer.name).fontWeight(.medium) + Text("  \(answer.answer)").foregroundStyle(.secondary)
-                            if let evidence = answer.evidence {
-                                Text("\u{201C}\(evidence)\u{201D}").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                        }
-                    } icon: {
-                        if let verdict = answer.verdict {
-                            Image(systemName: verdictSymbol(verdict)).foregroundStyle(verdictColor(verdict))
-                        } else {
-                            Image(systemName: "info.circle").foregroundStyle(.secondary)
-                        }
-                    }
+    private func screen(_ details: JobDetails) -> some View {
+        let rows = details.screenRows
+        if !rows.isEmpty {
+            HubSection("Screen") {
+                // A screen-out answer and a criteria check can share a name.
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    VerdictRow(row.verdict, name: row.name, reason: row.reason, evidence: row.evidence)
+                }
+            } trailing: {
+                ToneChip(details.fit.level)
+            }
+        }
+    }
+
+    /// The people you know at the company, and a link to its People tab.
+    @ViewBuilder
+    private func people(_ details: JobDetails) -> some View {
+        let connections = details.connections ?? []
+        if !connections.isEmpty || details.job.companyID != nil {
+            HubSection("People") {
+                if connections.isEmpty {
+                    Text("No one you know at \(details.companyName ?? "this company") yet.").foregroundStyle(.secondary)
+                }
+                ConnectionList(connections: connections)
+            } trailing: {
+                if let companyID = details.job.companyID {
+                    Button("Company") { inspector.open(.company(companyID), tab: .people) }
+                        .buttonStyle(.link)
+                        .help("Everyone at \(details.companyName ?? "the company")")
                 }
             }
         }
     }
 
-    private func fitChecks(_ fit: JobFit) -> some View {
-        section("Fit") {
-            HStack(spacing: 6) {
-                FitLabel(level: fit.level)
-                Text("for your criteria").foregroundStyle(.secondary)
-            }
-            ForEach(fit.checks) { check in
-                Label {
-                    Text(check.name).fontWeight(.medium) + Text("  \(check.reason)").foregroundStyle(.secondary)
-                } icon: {
-                    Image(systemName: verdictSymbol(check.verdict)).foregroundStyle(verdictColor(check.verdict))
+    @ViewBuilder
+    private func posting(_ job: Job) -> some View {
+        if let description = job.description, !description.isEmpty {
+            HubSection("Posting") {
+                Text(description).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            } trailing: {
+                if let url = URL(string: job.url) {
+                    Link("Open", destination: url)
                 }
             }
-        }
-    }
-
-    private func verdictSymbol(_ verdict: FitVerdict) -> String {
-        switch verdict {
-        case .yes: "checkmark.circle.fill"
-        case .no: "xmark.circle.fill"
-        case .unclear: "questionmark.circle"
-        }
-    }
-
-    private func verdictColor(_ verdict: FitVerdict) -> Color {
-        switch verdict {
-        case .yes: .green
-        case .no: .red
-        case .unclear: .orange
         }
     }
 
     private func boardFacts(_ job: Job) -> some View {
-        section("From the board") {
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                if let pay = job.pay {
-                    factRow("Pay") {
+        HubSection("From the board") {
+            FactGrid {
+                FactRow("Pay") {
+                    if let pay = job.pay {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(pay.ranges.enumerated()), id: \.offset) { _, range in
                                 Text([range.label, range.format()].compactMap { $0 }.joined(separator: ": "))
@@ -407,119 +413,62 @@ struct JobDetailView: View {
                                 Text(summary).foregroundStyle(.secondary)
                             }
                         }
+                    } else {
+                        Text("Not published").foregroundStyle(.secondary)
                     }
-                } else {
-                    factRow("Pay") { Text("Not published").foregroundStyle(.secondary) }
                 }
-                textRow("Workplace", job.workplaceType)
-                textRow("Employment", job.employmentType)
-                textRow("Department", job.department)
-                textRow("Also hiring in", job.otherLocations?.joined(separator: ", "))
-                textRow("Published", job.publishedAt?.formatted(date: .abbreviated, time: .omitted))
-                textRow("First seen", job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
+                FactRow("Workplace", text: job.workplaceType)
+                FactRow("Employment", text: job.employmentType)
+                FactRow("Department", text: job.department)
+                FactRow("Also hiring in", text: job.otherLocations?.joined(separator: ", "))
+                FactRow("Published", text: job.publishedAt?.formatted(date: .abbreviated, time: .omitted))
+                FactRow("First seen", text: job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
             }
         }
     }
 
-    @ViewBuilder
     private func readFacts(_ facts: LabelledJobFacts?) -> some View {
-        if let facts {
-            section("Read from the posting") {
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+        HubSection("Read from the posting") {
+            if let facts {
+                FactGrid {
                     ForEach(facts.entries) { entry in
-                        factRow(entry.title, help: entry.description) {
+                        FactRow(entry.title, help: entry.description) {
                             VStack(alignment: .leading, spacing: 2) {
                                 switch entry.display {
-                                case let .text(text): Text(text).textSelection(.enabled)
-                                case let .list(items): Text(items.joined(separator: ", ")).textSelection(.enabled)
+                                case let .text(text): Text(text)
+                                case let .list(items): Text(items.joined(separator: ", "))
                                 case .notStated: Text("Not stated").foregroundStyle(.secondary)
                                 }
                                 if let evidence = entry.evidence {
-                                    Text("\u{201C}\(evidence)\u{201D}")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
+                                    Evidence(text: evidence)
                                 }
                             }
                         }
                     }
                 }
                 Text("Read by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
-                    .font(.caption)
+                    .font(.hubCaption)
                     .foregroundStyle(.tertiary)
-                readFactsNowRow
-            }
-        } else {
-            section("Read from the posting") {
+            } else {
                 Text("Not read yet. The hub reads new postings as they arrive, unless its model work is paused.")
                     .foregroundStyle(.secondary)
-                readFactsNowRow
             }
+            readFactsNowRow
         }
     }
 
     /// The "Read facts now" button, and where its run stands.
     private var readFactsNowRow: some View {
-        HStack(spacing: 8) {
-            Button(model.isReadingFacts ? "Reading…" : "Read facts now", systemImage: "arrow.clockwise") {
-                Task { await model.readFactsNow(jobID, with: client) }
+        HStack(spacing: Space.s) {
+            AsyncButton("Read facts now", busyTitle: "Reading…", systemImage: "arrow.clockwise", isBusy: model.isReadingFacts) {
+                await model.readFactsNow(jobID, with: client)
             }
-            .disabled(model.isReadingFacts)
             switch model.factsReadState {
-            case .queued:
-                ProgressView().controlSize(.small)
-                Text("Waiting for its turn").foregroundStyle(.secondary)
-            case .running:
-                ProgressView().controlSize(.small)
-                Text("Reading now").foregroundStyle(.secondary)
-            case .notQueued:
-                EmptyView()
+            case .queued: Text("Waiting for its turn").foregroundStyle(.secondary)
+            case .running: Text("Reading now").foregroundStyle(.secondary)
+            case .notQueued: EmptyView()
             }
         }
-        .padding(.top, 4)
-    }
-
-    @ViewBuilder
-    private func textRow(_ title: String, _ value: String?) -> some View {
-        if let value, !value.isEmpty {
-            factRow(title) { Text(value).textSelection(.enabled) }
-        }
-    }
-
-    private func factRow<Value: View>(_ title: String, help: String? = nil, @ViewBuilder value: () -> Value) -> some View {
-        GridRow {
-            Text(title).foregroundStyle(.secondary).gridColumnAlignment(.trailing).help(help ?? "")
-            value().frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            content()
-        }
-    }
-}
-
-/// A brief's match as a colored word.
-struct MatchLabel: View {
-    let match: JobMatch
-
-    var body: some View {
-        Text(match.title)
-            .font(.callout.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
-    }
-
-    private var color: Color {
-        switch match {
-        case .strong: .green
-        case .possible: .blue
-        case .stretch: .orange
-        case .mismatch: .secondary
-        }
+        .padding(.top, Space.xs)
     }
 }

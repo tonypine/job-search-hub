@@ -32,8 +32,14 @@ func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource excha
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
+	confirmed := true
+	roles, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Kind: store.ProfileEntryRole, Confirmed: &confirmed})
+	if err != nil {
+		return judgedJobDetails{}, err
+	}
 	fit := jobfit.Judge(details.Job, details.RawFacts, criteria, rates)
-	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: buildScreenOutAnswers(details, fit)}, nil
+	screenOut := buildScreenOutAnswers(details, fit, countExperienceMonths(roles, time.Now()))
+	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: screenOut}, nil
 }
 
 type jobsResponse struct {
@@ -189,6 +195,21 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		default:
 			writeJSON(w, http.StatusOK, decision)
+		}
+	})))
+	routes.Handle("DELETE /v1/jobs/{id}/decision", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		switch err := hub.ClearJobDecision(r.Context(), owner, id); {
+		case errors.Is(err, store.ErrJobNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case err != nil:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		default:
+			w.WriteHeader(http.StatusNoContent)
 		}
 	})))
 }

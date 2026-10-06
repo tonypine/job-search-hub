@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tonypine.jobsearchhub.core.CompanyDossier
+import com.tonypine.jobsearchhub.core.FollowUpStatus
 import com.tonypine.jobsearchhub.core.HubUpdate
 import com.tonypine.jobsearchhub.core.DecisionQueueItem
 import com.tonypine.jobsearchhub.core.JobDetails
@@ -12,8 +13,11 @@ import com.tonypine.jobsearchhub.core.JobListItem
 import com.tonypine.jobsearchhub.core.JobsOrder
 import com.tonypine.jobsearchhub.core.Pairing
 import com.tonypine.jobsearchhub.core.PairingLink
+import com.tonypine.jobsearchhub.core.PipelineBoard
 import com.tonypine.jobsearchhub.core.PipelineCard
+import com.tonypine.jobsearchhub.core.PipelinePhase
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
+import com.tonypine.jobsearchhub.core.RecruiterConversation
 import com.tonypine.jobsearchhub.data.HubClient
 import com.tonypine.jobsearchhub.data.HubException
 import com.tonypine.jobsearchhub.push.UpdateNotifications
@@ -23,6 +27,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.Instant
+import java.time.ZoneId
 
 /** A company as the phone briefs it before an interview. */
 data class CompanyBrief(
@@ -39,15 +45,26 @@ data class HubState(
     val decisionQueue: List<DecisionQueueItem> = emptyList(),
     /** How many open jobs the hub holds; the list is its newest page. */
     val openJobCount: Int = 0,
+    val pipeline: PipelineBoard? = null,
+    val recruiters: List<RecruiterConversation> = emptyList(),
     val includesUnclear: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** When the lists last read the hub without an error. */
+    val readAt: Instant? = null,
 ) {
     val shownJobs: List<JobListItem> get() = JobsOrder.pick(jobs, includesUnclear)
+
+    /** The pipeline cards whose follow-up is overdue or due today, the longest overdue first. */
+    fun dueFollowUps(now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): List<Pair<PipelineCard, FollowUpStatus>> =
+        pipeline?.dueFollowUps(now, zone).orEmpty()
 }
 
-/** What a tapped notification opens: its job, or else its company. */
-data class NotificationTarget(val jobId: String?, val companyId: String?)
+/** What a tapped notification opens: a reminder's pipeline card, or else its job, or else its company. */
+data class NotificationTarget(val jobId: String?, val companyId: String?, val isFollowUp: Boolean = false)
+
+/** The job or company whose card Pipeline should show, from a follow-up reminder. */
+data class PipelineFocus(val jobId: String?, val companyId: String?)
 
 /** The phone's view of the hub: its pairing, the updates and the jobs. */
 class HubViewModel(application: Application) : AndroidViewModel(application) {
@@ -57,6 +74,8 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<HubState> = mutableState.asStateFlow()
     private val mutableNotificationTarget = MutableStateFlow<NotificationTarget?>(null)
     val notificationTarget: StateFlow<NotificationTarget?> = mutableNotificationTarget.asStateFlow()
+    private val mutablePipelineFocus = MutableStateFlow<PipelineFocus?>(null)
+    val pipelineFocus: StateFlow<PipelineFocus?> = mutablePipelineFocus.asStateFlow()
 
     private val client: HubClient? get() = state.value.pairing?.let { HubClient(it) }
 
@@ -96,6 +115,15 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         mutableNotificationTarget.value = null
     }
 
+    /** Asks Pipeline to open the card a follow-up reminder is about. */
+    fun focusPipeline(focus: PipelineFocus) {
+        mutablePipelineFocus.value = focus
+    }
+
+    fun clearPipelineFocus() {
+        mutablePipelineFocus.value = null
+    }
+
     /** Pairs from a scanned or pasted link; says why a link isn't one. */
     fun pair(link: String): Boolean {
         val pairing = PairingLink.parse(link) ?: run {
@@ -111,6 +139,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unpair() {
         store.forget()
+        mutablePipelineFocus.value = null
         mutableState.update { HubState() }
     }
 
@@ -133,9 +162,14 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
                 val updates = client.getUpdates().updates
                 val jobs = client.getJobs()
                 val queue = client.getDecisionQueue().items
+                val pipeline = client.getPipeline()
+                val recruiters = client.getRecruiters().recruiters
                 mutableState.update {
                     if (it.pairing != pairing) it
-                    else it.copy(updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, isLoading = false, error = null)
+                    else it.copy(
+                        updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, pipeline = pipeline,
+                        recruiters = recruiters, isLoading = false, error = null, readAt = Instant.now(),
+                    )
                 }
             } catch (error: HubException) {
                 mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = error.message) }
@@ -153,6 +187,41 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             Result.success(CompanyBrief(dossier, jobs, cards))
         } catch (error: HubException) {
             Result.failure(error)
+        }
+    }
+
+    /** Notes that the owner followed up on the card now, which restarts its phase's follow-up count. */
+    suspend fun recordFollowUp(card: PipelineCard, note: String): Result<Unit> = changePipeline { it.recordFollowUp(card.id, note) }
+
+    /** Moves the card to the phase; a closed phase keeps the reason it ended. */
+    suspend fun moveCard(card: PipelineCard, phase: PipelinePhase, closedReason: String = ""): Result<Unit> =
+        changePipeline { it.moveApplication(card.id, phase.id, closedReason) }
+
+    private suspend fun changePipeline(change: suspend (HubClient) -> Unit): Result<Unit> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            change(client)
+            refresh()
+            Result.success(Unit)
+        } catch (error: HubException) {
+            Result.failure(error)
+        }
+    }
+
+    /** Marks an update seen, here at once and then on the hub, so Today stops listing it. */
+    fun markSeen(update: HubUpdate) {
+        if (update.seenAt != null) {
+            return
+        }
+        val client = client ?: return
+        val seenAt = Instant.now().toString()
+        mutableState.update { state -> state.copy(updates = state.updates.map { if (it.id == update.id) it.copy(seenAt = seenAt) else it }) }
+        viewModelScope.launch {
+            try {
+                client.markUpdatesSeen(listOf(update.id))
+            } catch (error: HubException) {
+                Log.w("HubViewModel", "Couldn't mark an update seen: ${error.message}")
+            }
         }
     }
 
@@ -180,6 +249,18 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             client.decideJob(id, decision, reason)
             refresh()
             Result.success(next)
+        } catch (error: HubException) {
+            Result.failure(error)
+        }
+    }
+
+    /** Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. */
+    suspend fun undoDecision(id: String): Result<Unit> {
+        val client = client ?: return Result.failure(HubException("Not paired."))
+        return try {
+            client.clearJobDecision(id)
+            refresh()
+            Result.success(Unit)
         } catch (error: HubException) {
             Result.failure(error)
         }

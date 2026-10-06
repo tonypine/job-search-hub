@@ -1,25 +1,26 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The Jobs table's optional columns: board facts, each fit check, and the
-/// facts read from postings.
+/// The Jobs table's optional columns: board facts, each screen check, and
+/// the facts read from postings.
 enum JobsColumns {
     struct FitCheckColumn: Identifiable, Sendable {
-        /// The check's name in the fit.
+        /// The check's name in the hub's fit, the job's screen.
         let name: String
         let title: String
 
+        /// Keeps the hub's name, so saved table layouts still find it.
         var id: String { "fit." + name }
         var sortComparator: JobsSortComparator { JobsSortComparator(.fitCheck(name)) }
     }
 
-    /// The fit checks, titled as columns; Pay's reason is the take-home.
+    /// The screen's checks, titled as columns; Pay's reason is the take-home.
     static let fitChecks = [
-        FitCheckColumn(name: "Role", title: "Role fit"),
+        FitCheckColumn(name: "Role", title: "Role"),
         FitCheckColumn(name: "Where they hire", title: "Where they hire"),
-        FitCheckColumn(name: "Stack", title: "Stack fit"),
-        FitCheckColumn(name: "Level", title: "Level fit"),
-        FitCheckColumn(name: "Timezone", title: "Timezone fit"),
+        FitCheckColumn(name: "Stack", title: "Stack"),
+        FitCheckColumn(name: "Level", title: "Level"),
+        FitCheckColumn(name: "Timezone", title: "Timezone"),
         FitCheckColumn(name: "Pay", title: "Take-home pay"),
     ]
 
@@ -47,7 +48,7 @@ enum JobsColumns {
     }
 }
 
-/// A fit check's verdict and reason in a table cell.
+/// A screen check's verdict and reason in a table cell.
 struct FitCheckCell: View {
     let check: FitCheck?
 
@@ -56,31 +57,16 @@ struct FitCheckCell: View {
             Label {
                 Text(check.reason).help(check.reason)
             } icon: {
-                Image(systemName: symbolName(check.verdict)).foregroundStyle(color(check.verdict))
+                Image(systemName: check.verdict.symbolName).foregroundStyle(check.verdict.tone.color)
             }
+            .accessibilityLabel("\(check.verdict.rawValue): \(check.reason)")
         } else {
             Text("–")
         }
     }
-
-    private func symbolName(_ verdict: FitVerdict) -> String {
-        switch verdict {
-        case .yes: "checkmark.circle.fill"
-        case .no: "xmark.circle.fill"
-        case .unclear: "questionmark.circle"
-        }
-    }
-
-    private func color(_ verdict: FitVerdict) -> Color {
-        switch verdict {
-        case .yes: .green
-        case .no: .red
-        case .unclear: .orange
-        }
-    }
 }
 
-/// The toolbar menu that shows and hides the table's optional columns; the
+/// The Jobs bar's menu that shows and hides the table's optional columns; the
 /// header's own menu does the same.
 struct ColumnsMenu: View {
     @Binding var customization: TableColumnCustomization<JobListItem>
@@ -91,7 +77,7 @@ struct ColumnsMenu: View {
             Section("From the board") {
                 ForEach(JobsColumns.boardFacts) { column in toggle(column.title, id: column.id) }
             }
-            Section("Fit") {
+            Section("Screen") {
                 ForEach(JobsColumns.fitChecks) { check in toggle(check.title, id: check.id) }
             }
             if !factColumns.isEmpty {

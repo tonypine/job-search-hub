@@ -149,6 +149,7 @@ type jobDetailsAnswer struct {
 	Facts       *store.LabelledJobFacts `json:"facts"`
 	Application *store.Application      `json:"application"`
 	Phase       *store.PipelinePhase    `json:"phase"`
+	Decision    *store.JobDecision      `json:"decision"`
 }
 
 func readJobDetails(t *testing.T, service apiUnderTest, id string) (int, jobDetailsAnswer) {
@@ -335,8 +336,22 @@ func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
 	awaiting, _ := service.hub.ListJobsAwaitingFacts(ctx, prompt.ID, 10)
 	facts := `{"location":{"evidence":"Remote in LATAM","restriction":"LATAM","open_to_brazil":"yes","reason":"LATAM"},
 		"seniority":{"evidence":"Senior engineer","as_written":"Senior","levels":["senior"]},
-		"contract":{"evidence":"as a contractor","as_written":"contractor","kinds":["contractor"]}}`
+		"contract":{"evidence":"as a contractor","as_written":"contractor","kinds":["contractor"]},
+		"years_of_experience":{"evidence":"5+ years with React","value":5},
+		"languages":{"evidence":"fluent English","value":["English"]}}`
 	if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: job.ID, PromptID: prompt.ID, Model: "m", TextHash: awaiting[0].TextHash, Facts: json.RawMessage(facts)}); err != nil {
+		t.Fatal(err)
+	}
+	role, err := service.hub.SaveProfileEntry(ctx, owner, nil, store.ProfileEntryInput{Kind: store.ProfileEntryRole, Title: "Engineer",
+		StartMonth: "2010-01", EndMonth: "2017-12", Source: store.ProfileSourceOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.hub.ConfirmProfileEntries(ctx, owner, []uuid.UUID{role.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.hub.SaveProfileEntry(ctx, owner, nil, store.ProfileEntryInput{Kind: store.ProfileEntryRole, Title: "Unconfirmed",
+		StartMonth: "1990-01", EndMonth: "2009-12", Source: store.ProfileSourceOwner}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := service.hub.GetKnowledgeHash(ctx)
@@ -357,7 +372,9 @@ func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
 		"Hires from Brazil": "yes|open to someone in Brazil|Remote in LATAM",
 		"Level":             "unclear|the criteria name no levels|Senior engineer",
 		"Timezone":          "unclear|the posting doesn't say|",
+		"Experience":        "yes|asks for 5 years; you have 8 years|5+ years with React",
 		"Contract":          "|contractor|as a contractor",
+		"Languages":         "|English|fluent English",
 	}
 	for name, answer := range want {
 		if answers[name] != answer {
@@ -383,6 +400,29 @@ func TestADecisionIsRecordedAndActedOn(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, `{"decision":"later"}`); status != http.StatusNotFound {
 		t.Errorf("an unknown job: %d, want 404", status)
+	}
+}
+
+func TestADecisionCanBeTakenBack(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	job, _, _ := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
+	if _, err := service.hub.DecideJob(ctx, owner, job.ID, store.JobDecisionSkip, "agency"); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, body := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, ""); status != http.StatusNoContent {
+		t.Fatalf("clear: %d %s", status, body)
+	}
+	if _, details := readJobDetails(t, service, job.ID.String()); details.Decision != nil || details.Job.DismissedAt != nil {
+		t.Errorf("after clearing, decision = %+v, dismissed at %v; want undecided and restored", details.Decision, details.Job.DismissedAt)
+	}
+	if status, _ := send(t, http.MethodDelete, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, ""); status != http.StatusNotFound {
+		t.Errorf("an unknown job: %d, want 404", status)
+	}
+	if status, _ := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("without a token: %d, want 401", status)
 	}
 }
 

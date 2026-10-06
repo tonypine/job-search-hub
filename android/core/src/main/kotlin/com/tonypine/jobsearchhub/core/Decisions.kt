@@ -42,6 +42,13 @@ data class JobDecision(val decision: String, val reason: String? = null, val dec
 @Serializable
 data class JobDecisionRequest(val decision: String, val reason: String)
 
+/** What the snackbar says after a decision Undo can take back: Later or Skip; null for Pursue. */
+fun decisionNotice(title: String, decision: String): String? = when (decision) {
+    "later" -> "Left $title for later"
+    "skip" -> "Skipped $title"
+    else -> null
+}
+
 /** A briefed job waiting for the owner's decision. */
 @Serializable
 data class DecisionQueueItem(
@@ -56,3 +63,9 @@ data class DecisionQueueItem(
 
 @Serializable
 data class DecisionQueueResponse(val items: List<DecisionQueueItem>, val total: Int)
+
+/** What Decide takes from the decision queue. */
+object Decide {
+    /** The line under Decide's title: "7 to decide". */
+    fun summary(toDecide: Int): String = if (toDecide > 0) "$toDecide to decide" else "Nothing to decide"
+}

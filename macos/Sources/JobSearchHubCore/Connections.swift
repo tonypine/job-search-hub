@@ -172,22 +172,36 @@ public struct FollowsImport: Decodable, Equatable, Sendable {
     public var summary: String { "Followed companies: \(stored); see Suggestions on the Companies page." }
 }
 
-/// A company the owner follows on LinkedIn that the hub doesn't hold, and
-/// what makes it worth researching.
+/// A company the hub doesn't hold, from the owner's LinkedIn follows or
+/// startups.gallery's remote list, and what makes it worth researching.
 public struct CompanySuggestion: Decodable, Equatable, Identifiable, Sendable {
+    /// Where a suggestion came from.
+    public enum Source: String, Decodable, Sendable {
+        case linkedIn = "linkedin"
+        case startupsGallery = "startups_gallery"
+    }
+
     public var organization: String
+    public var source: Source?
     public var followedAt: Date?
+    public var website: String?
+    public var careersURL: String?
     public var connectionCount: Int
     public var openJobs: Int
     public var fittingJobs: Int
 
+    enum CodingKeys: String, CodingKey {
+        case organization, source, followedAt, website, connectionCount, openJobs, fittingJobs
+        case careersURL = "careersUrl"
+    }
+
     public var id: String { organization }
 
-    /// "2 fitting jobs open · 1 person you know", or "Followed since 2019".
+    /// "2 open jobs pass the screen · 1 person you know", or "Followed since 2019".
     public var reason: String {
         var parts: [String] = []
         if fittingJobs > 0 {
-            parts.append(fittingJobs == 1 ? "1 fitting job open" : "\(fittingJobs) fitting jobs open")
+            parts.append(fittingJobs == 1 ? "1 open job passes the screen" : "\(fittingJobs) open jobs pass the screen")
         } else if openJobs > 0 {
             parts.append(openJobs == 1 ? "1 job open" : "\(openJobs) jobs open")
         }
@@ -198,6 +212,18 @@ public struct CompanySuggestion: Decodable, Equatable, Identifiable, Sendable {
             parts.append("Followed since \(followedAt.formatted(.dateTime.year()))")
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Where it came from, which Add company keeps as how it was found.
+    public var origin: String {
+        source == .startupsGallery ? "On startups.gallery's remote list" : "Followed on LinkedIn"
+    }
+
+    /// What Add company researches: the company's site when the suggestion
+    /// has one, since a short name alone can be ambiguous, else its name.
+    public var researchTarget: String {
+        guard let website, let host = URL(string: website)?.host(), !host.isEmpty else { return organization }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }
 

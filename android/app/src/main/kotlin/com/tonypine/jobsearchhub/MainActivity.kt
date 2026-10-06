@@ -8,8 +8,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.tonypine.jobsearchhub.core.HubUpdate
 import com.tonypine.jobsearchhub.push.UpdateNotifications
-import com.tonypine.jobsearchhub.ui.HubTheme
+import com.tonypine.jobsearchhub.ui.design.HubTheme
 import com.tonypine.jobsearchhub.ui.HubNavigation
 
 class MainActivity : ComponentActivity() {
@@ -19,7 +20,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pairFrom(intent)
-        openNotificationFrom(intent)
+        // A recreated activity gets the intent it was opened with again, whose notification is long gone.
+        openNotificationFrom(intent, dismiss = savedInstanceState == null)
         setContent {
             HubTheme {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -35,10 +37,16 @@ class MainActivity : ComponentActivity() {
         openNotificationFrom(intent)
     }
 
-    private fun openNotificationFrom(intent: Intent?) {
+    private fun openNotificationFrom(intent: Intent?, dismiss: Boolean = true) {
         intent ?: return
+        if (dismiss) {
+            UpdateNotifications.opened(this, intent)
+        }
         viewModel.openNotification(
-            NotificationTarget(intent.getStringExtra(UpdateNotifications.JOB_ID), intent.getStringExtra(UpdateNotifications.COMPANY_ID)),
+            NotificationTarget(
+                intent.getStringExtra(UpdateNotifications.JOB_ID), intent.getStringExtra(UpdateNotifications.COMPANY_ID),
+                isFollowUp = intent.getStringExtra(UpdateNotifications.KIND) == HubUpdate.FOLLOW_UP_DUE,
+            ),
         )
     }
 
