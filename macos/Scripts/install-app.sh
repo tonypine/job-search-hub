@@ -154,7 +154,9 @@ if pgrep -x JobSearchHub >/dev/null; then
     pgrep -x JobSearchHub >/dev/null || break
     sleep 1
   done
-  pgrep -x JobSearchHub >/dev/null && fail "The app is still open; quit it and run this again."
+  if pgrep -x JobSearchHub >/dev/null; then
+    fail "The app is still open; quit it and run this again."
+  fi
 fi
 
 # On SIGTERM the server waits up to 30 seconds for the work still running, 5
@@ -165,7 +167,9 @@ for _ in $(seq 80); do
   launchctl print "$domain/$label" >/dev/null 2>&1 || break
   sleep 1
 done
-launchctl print "$domain/$label" >/dev/null 2>&1 && fail "The server didn't stop; see ~/Library/Logs/JobSearchHub/server.log."
+if launchctl print "$domain/$label" >/dev/null 2>&1; then
+  fail "The server didn't stop; see ~/Library/Logs/JobSearchHub/server.log."
+fi
 old_plist="$HOME/Library/LaunchAgents/$label.plist"
 if [ -f "$old_plist" ]; then
   rm -f "$old_plist"
@@ -193,7 +197,7 @@ fi
 echo "==> Installing $installed"
 if [ -d "$installed" ]; then mv "$installed" "$installed.replaced"; fi
 if ! mv "$staged" "$installed"; then
-  [ -d "$installed.replaced" ] && mv "$installed.replaced" "$installed"
+  if [ -d "$installed.replaced" ]; then mv "$installed.replaced" "$installed"; fi
   fail "Couldn't put the app in $installed."
 fi
 rm -rf "$installed.replaced"
@@ -211,8 +215,9 @@ for _ in $(seq 120); do
   fi
   sleep 1
 done
-curl -fsS "$hub_url/v1/health" >/dev/null 2>&1 ||
+if ! curl -fsS "$hub_url/v1/health" >/dev/null 2>&1; then
   fail "The server didn't answer on $hub_url; see ~/Library/Logs/JobSearchHub/server.log."
+fi
 echo "hub-server $version is up on $hub_url, from $installed/Contents/Helpers/bin/hub-server"
 
 if [ -d "$app_support/bin" ]; then
