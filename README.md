@@ -48,6 +48,23 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
 
+   **Moving your data out of Docker.** A `server.env` that still sets `HUB_DATABASE_URL` keeps the hub on Docker's Postgres. To move it into the database the server owns:
+
+   1. Stop the hub in Settings › Server, so nothing is written between the dump and the switch.
+   2. Import Docker's database, with the password from `.env`'s `HUB_DATABASE_PASSWORD`:
+
+      ```bash
+      ~/Library/Application\ Support/JobSearchHub/bin/hub-server database import "postgres://hub:<password>@localhost:5434/hub"
+      ```
+
+      It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in Docker's database and in the new one. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`.
+   3. Remove the `HUB_DATABASE_URL` line from `~/.config/job-search-hub/server.env`, then start the hub in Settings › Server.
+   4. Check Today, the Pipeline and a company's dossier in the Mac app, and that the phone gets updates. The companies list keeps its order: names sort ignoring case, as they did on Docker.
+   5. `docker compose stop db`, keeping its volume. The hub keeps working.
+   6. After two weeks of nightly dumps from the owned database, `docker compose down` and `docker volume rm job-search-hub_hub-db`.
+
+   To go back before step 6: stop the hub, put `HUB_DATABASE_URL` back in `server.env`, `docker compose start db`, and start the hub. Writes made since step 3 stay only in the database the server owns. To keep them, dump it before stopping the hub, with the engine's `pg_dump` (`engines/postgres-18/bin/pg_dump --format=custom --file=<file> "postgres:///hub?host=$HOME/Library/Application%20Support/JobSearchHub/postgres&user=hub"`), and once Docker's runs, restore the file into it with `pg_restore --clean --no-owner --dbname=<Docker's URL> <file>`.
+
 2. **Install the CLI.**
 
    ```bash
