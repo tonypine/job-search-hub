@@ -61,3 +61,8 @@ func getBootTime() (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("no btime in /proc/stat")
 }
+
+// excludeFromBackups does nothing: Linux has no Time Machine.
+func excludeFromBackups(string) error {
+	return nil
+}

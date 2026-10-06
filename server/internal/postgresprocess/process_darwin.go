@@ -3,6 +3,7 @@ package postgresprocess
 import (
 	"bytes"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -33,4 +34,14 @@ func getProcessInfo(pid int) (executable string, started time.Time, err error) {
 	}
 	start := info.Proc.P_starttime
 	return string(path), time.Unix(start.Sec, int64(start.Usec)*1000), nil
+}
+
+// excludeFromBackups keeps Time Machine from copying path: a copy of a live
+// cluster is the wrong thing to restore, and the nightly dumps are the
+// backup. The exclusion is an attribute of the folder, so it moves with it.
+func excludeFromBackups(path string) error {
+	if output, err := exec.Command("/usr/bin/tmutil", "addexclusion", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmutil addexclusion: %w: %s", err, bytes.TrimSpace(output))
+	}
+	return nil
 }

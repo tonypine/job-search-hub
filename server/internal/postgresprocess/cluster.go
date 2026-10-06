@@ -80,9 +80,10 @@ type Cluster struct {
 	stopOnce sync.Once
 }
 
-// Start takes the folder's lock, creates the cluster if there is none, stops
-// a Postgres an earlier server left running on it, and starts postgres as a
-// child. It returns once the hub database accepts connections.
+// Start takes the folder's lock, refuses a cluster of a newer major than the
+// engine's, creates the cluster if there is none, stops a Postgres an earlier
+// server left running on it, and starts postgres as a child. It returns once
+// the hub database accepts connections.
 func Start(ctx context.Context, settings Settings) (*Cluster, error) {
 	engine, err := filepath.Abs(settings.Engine)
 	if err != nil {
@@ -113,6 +114,9 @@ func Start(ctx context.Context, settings Settings) (*Cluster, error) {
 func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, error) {
 	major, err := getMajor(engine)
 	if err != nil {
+		return nil, err
+	}
+	if err := refuseNewerCluster(dir, major); err != nil {
 		return nil, err
 	}
 	dataDir := filepath.Join(dir, major)
@@ -384,6 +388,9 @@ func createIfMissing(ctx context.Context, engine, dataDir string) error {
 	command.WaitDelay = stopTimeout
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("initdb: %w: %s", err, output)
+	}
+	if err := excludeFromBackups(partial); err != nil {
+		slog.Warn("the database stays in Time Machine's backups", "data", dataDir, "error", err)
 	}
 	if err := os.Rename(partial, dataDir); err != nil {
 		return fmt.Errorf("move the new cluster into place: %w", err)
