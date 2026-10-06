@@ -17,7 +17,8 @@ import Observation
 ///
 /// A build no Apple team signed, such as the ad hoc build in Symphony's QA
 /// VM, keeps the token in its preferences when the Keychain refuses it, and
-/// reads it from there first. A team-signed build only ever uses the Keychain.
+/// reads it from there first. A team-signed build never reads or writes that
+/// copy.
 @MainActor
 @Observable
 public final class HubConnection {
