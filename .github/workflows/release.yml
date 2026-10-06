@@ -303,11 +303,15 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.keystore"
 
+      # The phone checks a download against its .sha256 before it offers it.
       - name: Verify the APK
         run: |
           scripts/release/verify-apk.sh android/app/build/outputs/apk/release/app-release.apk \
             com.tonypine.jobsearchhub "$VERSION_CODE" "$VERSION_NAME"
-          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/job-search-hub-$VERSION_NAME.apk"
+          apk=job-search-hub-$VERSION_NAME.apk
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/$apk"
+          (cd "$RUNNER_TEMP" && sha256sum "$apk" > "$apk.sha256")
+          cat "$RUNNER_TEMP/$apk.sha256"
 
       - name: Write the changelog
         run: |
@@ -319,7 +323,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" "$RUNNER_TEMP/job-search-hub-$VERSION_NAME.apk" \
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/job-search-hub-$VERSION_NAME.apk" \
+            "$RUNNER_TEMP/job-search-hub-$VERSION_NAME.apk.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SHA" \
             --title "Android $VERSION_NAME" \
