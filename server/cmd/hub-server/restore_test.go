@@ -85,8 +85,8 @@ func TestTheRestoreCommandRefusesADumpThatHoldsNoHubDatabase(t *testing.T) {
 	}
 }
 
-func TestTheDatabaseCommandNeedsRestoreAndOneDump(t *testing.T) {
-	for _, arguments := range [][]string{nil, {"restore"}, {"dump", "hub.dump"}, {"restore", "a.dump", "b.dump"}} {
+func TestTheDatabaseCommandNeedsRestoreAndOneDumpOrImportAndOneURL(t *testing.T) {
+	for _, arguments := range [][]string{nil, {"restore"}, {"dump", "hub.dump"}, {"restore", "a.dump", "b.dump"}, {"import"}, {"import", "--replace"}, {"import", "postgres://a", "postgres://b"}} {
 		err := runDatabaseCommand(arguments, lookupFrom(nil), &bytes.Buffer{})
 		if err == nil || err.Error() != databaseUsage {
 			t.Errorf("%v: %v, want the usage", arguments, err)

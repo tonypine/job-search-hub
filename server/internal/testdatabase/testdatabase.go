@@ -40,7 +40,9 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 
 	name := "hub_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+	// The locale of the cluster the server owns, whose code-point order
+	// sorts "Zeta" before "acme".
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name+" TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'"); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	t.Cleanup(func() {

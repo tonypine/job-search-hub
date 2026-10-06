@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +165,44 @@ func TestADumpIsReadableAndAFailedOneLeavesNoFile(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(broken.folder); len(entries) != 0 {
 		t.Errorf("a failed dump left %d files", len(entries))
+	}
+}
+
+func TestAnImportsDumpIsNeverCountedOrRemoved(t *testing.T) {
+	folder := t.TempDir()
+	imported := filepath.Join(folder, importPrefix+"2026-08-01"+dumpSuffix)
+	if err := os.WriteFile(imported, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := at(t, "2026-09-01 03:00")
+	for day := range keptDumps + 2 {
+		name := dumpPrefix + start.AddDate(0, 0, day).Format(dumpDateLayout) + dumpSuffix
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for version := range keptPreMigrationDumps + 2 {
+		name := preMigrationPrefix + strconv.Itoa(70+version) + dumpSuffix
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dumper := NewDumper("", folder, "")
+	if err := dumper.removeOldDumps(); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeOldPreMigrationDumps(folder); err != nil {
+		t.Fatal(err)
+	}
+	days, err := dumper.listDumpDays()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != keptDumps || slices.Contains(days, "2026-08-01") {
+		t.Fatalf("nightly dumps %v", days)
+	}
+	if _, err := os.Stat(imported); err != nil {
+		t.Fatalf("the import's dump was removed: %v", err)
 	}
 }

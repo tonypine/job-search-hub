@@ -174,12 +174,7 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	if parsed.runtimeIdleTimeout, err = parseInterval(lookup, "HUB_RUNTIME_IDLE_TIMEOUT", defaultRuntimeIdleTimeout); err != nil {
 		return config{}, err
 	}
-	parsed.backupsDir = lookup("HUB_BACKUPS_DIR")
-	if parsed.backupsDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			parsed.backupsDir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "backups")
-		}
-	}
+	parsed.backupsDir = parseBackupsDir(lookup)
 	parsed.pgDump = lookup("HUB_PG_DUMP")
 	parsed.postgresEngines, parsed.postgresDir = parseDatabasePaths(lookup)
 	parsed.claudeBinary = lookup("HUB_CLAUDE_BIN")
@@ -235,6 +230,18 @@ func parseDatabasePaths(lookup func(string) string) (engines, dir string) {
 		}
 	}
 	return engines, dir
+}
+
+// parseBackupsDir reads the folder the database dumps go to, which the
+// import command needs without the rest.
+func parseBackupsDir(lookup func(string) string) string {
+	if dir := lookup("HUB_BACKUPS_DIR"); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Library", "Application Support", "JobSearchHub", "backups")
+	}
+	return ""
 }
 
 func parseInterval(lookup func(string) string, name string, fallback time.Duration) (time.Duration, error) {

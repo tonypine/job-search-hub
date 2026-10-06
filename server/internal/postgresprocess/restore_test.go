@@ -201,3 +201,70 @@ func TestAStartWithOnlyAReplacedClusterIsRefused(t *testing.T) {
 	assertMissing(t, dataDir)
 	assertMissing(t, dataDir+".partial")
 }
+
+func own(t *testing.T, dir string) *postgresprocess.Owner {
+	t.Helper()
+	owner, err := postgresprocess.Own(postgresprocess.Settings{Engine: getEngine(t), Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.Release)
+	return owner
+}
+
+func TestInspectSeesTheCurrentClustersRowsAndHoldsTheLockUntilReleased(t *testing.T) {
+	dir, _, _ := clusterWithDump(t)
+	owner := own(t, dir)
+	note := ""
+	found, err := owner.Inspect(context.Background(), func(ctx context.Context, databaseURL string) error {
+		note = queryString(t, connectTo(t, databaseURL), "SELECT note FROM kept")
+		return nil
+	})
+	if err != nil || !found {
+		t.Fatalf("Inspect: found %v, %v", found, err)
+	}
+	if note != "after the dump" {
+		t.Fatalf("Inspect saw %q", note)
+	}
+
+	// The cluster is stopped again, and the lock still held.
+	if _, err := postgresprocess.Start(context.Background(), postgresprocess.Settings{Engine: getEngine(t), Dir: dir}); !errors.Is(err, postgresprocess.ErrLocked) {
+		t.Fatalf("a start while a command owns the folder: %v", err)
+	}
+	owner.Release()
+	if note := queryString(t, connect(t, start(t, dir)), "SELECT note FROM kept"); note != "after the dump" {
+		t.Fatalf("after Inspect: %q", note)
+	}
+}
+
+func TestInspectFindsNoClusterInANewFolder(t *testing.T) {
+	dir := newDir(t)
+	found, err := own(t, dir).Inspect(context.Background(), func(context.Context, string) error {
+		t.Fatal("inspected a cluster that isn't there")
+		return nil
+	})
+	if err != nil || found {
+		t.Fatalf("Inspect: found %v, %v", found, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Errorf("Inspect created %s", entry.Name())
+		}
+	}
+}
+
+func TestInspectRefusesAFolderAKilledRestoreLeftHalfSwapped(t *testing.T) {
+	dir, dataDir := newStoppedCluster(t)
+	replaced := dataDir + ".replaced-2026-10-06-120000"
+	if err := os.Rename(dataDir, replaced); err != nil {
+		t.Fatal(err)
+	}
+	_, err := own(t, dir).Inspect(context.Background(), func(context.Context, string) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "rename "+replaced+" back to "+dataDir) {
+		t.Fatalf("Inspect of a half-swapped folder: %v", err)
+	}
+}

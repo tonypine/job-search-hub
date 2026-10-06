@@ -527,7 +527,7 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		       (SELECT pipeline_phases.name FROM applications JOIN pipeline_phases ON pipeline_phases.id = applications.phase_id
 		        WHERE applications.job_id = jobs.id LIMIT 1)
 		`+matches+`
-		ORDER BY jobs.first_seen_at DESC, jobs.title
+		ORDER BY jobs.first_seen_at DESC, lower(jobs.title), jobs.title
 		LIMIT $6 OFFSET $7`, query, filter.CompanyID, status, title, phase, limit, filter.Offset)
 	if err != nil {
 		return nil, 0, err
