@@ -25,7 +25,7 @@ go test ./internal/<package> ...    # only the packages the change touches
 
 Store and tool tests (the packages whose tests use `internal/testdatabase`) each get a fresh database created through `HUB_TEST_DATABASE_URL` and dropped afterwards. Without the variable they fail rather than skip. Agent runs don't get `.env`, so they leave those packages to CI's `server-test` job. In an agent's sandbox, point the build cache at `/tmp` first: `export GOCACHE=/private/tmp/job-search-hub-go-build`.
 
-For `macos/`, agent runs don't run `swift build` or `swift test`: the sandbox blocks SwiftPM. CI's `macos` job builds and tests it.
+For `macos/`, agent runs don't run `swift build` or `swift test`: the sandbox blocks SwiftPM. CI's `macos` job builds and tests it. When the signing choice changes, run `macos/Scripts/signing-identity_test.sh`, which needs no keychain.
 
 For `android/`, run `cd android && ./gradlew :core:test` when `android/core` changed, and leave the rest to CI's `android` job.
 

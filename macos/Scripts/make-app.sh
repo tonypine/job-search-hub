@@ -149,60 +149,13 @@ PLIST
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
 echo "==> Signing"
-# The bundle and every executable in it are signed by the owner's team, pinned
-# by its ID, so another identity in the keychain, such as a work certificate,
-# is never picked. An Apple-issued identity keeps the app's designated
-# requirement stable across builds, so its Keychain item (the owner token)
-# survives them. CODESIGN_TEAM_ID names the team, or
-# ~/.config/job-search-hub/codesign-team-id holds it; CODESIGN_IDENTITY can
-# narrow the choice to one of the team's identities. Without a team, as in CI
-# and Symphony's QA VM, or with CODESIGN_IDENTITY=-, the bundle is signed ad
-# hoc, without the hardened runtime, and the Keychain asks for access after
-# every build.
-TEAM_FILE="$HOME/.config/job-search-hub/codesign-team-id"
-TEAM_ID="${CODESIGN_TEAM_ID:-}"
-if [ -z "$TEAM_ID" ] && [ -f "$TEAM_FILE" ]; then
-  TEAM_ID="$(tr -d '[:space:]' < "$TEAM_FILE")"
-fi
-
-# team_of SHA1 NAME prints the team of the identity's certificate, its OU.
-team_of() {
-  security find-certificate -a -c "$2" -Z -p 2>/dev/null |
-    awk -v hash="$1" '/^SHA-1 hash:/ { current = $3 } /BEGIN CERTIFICATE/ { printing = (current == hash) } printing { print } /END CERTIFICATE/ { printing = 0 }' |
-    openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]*\).*/\1/p'
-}
-
-if [ "${CODESIGN_IDENTITY:-}" = "-" ]; then
-  TEAM_ID=""
-  IDENTITY="-"
-elif [ -z "$TEAM_ID" ]; then
-  if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-    echo "CODESIGN_IDENTITY needs its team pinned too: set CODESIGN_TEAM_ID, or write it to $TEAM_FILE." >&2
-    exit 1
-  fi
-  echo "No signing team pinned, so signing ad hoc: the Keychain will ask for access after every build. Set" >&2
-  echo "CODESIGN_TEAM_ID to your Apple Development certificate's team, or write it to $TEAM_FILE." >&2
-  IDENTITY="-"
-else
-  if ! [[ "$TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
-    echo "\"$TEAM_ID\" isn't a team ID, ten capital letters and digits, as Keychain Access shows in the certificate's Organizational Unit." >&2
-    exit 1
-  fi
-  IDENTITY=""
-  while read -r hash name; do
-    case "$name" in *"${CODESIGN_IDENTITY:-}"*) ;; *) continue ;; esac
-    if [ "$(team_of "$hash" "$name")" = "$TEAM_ID" ]; then
-      IDENTITY="$hash"
-      echo "Signing with \"$name\" of team $TEAM_ID"
-      break
-    fi
-  done < <(security find-identity -v -p codesigning | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "\(.*\)"$/\1 \2/p')
-  if [ -z "$IDENTITY" ]; then
-    echo "No signing identity of team $TEAM_ID${CODESIGN_IDENTITY:+ matching \"$CODESIGN_IDENTITY\"} in the keychain, and no other team's will do." >&2
-    echo "Create an Apple Development certificate in Xcode > Settings > Accounts > Manage Certificates." >&2
-    exit 1
-  fi
-fi
+# Scripts/signing-identity.sh picks the owner's team and its identity: pinned
+# by CODESIGN_TEAM_ID or ~/.config/job-search-hub/codesign-team-id, else the
+# keychain's one Apple Development identity, whose team it pins. Without one,
+# as in CI and Symphony's QA VM, or with CODESIGN_IDENTITY=-, it's ad hoc,
+# without the hardened runtime.
+SIGNING="$(Scripts/signing-identity.sh)"
+read -r IDENTITY TEAM_ID <<<"$SIGNING"
 if [ "$IDENTITY" = "-" ]; then
   SIGN_OPTIONS=(--sign -)
 else

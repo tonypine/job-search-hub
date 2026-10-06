@@ -58,8 +58,8 @@ if [ -z "$pinned" ] && [ -f "$config_dir/codesign-team-id" ]; then
 fi
 if [ -z "$pinned" ] || [ "$team" != "$pinned" ]; then
   echo "$source_app is signed by team \"${team:-none}\", not the pinned team \"${pinned:-none pinned}\"." >&2
-  echo "Pin your Apple Development certificate's team with CODESIGN_TEAM_ID, or in $config_dir/codesign-team-id," >&2
-  fail "and build again: the Keychain trusts the app with the owner token by that team's signature."
+  echo "Build it with make-app.sh, which pins the team of the keychain's Apple Development identity, or pin yours with" >&2
+  fail "CODESIGN_TEAM_ID: the Keychain trusts the app with the owner token by that team's signature."
 fi
 version="$("$server" --version | sed -n 's/^hub-server //p')"
 echo "hub-server $version, signed by team $team"

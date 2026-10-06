@@ -301,6 +301,11 @@ jobs:
           restore-keys: |
             swiftpm-${{ steps.xcode.outputs.image }}-xcode-${{ env.XCODE_VERSION }}-
 
+      # The choice of make-app.sh's signing identity and team, against a
+      # fake keychain.
+      - name: Signing identity
+        run: Scripts/signing-identity_test.sh
+
       - name: swift build
         run: swift build
 
