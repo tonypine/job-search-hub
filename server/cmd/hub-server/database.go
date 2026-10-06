@@ -86,6 +86,7 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 			database.Close()
 			return nil, err
 		}
+		slog.Info("database marked after migrating", "file", databasebackup.MarkPath(dump))
 	}
 	return database, nil
 }
@@ -102,6 +103,8 @@ func dumpBeforeMigrating(ctx context.Context, database *hubDatabase, folder stri
 	if !pending || version == 0 {
 		return "", nil
 	}
+	// hub-update reads it as the start of a slower start.
+	slog.Info("migrating the database", "from", version)
 	path, err := databasebackup.DumpBeforeMigration(ctx, database.pgDump, database.url, folder, version)
 	if err != nil {
 		return "", fmt.Errorf("dump the database before migrating it: %w", err)
