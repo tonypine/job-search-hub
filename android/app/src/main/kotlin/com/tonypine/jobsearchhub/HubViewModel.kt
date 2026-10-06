@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tonypine.jobsearchhub.core.ClearedJobDecision
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.FollowUpStatus
 import com.tonypine.jobsearchhub.core.HubUpdate
@@ -53,6 +54,11 @@ data class HubState(
     val error: HubFailure? = null,
     /** When the lists last read the hub without an error. */
     val readAt: Instant? = null,
+    /**
+     * The hub's words when it no longer serves this version of the app, kept until a read succeeds, so a retry
+     * doesn't flash the pages between two refusals.
+     */
+    val tooOld: String? = null,
 ) {
     val shownJobs: List<JobListItem> get() = JobsOrder.pick(jobs, includesUnclear)
 
@@ -80,7 +86,11 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     private val client: HubClient? get() = state.value.pairing?.let { HubClient(it, BuildConfig.VERSION_NAME) }
 
+    /** The app's own new versions, which Today, Settings and the too-old screen offer. */
+    val versions = app.versions
+
     init {
+        versions.checkSoon()
         refresh()
         registerForPushes()
         viewModelScope.launch { app.pushes.collect { refresh() } }
@@ -169,11 +179,14 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
                     if (it.pairing != pairing) it
                     else it.copy(
                         updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, pipeline = pipeline,
-                        recruiters = recruiters, isLoading = false, error = null, readAt = Instant.now(),
+                        recruiters = recruiters, isLoading = false, error = null, readAt = Instant.now(), tooOld = null,
                     )
                 }
             } catch (error: HubException) {
-                mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = HubFailure.of(error)) }
+                mutableState.update {
+                    if (it.pairing != pairing) it
+                    else it.copy(isLoading = false, error = HubFailure.of(error), tooOld = if (error.isUpgradeRequired) error.message else it.tooOld)
+                }
             }
         }
     }
@@ -255,13 +268,16 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. */
-    suspend fun undoDecision(id: String): Result<Unit> {
+    /**
+     * Takes back the decision on the job, which leaves it undecided and not skipped, and reads the lists again. Returns
+     * what the hub did with a pursue's card.
+     */
+    suspend fun undoDecision(id: String): Result<ClearedJobDecision> {
         val client = client ?: return Result.failure(HubException("Not paired."))
         return try {
-            client.clearJobDecision(id)
+            val cleared = client.clearJobDecision(id)
             refresh()
-            Result.success(Unit)
+            Result.success(cleared)
         } catch (error: HubException) {
             Result.failure(error)
         }

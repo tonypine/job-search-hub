@@ -7,6 +7,10 @@ import SwiftUI
 /// is truncated: rows whose height follows the table's width can loop the
 /// window's layout as the inspector opens (#54, #66).
 enum JobRowLayout {
+    /// The rows' height. The table is told it as its rows' minimum height:
+    /// it doesn't size every row from its cells on every macOS, and a 24 pt
+    /// row cuts the second line off.
+    static let rowHeight: CGFloat = 44
     /// The cells' height; the table's own padding makes the row 44 pt.
     static let cellHeight: CGFloat = 36
 }

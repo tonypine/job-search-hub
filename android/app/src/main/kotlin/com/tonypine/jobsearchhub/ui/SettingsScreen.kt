@@ -46,12 +46,13 @@ import com.tonypine.jobsearchhub.push.UpdateNotifications
 import com.tonypine.jobsearchhub.ui.design.HubSection
 import com.tonypine.jobsearchhub.ui.design.SegmentedGroup
 import com.tonypine.jobsearchhub.ui.design.Spacing
+import com.tonypine.jobsearchhub.versions.VersionState
 import java.net.URI
 
-/** The paired hub, the phone's notifications, and unpairing, which asks first. */
+/** The paired hub, the phone's notifications, the app's version, and unpairing, which asks first. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(state: HubState, onBack: () -> Unit, onUnpair: () -> Unit) {
+fun SettingsScreen(state: HubState, version: VersionState, versionActions: VersionActions, onBack: () -> Unit, onUnpair: () -> Unit) {
     val context = LocalContext.current
     var isUnpairing by rememberSaveable { mutableStateOf(false) }
     // Read again on each return, as the switch lives in the system's settings.
@@ -127,6 +128,9 @@ fun SettingsScreen(state: HubState, onBack: () -> Unit, onUnpair: () -> Unit) {
                     ),
                     Modifier.padding(horizontal = Spacing.l),
                 )
+            }
+            HubSection("App version") {
+                AppVersionCard(version, versionActions)
             }
             SegmentedGroup(
                 listOf { SettingsRow(Icons.Rounded.LinkOff, "Unpair this phone", color = MaterialTheme.colorScheme.error) { isUnpairing = true } },

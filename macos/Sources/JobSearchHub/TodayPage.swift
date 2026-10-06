@@ -243,7 +243,7 @@ struct TodayPage: View {
                 .accessibilityLabel(Today.summarize(items.chips))
             }
             if let loadError = model.loadError {
-                HubErrorView(loadError) { Task { await model.load(with: client) } }
+                HubErrorView(loadError, retry: { Task { await model.load(with: client) } })
             }
             if isWide {
                 HStack(alignment: .top, spacing: Space.l) {

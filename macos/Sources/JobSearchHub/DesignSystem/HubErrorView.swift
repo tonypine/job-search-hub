@@ -104,13 +104,13 @@ struct HubFailure: Equatable {
 }
 
 extension HubErrorView {
-    init(_ failure: HubFailure, style: Style = .inline, retry: (() -> Void)? = nil, dismiss: (() -> Void)? = nil) {
-        self.init(title: failure.title, report: failure.report, style: style, retry: retry, dismiss: dismiss)
+    init(_ failure: HubFailure, style: Style = .inline, retry: (() -> Void)? = nil) {
+        self.init(title: failure.title, report: failure.report, style: style, retry: retry)
     }
 
     /// A failure the owner reads and dismisses, which clears it.
     init(_ failure: Binding<HubFailure?>, retry: (() -> Void)? = nil) {
         let shown = failure.wrappedValue ?? HubFailure("", advice: "")
-        self.init(shown, retry: retry) { failure.wrappedValue = nil }
+        self.init(title: shown.title, report: shown.report, retry: retry, dismiss: { failure.wrappedValue = nil })
     }
 }

@@ -14,10 +14,10 @@ struct JobSearchHubApp: App {
     @State private var taskRunner: RemoteTaskRunner
     @State private var profileSeed = ProfileSeed()
     @State private var jobDecisions = JobDecisions()
+    @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        Self.importOwnerTokenIfAsked()
-        _connection = State(initialValue: HubConnection())
+        _connection = State(initialValue: HubConnection(importedToken: Self.importOwnerTokenIfAsked()))
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
@@ -41,6 +41,7 @@ struct JobSearchHubApp: App {
                 .environment(profileSeed)
                 .environment(jobDecisions)
                 .environment(taskRunner)
+                .environment(newVersions)
                 .frame(minWidth: 900, minHeight: 600)
                 // Hub Indigo marks you and your actions: selection, links, the primary button.
                 .tint(.hubAccent)
@@ -82,7 +83,7 @@ struct JobSearchHubApp: App {
         // every page lays out.
         .windowResizability(.contentMinSize)
         .commands {
-            HubCommands(events: events)
+            HubCommands(events: events, newVersions: newVersions)
         }
 
         // A session opened in a window of its own, out of the inspector's width.
@@ -97,6 +98,7 @@ struct JobSearchHubApp: App {
         Settings {
             SettingsWindow()
                 .environment(connection)
+                .environment(newVersions)
                 .tint(.hubAccent)
         }
     }
@@ -123,12 +125,13 @@ struct JobSearchHubApp: App {
     /// into the Keychain, for setting up without typing the token:
     /// `open JobSearchHub.app --env HUB_OWNER_TOKEN=… --args --import-owner-token`.
     /// The app writes the item itself, which is what keeps later reads free of
-    /// Keychain prompts.
-    private static func importOwnerTokenIfAsked() {
+    /// Keychain prompts. When the Keychain refuses it, as in a VM, the app
+    /// still uses the token until it quits. Nil when not asked.
+    private static func importOwnerTokenIfAsked() -> OwnerTokenState? {
         guard ProcessInfo.processInfo.arguments.contains("--import-owner-token"),
               let token = ProcessInfo.processInfo.environment["HUB_OWNER_TOKEN"], !token.isEmpty
-        else { return }
-        try? OwnerTokenKeychain.save(token)
+        else { return nil }
+        return OwnerTokenState.saving(token)
     }
 }
 
@@ -159,6 +162,9 @@ struct ContentView: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(SidebarCounts.self) private var counts
     @Environment(JobDecisions.self) private var decisions
+    @Environment(NewVersionChecker.self) private var newVersions
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
     @State private var selectedPage: Page?
     /// The sidebar groups folded away, by raw value: the Hub's at first.
     @AppStorage("sidebarCollapsedGroups") private var collapsedGroups = SidebarGroup.allCases
@@ -197,8 +203,15 @@ struct ContentView: View {
                 }
             }
             // The hub's state, where the sessions were: they're in its popover.
+            // Under it, once one is downloaded and checked, the new version.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
+                VStack(spacing: 0) {
+                    HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
+                    if let ready = newVersions.facts.ready {
+                        NewVersionLabel(version: ready.version) { openVersionSettings() }
+                            .padding(.bottom, Space.s)
+                    }
+                }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
@@ -271,7 +284,10 @@ struct ContentView: View {
                         .ignoresSafeArea()
                         .onTapGesture { isShowingPalette = false }
                     CommandPalette(
-                        model: palette, actions: PaletteAction.getAvailable(isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count),
+                        model: palette,
+                        actions: PaletteAction.getAvailable(
+                            isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count, hasReadyVersion: newVersions.facts.ready != nil
+                        ),
                         choose: choose
                     ) {
                         isShowingPalette = false
@@ -449,7 +465,19 @@ struct ContentView: View {
                 await unseen.markSeen(UpdateSelection(all: true), with: client)
                 if unseen.count == 0 { toast = ToastMessage(text: "Marked all updates seen") }
             }
+        case .installNewVersion, .showWhatsNew:
+            openVersionSettings()
+        case .checkForNewVersion:
+            newVersions.checkNow()
+            openVersionSettings()
         }
+    }
+
+    /// Opens Settings on its Version tab, where the ready version and
+    /// what's in it are.
+    private func openVersionSettings() {
+        settingsTab = .version
+        openSettings()
     }
 
     /// Opens a session's job or company on its Session tab over the page

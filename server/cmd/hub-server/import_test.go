@@ -21,7 +21,7 @@ func countCompanies(t *testing.T, database *hubDatabase) int {
 }
 
 func TestTheImportCommandMovesAnExternalDatabasesRowsAndRefusesASecondImportWithoutReplace(t *testing.T) {
-	// The hub's database in Docker's Postgres, as the owner has it today.
+	// The hub's database in a Postgres the server doesn't run.
 	source := externalDatabaseURL(t)
 	execute(t, source, "INSERT INTO companies (name, domain) VALUES ('Acme', 'acme.example'), ('beta', 'beta.example')")
 	settings, _ := ownedDatabaseSettings(t)
@@ -135,7 +135,7 @@ func TestImportTakesASourceAndReplaceInAnyOrder(t *testing.T) {
 		replace   bool
 		ok        bool
 	}{
-		{[]string{"postgres://hub@localhost:5434/hub"}, "postgres://hub@localhost:5434/hub", false, true},
+		{[]string{"postgres://hub@db.example:5432/hub"}, "postgres://hub@db.example:5432/hub", false, true},
 		{[]string{"--replace", "postgres://a"}, "postgres://a", true, true},
 		{[]string{"postgres://a", "--replace"}, "postgres://a", true, true},
 		{[]string{"--replace"}, "", false, false},

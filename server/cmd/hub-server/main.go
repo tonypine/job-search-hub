@@ -65,10 +65,14 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	// shutdownTimeout is how long a stopping server waits for the model call
 	// and `claude -p` runs still running; launchd's ExitTimeOut leaves room
-	// for it and closeTimeout.
+	// for it, closeTimeout, modelRuntimeStopTimeout and Postgres's stop.
 	shutdownTimeout = 30 * time.Second
 	// closeTimeout is how long the requests still open then get to end.
 	closeTimeout = 5 * time.Second
+	// modelRuntimeStopTimeout is how long the server waits, once the work
+	// stopped, for the model runtime to stop llama-server: the runtime kills
+	// it once modelruntime.StopTimeout has passed.
+	modelRuntimeStopTimeout = modelruntime.StopTimeout + 5*time.Second
 	// mailTriageInterval retries mail the model couldn't read; new mail
 	// nudges a pass at once.
 	mailTriageInterval = 5 * time.Minute
@@ -277,7 +281,18 @@ func run() error {
 		LlamaServer: settings.llamaServer, ModelsDir: settings.modelsDir, Port: settings.runtimePort,
 		IdleTimeout: settings.runtimeIdleTimeout, LogPath: filepath.Join(logDirectory, "llama-server.log"),
 	})
-	go modelRuntime.Run(workCtx)
+	modelRuntimeStopped := make(chan struct{})
+	go func() {
+		defer close(modelRuntimeStopped)
+		modelRuntime.Run(workCtx)
+	}()
+	// Run stops llama-server once workCtx ends. Waiting for it, whichever
+	// way the server stops, keeps a loaded model from outliving the server
+	// and holding the runtime port.
+	defer func() {
+		stopWork()
+		waitForModelRuntime(modelRuntimeStopped, modelRuntimeStopTimeout)
+	}()
 	// Model calls take turns through one queue, which starts paused if the
 	// owner left it paused.
 	paused, err := hub.GetModelWorkPaused(ctx)
@@ -467,6 +482,16 @@ func shutDown(server *http.Server, drainer *drain.Drain, stopWork context.Cancel
 		_ = server.Close()
 	}
 	slog.Info("hub-server shut down")
+}
+
+// waitForModelRuntime waits up to timeout for the model runtime's Run to
+// return, which it does once llama-server has stopped.
+func waitForModelRuntime(stopped <-chan struct{}, timeout time.Duration) {
+	select {
+	case <-stopped:
+	case <-time.After(timeout):
+		slog.Warn("stopping with the model runtime still running", "waited", timeout.String())
+	}
 }
 
 // listRunningModelCall is the model queue's running call, as a drain lists it.

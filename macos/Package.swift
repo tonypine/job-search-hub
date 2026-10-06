@@ -19,6 +19,11 @@ let package = Package(
         ),
         // The hub server prints CVs with it: WebKit, offscreen, no window.
         .executableTarget(name: "CVPrint"),
-        .testTarget(name: "JobSearchHubCoreTests", dependencies: ["JobSearchHubCore"]),
+        // What both test targets share: StubHub, the canned URLSession.
+        .target(name: "HubTestSupport", path: "Tests/HubTestSupport"),
+        .testTarget(name: "JobSearchHubCoreTests", dependencies: ["JobSearchHubCore", "HubTestSupport"]),
+        // The app's views, drawn offscreen with ImageRenderer, and the app's
+        // new-version checks.
+        .testTarget(name: "JobSearchHubTests", dependencies: ["JobSearchHub", "JobSearchHubCore", "HubTestSupport"]),
     ]
 )
