@@ -9,13 +9,14 @@ enum SettingsTab: String {
     case accounts
     case phones
     case models
+    case version
 
     static let storageKey = "settingsTab"
 }
 
 /// The app's Settings window (⌘,): how the app reaches the hub, the server
-/// on this Mac, the accounts the hub reads, phones and models. What the
-/// search looks for is on the Criteria page.
+/// on this Mac, the accounts the hub reads, phones, models, and the app's
+/// version. What the search looks for is on the Criteria page.
 struct SettingsWindow: View {
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.connection
 
@@ -30,6 +31,7 @@ struct SettingsWindow: View {
             Tab("Models", systemImage: "cpu", value: .models) {
                 ConnectedSettings { client in ModelsSection(client: client) }
             }
+            Tab("Version", systemImage: "arrow.down.circle", value: .version) { VersionSettings() }
         }
         .frame(width: 620)
         .frame(minHeight: 420, idealHeight: 560)

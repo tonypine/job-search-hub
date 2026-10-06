@@ -2,7 +2,7 @@
 
 ## The repo is meant to be public
 
-Nothing personal goes in a commit: no tokens, no `.env`, no company or person data from a real search, no recruiter names. Real data lives in the Postgres volume, and notes about the search live outside the repo (see `CLAUDE.local.md` if it exists).
+Nothing personal goes in a commit: no tokens, no `.env`, no company or person data from a real search, no recruiter names. Real data lives in the database the server owns, and notes about the search live outside the repo (see `CLAUDE.local.md` if it exists).
 
 ## Commits
 
@@ -43,7 +43,7 @@ git config core.hooksPath .githooks
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and reports one check, `ci`, which `main` requires. Its jobs are `server-static` (gofmt, go vet, staticcheck, go mod tidy), `server-test` (the whole Go suite against Postgres 18), `macos` (`swift build` and `swift test`) and `android` (`:core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug`). Jobs for parts of the repo a PR doesn't touch skip.
 
-Running the full suite locally is optional, for a change to shared infrastructure (migrations, `internal/testdatabase`, the store, the build) where waiting on CI is slow. `server/scripts/test-with-postgres.sh` runs `go test` against a throwaway Postgres it creates from the installed hub's engine (`~/Library/Application Support/JobSearchHub/engines/postgres-18`, or `HUB_POSTGRES_ENGINES`) in a temporary folder, and deletes it on exit, Ctrl-C included. No Docker, no `.env`:
+Running the full suite locally is optional, for a change to shared infrastructure (migrations, `internal/testdatabase`, the store, the build) where waiting on CI is slow. `server/scripts/test-with-postgres.sh` runs `go test` against a throwaway Postgres it creates from the installed hub's engine (`~/Library/Application Support/JobSearchHub/engines/postgres-18`, or `HUB_POSTGRES_ENGINES`) in a temporary folder, and deletes it on exit, Ctrl-C included. It needs no `.env`:
 
 ```bash
 server/scripts/test-with-postgres.sh ./...   # any go test arguments, as in server/

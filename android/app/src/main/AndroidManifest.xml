@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Whether the network is Wi-Fi, which new versions download on. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The app installs its own new versions through PackageInstaller; Android asks the owner to allow it once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".HubApp"
@@ -44,5 +48,17 @@
         <receiver
             android:name=".push.NotificationActionReceiver"
             android:exported="false" />
+        <!-- Android's installer reporting on an update the app handed it. -->
+        <receiver
+            android:name=".versions.InstallResultReceiver"
+            android:exported="false" />
+        <!-- Opens the app again once it has replaced itself with a new version. -->
+        <receiver
+            android:name=".versions.UpdatedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

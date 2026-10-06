@@ -1,9 +1,9 @@
 #!/bin/sh
 # Runs the server's Go tests against a throwaway Postgres from the hub's own
-# engine, with no Docker. It creates a cluster in a new temporary folder,
-# starts it on a Unix socket there alone, points HUB_TEST_DATABASE_URL at it,
-# runs go test in server/ with the arguments given, and stops and deletes the
-# cluster on exit: after the tests, a failure, or Ctrl-C.
+# engine. It creates a cluster in a new temporary folder, starts it on a Unix
+# socket there alone, points HUB_TEST_DATABASE_URL at it, runs go test in
+# server/ with the arguments given, and stops and deletes the cluster on exit:
+# after the tests, a failure, or Ctrl-C.
 #
 #   server/scripts/test-with-postgres.sh                     go test ./...
 #   server/scripts/test-with-postgres.sh ./internal/store    any go test arguments, as in server/

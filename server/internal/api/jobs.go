@@ -203,13 +203,14 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
 			return
 		}
-		switch err := hub.ClearJobDecision(r.Context(), owner, id); {
+		cleared, err := hub.ClearJobDecision(r.Context(), owner, id)
+		switch {
 		case errors.Is(err, store.ErrJobNotFound):
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
 		case err != nil:
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		default:
-			w.WriteHeader(http.StatusNoContent)
+			writeJSON(w, http.StatusOK, cleared)
 		}
 	})))
 }

@@ -39,13 +39,17 @@ func parseImportArguments(arguments []string) (source string, replace, ok bool) 
 	return source, replace, true
 }
 
-// importDatabase moves the hub's data from the Postgres at source, such as
-// Docker's, into a new cluster in dir, run by the newest engine in engines.
-// It dumps source into backups with the engine's pg_dump and restores the
-// dump as a restore does, keeping the new cluster only if each of its tables
-// holds as many rows as in source. Without replace, it refuses when the
-// cluster in dir holds data already.
-func importDatabase(ctx context.Context, engines, dir, backups, source string, replace bool, out io.Writer) error {
+// importCheck checks the database imported from source before it is kept;
+// checkImported in production.
+type importCheck func(ctx context.Context, source, imported string, out io.Writer) error
+
+// importDatabase moves the hub's data from the Postgres at source into a new
+// cluster in dir, run by the newest engine in engines. It dumps source into
+// backups with the engine's pg_dump and restores the dump as a restore does,
+// keeping the new cluster only if check passes: each of its tables holds as
+// many rows as in source. Without replace, it refuses when the cluster in dir
+// holds data already.
+func importDatabase(ctx context.Context, engines, dir, backups, source string, replace bool, check importCheck, out io.Writer) error {
 	engine, err := postgresprocess.NewestEngine(engines)
 	if err != nil {
 		return err
@@ -70,7 +74,7 @@ func importDatabase(ctx context.Context, engines, dir, backups, source string, r
 		return fmt.Errorf("dump the database to import: %w", err)
 	}
 	replaced, err := owner.Restore(ctx, dump, func(ctx context.Context, imported string) error {
-		return checkImported(ctx, source, imported, out)
+		return check(ctx, source, imported, out)
 	}, out)
 	if err != nil {
 		return fmt.Errorf("the import failed, and the database the server owns is as it was: %w", err)
@@ -79,7 +83,6 @@ func importDatabase(ctx context.Context, engines, dir, backups, source string, r
 	if replaced != "" {
 		fmt.Fprintf(out, "The database it replaced is kept in %s; delete that folder once the hub runs well.\n", replaced)
 	}
-	fmt.Fprintln(out, "Remove HUB_DATABASE_URL from ~/.config/job-search-hub/server.env, then start the hub in Settings › Server.")
 	return nil
 }
 
