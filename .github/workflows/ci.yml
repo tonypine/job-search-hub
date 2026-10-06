@@ -230,7 +230,7 @@ jobs:
         run: go test -count=1 ./...
 
       # A release's build, with the version code release.yml would pass: the
-      # server's --version, hub's and GET /v1/version all say 0.1.<N>.
+      # server's --version, hub's, hub-update's and GET /v1/version all say 0.1.<N>.
       - name: A stamped server and hub report one version
         env:
           HUB_VERSION_CODE: "4242"
@@ -240,10 +240,12 @@ jobs:
           ldflags=$(sh ../scripts/release/version.sh --go-ldflags)
           go build -ldflags "$ldflags" -o "$RUNNER_TEMP/hub-server" ./cmd/hub-server
           go build -ldflags "$ldflags" -o "$RUNNER_TEMP/hub" ./cmd/hub
+          go build -ldflags "$ldflags" -o "$RUNNER_TEMP/hub-update" ./cmd/hub-update
           "$RUNNER_TEMP/hub-server" --version | tee "$RUNNER_TEMP/server-version"
           grep -qx "hub-server $want" "$RUNNER_TEMP/server-version"
           grep -qx "commit $(git rev-parse HEAD)" "$RUNNER_TEMP/server-version"
           test "$("$RUNNER_TEMP/hub" --version)" = "hub $want"
+          test "$("$RUNNER_TEMP/hub-update" --version)" = "hub-update $want"
 
           psql "$HUB_TEST_DATABASE_URL" -c 'CREATE DATABASE stamped_version'
           HUB_ADDR=127.0.0.1:8099 HUB_OWNER_TOKEN="$(openssl rand -hex 32)" \
