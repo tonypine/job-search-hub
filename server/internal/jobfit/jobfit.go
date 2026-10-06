@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
@@ -277,40 +276,41 @@ func getSpellings(term string) []string {
 	return append([]string{term}, placeSpellings[getPlace(term)]...)
 }
 
-// nonPlaceWords are the words of a residency rule that name no place, as
-// "must", "based" and "candidates" do, or only a language, as "English" does
-// in "English required".
-var nonPlaceWords = func() map[string]bool {
-	words := map[string]bool{}
-	for _, term := range slices.Concat(requirementWords, residenceWords, softeningWords, hoursOnlyWords, []string{
-		"based", "candidate", "candidates", "applicant", "applicants", "people", "talent", "professionals", "open", "hiring", "hire",
-		"we", "for", "from", "anywhere", "across", "all", "any", "country", "countries", "region", "regions",
-		"english", "spanish", "portuguese", "ingles", "espanol", "portugues", "fluent", "fluency", "speaker", "speakers", "speaking",
-		"candidatos", "candidatas", "pessoas", "profissionais", "paises", "pais", "regiao", "qualquer", "cualquier",
-	}) {
-		for _, word := range getWords(term) {
-			words[word] = true
-		}
-	}
-	for word := range remoteWords {
-		words[word] = true
-	}
-	return words
-}()
+// otherPlaces are places a residency rule beside a region may narrow it
+// to, in English, Portuguese and Spanish. A place that includes the owner is
+// dropped from a rule before these are looked for, so listing it is harmless.
+var otherPlaces = []string{
+	"United States", "Estados Unidos", "America do Norte", "North America", "Norteamerica",
+	"Central America", "America Central", "Centroamerica", "Caribbean", "Caribe",
+	"Canada", "Mexico", "Argentina", "Chile", "Colombia", "Peru", "Uruguay", "Uruguai", "Paraguay", "Paraguai",
+	"Ecuador", "Equador", "Bolivia", "Venezuela", "Costa Rica", "Panama", "Guatemala", "Puerto Rico",
+	"Europe", "Europa", "European Union", "Uniao Europeia", "Union Europea", "United Kingdom", "Reino Unido",
+	"Portugal", "Spain", "Espanha", "Espana", "Germany", "Alemanha", "Alemania", "France", "Franca", "Francia",
+	"Netherlands", "Ireland", "Poland", "Romania", "Italy", "Italia",
+	"Asia", "Africa", "India", "Philippines", "Australia", "New Zealand",
+}
+
+// otherPlaceCodes are the codes of otherPlaces. They count only written in
+// capitals, since "us" in "join us" names no place.
+var otherPlaceCodes = []string{"US", "USA", "EUA", "EEUU", "UK", "EU", "EMEA", "APAC", "CA", "MX", "AR", "CO", "CL"}
 
 // hasRuleForAnotherPlace reports whether a part of the texts has a residency
-// rule naming a place other than the regions, as "LATAM - must reside in
-// Argentina" does. A rule for the region itself, as in "Latin America only",
-// names none. A place is a capitalized word that isn't a rule's own, since
-// "our focus only matters" names none.
+// rule naming one of otherPlaces besides the regions, as "LATAM - must
+// reside in Argentina" does. A rule for the region itself, as in "Latin
+// America only", or for something other than a place, as in "Contractors
+// only", names none.
 func hasRuleForAnotherPlace(texts, regions []string) bool {
 	for _, text := range texts {
 		for _, part := range getParts(text) {
 			if !hasResidencyRule([]string{part}) {
 				continue
 			}
-			for _, word := range dropTerms(part, regions) {
-				if first, _ := utf8.DecodeRuneInString(word); unicode.IsUpper(first) && !nonPlaceWords[wordmatch.Normalize(word)] {
+			words := dropTerms(part, regions)
+			if _, found := findTerm([]string{strings.Join(words, " ")}, otherPlaces); found {
+				return true
+			}
+			for _, code := range otherPlaceCodes {
+				if slices.Contains(words, code) {
 					return true
 				}
 			}

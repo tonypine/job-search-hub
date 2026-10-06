@@ -190,11 +190,17 @@ func TestPlacesThatIncludeBrazilAreOpenToIt(t *testing.T) {
 		"Remote, LATAM (Brasil or Mexico only)":        jobfit.VerdictYes,
 		"Remote, Latin America only, English required": jobfit.VerdictYes,
 		"LATAM based candidates only":                  jobfit.VerdictYes,
+		"Remote - LATAM (Contractors only)":            jobfit.VerdictYes,
+		"Americas (Full-time only)":                    jobfit.VerdictYes,
+		"Remote, Americas, Senior Engineers Only":      jobfit.VerdictYes,
+		"Remote, LATAM only, join us":                  jobfit.VerdictYes,
 		"Remote - Americas (US or Canada only)":        jobfit.VerdictNo,
 		"Americas: US and Canada residents only":       jobfit.VerdictNo,
 		"Remote, Latin America (Mexico only)":          jobfit.VerdictNo,
 		"LATAM - must reside in Argentina":             jobfit.VerdictNo,
 		"Remoto, América Latina (somente México)":      jobfit.VerdictNo,
+		"Remote, LATAM (EU timezone, Portugal only)":   jobfit.VerdictNo,
+		"Americas (North America only)":                jobfit.VerdictNo,
 	} {
 		fit := jobfit.Judge(store.Job{Location: location}, facts(t, map[string]any{"location_restriction": "not stated"}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != want {
