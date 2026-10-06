@@ -58,7 +58,7 @@ private func makePreferences() -> UserDefaults {
 
 private struct RefusedByKeychain: Error {}
 
-@MainActor @Test func aBuildWithoutATeamKeepsTheTokenInItsPreferencesWhenTheKeychainRefusesIt() async throws {
+@MainActor @Test func aBuildWithoutATeamKeepsTheTokenInItsPreferencesWhenTheKeychainRefusesIt() async {
     let preferences = makePreferences()
     let connection = HubConnection(
         arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false,
@@ -66,7 +66,7 @@ private struct RefusedByKeychain: Error {}
     )
     await connection.finishReadingToken()
 
-    try connection.save(newToken: " saved-token \n")
+    connection.save(newToken: " saved-token \n")
 
     #expect(connection.makeClient()?.token == "saved-token")
     #expect(connection.tokenSource == .preferences)
@@ -80,7 +80,7 @@ private struct RefusedByKeychain: Error {}
     #expect(relaunched.tokenSource == .preferences)
 }
 
-@MainActor @Test func aTeamSignedBuildStillFailsTheSaveWhenTheKeychainRefusesIt() async {
+@MainActor @Test func aTeamSignedBuildLeavesATokenTheKeychainRefusesUnsaved() async {
     let preferences = makePreferences()
     let connection = HubConnection(
         arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: true,
@@ -88,8 +88,13 @@ private struct RefusedByKeychain: Error {}
     )
     await connection.finishReadingToken()
 
-    #expect(throws: RefusedByKeychain.self) { try connection.save(newToken: "saved-token") }
-    #expect(connection.makeClient() == nil)
+    connection.save(newToken: "saved-token")
+
+    guard case .unsaved("saved-token", _) = connection.token else {
+        Issue.record("expected an unsaved token, got \(connection.token)")
+        return
+    }
+    #expect(connection.makeClient()?.token == "saved-token")
     #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == nil)
 }
 
@@ -106,7 +111,7 @@ private struct RefusedByKeychain: Error {}
     #expect(connection.tokenSource == .keychain)
 }
 
-@MainActor @Test func aSaveTheKeychainTakesDropsTheCopyInPreferences() async throws {
+@MainActor @Test func aSaveTheKeychainTakesDropsTheCopyInPreferences() async {
     let preferences = makePreferences()
     preferences.set("old-token", forKey: HubConnection.ownerTokenPreferenceKey)
     var keychainToken: String?
@@ -117,10 +122,35 @@ private struct RefusedByKeychain: Error {}
     await connection.finishReadingToken()
     #expect(connection.tokenSource == .preferences)
 
-    try connection.save(newToken: "new-token")
+    connection.save(newToken: "new-token")
 
     #expect(keychainToken == "new-token")
     #expect(connection.makeClient()?.token == "new-token")
     #expect(connection.tokenSource == .keychain)
     #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == nil)
+}
+
+@MainActor @Test func anImportedTokenTheKeychainRefusedIsUsedWithoutReadingTheKeychain() async {
+    let connection = HubConnection(
+        importedToken: .unsaved("imported-token", reason: "locked"),
+        arguments: ["JobSearchHub"], environment: [:],
+        preferences: makePreferences(), isTeamSigned: true, readKeychain: { "keychain-token" }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.makeClient()?.token == "imported-token")
+}
+
+@MainActor @Test func aBuildWithoutATeamKeepsAnImportedTokenTheKeychainRefusedInItsPreferences() async {
+    let preferences = makePreferences()
+    let connection = HubConnection(
+        importedToken: .unsaved("imported-token", reason: "locked"),
+        arguments: ["JobSearchHub"], environment: [:],
+        preferences: preferences, isTeamSigned: false, readKeychain: { nil }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.token == .present("imported-token"))
+    #expect(connection.tokenSource == .preferences)
+    #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == "imported-token")
 }

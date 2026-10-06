@@ -26,7 +26,7 @@ final class NewVersionChecker {
     private(set) var runningReleaseURL: URL?
 
     @ObservationIgnored let updates: UpdatesFolder
-    @ObservationIgnored private let feed = ReleaseFeed()
+    @ObservationIgnored private let feed: ReleaseFeed
     @ObservationIgnored private let inspector: any BundleInspecting
     @ObservationIgnored private var runningSigning: BundleSigning?
     @ObservationIgnored private var loop: Task<Void, Never>?
@@ -34,11 +34,13 @@ final class NewVersionChecker {
 
     init(
         updates: UpdatesFolder = .makeDefault(home: FileManager.default.homeDirectoryForCurrentUser),
-        inspector: any BundleInspecting = CodesignInspector()
+        inspector: any BundleInspecting = CodesignInspector(),
+        feed: ReleaseFeed = ReleaseFeed(),
+        running: HubVersion = HubVersion(HubClient.appVersion) ?? HubVersion("0.1.0-dev")!
     ) {
         self.updates = updates
         self.inspector = inspector
-        let running = HubVersion(HubClient.appVersion) ?? HubVersion("0.1.0-dev")!
+        self.feed = feed
         let defaults = UserDefaults.standard
         facts = NewVersionFacts(
             running: running,
@@ -70,7 +72,7 @@ final class NewVersionChecker {
         Task { await checkAndWait() }
     }
 
-    private func checkAndWait() async {
+    func checkAndWait() async {
         if let check {
             await check.value
             return

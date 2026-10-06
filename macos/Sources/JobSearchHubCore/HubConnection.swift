@@ -7,7 +7,9 @@ import Observation
 ///
 /// The token is read once, off the main thread, and held in memory: when the
 /// Keychain item's access list doesn't name this build, the read waits on the
-/// Keychain's access prompt, and the window stays responsive meanwhile.
+/// Keychain's access prompt, and the window stays responsive meanwhile. A
+/// token the Keychain refuses, as in a VM whose login keychain is locked, is
+/// still used until the app quits.
 ///
 /// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
 /// instead, for a QA machine whose Keychain won't keep it. Without the flag
@@ -35,7 +37,10 @@ public final class HubConnection {
     @ObservationIgnored private let isTeamSigned: Bool
     @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
+    /// With an imported token, from `--import-owner-token`, the app uses it
+    /// rather than read the Keychain, which may have refused it.
     public init(
+        importedToken: OwnerTokenState? = nil,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
@@ -47,6 +52,10 @@ public final class HubConnection {
         self.saveKeychain = saveKeychain
         self.isTeamSigned = isTeamSigned
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
+        if let importedToken {
+            token = keep(importedToken)
+            return
+        }
         if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
             token = .present(qaToken)
             tokenSource = .environment
@@ -88,23 +97,32 @@ public final class HubConnection {
     }
 
     /// Saves the URL, and the token when one is given; an empty token field
-    /// keeps the stored token. A build without a team keeps the token in its
-    /// preferences when the Keychain refuses it, and drops that copy once the
+    /// keeps the stored token. A token the Keychain refuses is unsaved, and
+    /// used until the app quits, unless the build has no team: it keeps the
+    /// token in its preferences instead, and drops that copy once the
     /// Keychain takes one.
-    public func save(newToken: String) throws {
+    public func save(newToken: String) {
         preferences.set(hubURLText, forKey: Self.hubURLPreferenceKey)
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedToken.isEmpty else { return }
-        do {
-            try saveKeychain(trimmedToken)
+        token = keep(.saving(trimmedToken, with: saveKeychain))
+    }
+
+    /// The state of a token just handed to the Keychain, after a build
+    /// without a team has moved one the Keychain refused to its preferences.
+    private func keep(_ state: OwnerTokenState) -> OwnerTokenState {
+        switch state {
+        case .present:
             preferences.removeObject(forKey: Self.ownerTokenPreferenceKey)
             tokenSource = .keychain
-        } catch {
-            guard !isTeamSigned else { throw error }
-            preferences.set(trimmedToken, forKey: Self.ownerTokenPreferenceKey)
+            return state
+        case .unsaved(let token, _) where !isTeamSigned:
+            preferences.set(token, forKey: Self.ownerTokenPreferenceKey)
             tokenSource = .preferences
+            return .present(token)
+        case .unsaved, .reading, .missing:
+            return state
         }
-        token = .present(trimmedToken)
     }
 
     public func check() async {

@@ -1,5 +1,6 @@
 package com.tonypine.jobsearchhub.data
 
+import com.tonypine.jobsearchhub.core.ClearedJobDecision
 import com.tonypine.jobsearchhub.core.CompanyDossier
 import com.tonypine.jobsearchhub.core.JobDetails
 import com.tonypine.jobsearchhub.core.DecisionQueueResponse
@@ -100,9 +101,14 @@ class HubClient(
     suspend fun decideJob(id: String, decision: String, reason: String = ""): JobDecision =
         send("/v1/jobs/$id/decision", hubJson.encodeToString(JobDecisionRequest(decision, reason.trim())))
 
-    /** Takes back the decision on a job, which leaves it undecided: a skipped job comes back to the jobs list. */
-    suspend fun clearJobDecision(id: String) {
-        fetch("DELETE", "/v1/jobs/$id/decision", null)
+    /**
+     * Takes back the decision on a job, which leaves it undecided: a skipped job comes back to the jobs list, and a
+     * pursued one leaves the pipeline unless its card was there before or changed since. A hub that answers with no
+     * body says nothing about the card.
+     */
+    suspend fun clearJobDecision(id: String): ClearedJobDecision {
+        val body = fetch("DELETE", "/v1/jobs/$id/decision", null)
+        return if (body.isBlank()) ClearedJobDecision() else hubJson.decodeFromString(body)
     }
 
     /** Registers the token FCM gave this app, so the hub pushes its updates here. */

@@ -26,10 +26,21 @@ class CoreTest {
     }
 
     @Test
-    fun laterAndSkipSayWhatUndoTakesBack() {
-        assertEquals("Left Senior Engineer for later", decisionNotice("Senior Engineer", "later"))
-        assertEquals("Skipped Senior Engineer", decisionNotice("Senior Engineer", "skip"))
-        assertNull(decisionNotice("Senior Engineer", "pursue"))
+    fun eachDecisionSaysWhatUndoTakesBack() {
+        assertEquals("Left Senior Engineer for later", DecisionNotice("Senior Engineer", "later").text)
+        assertEquals("Skipped Senior Engineer", DecisionNotice("Senior Engineer", "skip").text)
+        assertEquals("Pursued Senior Engineer", DecisionNotice("Senior Engineer", "pursue").text)
+    }
+
+    @Test
+    fun undoingAPursueSaysSoOnlyWhenTheHubKeptTheCard() {
+        val notice = DecisionNotice("Senior Engineer", "pursue")
+        assertEquals(
+            "Senior Engineer stays on the pipeline: its card changed since the pursue",
+            notice.afterUndo(ClearedJobDecision(decision = "pursue", keptApplicationId = "a1")),
+        )
+        assertNull(notice.afterUndo(ClearedJobDecision(decision = "pursue", removedApplicationId = "a1")))
+        assertNull(notice.afterUndo(ClearedJobDecision(decision = "pursue")))
     }
 
     @Test
