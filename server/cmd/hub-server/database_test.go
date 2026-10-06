@@ -139,7 +139,7 @@ func TestNoEngineStopsTheStartBeforeAnyDatabase(t *testing.T) {
 }
 
 // externalDatabaseURL is a new, migrated database's URL, like a
-// HUB_DATABASE_URL naming Docker's Postgres.
+// HUB_DATABASE_URL naming a Postgres the server doesn't run.
 func externalDatabaseURL(t *testing.T) string {
 	t.Helper()
 	var name string
