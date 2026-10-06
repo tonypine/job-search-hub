@@ -99,11 +99,13 @@ set -a && . ./.env && set +a
 open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
+On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then starts from empty connection settings, forgetting the hub URL and token an earlier run saved, takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
 
 ```bash
 open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --qa-mode
 ```
+
+A build with neither a team nor Go, as `make-app.sh` makes in Symphony's QA VM, is a QA build: it runs in QA mode at every launch, with or without `--qa-mode`, so each QA launch starts from empty connection settings. `HUB_QA_BUILD=1` or `HUB_QA_BUILD=0` before `make-app.sh` decides it instead.
 
 The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token. A build no Apple team signed (ad hoc, self-signed or unsigned) keeps the token in its preferences when the Keychain refuses to save it, as in Symphony's QA VM, and reads it from there first at the next launch; a team-signed build keeps it only until it quits.
 
