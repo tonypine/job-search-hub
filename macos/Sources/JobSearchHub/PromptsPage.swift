@@ -188,7 +188,7 @@ struct PromptsPage: View {
             .padding(Space.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if let failure = model.failure {
-            HubErrorView(failure, style: .page) { Task { await model.loadSummaries(with: client) } }
+            HubErrorView(failure, style: .page, retry: { Task { await model.loadSummaries(with: client) } })
         } else {
             ContentUnavailableView("Pick a prompt", systemImage: "text.bubble")
         }

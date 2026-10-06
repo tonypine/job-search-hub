@@ -311,7 +311,7 @@ struct PipelinePage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
             }
         }
         .overlay(alignment: .bottom) {
