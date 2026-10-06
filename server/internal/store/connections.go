@@ -299,7 +299,7 @@ func (s *Store) GetConnectionsSummary(ctx context.Context) (ConnectionsSummary, 
 // the longest-standing first.
 func (s *Store) ListCompanyConnections(ctx context.Context, companyID uuid.UUID) ([]Connection, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+connectionColumns+` FROM connections WHERE company_id = $1 ORDER BY connected_on NULLS LAST, last_name`, companyID)
+		SELECT `+connectionColumns+` FROM connections WHERE company_id = $1 ORDER BY connected_on NULLS LAST, lower(last_name), last_name`, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (s *Store) ListConnectionsAtCompanyName(ctx context.Context, companyName st
 		return connections, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+connectionColumns+` FROM connections WHERE company_name <> '' ORDER BY connected_on NULLS LAST, last_name`)
+		SELECT `+connectionColumns+` FROM connections WHERE company_name <> '' ORDER BY connected_on NULLS LAST, lower(last_name), last_name`)
 	if err != nil {
 		return nil, err
 	}

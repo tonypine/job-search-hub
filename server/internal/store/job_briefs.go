@@ -115,7 +115,7 @@ func (s *Store) GetJobBrief(ctx context.Context, jobID uuid.UUID) (*JobBrief, er
 	for _, point := range append(append([]JobBriefPoint{}, brief.Strengths...), brief.Weaknesses...) {
 		citedIDs = append(citedIDs, point.EntryIDs...)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, kind, title, organization FROM profile_entries WHERE id = ANY($1) ORDER BY kind, title`, citedIDs)
+	rows, err := s.pool.Query(ctx, `SELECT id, kind, title, organization FROM profile_entries WHERE id = ANY($1) ORDER BY kind, lower(title), title`, citedIDs)
 	if err != nil {
 		return nil, err
 	}
