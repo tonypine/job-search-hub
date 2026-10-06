@@ -213,7 +213,9 @@ At start, with no `HUB_DATABASE_URL`:
    `postgres/<major>/`. A cluster of a newer major than any engine means the app was rolled back
    past an upgrade: the server refuses to start and says so, rather than open a stale older cluster.
    An older major's cluster alone means an upgrade is due (see below). No cluster means a fresh
-   install: `initdb`, unless a `<major>.replaced-<date>` folder is there without its replacement,
+   install: `initdb` into `postgres/<major>.partial`, removing any an earlier `initdb` left when it
+   was killed, then a rename to `postgres/<major>/`, so a cluster folder is always a finished one.
+   The exception is a `<major>.replaced-<date>` folder there without its replacement,
    which means a restore was killed between its two renames: the server refuses to start and names
    the folder to rename back, rather than open an empty cluster.
 3. **Clean up an orphan.** If `postmaster.pid` names a live process, a previous server may have died
@@ -233,8 +235,10 @@ At start, with no `HUB_DATABASE_URL`:
 
 At stop (`SIGTERM` from launchd or Settings › Server › Stop): the HTTP server and the workers stop
 as today, the pool closes, then the server sends Postgres `SIGINT` (fast shutdown) and waits up to
-20 seconds, then `SIGQUIT`, which is safe: Postgres recovers from its WAL at the next start. The
-LaunchAgent's `ExitTimeOut` goes to 30 seconds so launchd doesn't kill the server mid-way.
+20 seconds, then `SIGQUIT`, which is safe: Postgres recovers from its WAL at the next start. A
+Postgres that hasn't quit 10 seconds later, because it is suspended or stuck, gets `SIGKILL`, so the
+stop always ends. The LaunchAgent's `ExitTimeOut` goes to 40 seconds so launchd doesn't kill the
+server mid-way.
 
 If Postgres exits on its own while the server runs, the server logs it and exits non-zero, and
 launchd's `KeepAlive` restarts both. One supervisor, launchd, rather than two. If the server is
@@ -384,10 +388,10 @@ of TP-411, in Backlog until the proposal is approved.
 
 - **Bundled Postgres over SQLite.** The recommendation above. SQLite stays possible later; nothing
   here makes it harder.
-- **Building Postgres ourselves.** Ticket 1 builds it from the official source tarball, pinned by
-  checksum, on a macOS runner. The alternative is to repackage a prebuilt one (zonky's, which
-  `embedded-postgres` uses): faster to start, but a third party's build of the binary that holds the
-  data.
+- **Building Postgres ourselves.** Settled (2026-10-06): build it from the official source
+  tarball, pinned by checksum, on a macOS runner, rather than repackage a prebuilt one (zonky's,
+  which `embedded-postgres` uses), a third party's build of the binary that holds the data. The
+  recipe is `scripts/postgres-engine/`.
 - **Sorting by code point**, with the queries that sort names moved to `lower(…)`. The alternative,
   ICU, adds about 30 MB to the app and a collation version that can change under the indexes.
 - **No Time Machine copy of the live data directory**, with the dumps as the backup.

@@ -147,6 +147,8 @@ Revisit this if the PC turns out to run the local models well. If it does, move 
 
 `main` is protected by `.github/rulesets/main.json`: changes land through a pull request with no required approvals, since Symphony opens PRs under the owner's account and the approval is moving the Linear ticket to `Merging`. `ci` from GitHub Actions has to pass, but the branch doesn't have to be up to date with `main`; the push run on `main` catches the rare conflict. Force pushes and deleting `main` are blocked, and nobody can bypass the rules, admins included: in an emergency, turn the ruleset off in Settings › Rules first.
 
+`.github/workflows/postgres-engine.yml` builds the Postgres engine the hub will run on the Mac, on a macOS runner, and publishes it as a `postgres-v…` release that `server/postgres-engine.lock` pins. It runs only for changes to `scripts/postgres-engine/`, the lock or itself, and builds only when `build.sh` changes. See `scripts/postgres-engine/README.md`.
+
 The ruleset and these settings need a repository admin, once:
 
 1. **Settings › Rules › Rulesets › New ruleset › Import a ruleset**, pick `.github/rulesets/main.json`, and create it.
