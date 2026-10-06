@@ -141,49 +141,52 @@ struct JobsPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                table(client: client)
-                    .task(id: "\(model.search)|\(model.status.rawValue)") {
-                        try? await Task.sleep(for: .milliseconds(250))
-                        await model.load(with: client)
+                VStack(spacing: 0) {
+                    controls
+                    table(client: client)
+                }
+                .task(id: "\(model.search)|\(model.status.rawValue)") {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    await model.load(with: client)
+                }
+                .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision, taskRunner.fixRevision]) { Task { await model.load(with: client) } }
+                .onChange(of: model.selectedID, initial: true) {
+                    // `--session` opens the launch job on its Session tab, once.
+                    if opensSession, let jobID = model.selectedID, jobID == initialJobID, details.getEntry(on: .jobs) == nil {
+                        details.openSession(.job(jobID), from: .jobs)
+                    } else {
+                        details.show(model.selectedID.map(InspectorSubject.job), from: .jobs)
                     }
-                    .onChange(of: [events.revision, unseen.revision, jobFinder.revision, decisions.revision, taskRunner.fixRevision]) { Task { await model.load(with: client) } }
-                    .onChange(of: model.selectedID, initial: true) {
-                        // `--session` opens the launch job on its Session tab, once.
-                        if opensSession, let jobID = model.selectedID, jobID == initialJobID, details.getEntry(on: .jobs) == nil {
-                            details.openSession(.job(jobID), from: .jobs)
-                        } else {
-                            details.show(model.selectedID.map(InspectorSubject.job), from: .jobs)
+                }
+                .onChange(of: details.getEntry(on: .jobs)) {
+                    // Closing the details of one job deselects it; several selected jobs show no details at all.
+                    if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                }
+                .sheet(item: $skipping) { target in
+                    SkipJobsSheet(jobCount: target.jobIDs.count) { reason in
+                        await model.skip(target.jobIDs, reason: reason, through: decisions, with: client)
+                    }
+                }
+                .sheet(item: $fix) { target in
+                    FixJobSheet(jobTitle: target.title) { note in
+                        do {
+                            try await taskRunner.fixJob(target.id, note: note, with: client)
+                            return nil
+                        } catch {
+                            return HubFailure("Couldn't ask for the fix", error)
                         }
                     }
-                    .onChange(of: details.getEntry(on: .jobs)) {
-                        // Closing the details of one job deselects it; several selected jobs show no details at all.
-                        if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                }
+                .sheet(isPresented: $isAddingByURL) {
+                    AddJobSheet(client: client) { added in
+                        model.selectedIDs = [added.id]
+                        Task { await model.load(with: client) }
                     }
-                    .sheet(item: $skipping) { target in
-                        SkipJobsSheet(jobCount: target.jobIDs.count) { reason in
-                            await model.skip(target.jobIDs, reason: reason, through: decisions, with: client)
-                        }
-                    }
-                    .sheet(item: $fix) { target in
-                        FixJobSheet(jobTitle: target.title) { note in
-                            do {
-                                try await taskRunner.fixJob(target.id, note: note, with: client)
-                                return nil
-                            } catch {
-                                return HubFailure("Couldn't ask for the fix", error)
-                            }
-                        }
-                    }
-                    .sheet(isPresented: $isAddingByURL) {
-                        AddJobSheet(client: client) { added in
-                            model.selectedIDs = [added.id]
-                            Task { await model.load(with: client) }
-                        }
-                    }
-                    .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
-                    .onPageRequest(.jobs) { request in
-                        if request == .addJobByURL { isAddingByURL = true }
-                    }
+                }
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
+                .onPageRequest(.jobs) { request in
+                    if request == .addJobByURL { isAddingByURL = true }
+                }
             }
         }
         .navigationTitle("Jobs")
@@ -196,6 +199,43 @@ struct JobsPage: View {
         let passCount = shownItems.count { $0.fit.level == .good }
         let jobCount = model.total == shownItems.count ? "\(model.total) jobs" : "\(shownItems.count) of \(model.total) jobs"
         return "\(jobCount) · " + (passCount == 1 ? "1 passes the screen" : "\(passCount) pass the screen")
+    }
+
+    /// The page's controls, on a bar over the table rather than in the
+    /// window's toolbar, which reaches over the details inspector.
+    private var controls: some View {
+        PageBar {
+            Button("Filters", systemImage: filter.wrappedValue.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") {
+                isShowingFilters.toggle()
+            }
+            .labelStyle(.iconOnly)
+            .help("Choose which jobs show")
+            .popover(isPresented: $isShowingFilters, arrowEdge: .bottom) {
+                JobsFilterPopover(
+                    filter: filter, choices: JobsFilterChoices(items: model.items),
+                    newCount: model.items.count { $0.isNew(since: model.previousVisit) }
+                )
+            }
+            Menu {
+                Picker("Status", selection: $model.status) {
+                    ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label(model.status.title, systemImage: "tray.full")
+            }
+            .labelStyle(.titleAndIcon)
+            .fixedSize()
+            .help("Show open, closed, all or skipped jobs")
+            ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
+                .labelStyle(.iconOnly)
+                .fixedSize()
+            Button("Add job by URL…", systemImage: "plus") { isAddingByURL = true }
+                .labelStyle(.iconOnly)
+                .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
+            SearchField(text: $model.search, prompt: "Title, location or company")
+                .frame(minWidth: 100, maxWidth: 180)
+        }
     }
 
     private func table(client: HubClient) -> some View {
@@ -281,35 +321,6 @@ struct JobsPage: View {
             if model.status != .dismissed && !model.selectedIDs.isEmpty {
                 skipping = JobSkipTarget(jobIDs: model.selectedIDs)
             }
-        }
-        .toolbar {
-            Button("Filters", systemImage: filter.wrappedValue.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") {
-                isShowingFilters.toggle()
-            }
-            .help("Choose which jobs show")
-            .popover(isPresented: $isShowingFilters, arrowEdge: .bottom) {
-                JobsFilterPopover(
-                    filter: filter, choices: JobsFilterChoices(items: model.items),
-                    newCount: model.items.count { $0.isNew(since: model.previousVisit) }
-                )
-            }
-            // The toolbar shows only icons unless told otherwise, which left the status blank.
-            Menu {
-                Picker("Status", selection: $model.status) {
-                    ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label(model.status.title, systemImage: "tray.full")
-            }
-            .labelStyle(.titleAndIcon)
-            .fixedSize()
-            .help("Show open, closed, all or skipped jobs")
-            ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
-            Button("Add job by URL…", systemImage: "plus") { isAddingByURL = true }
-                .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
-            ToolbarSearchField(text: $model.search, prompt: "Title, location or company")
-                .frame(width: 180)
         }
         .overlay {
             if let loadError = model.loadError {

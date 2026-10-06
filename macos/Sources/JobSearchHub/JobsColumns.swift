@@ -66,7 +66,7 @@ struct FitCheckCell: View {
     }
 }
 
-/// The toolbar menu that shows and hides the table's optional columns; the
+/// The Jobs bar's menu that shows and hides the table's optional columns; the
 /// header's own menu does the same.
 struct ColumnsMenu: View {
     @Binding var customization: TableColumnCustomization<JobListItem>
