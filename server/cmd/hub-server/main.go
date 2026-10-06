@@ -161,7 +161,7 @@ func run() error {
 
 	rates := exchangerates.NewCache(exchangerates.DefaultAPIBase)
 	routes := http.NewServeMux()
-	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool))
+	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool, database.postgresHealth()))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)

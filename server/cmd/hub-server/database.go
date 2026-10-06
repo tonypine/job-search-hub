@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/postgresprocess"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -33,7 +34,12 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 		if err != nil {
 			return nil, err
 		}
-		cluster, err := postgresprocess.Start(ctx, postgresprocess.Settings{Engine: engine, Dir: settings.postgresDir})
+		cluster, err := postgresprocess.Start(ctx, postgresprocess.Settings{
+			Engine:  engine,
+			Dir:     settings.postgresDir,
+			Engines: settings.postgresEngines,
+			Backups: settings.backupsDir,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("start the database: %w", err)
 		}
@@ -91,6 +97,19 @@ func dumpBeforeMigrating(ctx context.Context, database *hubDatabase, folder stri
 	}
 	slog.Info("database dumped before migrating", "file", path)
 	return nil
+}
+
+// postgresHealth is the major of the Postgres the server runs, and the one
+// it failed to move it to, for /v1/health; nil for one it doesn't run.
+func (database *hubDatabase) postgresHealth() *api.PostgresHealth {
+	if database.cluster == nil {
+		return nil
+	}
+	health := &api.PostgresHealth{Major: database.cluster.Major()}
+	if failure := database.cluster.UpgradeError(); failure != nil {
+		health.UpgradeFailedTo = failure.To
+	}
+	return health
 }
 
 // Exited closes when the Postgres the server runs stops by itself, and never

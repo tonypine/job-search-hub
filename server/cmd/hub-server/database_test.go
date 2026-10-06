@@ -76,7 +76,7 @@ func TestWithoutADatabaseURLTheServerRunsMigratesAndStopsItsOwnPostgres(t *testi
 		t.Fatal(err)
 	}
 
-	health := httptest.NewServer(api.NewHealthHandler(database.pool))
+	health := httptest.NewServer(api.NewHealthHandler(database.pool, database.postgresHealth()))
 	defer health.Close()
 	response, err := http.Get(health.URL + "/v1/health")
 	if err != nil {
