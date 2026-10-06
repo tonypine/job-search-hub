@@ -165,12 +165,13 @@ Until an app's signing secrets exist, its release job fails at its first step, n
    | --- | --- |
    | `RELEASE_KEYSTORE_BASE64` | `base64 -i ~/job-search-hub-release.keystore \| pbcopy` |
    | `RELEASE_KEYSTORE_PASSWORD` | the keystore's password |
-   | `RELEASE_KEY_ALIAS` | `job-search-hub` |
    | `RELEASE_KEY_PASSWORD` | the same password |
    | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
    | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each Android release is posted as a Job Search Hub project update. |
 
    Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
+
+   The key's alias isn't a secret: the job uses `job-search-hub`, or the repository variable `RELEASE_KEY_ALIAS` (Settings › Secrets and variables › Actions › Variables) for a key made with another alias. Don't make it a secret: Actions hides a secret's value in every log, and this one is the repository's name. A `RELEASE_KEY_ALIAS` secret left from an older setup is unused; delete it.
 
 3. **Ship the first release:** Actions › release › Run workflow, with the tag left empty, or merge the next app change.
 
