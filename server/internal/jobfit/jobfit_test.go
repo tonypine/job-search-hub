@@ -107,6 +107,8 @@ func TestWhereTheyHire(t *testing.T) {
 		{"remote followed by working hours", store.Job{Location: "Remote with US time zone overlap"}, "not stated", jobfit.VerdictUnclear},
 		{"a country code that is also a short word", store.Job{Location: "Remote (DE)"}, "not stated", jobfit.VerdictNo},
 		{"a state code that is also a short word", store.Job{Location: "Remote, OR"}, "not stated", jobfit.VerdictNo},
+		{"a state code that is also a short word beside a time zone", store.Job{Location: "Remote (IN EST)"}, "not stated", jobfit.VerdictNo},
+		{"a country code that is also a short word beside a time zone", store.Job{Location: "Remote (AT CET)"}, "not stated", jobfit.VerdictNo},
 	} {
 		fit := jobfit.Judge(test.job, facts(t, map[string]any{"location_restriction": test.restriction}), criteria, rates)
 		if check := findCheck(t, fit, "Where they hire"); check.Verdict != test.want {
@@ -147,6 +149,8 @@ func TestCouldFitKeepsPostingsThatOnlyPreferARegion(t *testing.T) {
 		"Remote, preferably US/Canada":         true,
 		"Remote (US EST)":                      false,
 		"Remote US EST":                        false,
+		"Remote (IN EST)":                      false,
+		"Remote (AT CET)":                      false,
 		"Austin TX CST":                        false,
 		"New York EST":                         false,
 		"London GMT":                           false,

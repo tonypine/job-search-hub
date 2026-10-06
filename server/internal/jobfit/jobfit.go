@@ -260,9 +260,13 @@ var (
 	// doesn't: in "Austin TX CST" it only tags the city.
 	qualifierWords = slices.Concat(preferenceWords, workingHoursWords)
 	hoursWords     = slices.Concat(workingHoursWords, zoneNames)
-	// hoursOnlyWords are the words of a text about working hours that names
-	// no place, as "UTC-5 to UTC+1", "EST only" and "Must be able to work EST
-	// hours" are. Country codes like "de", "at" and "no" are left out.
+	// zoneOnlyWords are the words of a text that names only time zones, as
+	// "UTC-5 to UTC+1" and "Remote EST" do. Beside a zone name alone, a
+	// short word is a place: "IN EST" names Indiana and "AT CET" Austria.
+	zoneOnlyWords = slices.Concat(zoneNames, []string{"to", "or", "and", "remote"})
+	// hoursOnlyWords are the words of a text that requires working hours, or
+	// a time zone, and names no place, as "EST only" and "Must be able to
+	// work EST hours" do. Country codes like "de" and "no" are left out.
 	hoursOnlyWords = slices.Concat(hoursWords, requirementWords, []string{
 		"remote", "remoto", "remota", "fully", "be", "is", "are", "able", "to", "work", "working", "during", "with", "within", "in",
 		"the", "a", "an", "at", "least", "of", "our", "your", "and", "or", "core", "business", "hrs", "am", "pm",
@@ -271,9 +275,16 @@ var (
 )
 
 // isOnlyAboutHours reports whether a text sets working hours or a time zone
-// and names no place.
+// and names no place. Filler words like "in" and "at" count only beside a
+// word that requires or an hours word, as in "Must be in EST".
 func isOnlyAboutHours(text string) bool {
-	return hasAnyTerm([]string{text}, hoursWords...) && isOnlyWordsOf(text, hoursOnlyWords)
+	if !hasAnyTerm([]string{text}, hoursWords...) {
+		return false
+	}
+	if !hasAnyTerm([]string{text}, requirementWords...) && !hasAnyTerm([]string{text}, workingHoursWords...) {
+		return isOnlyWordsOf(text, zoneOnlyWords)
+	}
+	return isOnlyWordsOf(text, hoursOnlyWords)
 }
 
 // hasResidencyRule reports whether any part of the texts requires where
