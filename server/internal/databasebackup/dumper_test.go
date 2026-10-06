@@ -114,6 +114,65 @@ func TestOnlyTheNewestPreMigrationDumpsAreKept(t *testing.T) {
 	}
 }
 
+func TestAPreUpgradeDumpIsNamedByBothMajorsAndOutlivesThePruning(t *testing.T) {
+	folder := t.TempDir()
+	// A pg_dump that writes its --file argument and nothing else.
+	pgDump := filepath.Join(t.TempDir(), "pg_dump")
+	script := "#!/bin/sh\nfor argument; do case $argument in --file=*) echo dump > \"${argument#--file=}\";; esac; done\n"
+	if err := os.WriteFile(pgDump, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := DumpBeforeUpgrade(context.Background(), pgDump, "postgres:///hub", folder, "17", "18", at(t, "2026-10-06 09:30"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(folder, "hub-pre-upgrade-17-to-18-2026-10-06.dump"); path != want {
+		t.Fatalf("path = %s, want %s", path, want)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the dump: %v, %v", info, err)
+	}
+
+	// Neither the nightly nor the pre-migration pruning counts it.
+	if days, err := NewDumper("", folder, "").listDumpDays(); err != nil || len(days) != 0 {
+		t.Fatalf("nightly dumps = %v, %v", days, err)
+	}
+	if err := removeOldPreMigrationDumps(folder); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the pruning removed it: %v", err)
+	}
+}
+
+func TestTheNewestDumpIsTheOneWrittenLastOfAnyKind(t *testing.T) {
+	folder := t.TempDir()
+	if newest, err := Newest(filepath.Join(folder, "missing")); err != nil || newest != "" {
+		t.Fatalf("no folder: %q, %v", newest, err)
+	}
+	if newest, err := Newest(folder); err != nil || newest != "" {
+		t.Fatalf("an empty folder: %q, %v", newest, err)
+	}
+
+	written := at(t, "2026-09-01 03:00")
+	// A later name isn't a later dump: the pre-migration one is written last.
+	for order, name := range []string{"hub-2026-09-30.dump", "hub-pre-upgrade-17-to-18-2026-09-29.dump", "hub-pre-migration-80.dump", "hub-2026-10-01.dump.partial", "notes.txt"} {
+		path := filepath.Join(folder, name)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		modified := written.Add(time.Duration(order) * time.Hour)
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest, err := Newest(folder)
+	if want := filepath.Join(folder, "hub-pre-migration-80.dump"); err != nil || newest != want {
+		t.Fatalf("newest = %q, %v; want %s", newest, err, want)
+	}
+}
+
 func TestThePasswordStaysOffTheCommandLine(t *testing.T) {
 	command, err := buildDumpCommand(context.Background(), "pg_dump", "postgres://hub:s3cret@localhost:5434/hub", "out.dump")
 	if err != nil {

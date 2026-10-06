@@ -1,6 +1,6 @@
 // Package databasebackup dumps the hub's database into a private folder on
-// this machine: once a night, and before migrations change it. It keeps the
-// newest dumps of each.
+// this machine: once a night, and before migrations or an engine upgrade
+// change it. It keeps the newest nightly and pre-migration dumps.
 package databasebackup
 
 import (
@@ -32,6 +32,9 @@ const (
 	// A dump taken before migrations is named by the migration version it
 	// holds. The nightly dumps' listing leaves it out: its name holds no day.
 	preMigrationPrefix = "hub-pre-migration-"
+	// A dump taken before moving the database to a new Postgres major is
+	// kept until it is removed by hand.
+	preUpgradePrefix = "hub-pre-upgrade-"
 )
 
 // Dumper writes one pg_dump a day of the database at databaseURL into
@@ -109,6 +112,43 @@ func DumpBeforeMigration(ctx context.Context, pgDump, databaseURL, folder string
 		return "", err
 	}
 	return path, removeOldPreMigrationDumps(folder)
+}
+
+// DumpBeforeUpgrade writes the database at databaseURL, a cluster of Postgres
+// from, to folder as hub-pre-upgrade-<from>-to-<to>-<date>.dump with the
+// pg_dump at pgDump, a newer one's, before the database moves to Postgres to.
+func DumpBeforeUpgrade(ctx context.Context, pgDump, databaseURL, folder, from, to string, now time.Time) (string, error) {
+	path := filepath.Join(folder, preUpgradePrefix+from+"-to-"+to+"-"+now.Format(dumpDateLayout)+dumpSuffix)
+	if err := writeDump(ctx, pgDump, databaseURL, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// Newest is the dump in folder written last, of any kind, or "" when there
+// is none.
+func Newest(folder string) (string, error) {
+	entries, err := os.ReadDir(folder)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	newest, newestModified := "", time.Time{}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), dumpPrefix) || !strings.HasSuffix(entry.Name(), dumpSuffix) || !entry.Type().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return "", err
+		}
+		if newest == "" || info.ModTime().After(newestModified) {
+			newest, newestModified = filepath.Join(folder, entry.Name()), info.ModTime()
+		}
+	}
+	return newest, nil
 }
 
 // writeDump dumps the database to path, through a partial file renamed into
