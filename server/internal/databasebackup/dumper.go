@@ -1,6 +1,7 @@
 // Package databasebackup dumps the hub's database into a private folder on
 // this machine: once a night, and before migrations change it. It keeps the
-// newest dumps of each.
+// newest dumps of each. It also dumps the database an import moves the hub's
+// data from, and keeps that dump.
 package databasebackup
 
 import (
@@ -32,6 +33,9 @@ const (
 	// A dump taken before migrations is named by the migration version it
 	// holds. The nightly dumps' listing leaves it out: its name holds no day.
 	preMigrationPrefix = "hub-pre-migration-"
+	// A dump of the database an import moves the hub's data from, named by
+	// its day. Neither listing counts it, so none removes it.
+	importPrefix = "hub-import-"
 )
 
 // Dumper writes one pg_dump a day of the database at databaseURL into
@@ -109,6 +113,17 @@ func DumpBeforeMigration(ctx context.Context, pgDump, databaseURL, folder string
 		return "", err
 	}
 	return path, removeOldPreMigrationDumps(folder)
+}
+
+// DumpForImport writes the database at databaseURL, which an import moves
+// the hub's data from, to folder as hub-import-<now's day>.dump with the
+// pg_dump at pgDump. It is kept until the owner removes it.
+func DumpForImport(ctx context.Context, pgDump, databaseURL, folder string, now time.Time) (string, error) {
+	path := filepath.Join(folder, importPrefix+now.Format(dumpDateLayout)+dumpSuffix)
+	if err := writeDump(ctx, pgDump, databaseURL, path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // writeDump dumps the database to path, through a partial file renamed into
