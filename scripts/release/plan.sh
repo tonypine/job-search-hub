@@ -15,7 +15,9 @@
 #
 # Each diff runs against that platform's previous release, not the previous
 # commit, so a run that failed or that the concurrency group dropped is picked
-# up by the next one. Before a platform's first release it runs against HEAD^.
+# up by the next one. Before a platform's first release it runs against HEAD^,
+# or, with --manual (a release someone asked for by hand), against nothing, so
+# that every platform without a release gets its first one.
 
 set -eu
 
@@ -26,6 +28,12 @@ fail() {
 	echo "::error::$*" >&2
 	exit 1
 }
+
+case ${1:-} in
+'') manual= ;;
+--manual) manual=1 ;;
+*) fail "Unknown option '$1'; use --manual." ;;
+esac
 
 version_code=$(git rev-list --count HEAD)
 released=
@@ -52,16 +60,19 @@ plan() {
 
 	if [ -n "$previous_tag" ]; then
 		base=$previous_tag
-	elif git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+		since=$previous_tag
+	elif [ -z "$manual" ] && git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
 		base=HEAD^
+		since="the previous commit"
 	else
 		base=$empty_tree
+		since="the repository began"
 	fi
 
 	echo "${platform}_previous_tag=$previous_tag"
 
 	if git diff --quiet "$base" HEAD -- "$@"; then
-		echo "Nothing under $* changed since ${previous_tag:-the previous commit}; no $platform release." >&2
+		echo "Nothing under $* changed since $since; no $platform release." >&2
 		echo "${platform}_changed=false"
 		return
 	fi

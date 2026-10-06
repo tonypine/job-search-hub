@@ -26,6 +26,16 @@ android_changed=false
 version_code=2
 version_name=0.1.2
 mac_tag=mac-v0.1.2" "$("$here/plan.sh" 2>/dev/null)"
+expect "by hand, every app without a release gets its first" "mac_previous_tag=
+mac_changed=true
+android_previous_tag=
+android_changed=true
+version_code=2
+version_name=0.1.2
+mac_tag=mac-v0.1.2
+android_tag=android-v0.1.2" "$("$here/plan.sh" --manual 2>/dev/null)"
+expect "refuses an unknown option" "::error::Unknown option '--force'; use --manual." \
+	"$("$here/plan.sh" --force 2>&1 >/dev/null || true)"
 git tag mac-v0.1.2
 
 commit macos/a.swift "feat: a Mac change"
@@ -56,6 +66,10 @@ android_previous_tag=android-v0.1.4
 android_changed=false" "$("$here/plan.sh" 2>/dev/null)"
 expect "and says why for each" "Nothing under server/ macos/ changed since mac-v0.1.3; no mac release.
 Nothing under android/ changed since android-v0.1.4; no android release." "$("$here/plan.sh" 2>&1 >/dev/null)"
+expect "by hand, an app with a release still needs a change since it" "mac_previous_tag=mac-v0.1.3
+mac_changed=false
+android_previous_tag=android-v0.1.4
+android_changed=false" "$("$here/plan.sh" --manual 2>/dev/null)"
 
 commit macos/a.swift "feat: a Mac change"
 commit android/app/a.kt "fix: an app fix"

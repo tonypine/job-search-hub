@@ -57,3 +57,38 @@ private func sortTitles(_ items: [JobListItem], by column: JobsSortColumn, _ ord
 
     #expect(sortTitles(items, by: .pay) == ["canadian", "yearly", "hourly", "unpaid"])
 }
+
+@Test func matchSortsStrongFirstWithUnbriefedLast() {
+    var strong = makeItem("strong"), stretch = makeItem("stretch"), mismatch = makeItem("mismatch")
+    strong.match = .strong
+    stretch.match = .stretch
+    mismatch.match = .mismatch
+    let items = [mismatch, makeItem("unbriefed"), strong, stretch]
+
+    #expect(sortTitles(items, by: .match) == ["strong", "stretch", "mismatch", "unbriefed"])
+    #expect(sortTitles(items, by: .match, .reverse) == ["mismatch", "stretch", "strong", "unbriefed"])
+}
+
+@Test func takeHomeSortsByTheLowestEstimate() {
+    func pay(_ reason: String) -> [FitCheck] { [FitCheck(name: "Pay", verdict: .yes, reason: reason)] }
+    let items = [
+        makeItem("high", checks: pay("about BRL 40.0k a month take-home")), makeItem("hourly", checks: pay("paid by the hour")),
+        makeItem("range", checks: pay("BRL 20.0k to 33.0k a month take-home, depending on the contract or pay period")),
+        makeItem("none"),
+    ]
+
+    #expect(sortTitles(items, by: .takeHome, .reverse) == ["high", "range", "hourly", "none"])
+}
+
+@Test func postedSortsByTheBoardsDateOrElseFirstSeen() {
+    let items = [makeItem("seen late", firstSeen: 300), makeItem("published early", firstSeen: 400, published: 100), makeItem("seen mid", firstSeen: 200)]
+
+    #expect(sortTitles(items, by: .posted, .reverse) == ["seen late", "seen mid", "published early"])
+}
+
+@Test func sortOrdersSavedBeforeStillDecode() throws {
+    let saved = try JSONEncoder().encode([JobsSortComparator(.firstSeen, order: .reverse)])
+    let decoded = try JSONDecoder().decode([JobsSortComparator].self, from: saved)
+
+    #expect(decoded == [JobsSortComparator(.firstSeen, order: .reverse)])
+}
