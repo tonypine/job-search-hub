@@ -192,23 +192,26 @@ struct PipelinePage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                board(client: client)
-                    .task {
-                        await model.load(with: client)
-                        if let initialJobID, selectedCardID == nil {
-                            selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
-                        }
+                VStack(spacing: 0) {
+                    controls
+                    board(client: client)
+                }
+                .task {
+                    await model.load(with: client)
+                    if let initialJobID, selectedCardID == nil {
+                        selectedCardID = model.board.cards.first { $0.application.jobID == initialJobID }?.id
                     }
-                    .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                    .onChange(of: model.showsSkipped) {
-                        selectedCardID = nil
-                        Task { await model.load(with: client) }
-                    }
-                    .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
-                    .onChange(of: details.getEntry(on: .pipeline)) {
-                        if details.getEntry(on: .pipeline) == nil { selectedCardID = nil }
-                    }
-                    .onChange(of: research.state) { finishFindingPeople(with: client) }
+                }
+                .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                .onChange(of: model.showsSkipped) {
+                    selectedCardID = nil
+                    Task { await model.load(with: client) }
+                }
+                .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
+                .onChange(of: details.getEntry(on: .pipeline)) {
+                    if details.getEntry(on: .pipeline) == nil { selectedCardID = nil }
+                }
+                .onChange(of: research.state) { finishFindingPeople(with: client) }
             }
         }
         .navigationTitle("Pipeline")
@@ -223,6 +226,18 @@ struct PipelinePage: View {
         let applications = count == 1 ? "1 application" : "\(count) applications"
         guard let contacts = model.board.getContactTally(now: .now).text else { return applications }
         return "\(applications) · \(contacts)"
+    }
+
+    /// The page's controls, on a bar over the board rather than in the
+    /// window's toolbar, which reaches over the details inspector.
+    private var controls: some View {
+        PageBar {
+            Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
+                .help("Show only the cards whose follow-up is due")
+            Toggle("Skipped", systemImage: SetAside.skipped.symbolName, isOn: $model.showsSkipped)
+                .help("Show the skipped cards, where they can be restored")
+        }
+        .toggleStyle(.button)
     }
 
     private func board(client: HubClient) -> some View {
@@ -253,12 +268,6 @@ struct PipelinePage: View {
                 .padding(Self.boardPadding)
                 .frame(height: geometry.size.height, alignment: .top)
             }
-        }
-        .toolbar {
-            Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
-                .help("Show only the cards whose follow-up is due")
-            Toggle("Skipped", systemImage: SetAside.skipped.symbolName, isOn: $model.showsSkipped)
-                .help("Show the skipped cards, where they can be restored")
         }
         .alert("Followed up", isPresented: Binding(get: { followUpCardID != nil }, set: { if !$0 { followUpCardID = nil } })) {
             TextField("What you did", text: $followUpNote)
