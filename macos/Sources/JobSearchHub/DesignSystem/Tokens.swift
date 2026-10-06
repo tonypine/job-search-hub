@@ -80,6 +80,8 @@ extension Font {
     static let hubSection = Font.headline
     /// Text to read.
     static let hubBody = Font.body
+    /// Text read at length, such as a brief's verdict: a size up from body.
+    static let hubReading = Font.system(size: 14)
     /// Company, location, reasons; shown in `.secondary`.
     static let hubSecondary = Font.callout
     /// Who wrote it and when.
@@ -96,6 +98,11 @@ extension View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(.background, in: RoundedRectangle(cornerRadius: Radius.card))
             .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(.separator))
+    }
+
+    /// Text read at length, at 1.3 line height.
+    func hubReading() -> some View {
+        font(.hubReading).lineSpacing(2)
     }
 
     /// Quoted or generated text, such as a drafted reply.
