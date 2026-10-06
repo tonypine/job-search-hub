@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
@@ -207,7 +208,13 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 	if term, found := findTerm(texts, criteria.IneligibleLocationTerms); found {
 		return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("says %q", term)}
 	}
-	if term, found := findTerm(texts, criteria.EligibleLocationTerms); found {
+	if term, found := findTerm(texts, getSpellings(criteria.HomeCountry)); found {
+		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("names %q", term)}
+	}
+	// A region decides only when no rule beside it narrows it to other
+	// places, as "Mexico only" does in "Latin America (Mexico only)".
+	eligible := getEligibleTerms(criteria)
+	if term, found := findTerm(texts, eligible); found && !hasRuleForAnotherPlace(texts, eligible) {
 		return Check{Name: name, Verdict: VerdictYes, Reason: fmt.Sprintf("names %q", term)}
 	}
 	named := strings.TrimSpace(restriction)
@@ -224,6 +231,127 @@ func checkLocation(job store.Job, facts readFacts, criteria store.JobCriteria) C
 		named = job.Location
 	}
 	return Check{Name: name, Verdict: VerdictNo, Reason: fmt.Sprintf("names only %q", named)}
+}
+
+// placeSpellings are the ways postings write a place, in English,
+// Portuguese and Spanish.
+var placeSpellings = map[string][]string{
+	"Brazil":        {"Brazil", "Brasil"},
+	"Latin America": {"Latin America", "LATAM", "América Latina", "Latinoamérica"},
+	"South America": {"South America", "América do Sul", "América del Sur", "Sudamérica", "Suramérica"},
+	"Americas":      {"Americas", "Américas"},
+}
+
+// placeRegions are the regions that include a place.
+var placeRegions = map[string][]string{
+	"Brazil":        {"Latin America", "South America"},
+	"Latin America": {"Americas"},
+	"South America": {"Americas"},
+}
+
+// getEligibleTerms returns the owner's eligible terms and home country, with
+// every spelling of the places they name and of the regions that include
+// them: a posting for "Latin America only" or "Brasil" is open to someone
+// in Brazil.
+func getEligibleTerms(criteria store.JobCriteria) []string {
+	terms := append(slices.Clone(criteria.EligibleLocationTerms), criteria.HomeCountry)
+	pending := slices.Clone(terms)
+	seen := map[string]bool{}
+	for len(pending) > 0 {
+		place := getPlace(pending[0])
+		pending = pending[1:]
+		if place == "" || seen[place] {
+			continue
+		}
+		seen[place] = true
+		terms = append(terms, placeSpellings[place]...)
+		pending = append(pending, placeRegions[place]...)
+	}
+	return terms
+}
+
+// getSpellings returns a term with the other spellings of the place it
+// names, as "Brasil" for "Brazil".
+func getSpellings(term string) []string {
+	return append([]string{term}, placeSpellings[getPlace(term)]...)
+}
+
+// otherPlaces are places a residency rule beside a region may narrow it
+// to, in English, Portuguese and Spanish. A place that includes the owner is
+// dropped from a rule before these are looked for, so listing it is harmless.
+var otherPlaces = []string{
+	"United States", "Estados Unidos", "America do Norte", "North America", "Norteamerica",
+	"Central America", "America Central", "Centroamerica", "Caribbean", "Caribe",
+	"Canada", "Mexico", "Argentina", "Chile", "Colombia", "Peru", "Uruguay", "Uruguai", "Paraguay", "Paraguai",
+	"Ecuador", "Equador", "Bolivia", "Venezuela", "Costa Rica", "Panama", "Guatemala", "Puerto Rico",
+	"Europe", "Europa", "European Union", "Uniao Europeia", "Union Europea", "United Kingdom", "Reino Unido",
+	"Portugal", "Spain", "Espanha", "Espana", "Germany", "Alemanha", "Alemania", "France", "Franca", "Francia",
+	"Netherlands", "Ireland", "Poland", "Romania", "Italy", "Italia",
+	"Asia", "Africa", "India", "Philippines", "Australia", "New Zealand",
+}
+
+// otherPlaceCodes are the codes of otherPlaces. They count only written in
+// capitals, since "us" in "join us" names no place.
+var otherPlaceCodes = []string{"US", "USA", "EUA", "EEUU", "UK", "EU", "EMEA", "APAC", "CA", "MX", "AR", "CO", "CL"}
+
+// hasRuleForAnotherPlace reports whether a part of the texts has a residency
+// rule naming one of otherPlaces besides the regions, as "LATAM - must
+// reside in Argentina" does. A rule for the region itself, as in "Latin
+// America only", or for something other than a place, as in "Contractors
+// only", names none.
+func hasRuleForAnotherPlace(texts, regions []string) bool {
+	for _, text := range texts {
+		for _, part := range getParts(text) {
+			if !hasResidencyRule([]string{part}) {
+				continue
+			}
+			words := dropTerms(part, regions)
+			if _, found := findTerm([]string{strings.Join(words, " ")}, otherPlaces); found {
+				return true
+			}
+			for _, code := range otherPlaceCodes {
+				if slices.Contains(words, code) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// dropTerms returns the words of a text, as written, without the terms it
+// names: "Latin America only" without "Latin America" is "only".
+func dropTerms(text string, terms []string) []string {
+	words := strings.FieldsFunc(text, func(character rune) bool {
+		return !unicode.IsLetter(character) && !unicode.IsDigit(character)
+	})
+	for _, term := range terms {
+		termWords := getWords(term)
+		if len(termWords) == 0 {
+			continue
+		}
+		for index := 0; index+len(termWords) <= len(words); {
+			if slices.Equal(getWords(strings.Join(words[index:index+len(termWords)], " ")), termWords) {
+				words = slices.Delete(words, index, index+len(termWords))
+			} else {
+				index++
+			}
+		}
+	}
+	return words
+}
+
+// getPlace returns the place a term spells, as "Brazil" for "Brasil", or ""
+// for a term that spells none of placeSpellings.
+func getPlace(term string) string {
+	for place, spellings := range placeSpellings {
+		for _, spelling := range spellings {
+			if wordmatch.Normalize(spelling) == wordmatch.Normalize(term) {
+				return place
+			}
+		}
+	}
+	return ""
 }
 
 // A place a posting names reads as a residency rule, unless it is only

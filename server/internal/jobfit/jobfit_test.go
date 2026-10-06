@@ -167,6 +167,69 @@ func TestCouldFitKeepsPostingsThatOnlyPreferARegion(t *testing.T) {
 	}
 }
 
+func TestPlacesThatIncludeBrazilAreOpenToIt(t *testing.T) {
+	for location, want := range map[string]jobfit.Verdict{
+		"Remote, Latin America only":                   jobfit.VerdictYes,
+		"Remote (Brasil)":                              jobfit.VerdictYes,
+		"Remote (Brasil) com horário EST":              jobfit.VerdictYes,
+		"Remote, LATAM only":                           jobfit.VerdictYes,
+		"Brazil (Remote)":                              jobfit.VerdictYes,
+		"Remote, América Latina only":                  jobfit.VerdictYes,
+		"Remoto, solo Latinoamérica":                   jobfit.VerdictYes,
+		"Remote, South America only":                   jobfit.VerdictYes,
+		"Remoto (América do Sul)":                      jobfit.VerdictYes,
+		"Remoto, Sudamérica":                           jobfit.VerdictYes,
+		"Remote, Americas only":                        jobfit.VerdictYes,
+		"Remoto, Américas":                             jobfit.VerdictYes,
+		"Remote (US only)":                             jobfit.VerdictNo,
+		"Remote (EU only)":                             jobfit.VerdictNo,
+		"Remote (Canada only)":                         jobfit.VerdictNo,
+		"Remote, North America only":                   jobfit.VerdictNo,
+		"Remote, Central America only":                 jobfit.VerdictNo,
+		"Remote (Americas)":                            jobfit.VerdictYes,
+		"Remote, LATAM (Brasil or Mexico only)":        jobfit.VerdictYes,
+		"Remote, Latin America only, English required": jobfit.VerdictYes,
+		"LATAM based candidates only":                  jobfit.VerdictYes,
+		"Remote - LATAM (Contractors only)":            jobfit.VerdictYes,
+		"Americas (Full-time only)":                    jobfit.VerdictYes,
+		"Remote, Americas, Senior Engineers Only":      jobfit.VerdictYes,
+		"Remote, LATAM only, join us":                  jobfit.VerdictYes,
+		"Remote - Americas (US or Canada only)":        jobfit.VerdictNo,
+		"Americas: US and Canada residents only":       jobfit.VerdictNo,
+		"Remote, Latin America (Mexico only)":          jobfit.VerdictNo,
+		"LATAM - must reside in Argentina":             jobfit.VerdictNo,
+		"Remoto, América Latina (somente México)":      jobfit.VerdictNo,
+		"Remote, LATAM (EU timezone, Portugal only)":   jobfit.VerdictNo,
+		"Americas (North America only)":                jobfit.VerdictNo,
+	} {
+		fit := jobfit.Judge(store.Job{Location: location}, facts(t, map[string]any{"location_restriction": "not stated"}), criteria, rates)
+		if check := findCheck(t, fit, "Where they hire"); check.Verdict != want {
+			t.Errorf("%s: %+v, want %s", location, check, want)
+		}
+		posting := store.JobPosting{Title: "Senior React Engineer", Location: location}
+		if got := jobfit.CouldFit(posting, criteria); got != (want != jobfit.VerdictNo) {
+			t.Errorf("%s: could fit = %v, want %v", location, got, want != jobfit.VerdictNo)
+		}
+	}
+}
+
+func TestPlacesThatIncludeTheHomeCountryAreOpenToIt(t *testing.T) {
+	onlyHome := store.JobCriteria{Roles: criteria.Roles, HomeCountry: "Brasil"}
+	for location, want := range map[string]jobfit.Verdict{
+		"Brazil (Remote)":                  jobfit.VerdictYes,
+		"Remote, LATAM only":               jobfit.VerdictYes,
+		"Remote, Americas only":            jobfit.VerdictYes,
+		"Remote (US only)":                 jobfit.VerdictNo,
+		"Remote, North America only":       jobfit.VerdictNo,
+		"LATAM - must reside in Argentina": jobfit.VerdictNo,
+	} {
+		fit := jobfit.Judge(store.Job{Location: location}, facts(t, map[string]any{}), onlyHome, rates)
+		if check := findCheck(t, fit, "Where they hire"); check.Verdict != want {
+			t.Errorf("%s: %+v, want %s", location, check, want)
+		}
+	}
+}
+
 func TestStackAndLevel(t *testing.T) {
 	for _, test := range []struct {
 		name      string
