@@ -191,7 +191,9 @@ func parseLeverPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 		Text             string `json:"text"`
 		HostedURL        string `json:"hostedUrl"`
 		WorkplaceType    string `json:"workplaceType"`
+		Description      string `json:"description"`
 		DescriptionPlain string `json:"descriptionPlain"`
+		Additional       string `json:"additional"`
 		AdditionalPlain  string `json:"additionalPlain"`
 		CreatedAt        int64  `json:"createdAt"`
 		Categories       struct {
@@ -215,18 +217,18 @@ func parseLeverPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	if err := json.Unmarshal(raw, &posting); err != nil {
 		return store.JobPosting{}, false, err
 	}
-	sections := []string{posting.DescriptionPlain}
+	sections := []string{convertHTMLOrPlain(posting.Description, posting.DescriptionPlain)}
 	for _, list := range posting.Lists {
 		sections = append(sections, formatSection(list.Text, textextract.ConvertHTMLToMarkdown(list.Content)))
 	}
-	sections = append(sections, posting.AdditionalPlain)
+	sections = append(sections, convertHTMLOrPlain(posting.Additional, posting.AdditionalPlain))
 	parsed := store.JobPosting{
 		ExternalID:    posting.ID,
 		Title:         posting.Text,
 		Location:      posting.Categories.Location,
 		WorkplaceType: posting.WorkplaceType,
 		URL:           posting.HostedURL,
-		Description:   strings.TrimSpace(strings.Join(sections, "\n\n")),
+		Description:   joinSections(sections...),
 	}
 	parsed.EmploymentType = posting.Categories.Commitment
 	parsed.Department = posting.Categories.Department
@@ -248,6 +250,15 @@ func parseLeverPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	return parsed, true, nil
 }
 
+// convertHTMLOrPlain keeps a description's headings, lists and bold from its
+// HTML as Markdown, and reads the board's plain text when it sends no HTML.
+func convertHTMLOrPlain(markup, plain string) string {
+	if text := textextract.ConvertHTMLToMarkdown(markup); text != "" {
+		return text
+	}
+	return plain
+}
+
 // parseAshbyPosting reports an unlisted posting as not open: Ashby hides it
 // from the company's own board.
 func parseAshbyPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
@@ -257,6 +268,7 @@ func parseAshbyPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 		Location           string     `json:"location"`
 		WorkplaceType      string     `json:"workplaceType"`
 		JobURL             string     `json:"jobUrl"`
+		DescriptionHTML    string     `json:"descriptionHtml"`
 		DescriptionPlain   string     `json:"descriptionPlain"`
 		IsListed           bool       `json:"isListed"`
 		EmploymentType     string     `json:"employmentType"`
@@ -288,7 +300,7 @@ func parseAshbyPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 		Location:      job.Location,
 		WorkplaceType: job.WorkplaceType,
 		URL:           job.JobURL,
-		Description:   job.DescriptionPlain,
+		Description:   convertHTMLOrPlain(job.DescriptionHTML, job.DescriptionPlain),
 	}
 	posting.EmploymentType = ashbyEmploymentTypes[job.EmploymentType]
 	posting.Department = job.Department

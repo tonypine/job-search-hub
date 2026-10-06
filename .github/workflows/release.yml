@@ -4,8 +4,8 @@
 # changed android/ since the previous Android release becomes
 # android-v<major>.<minor>.<commit count>, with the signed APK. A commit that
 # changed both releases both, with the same number. Then, if a Linear key is
-# set, the Android release is posted as a Job Search Hub project update. See
-# docs/design/updates.md › Releases from CI,
+# set, the run's releases are announced in one update on the initiative the Job
+# Search Hub project belongs to. See docs/design/updates.md › Releases from CI,
 # docs/decisions/0001-android-release-distribution.md, and the README's
 # Releases section for the secrets.
 #
@@ -17,11 +17,11 @@ on:
   workflow_run:
     workflows: [ci]
     types: [completed]
-  # Posts the Linear update for an existing release again.
+  # Posts the Linear update for existing releases again.
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to post to Linear, e.g. android-v0.1.123
+      tags:
+        description: The run's release tags to post to Linear, e.g. mac-v0.1.123 android-v0.1.123
         required: true
 
 permissions:
@@ -226,8 +226,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
-    outputs:
-      tag: ${{ needs.plan.outputs.android_tag }}
     env:
       SHA: ${{ github.event.workflow_run.head_sha }}
       TAG: ${{ needs.plan.outputs.android_tag }}
@@ -327,15 +325,17 @@ jobs:
             --title "Android $VERSION_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
-  # Posts the Android release, for now. Optional: without
+  # Announces every platform this run released in one Linear update, so a
+  # platform whose job failed is left out. Optional: without
   # LINEAR_RELEASE_API_KEY it only says so. If Linear refuses, this job fails
-  # and the release stays published; run the workflow by hand with the tag to
+  # and the releases stay published; run the workflow by hand with the tags to
   # post again.
   linear:
-    needs: android
+    needs: [plan, mac, android]
     if: >-
       always() &&
-      (needs.android.result == 'success' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'workflow_dispatch' ||
+      needs.mac.result == 'success' || needs.android.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -343,15 +343,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Post the Linear project update
+      - name: Post the Linear update
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.android.outputs.tag }}
+          DISPATCH_TAGS: ${{ inputs.tags }}
+          MAC_TAG: ${{ needs.mac.result == 'success' && needs.plan.outputs.mac_tag || '' }}
+          ANDROID_TAG: ${{ needs.android.result == 'success' && needs.plan.outputs.android_tag || '' }}
           GH_TOKEN: ${{ github.token }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_RELEASE_API_KEY }}
           LINEAR_PROJECT: Job Search Hub
+        # $tags is split on purpose, one argument a tag, and never globbed.
         run: |
+          set -f
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            tags=$DISPATCH_TAGS
+          else
+            tags="$MAC_TAG $ANDROID_TAG"
+          fi
           if [ -z "$LINEAR_API_KEY" ]; then
-            echo "::notice::LINEAR_RELEASE_API_KEY isn't set, so $TAG gets no Linear update."
+            echo "::notice::LINEAR_RELEASE_API_KEY isn't set, so" $tags "get no Linear update."
             exit 0
           fi
-          scripts/release/linear-update.sh "$TAG"
+          scripts/release/linear-update.sh $tags

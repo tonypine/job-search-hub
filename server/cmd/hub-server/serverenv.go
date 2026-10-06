@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 // serverEnvPath is the settings file every version of the server shares,
@@ -105,41 +103,4 @@ func makeSearchPath(inherited, home string) string {
 		}
 	}
 	return strings.Join(path, string(os.PathListSeparator))
-}
-
-// logToFile sends the server's output, and its children's, to the file path
-// names, appending. launchd starts the server from the app's bundle, whose
-// plist can't name a file in the user's home, so it passes the log as
-// HUB_LOG_FILE with a leading ~/. Empty leaves the output where it is.
-func logToFile(path string) error {
-	if path == "" {
-		return nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("find the home folder: %w", err)
-	}
-	path = expandHome(path, home)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create the log's folder: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open the log: %w", err)
-	}
-	defer file.Close()
-	for _, output := range []*os.File{os.Stdout, os.Stderr} {
-		if err := unix.Dup2(int(file.Fd()), int(output.Fd())); err != nil {
-			return fmt.Errorf("send the output to %s: %w", path, err)
-		}
-	}
-	return nil
-}
-
-// expandHome replaces a leading ~/ in path with home.
-func expandHome(path, home string) string {
-	if rest, ok := strings.CutPrefix(path, "~/"); ok {
-		return filepath.Join(home, rest)
-	}
-	return path
 }

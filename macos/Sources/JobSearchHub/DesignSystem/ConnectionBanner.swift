@@ -27,11 +27,11 @@ struct ConnectionBanner: View {
         .task(id: problem) { await server.readState() }
     }
 
-    /// A build outside ~/Applications can kick a loaded agent but not
-    /// register an unloaded one, so it offers Start server only for the first.
+    /// An installed agent can be loaded, and a loaded one kicked; without
+    /// either, there's no server to start.
     private var canStartServer: Bool {
         guard server.bundleCarriesServer else { return false }
-        if server.canRegister { return true }
+        if server.isInstalled { return true }
         return server.state != nil && server.state != .stopped
     }
 
@@ -48,7 +48,7 @@ struct ConnectionBanner: View {
             Spacer(minLength: Space.s)
             if problem.isFixedByStartingTheServer && canStartServer {
                 AsyncButton("Start server", busyTitle: "Starting…", isBusy: server.isWorking) {
-                    // A loaded agent that isn't running is kicked; an unloaded one is registered from the bundle.
+                    // A loaded agent that isn't running is kicked; an unloaded one is loaded.
                     await server.readState()
                     if server.state == .stopped {
                         await server.start()
