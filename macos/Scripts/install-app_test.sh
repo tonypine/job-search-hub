@@ -235,7 +235,7 @@ expect "from the native layout: the new version answers" 0.1.0-new "$(loaded_ver
 expect "the agent's plist runs the bundle's server" "$installed/Contents/Helpers/bin/hub-server" "$(plutil -extract ProgramArguments.0 raw "$plist")"
 expect "the agent's plist names the app for Login Items" com.tonypine.JobSearchHub "$(plutil -extract AssociatedBundleIdentifiers.0 raw "$plist")"
 expect "the agent restarts only after a crash" false "$(plutil -extract KeepAlive.SuccessfulExit raw "$plist")"
-expect "the agent leaves the server 70 s to stop" 70 "$(plutil -extract ExitTimeOut raw "$plist")"
+expect "the agent leaves the server 100 s to stop" 100 "$(plutil -extract ExitTimeOut raw "$plist")"
 expect "the old bin/ goes" no "$(exists "$app_support/bin")"
 contains "the HUB_CV_PRINT_BIN that pointed at bin/ goes" "HUB_OWNER_TOKEN=test-token" "$(cat "$env_file")"
 expect "the HUB_CV_PRINT_BIN that pointed at bin/ goes, alone" "" "$(grep HUB_CV_PRINT_BIN "$env_file" || true)"
