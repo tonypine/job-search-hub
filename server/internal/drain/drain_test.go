@@ -56,6 +56,29 @@ func TestNoWorkStartsWhileDrainingAndRunningWorkIsListedUntilItEnds(t *testing.T
 	end()
 }
 
+func TestListenersHearTheLastChangeOfRacingStartsAndCancels(t *testing.T) {
+	hub := drain.New(time.Hour)
+	var mutex sync.Mutex
+	var heard bool
+	hub.OnChange(func(draining bool) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		heard = draining
+	})
+	for range 200 {
+		var group sync.WaitGroup
+		group.Go(hub.Start)
+		group.Go(hub.Cancel)
+		group.Wait()
+		mutex.Lock()
+		last := heard
+		mutex.Unlock()
+		if last != hub.Draining() {
+			t.Fatalf("listener heard draining = %v, the drain is draining = %v", last, hub.Draining())
+		}
+	}
+}
+
 func TestTheRunningWorkListsAddedWorkOldestFirst(t *testing.T) {
 	hub := drain.New(time.Hour)
 	older := drain.Work{Type: drain.TypeModelCall, Kind: "job_facts", StartedAt: time.Now().Add(-time.Minute)}

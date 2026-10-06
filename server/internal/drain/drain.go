@@ -43,10 +43,14 @@ type Drain struct {
 	timeout time.Duration
 	now     func() time.Time
 
-	mutex    sync.Mutex
-	draining bool
-	since    time.Time
-	timer    *time.Timer
+	// notifying serializes Start and cancel, listeners included, so the
+	// listeners hear the changes in the order they happened and the last
+	// one they hear is the drain's state. Take it before mutex.
+	notifying sync.Mutex
+	mutex     sync.Mutex
+	draining  bool
+	since     time.Time
+	timer     *time.Timer
 	// generation counts the timer's arming, so a timer that fires after
 	// it was re-armed or cancelled does nothing.
 	generation int
@@ -63,7 +67,8 @@ func New(timeout time.Duration) *Drain {
 	return &Drain{timeout: timeout, now: time.Now, tracked: map[*Work]struct{}{}, changed: make(chan struct{})}
 }
 
-// OnChange tells listener when the hub starts or stops draining.
+// OnChange tells listener when the hub starts or stops draining. The
+// listener must not start or cancel the drain itself.
 func (drain *Drain) OnChange(listener func(draining bool)) {
 	drain.mutex.Lock()
 	defer drain.mutex.Unlock()
@@ -80,6 +85,8 @@ func (drain *Drain) AddLister(lister func() []Work) {
 
 // Start drains, or, already draining, re-arms the timeout.
 func (drain *Drain) Start() {
+	drain.notifying.Lock()
+	defer drain.notifying.Unlock()
 	drain.mutex.Lock()
 	started := !drain.draining
 	if started {
@@ -114,6 +121,8 @@ func (drain *Drain) Cancel() {
 // cancel stops draining, unless generation is a timer's arming that was
 // re-armed since; -1 always stops.
 func (drain *Drain) cancel(generation int, reason string) {
+	drain.notifying.Lock()
+	defer drain.notifying.Unlock()
 	drain.mutex.Lock()
 	if !drain.draining || (generation >= 0 && generation != drain.generation) {
 		drain.mutex.Unlock()
