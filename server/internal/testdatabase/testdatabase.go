@@ -23,15 +23,16 @@ import (
 //go:embed agentprompts
 var agentPrompts embed.FS
 
-// New creates the database through HUB_TEST_DATABASE_URL, which points at the
-// compose Postgres's maintenance database.
+// New creates the database through HUB_TEST_DATABASE_URL, which points at a
+// Postgres's maintenance database, such as the throwaway one
+// server/scripts/test-with-postgres.sh starts.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 
 	adminURL := os.Getenv("HUB_TEST_DATABASE_URL")
 	if adminURL == "" {
-		t.Fatal("HUB_TEST_DATABASE_URL is not set; point it at the compose Postgres, e.g. postgres://hub:<password>@localhost:5434/postgres")
+		t.Fatal("HUB_TEST_DATABASE_URL is not set; run the tests through server/scripts/test-with-postgres.sh, which starts a throwaway Postgres, or point it at a Postgres you can create databases in")
 	}
 	admin, err := pgx.Connect(ctx, adminURL)
 	if err != nil {
