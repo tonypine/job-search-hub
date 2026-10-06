@@ -7,7 +7,9 @@ import Observation
 ///
 /// The token is read once, off the main thread, and held in memory: when the
 /// Keychain item's access list doesn't name this build, the read waits on the
-/// Keychain's access prompt, and the window stays responsive meanwhile.
+/// Keychain's access prompt, and the window stays responsive meanwhile. A
+/// token the Keychain refuses, as in a VM whose login keychain is locked, is
+/// still used until the app quits.
 ///
 /// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
 /// instead, for a QA machine whose Keychain won't keep it. Without the flag
@@ -26,7 +28,10 @@ public final class HubConnection {
     @ObservationIgnored private let preferences: UserDefaults
     @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
+    /// With an imported token, from `--import-owner-token`, the app uses it
+    /// rather than read the Keychain, which may have refused it.
     public init(
+        importedToken: OwnerTokenState? = nil,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
@@ -34,6 +39,10 @@ public final class HubConnection {
     ) {
         self.preferences = preferences
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
+        if let importedToken {
+            token = importedToken
+            return
+        }
         if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
             token = .present(qaToken)
             return
@@ -69,13 +78,13 @@ public final class HubConnection {
     }
 
     /// Saves the URL, and the token when one is given; an empty token field
-    /// keeps the stored token.
-    public func save(newToken: String) throws {
+    /// keeps the stored token. A token the Keychain refuses is unsaved, and
+    /// used until the app quits.
+    public func save(newToken: String) {
         preferences.set(hubURLText, forKey: Self.hubURLPreferenceKey)
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedToken.isEmpty {
-            try OwnerTokenKeychain.save(trimmedToken)
-            token = .present(trimmedToken)
+            token = .saving(trimmedToken)
         }
     }
 

@@ -86,20 +86,25 @@ struct ConnectionSettings: View {
     }
 
     private func save() {
-        do {
-            try connection.save(newToken: tokenField)
-            tokenField = ""
-            saveFailure = nil
-            Task { await connection.check() }
-        } catch {
-            saveFailure = HubFailure("Couldn't save the token", error)
+        let isNewToken = !tokenField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connection.save(newToken: tokenField)
+        tokenField = ""
+        saveFailure = nil
+        if isNewToken, case .unsaved(_, let reason) = connection.token {
+            saveFailure = HubFailure(
+                "Couldn't keep the token in the Keychain",
+                advice: "The app uses it until it quits; save it again after that.",
+                details: reason
+            )
         }
+        Task { await connection.check() }
     }
 
     private var tokenPrompt: String {
         switch connection.token {
         case .reading: "Waiting for Keychain access"
         case .present: "Saved in the Keychain; enter a new one to replace it"
+        case .unsaved: "In use until the app quits; the Keychain refused it"
         case .missing: "HUB_OWNER_TOKEN from the hub's .env"
         }
     }

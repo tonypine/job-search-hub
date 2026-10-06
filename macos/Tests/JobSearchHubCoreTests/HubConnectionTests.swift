@@ -55,3 +55,14 @@ private func makePreferences() -> UserDefaults {
         #expect(connection.makeClient()?.token == "keychain-token")
     }
 }
+
+@MainActor @Test func anImportedTokenTheKeychainRefusedIsUsedWithoutReadingTheKeychain() async {
+    let connection = HubConnection(
+        importedToken: .unsaved("imported-token", reason: "locked"),
+        arguments: ["JobSearchHub"], environment: [:],
+        preferences: makePreferences(), readKeychain: { "keychain-token" }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.makeClient()?.token == "imported-token")
+}
