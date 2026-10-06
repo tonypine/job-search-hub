@@ -67,6 +67,9 @@ public enum OwnerTokenState: Equatable, Sendable {
     case reading
     case missing
     case present(String)
+    /// A token the Keychain refused to save, as a VM's locked login keychain
+    /// does: the app uses it until it quits. The reason is the Keychain's error.
+    case unsaved(String, reason: String)
 
     /// The state after a read; an empty token counts as missing.
     public init(read token: String?) {
@@ -77,8 +80,24 @@ public enum OwnerTokenState: Equatable, Sendable {
         }
     }
 
+    /// The state after saving a token: present once the Keychain holds it,
+    /// or unsaved, still in use, when the Keychain refuses it.
+    public static func saving(
+        _ token: String, with save: (String) throws -> Void = OwnerTokenKeychain.save
+    ) -> OwnerTokenState {
+        do {
+            try save(token)
+            return .present(token)
+        } catch {
+            return .unsaved(token, reason: String(describing: error))
+        }
+    }
+
     public var value: String? {
-        if case .present(let token) = self { token } else { nil }
+        switch self {
+        case .present(let token), .unsaved(let token, _): token
+        case .reading, .missing: nil
+        }
     }
 }
 
