@@ -1,13 +1,15 @@
 #!/bin/bash
 # Builds JobSearchHub.app. SwiftPM only emits a bare executable, so the bundle
-# macOS needs is assembled here, then signed.
+# macOS needs is assembled here, then signed. The app and its hub command carry
+# the hub's one version, from scripts/release/version.sh: 0.1.<HUB_VERSION_CODE>
+# for a release, 0.1.0-dev.<short commit> otherwise.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 APP_NAME="JobSearchHub"
 BUNDLE_ID="com.tonypine.JobSearchHub"
-VERSION="0.1.0"
+VERSION="$(sh ../scripts/release/version.sh)"
 APP_DIR="build/$APP_NAME.app"
 
 echo "==> Building"
@@ -25,7 +27,8 @@ cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 mkdir -p "$APP_DIR/Contents/Resources"
 if command -v go >/dev/null; then
   echo "==> Building the hub command"
-  (cd ../server && go build -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
+  GO_LDFLAGS="$(sh ../scripts/release/version.sh --go-ldflags)"
+  (cd ../server && go build -ldflags "$GO_LDFLAGS" -o "../macos/$APP_DIR/Contents/Resources/hub" ./cmd/hub)
 else
   echo "No Go toolchain: building without the bundled hub CLI; features that run it won't work in this build." >&2
 fi
@@ -111,4 +114,4 @@ fi
 codesign --force "${SIGN_OPTIONS[@]}" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 
-echo "==> Built $APP_DIR"
+echo "==> Built $APP_DIR $VERSION"
