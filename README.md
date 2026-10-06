@@ -21,18 +21,24 @@ It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions t
 
 ## Setup
 
-You need Docker, Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use your subscription).
+You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use your subscription).
 
-1. **Configure and start the stack.** Postgres runs in Docker; the server runs natively on the Mac as a LaunchAgent, so it can run local models on the GPU.
+1. **Configure and start the server.** It runs natively on the Mac as a LaunchAgent, so it can run local models on the GPU, and runs its own Postgres 18 beside it: nothing else to install or keep running.
 
    ```bash
-   cp .env.example .env    # then fill in both values; each line says how to generate it
-   docker compose up -d                     # Postgres only
-   server/scripts/install-native-server.sh  # builds hub-server, installs and starts the LaunchAgent
+   cp .env.example .env    # then fill in HUB_OWNER_TOKEN; the line says how to generate it
+   server/scripts/install-native-server.sh  # installs the Postgres engine, builds hub-server, installs and starts the LaunchAgent
    curl -fsS localhost:8090/v1/health
    ```
 
-   Both listen on 127.0.0.1 only: the server on 8090, Postgres on 5434. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Each night from 03:00 the server dumps the database with `pg_dump` (`brew install libpq`) to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14; restore one with `pg_restore --clean --dbname=<url> <file>`. Run the script again after pulling changes, and `--uninstall` to remove the agent. On a host other than a Mac, run the server in Docker instead: `docker compose --profile docker-server up -d --build`.
+   The script downloads the Postgres engine pinned in `server/postgres-engine.lock`, refuses it unless its SHA-256 matches, and installs it in `~/Library/Application Support/JobSearchHub/engines/postgres-18/`. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes, and `--uninstall` to remove the agent.
+
+   The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
+
+   - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in `engines/` (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both.
+   - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
+
+   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. Restore one with `pg_restore --clean --dbname=<url> <file>`.
 
 2. **Install the CLI.**
 

@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/abandonedruns"
@@ -133,19 +132,15 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	database, err := pgxpool.New(ctx, settings.databaseURL)
+	// Closing it is the last thing the server does: the HTTP server and the
+	// workers stop first, then the pool closes, then Postgres stops.
+	database, err := openDatabase(ctx, settings)
 	if err != nil {
-		return fmt.Errorf("configure the database pool: %w", err)
+		return err
 	}
 	defer database.Close()
-	if err := waitForDatabase(ctx, database, startupDatabaseWait); err != nil {
-		return err
-	}
-	if err := store.Migrate(ctx, database); err != nil {
-		return err
-	}
 
-	hub := store.New(database)
+	hub := store.New(database.pool)
 	if err := seedAgentPrompts(ctx, hub, settings.agentPromptsDir); err != nil {
 		return err
 	}
@@ -156,7 +151,7 @@ func run() error {
 
 	rates := exchangerates.NewCache(exchangerates.DefaultAPIBase)
 	routes := http.NewServeMux()
-	routes.Handle("GET /v1/health", api.NewHealthHandler(database))
+	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool))
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
@@ -225,14 +220,13 @@ func run() error {
 	go postingtexts.New(hub, jsearch, settings.jsearchMonthlyRequests).Run(ctx, postingTextInterval)
 	// Each kind of task runs on the model it's routed to. The settings' model
 	// server seeds the routes of a fresh database; routes changed since stay.
+	// Errors return rather than exit, so the database closes on the way out.
 	if err := hub.EnsureDefaultTaskRoutes(ctx, settings.jobFactsModelURL, settings.jobFactsModel, store.RoutedTaskKinds); err != nil {
-		slog.Error("seed the task routes", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("seed the task routes: %w", err)
 	}
 	taskRoutes, err := hub.ListTaskRoutes(ctx)
 	if err != nil {
-		slog.Error("read the task routes", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("read the task routes: %w", err)
 	}
 	// The hub's own model runtime starts llama-server only when a route to
 	// it has work, and stops it when idle.
@@ -250,8 +244,7 @@ func run() error {
 	// owner left it paused.
 	paused, err := hub.GetModelWorkPaused(ctx)
 	if err != nil {
-		slog.Error("read whether model work is paused", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("read whether model work is paused: %w", err)
 	}
 	modelQueue := modelqueue.New(paused, modelqueue.Settings{
 		GetLoadedModel: func() string { return modelRuntime.Status().Model },
@@ -383,10 +376,10 @@ func run() error {
 	}
 	api.RegisterMailRoutes(routes, hub, mailBackfiller, requireOwner)
 
-	if pgDump, err := exec.LookPath(settings.pgDump); err != nil {
-		slog.Warn("database backups off: pg_dump not found", "pg_dump", settings.pgDump)
+	if pgDump, err := exec.LookPath(database.pgDump); err != nil {
+		slog.Warn("database backups off: pg_dump not found", "pg_dump", database.pgDump)
 	} else {
-		go databasebackup.NewDumper(settings.databaseURL, settings.backupsDir, pgDump).Run(ctx, databaseBackupCheckInterval)
+		go databasebackup.NewDumper(database.url, settings.backupsDir, pgDump).Run(ctx, databaseBackupCheckInterval)
 		slog.Info("database backups on", "folder", settings.backupsDir)
 	}
 
@@ -405,6 +398,10 @@ func run() error {
 	select {
 	case err := <-serveResult:
 		return err
+	case <-database.Exited():
+		// launchd restarts the server, and the server its Postgres.
+		stop()
+		return fmt.Errorf("the database stopped by itself: %w", database.ExitError())
 	case <-ctx.Done():
 	}
 
