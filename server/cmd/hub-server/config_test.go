@@ -52,11 +52,15 @@ func TestWithoutADatabaseURLTheServerRunsItsOwnFromTheEnginesBesideIt(t *testing
 	if err != nil {
 		t.Fatalf("no database URL: %v", err)
 	}
-	executable, err := os.Executable()
+	folder, err := executableFolder()
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantEngines := filepath.Join(filepath.Dir(filepath.Dir(executable)), "engines")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEngines := findEngines(folder, home)
 	if parsed.databaseURL != "" || parsed.postgresEngines != wantEngines ||
 		!strings.HasSuffix(parsed.postgresDir, "/Library/Application Support/JobSearchHub/postgres") {
 		t.Fatalf("database %q, engines %q (want %q), folder %q", parsed.databaseURL, parsed.postgresEngines, wantEngines, parsed.postgresDir)
@@ -65,6 +69,40 @@ func TestWithoutADatabaseURLTheServerRunsItsOwnFromTheEnginesBesideIt(t *testing
 	environment["HUB_POSTGRES_ENGINES"], environment["HUB_POSTGRES_DIR"] = "/opt/engines", "/srv/hub-postgres"
 	if parsed, err = parseEnvironment(lookupFrom(environment)); err != nil || parsed.postgresEngines != "/opt/engines" || parsed.postgresDir != "/srv/hub-postgres" {
 		t.Fatalf("engines %q, folder %q, err %v", parsed.postgresEngines, parsed.postgresDir, err)
+	}
+}
+
+func TestTheEnginesBesideTheServerWinOverTheInstalledOnes(t *testing.T) {
+	bundle, home := t.TempDir(), "/Users/ada"
+	helpers := filepath.Join(bundle, "Contents", "Helpers")
+	installed := "/Users/ada/Library/Application Support/JobSearchHub/engines"
+	if got := findEngines(filepath.Join(helpers, "bin"), home); got != installed {
+		t.Fatalf("a bundle without engines: %q, want %q", got, installed)
+	}
+	if err := os.MkdirAll(filepath.Join(helpers, "engines"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := findEngines(filepath.Join(helpers, "bin"), home), filepath.Join(helpers, "engines"); got != want {
+		t.Fatalf("a bundle with engines: %q, want %q", got, want)
+	}
+}
+
+func TestHubCVPrintIsFoundBesideTheServerUnlessSet(t *testing.T) {
+	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := executableFolder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(folder, "hub-cvprint"); parsed.cvPrintCommand != want {
+		t.Fatalf("cvprint %q, want %q", parsed.cvPrintCommand, want)
+	}
+	environment := maps.Clone(validEnvironment)
+	environment["HUB_CV_PRINT_BIN"] = "/opt/hub-cvprint"
+	if parsed, err = parseEnvironment(lookupFrom(environment)); err != nil || parsed.cvPrintCommand != "/opt/hub-cvprint" {
+		t.Fatalf("cvprint %q, err %v", parsed.cvPrintCommand, err)
 	}
 }
 

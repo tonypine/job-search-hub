@@ -198,13 +198,16 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		}
 		parsed.jsearchMonthlyRequests = requests
 	}
+	// hub-cvprint ships beside the server, in the app's bundle.
 	parsed.cvPrintCommand = lookup("HUB_CV_PRINT_BIN")
+	if parsed.cvPrintCommand == "" {
+		if folder, err := executableFolder(); err == nil {
+			parsed.cvPrintCommand = filepath.Join(folder, "hub-cvprint")
+		}
+	}
 	parsed.cvFolder = lookup("HUB_CV_FOLDER")
 	if home, err := os.UserHomeDir(); err == nil {
 		parsed.claudeFolder = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "claude-print")
-		if parsed.cvPrintCommand == "" {
-			parsed.cvPrintCommand = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "bin", "hub-cvprint")
-		}
 		if parsed.cvFolder == "" {
 			parsed.cvFolder = filepath.Join(home, "Interview", "CVs")
 		}
@@ -215,21 +218,47 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 // parseDatabasePaths reads where the engines and the clusters of the database
 // the server owns are, which the database commands need without the rest.
 func parseDatabasePaths(lookup func(string) string) (engines, dir string) {
+	home, _ := os.UserHomeDir()
 	engines = lookup("HUB_POSTGRES_ENGINES")
 	if engines == "" {
-		// The engines sit beside the server's own folder, wherever the
-		// app puts it.
-		if executable, err := os.Executable(); err == nil {
-			engines = filepath.Join(filepath.Dir(executable), "..", "engines")
-		}
+		folder, _ := executableFolder()
+		engines = findEngines(folder, home)
 	}
 	dir = lookup("HUB_POSTGRES_DIR")
-	if dir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "postgres")
-		}
+	if dir == "" && home != "" {
+		dir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "postgres")
 	}
 	return engines, dir
+}
+
+// findEngines is the engines folder beside folder, the server's own: the
+// app bundle's Helpers/engines once the bundle carries the engine. Until
+// then there's none there, and the server uses the engines installed in the
+// application support folder.
+func findEngines(folder, home string) string {
+	if folder != "" {
+		beside := filepath.Join(filepath.Dir(folder), "engines")
+		if info, err := os.Stat(beside); err == nil && info.IsDir() {
+			return beside
+		}
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "JobSearchHub", "engines")
+}
+
+// executableFolder is the folder of the server's own executable, its
+// symlinks resolved: the bundle's Helpers/bin when the app runs it.
+func executableFolder() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	return filepath.Dir(executable), nil
 }
 
 // parseBackupsDir reads the folder the database dumps go to, which the
