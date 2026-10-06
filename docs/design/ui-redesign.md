@@ -4,6 +4,9 @@ A review of both clients as they stand, and a proposal for a design system and i
 architecture to fix what it finds. Nothing in the apps changes with this document. The work it
 proposes is split into tickets at the end.
 
+The second pass, on reading and deciding (the job description, a job as a page, tables and forms),
+is in [ui-redesign-2.md](ui-redesign-2.md).
+
 The mockups in `mockups/` are drawn by SwiftUI from `mockups/render.swift`, with made-up companies,
 jobs and people:
 
