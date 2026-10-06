@@ -1,19 +1,23 @@
 import SwiftUI
 
 /// A view's actions: one primary, the next step for what it shows; up to two
-/// secondary; and the rest in an overflow menu. Buttons are capsules.
-struct ActionBar<Primary: View, Secondary: View, Overflow: View>: View {
+/// secondary; and the rest in an overflow menu. Buttons are capsules. An
+/// accessory, such as an icon that opens the posting, sits at the trailing
+/// edge beside the overflow.
+struct ActionBar<Primary: View, Secondary: View, Overflow: View, Accessory: View>: View {
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
     @ViewBuilder let overflow: Overflow
+    @ViewBuilder let accessory: Accessory
 
     init(
         @ViewBuilder primary: () -> Primary, @ViewBuilder secondary: () -> Secondary,
-        @ViewBuilder overflow: () -> Overflow
+        @ViewBuilder overflow: () -> Overflow, @ViewBuilder accessory: () -> Accessory
     ) {
         self.primary = primary()
         self.secondary = secondary()
         self.overflow = overflow()
+        self.accessory = accessory()
     }
 
     var body: some View {
@@ -23,6 +27,12 @@ struct ActionBar<Primary: View, Secondary: View, Overflow: View>: View {
                 .tint(.hubAccent)
             secondary
                 .buttonStyle(.bordered)
+            if Accessory.self != EmptyView.self {
+                Spacer(minLength: 0)
+                accessory
+                    .buttonStyle(.bordered)
+                    .labelStyle(.iconOnly)
+            }
             if Overflow.self != EmptyView.self {
                 Menu {
                     overflow
@@ -41,7 +51,13 @@ struct ActionBar<Primary: View, Secondary: View, Overflow: View>: View {
     }
 }
 
-extension ActionBar where Overflow == EmptyView {
+extension ActionBar where Accessory == EmptyView {
+    init(@ViewBuilder primary: () -> Primary, @ViewBuilder secondary: () -> Secondary, @ViewBuilder overflow: () -> Overflow) {
+        self.init(primary: primary, secondary: secondary, overflow: overflow) { EmptyView() }
+    }
+}
+
+extension ActionBar where Overflow == EmptyView, Accessory == EmptyView {
     init(@ViewBuilder primary: () -> Primary, @ViewBuilder secondary: () -> Secondary) {
         self.init(primary: primary, secondary: secondary) { EmptyView() }
     }
