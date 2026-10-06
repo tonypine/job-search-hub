@@ -29,6 +29,10 @@ gui/501/com.tonypine.jobsearchhub.server = {
 
 @Test func eachCommandIsALaunchctlCallInTheUsersDomain() {
     #expect(ServerLaunchAgent.makeArguments(.readState, userID: 501) == ["print", "gui/501/com.tonypine.jobsearchhub.server"])
+    let plist = ServerLaunchAgent.makePlistURL(home: URL(filePath: "/Users/ada"))
+    #expect(ServerLaunchAgent.makeArguments(.start(plist: plist), userID: 501) == [
+        "bootstrap", "gui/501", "/Users/ada/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist",
+    ])
     #expect(ServerLaunchAgent.makeArguments(.stop, userID: 501) == ["bootout", "gui/501/com.tonypine.jobsearchhub.server"])
     #expect(ServerLaunchAgent.makeArguments(.restart, userID: 501) == ["kickstart", "-k", "gui/501/com.tonypine.jobsearchhub.server"])
 }
@@ -37,5 +41,4 @@ gui/501/com.tonypine.jobsearchhub.server = {
     let app = ServerLaunchAgent.makeInstalledAppURL(home: URL(filePath: "/Users/ada"))
     #expect(app.path == "/Users/ada/Applications/Job Search Hub.app")
     #expect(ServerLaunchAgent.makeCommandURL("hub-server", bundle: app).path == "/Users/ada/Applications/Job Search Hub.app/Contents/Helpers/bin/hub-server")
-    #expect(ServerLaunchAgent.plistName == "com.tonypine.jobsearchhub.server.plist")
 }

@@ -4,8 +4,8 @@
 # changed android/ since the previous Android release becomes
 # android-v<major>.<minor>.<commit count>, with the signed APK. A commit that
 # changed both releases both, with the same number. Then, if a Linear key is
-# set, the Android release is posted as a Job Search Hub project update. See
-# docs/design/updates.md › Releases from CI,
+# set, the run's releases are announced in one update on the initiative the Job
+# Search Hub project belongs to. See docs/design/updates.md › Releases from CI,
 # docs/decisions/0001-android-release-distribution.md, and the README's
 # Releases section for the secrets.
 #
@@ -26,13 +26,13 @@ on:
   workflow_run:
     workflows: [ci]
     types: [completed]
-  # From main: with no tag, releases what main's tip changed since each app's
-  # previous release, and gives an app without one its first. With a tag,
-  # only posts that release's Linear update again.
+  # From main: with no tags, releases what main's tip changed since each
+  # app's previous release, and gives an app without one its first. With
+  # tags, only posts those releases' Linear update again.
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to post to Linear again, e.g. android-v0.1.123. Leave it empty to release main's tip.
+      tags:
+        description: The run's release tags to post to Linear again, e.g. mac-v0.1.123 android-v0.1.123. Leave it empty to release main's tip.
         required: false
         default: ""
 
@@ -55,7 +55,7 @@ concurrency:
     github.event.workflow_run.conclusion == 'success' &&
     github.event.workflow_run.event == 'push' &&
     github.event.workflow_run.head_branch == 'main' ||
-    github.event_name == 'workflow_dispatch' && inputs.tag == '' &&
+    github.event_name == 'workflow_dispatch' && inputs.tags == '' &&
     github.ref == 'refs/heads/main') &&
     'release-main' || format('release-{0}', github.run_id) }}
   cancel-in-progress: false
@@ -68,7 +68,7 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository ||
-      github.event_name == 'workflow_dispatch' && inputs.tag == '' &&
+      github.event_name == 'workflow_dispatch' && inputs.tags == '' &&
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -122,6 +122,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
     env:
       TAG: ${{ needs.plan.outputs.mac_tag }}
       VERSION_CODE: ${{ needs.plan.outputs.version_code }}
@@ -245,7 +247,9 @@ jobs:
 
       # Creates the tag at the built commit along with the release, if
       # GitHub lets the workflow's token tag it (see the top of this file).
+      # The tag goes to the linear job only once it's published.
       - name: Publish the release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -270,6 +274,7 @@ jobs:
             --target "$SHA" \
             --title "Job Search Hub $VERSION_NAME for Mac" \
             --notes-file "$RUNNER_TEMP/notes.md"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   android:
     needs: plan
@@ -397,16 +402,17 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-  # Posts the Android release, for now. Optional: without
-  # LINEAR_RELEASE_API_KEY it only says so. If Linear refuses, this job fails
-  # and the release stays published; run the workflow by hand with the tag to
-  # post again.
+  # Announces every platform this run published in one Linear update, so a
+  # platform whose job failed, or whose commit couldn't be tagged, is left
+  # out. Optional: without LINEAR_RELEASE_API_KEY it only says so. If Linear
+  # refuses, this job fails and the releases stay published; run the workflow
+  # by hand with the tags to post again.
   linear:
-    needs: android
+    needs: [mac, android]
     if: >-
       always() &&
-      (needs.android.outputs.tag != '' ||
-      github.event_name == 'workflow_dispatch' && inputs.tag != '')
+      (needs.mac.outputs.tag != '' || needs.android.outputs.tag != '' ||
+      github.event_name == 'workflow_dispatch' && inputs.tags != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -414,15 +420,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Post the Linear project update
+      - name: Post the Linear update
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.android.outputs.tag }}
+          DISPATCH_TAGS: ${{ inputs.tags }}
+          MAC_TAG: ${{ needs.mac.outputs.tag }}
+          ANDROID_TAG: ${{ needs.android.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_RELEASE_API_KEY }}
           LINEAR_PROJECT: Job Search Hub
+        # $tags is split on purpose, one argument a tag, and never globbed.
         run: |
+          set -f
+          if [ -n "$DISPATCH_TAGS" ]; then
+            tags=$DISPATCH_TAGS
+          else
+            tags="$MAC_TAG $ANDROID_TAG"
+          fi
           if [ -z "$LINEAR_API_KEY" ]; then
-            echo "::notice::LINEAR_RELEASE_API_KEY isn't set, so $TAG gets no Linear update."
+            echo "::notice::LINEAR_RELEASE_API_KEY isn't set, so" $tags "get no Linear update."
             exit 0
           fi
-          scripts/release/linear-update.sh "$TAG"
+          scripts/release/linear-update.sh $tags

@@ -1,10 +1,9 @@
 import AppKit
 import JobSearchHubCore
-import ServiceManagement
 import SwiftUI
 
-/// The hub server's launch agent on this Mac, read, stopped and restarted
-/// through `launchctl`, and started by registering it from the bundle.
+/// The hub server's launch agent on this Mac, read, started, stopped and
+/// restarted through `launchctl`.
 @MainActor
 @Observable
 final class ServerControl {
@@ -14,10 +13,12 @@ final class ServerControl {
     @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
 
     var logURL: URL { ServerLaunchAgent.makeLogURL(home: home) }
+    private var plistURL: URL { ServerLaunchAgent.makePlistURL(home: home) }
     var bundleCarriesServer: Bool { ServerAgent.bundleCarriesServer }
-    /// Whether this build can start an unloaded server: only the installed
-    /// app registers the agent. Any build stops and restarts a loaded one.
-    var canRegister: Bool { ServerAgent.isInstalledCopy }
+    /// Whether `install-app.sh` has installed the agent, so an unloaded
+    /// server can be started. It runs the installed app's server, whichever
+    /// build starts it.
+    var isInstalled: Bool { FileManager.default.fileExists(atPath: plistURL.path) }
 
     func watch() async {
         while !Task.isCancelled {
@@ -31,28 +32,20 @@ final class ServerControl {
         state = ServerLaunchAgent.parseState(finished.output, status: finished.status)
     }
 
-    /// Starts the server by registering its agent from this bundle, which
-    /// launchd loads and runs, then reads its state again.
+    /// Starts the server by loading its agent, which launchd runs at once,
+    /// then reads its state again.
     func start() async {
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            if try await ServerAgent.register() == .requiresApproval {
-                failure = HubFailure(
-                    "Couldn't start the server",
-                    advice: "It's turned off in System Settings › General › Login Items. Turn on Job Search Hub there, then start it again."
-                )
-                SMAppService.openSystemSettingsLoginItems()
-            } else {
-                failure = nil
-            }
-        } catch {
-            failure = HubFailure("Couldn't start the server", error)
+        guard isInstalled else {
+            failure = HubFailure(
+                "Couldn't start the server",
+                advice: "It isn't installed on this Mac. Install it with macos/Scripts/install-app.sh from the repository."
+            )
+            return
         }
-        await readState()
+        await perform(.start(plist: plistURL))
     }
 
-    /// Stops or restarts the server, then reads its state again.
+    /// Has launchd start, stop or restart the server, then reads its state again.
     func perform(_ command: ServerLaunchAgent.Command) async {
         isWorking = true
         defer { isWorking = false }
@@ -67,6 +60,7 @@ final class ServerControl {
     private func describe(_ command: ServerLaunchAgent.Command) -> String {
         switch command {
         case .readState: "read"
+        case .start: "start"
         case .stop: "stop"
         case .restart: "restart"
         }
@@ -125,10 +119,10 @@ struct ServerSection: View {
                 Label(describeState(), systemImage: stateSymbol).foregroundStyle(control.state?.tone.color ?? Tone.neutral.color)
                 HStack {
                     if control.state == .stopped {
-                        if control.canRegister {
+                        if control.isInstalled {
                             AsyncButton("Start", busyTitle: "Starting…") { await control.start() }
                         } else {
-                            Text("Start it from the installed app in ~/Applications.")
+                            Text("It isn't installed on this Mac. Install it with macos/Scripts/install-app.sh from the repository.")
                                 .foregroundStyle(.secondary)
                         }
                     } else {

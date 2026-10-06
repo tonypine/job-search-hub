@@ -4,9 +4,12 @@ import Foundation
 /// bundle, what launchd is asked to do with it, and how its state reads.
 public enum ServerLaunchAgent {
     public static let label = "com.tonypine.jobsearchhub.server"
-    /// The agent's plist in the bundle's Contents/Library/LaunchAgents, which
-    /// `SMAppService.agent(plistName:)` registers.
-    public static let plistName = "\(label).plist"
+
+    /// The agent's plist, which `install-app.sh` writes to run the installed
+    /// bundle's server.
+    public static func makePlistURL(home: URL) -> URL {
+        home.appending(path: "Library/LaunchAgents/\(label).plist")
+    }
 
     /// The app as `install-app.sh`, and later updates, put it: the copy whose
     /// server the agent runs.
@@ -20,16 +23,16 @@ public enum ServerLaunchAgent {
         bundle.appending(path: "Contents/Helpers/bin/\(name)")
     }
 
-    /// The log the server writes, from HUB_LOG_FILE in the agent's plist.
+    /// The log the server writes, which the agent's plist names.
     public static func makeLogURL(home: URL) -> URL {
         home.appending(path: "Library/Logs/JobSearchHub/server.log")
     }
 
-    /// What launchd is asked to do with the agent. Starting it again once
-    /// stopped goes through `SMAppService` instead, which loads it from the
-    /// bundle.
+    /// What launchd is asked to do with the agent. Starting it loads the
+    /// plist at `plist`, and launchd runs the server at once.
     public enum Command: Sendable {
         case readState
+        case start(plist: URL)
         case stop
         case restart
     }
@@ -39,6 +42,7 @@ public enum ServerLaunchAgent {
         let service = "gui/\(userID)/\(label)"
         switch command {
         case .readState: return ["print", service]
+        case let .start(plist): return ["bootstrap", "gui/\(userID)", plist.path]
         case .stop: return ["bootout", service]
         case .restart: return ["kickstart", "-k", service]
         }

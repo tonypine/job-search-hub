@@ -8,8 +8,9 @@
 #   Contents/Helpers/bin/hub-cvprint               the CV printer, which the server finds beside itself
 #   Contents/Helpers/bin/hub                       the hub command
 #   Contents/Helpers/bin/hub-update                the installer
-#   Contents/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
-#                                                  the server's agent, which the app registers
+#
+# install-app.sh writes the server's agent to ~/Library/LaunchAgents, naming
+# the installed bundle's hub-server.
 #
 # Contents/Helpers/engines/ is left for the owned database's engine, which
 # the server looks for beside its own folder; until the bundle carries it, the
@@ -28,7 +29,6 @@ BUNDLE_ID="com.tonypine.JobSearchHub"
 VERSION="$(sh ../scripts/release/version.sh)"
 APP_DIR="build/$APP_NAME.app"
 HELPERS="$APP_DIR/Contents/Helpers/bin"
-AGENT_LABEL="com.tonypine.jobsearchhub.server"
 
 echo "==> Building"
 swift build -c release --product "$APP_NAME"
@@ -54,44 +54,6 @@ if command -v go >/dev/null; then
   done
   echo "==> Building hub-cvprint"
   Scripts/build-cvprint.sh "$HELPERS/hub-cvprint"
-
-  # The app registers this agent with SMAppService, which reads it from the
-  # bundle, so launchd runs whichever server the bundle at that path holds.
-  # BundleProgram is relative to the bundle, and launchd can't expand a home
-  # folder here, so the server opens the log HUB_LOG_FILE names itself. It
-  # restarts after a crash, not after a clean exit, as when an update stops
-  # it to swap the bundle. On SIGTERM the server waits up to 30 seconds for
-  # the work still running, 5 for open requests, then up to 30 for its
-  # Postgres to stop: ExitTimeOut leaves room for all of it.
-  mkdir -p "$APP_DIR/Contents/Library/LaunchAgents"
-  AGENT_PLIST="$APP_DIR/Contents/Library/LaunchAgents/$AGENT_LABEL.plist"
-  cat > "$AGENT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>$AGENT_LABEL</string>
-	<key>BundleProgram</key>
-	<string>Contents/Helpers/bin/hub-server</string>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>HUB_LOG_FILE</key>
-		<string>~/Library/Logs/JobSearchHub/server.log</string>
-	</dict>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<dict>
-		<key>SuccessfulExit</key>
-		<false/>
-	</dict>
-	<key>ExitTimeOut</key>
-	<integer>70</integer>
-</dict>
-</plist>
-PLIST
-  plutil -lint "$AGENT_PLIST" >/dev/null
 else
   echo "No Go toolchain: building the app without the server and the hub command; features that run them won't work in this build." >&2
 fi
