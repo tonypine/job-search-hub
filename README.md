@@ -166,7 +166,7 @@ Until an app's signing secrets exist, its release job fails at its first step, n
    | `RELEASE_KEY_ALIAS` | `job-search-hub` |
    | `RELEASE_KEY_PASSWORD` | the same password |
    | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
-   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each Android release is posted as a Job Search Hub project update. |
+   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each release run is announced in one update on the initiative the Job Search Hub project belongs to: the version, a link per platform it released, and the changelog. A project in no initiative gets a project update instead, and the run warns. |
 
    Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
 
@@ -192,7 +192,7 @@ Until an app's signing secrets exist, its release job fails at its first step, n
 
 The job imports the certificate into a keychain of its own, which it deletes once the app is signed, or after a failed step. It signs only with the identity of `MAC_SIGNING_TEAM_ID`'s team, and fails if the `.p12` holds none.
 
-A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
+A Linear update that failed can be posted again from Actions › release › Run workflow, with the run's release tags, e.g. `mac-v0.1.252 android-v0.1.252`.
 
 To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
 
