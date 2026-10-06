@@ -668,8 +668,9 @@ app's next launch) finishes or undoes it, never leaving half a switch:
    answers with the new version and `GET /v1/health` with `ok`. Otherwise, roll back.
 6. **Reopen the app**, if it was open, with the version it came from, so it shows the banner and
    reopens its sessions.
-7. **Check the app**, if step 6 reopened it: it writes `launched` to `state.json` once its window
-   is up and connected. If that doesn't happen within 60 seconds, or it exits, roll back. After
+7. **Check the app**, if step 6 reopened it: it writes its version to `Updates/launched` once its
+   window is up and connected (a file of its own, so the app never races `hub-update` over
+   `state.json`). If that doesn't happen within 60 seconds, or it exits, roll back. After
    *Install when I quit* the app stays closed, so there's nothing to wait for: step 5's server
    check is the whole check, and the app's next launch is covered by the first-day crash prompt
    (see [Failures](#failures)).
