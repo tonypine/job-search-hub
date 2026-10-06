@@ -8,13 +8,16 @@
 set -euo pipefail
 
 [ $# -eq 1 ] || { echo "usage: $0 <output>" >&2; exit 2; }
-output=$1
+# The output is relative to the caller, not to macos/.
+case $1 in /*) output=$1 ;; *) output=$PWD/$1 ;; esac
 cd "$(dirname "$0")/.."
 
 VERSION="$(sh ../scripts/release/version.sh)"
 mkdir -p .build
-# A fixed path keeps the linker flags the same from build to build.
-PLIST="$PWD/.build/hub-cvprint-Info.plist"
+# SwiftPM doesn't track a file passed to the linker, so the version is in the
+# plist's path: a new version changes the linker flags, which forces a relink.
+rm -f .build/hub-cvprint-*Info.plist
+PLIST="$PWD/.build/hub-cvprint-$VERSION-Info.plist"
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
