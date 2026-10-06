@@ -41,6 +41,9 @@ func TestEachDecisionActsAndIsRecorded(t *testing.T) {
 	if open := listJobTitles(t, hub, store.JobStatusOpen); len(open) != 2 {
 		t.Errorf("open = %v, want the pursued and later jobs", open)
 	}
+	if leftForLater := listJobTitles(t, hub, store.JobStatusLater); len(leftForLater) != 1 || leftForLater[0] != "Later" {
+		t.Errorf("later = %v, want the job left for later", leftForLater)
+	}
 	details, _ := hub.GetJobDetails(ctx, later)
 	if details.Decision == nil || details.Decision.Decision != store.JobDecisionLater {
 		t.Errorf("details decision = %+v", details.Decision)
