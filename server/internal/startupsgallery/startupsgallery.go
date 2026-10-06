@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -84,12 +85,14 @@ func (reader *Reader) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := reader.ReadOnce(ctx)
-		if err != nil {
-			slog.Error("startups.gallery pass stopped", "error", err)
-		} else if summary != (PassSummary{}) {
-			slog.Info("startups.gallery pass done", "listed", summary.Listed, "new", summary.New, "pages read", summary.PagesRead,
-				"checked", summary.Checked, "kept", summary.Kept, "failed", summary.Failed, "disallowed", summary.Disallowed)
+		if !drain.IsDraining(ctx) {
+			summary, err := reader.ReadOnce(ctx)
+			if err != nil {
+				slog.Error("startups.gallery pass stopped", "error", err)
+			} else if summary != (PassSummary{}) {
+				slog.Info("startups.gallery pass done", "listed", summary.Listed, "new", summary.New, "pages read", summary.PagesRead,
+					"checked", summary.Checked, "kept", summary.Kept, "failed", summary.Failed, "disallowed", summary.Disallowed)
+			}
 		}
 		select {
 		case <-ctx.Done():

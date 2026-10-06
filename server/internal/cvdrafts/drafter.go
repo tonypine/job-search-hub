@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/resume"
@@ -76,14 +77,16 @@ func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		jobIDs, err := drafter.ListJobsNeedingCV(ctx)
-		if err != nil {
-			slog.Error("list jobs needing a CV", "error", err)
+		if !drain.IsDraining(ctx) {
+			jobIDs, err := drafter.ListJobsNeedingCV(ctx)
+			if err != nil {
+				slog.Error("list jobs needing a CV", "error", err)
+			}
+			for _, jobID := range jobIDs[:min(len(jobIDs), maximumGeneratedPerPass)] {
+				drafter.generateAndLog(ctx, jobID)
+			}
+			drafter.printEditedCVs(ctx)
 		}
-		for _, jobID := range jobIDs[:min(len(jobIDs), maximumGeneratedPerPass)] {
-			drafter.generateAndLog(ctx, jobID)
-		}
-		drafter.printEditedCVs(ctx)
 		select {
 		case <-ctx.Done():
 			return

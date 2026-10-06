@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -83,11 +84,13 @@ func (finder *Finder) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := finder.FindOnce(ctx)
-		if err != nil {
-			slog.Error("board search pass stopped", "error", err)
-		} else if summary != (PassSummary{}) {
-			slog.Info("board search pass done", "searched", summary.Searched, "found", summary.Found, "unfinished", summary.Unfinished)
+		if !drain.IsDraining(ctx) {
+			summary, err := finder.FindOnce(ctx)
+			if err != nil {
+				slog.Error("board search pass stopped", "error", err)
+			} else if summary != (PassSummary{}) {
+				slog.Info("board search pass done", "searched", summary.Searched, "found", summary.Found, "unfinished", summary.Unfinished)
+			}
 		}
 		select {
 		case <-ctx.Done():

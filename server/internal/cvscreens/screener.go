@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -51,11 +52,13 @@ func (screener *Screener) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := screener.ScreenOnce(ctx)
-		if err != nil {
-			slog.Error("cv screens pass stopped", "error", err, "screened", summary.Screened, "failed", summary.Failed)
-		} else if summary.Screened > 0 || summary.Failed > 0 {
-			slog.Info("cv screens pass done", "screened", summary.Screened, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			summary, err := screener.ScreenOnce(ctx)
+			if err != nil {
+				slog.Error("cv screens pass stopped", "error", err, "screened", summary.Screened, "failed", summary.Failed)
+			} else if summary.Screened > 0 || summary.Failed > 0 {
+				slog.Info("cv screens pass done", "screened", summary.Screened, "failed", summary.Failed)
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -45,14 +46,16 @@ func (analyzer *Analyzer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		computedAt, err := analyzer.hub.GetMarketGapsComputedAt(ctx)
-		if err == nil && (computedAt == nil || time.Since(*computedAt) >= refreshInterval) {
-			if gaps, err := analyzer.Refresh(ctx); errors.Is(err, ErrNoPrompt) {
-				slog.Info("market gaps wait for a market_gaps prompt")
-			} else if err != nil {
-				slog.Error("market gaps refresh failed", "error", err)
-			} else {
-				slog.Info("market gaps refreshed", "gaps", len(gaps))
+		if !drain.IsDraining(ctx) {
+			computedAt, err := analyzer.hub.GetMarketGapsComputedAt(ctx)
+			if err == nil && (computedAt == nil || time.Since(*computedAt) >= refreshInterval) {
+				if gaps, err := analyzer.Refresh(ctx); errors.Is(err, ErrNoPrompt) {
+					slog.Info("market gaps wait for a market_gaps prompt")
+				} else if err != nil {
+					slog.Error("market gaps refresh failed", "error", err)
+				} else {
+					slog.Info("market gaps refreshed", "gaps", len(gaps))
+				}
 			}
 		}
 		select {

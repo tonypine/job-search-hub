@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -52,10 +53,12 @@ func (teller *Teller) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if told, err := teller.TellOnce(ctx); err != nil {
-			slog.Error("fresh matches stopped", "error", err, "told", told)
-		} else if told > 0 {
-			slog.Info("fresh matches told", "told", told)
+		if !drain.IsDraining(ctx) {
+			if told, err := teller.TellOnce(ctx); err != nil {
+				slog.Error("fresh matches stopped", "error", err, "told", told)
+			} else if told > 0 {
+				slog.Info("fresh matches told", "told", told)
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -67,14 +67,16 @@ func NewAgentServer(hub *store.Store, verifier jobBoardVerifier, syncer jobBoard
 
 // NewHandler serves the MCP servers over streamable HTTP to callers holding a
 // token the verifier accepts: the owner gets ownerServer, and an agent run
-// agentServer.
+// agentServer. It keeps no sessions: the tools hold no state between calls
+// and every request carries its token, so a Claude session open across a
+// server restart goes on calling tools without reconnecting.
 func NewHandler(ownerServer, agentServer *mcp.Server, verifier auth.TokenVerifier) http.Handler {
 	streamable := mcp.NewStreamableHTTPHandler(func(request *http.Request) *mcp.Server {
 		if actor, err := tokens.GetActor(request.Context()); err == nil && actor.Kind == store.ActorOwner {
 			return ownerServer
 		}
 		return agentServer
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 	requireToken := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	return requireToken(streamable)
 }

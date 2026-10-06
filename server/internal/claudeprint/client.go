@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 )
 
 // BaseURL is what the run record names as the server of a Claude CLI run.
@@ -21,12 +22,14 @@ const BaseURL = "claude-cli"
 
 // Client runs the CLI at Binary in Directory, an empty folder of its own so
 // no project's instructions reach the model, with Model ("sonnet", or a full
-// model id). RecordRun, when set, is told about every run.
+// model id). RecordRun, when set, is told about every run. Drain, when set,
+// lists the runs and refuses new ones while the hub drains.
 type Client struct {
 	Binary    string
 	Directory string
 	Model     string
 	RecordRun func(context.Context, chatcompletions.RunRecord)
+	Drain     *drain.Drain
 }
 
 // cliAnswer is the part of `claude -p --output-format json` the hub reads.
@@ -45,8 +48,19 @@ type cliAnswer struct {
 
 // CompleteJSON asks Claude for the answer request.Schema describes, with
 // request.System as its system prompt. Worked examples are left out: Claude
-// follows the schema without them.
+// follows the schema without them. While the hub drains, no run starts: the
+// error is drain.ErrDraining, and reads as unreachable, so a pass stops
+// rather than counting a failure.
 func (client *Client) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+	subject := ""
+	if request.Task.SubjectID != nil {
+		subject = request.Task.SubjectID.String()
+	}
+	end, err := client.Drain.Begin(drain.TypeClaudeRun, request.SchemaName, subject)
+	if err != nil {
+		return chatcompletions.Answer{}, fmt.Errorf("%w: %w", chatcompletions.ErrUnreachable, err)
+	}
+	defer end()
 	record := chatcompletions.RunRecord{
 		Kind: request.SchemaName, Task: request.Task, BaseURL: BaseURL, Model: client.Model,
 		InputHash: chatcompletions.HashInput(request), StartedAt: time.Now(),

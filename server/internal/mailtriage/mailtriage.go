@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/wordmatch"
@@ -88,14 +89,16 @@ func (classifier *Classifier) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := classifier.ClassifyOnce(ctx)
-		if err != nil {
-			slog.Error("mail triage pass stopped", "error", err, "by rule", summary.ByRule, "by model", summary.ByModel)
-		} else if summary != (PassSummary{}) {
-			slog.Info("mail triage pass done", "by rule", summary.ByRule, "by model", summary.ByModel, "failed", summary.Failed)
-		}
-		if summary.ByRule+summary.ByModel > 0 && classifier.OnClassified != nil {
-			classifier.OnClassified()
+		if !drain.IsDraining(ctx) {
+			summary, err := classifier.ClassifyOnce(ctx)
+			if err != nil {
+				slog.Error("mail triage pass stopped", "error", err, "by rule", summary.ByRule, "by model", summary.ByModel)
+			} else if summary != (PassSummary{}) {
+				slog.Info("mail triage pass done", "by rule", summary.ByRule, "by model", summary.ByModel, "failed", summary.Failed)
+			}
+			if summary.ByRule+summary.ByModel > 0 && classifier.OnClassified != nil {
+				classifier.OnClassified()
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -112,6 +112,9 @@ exec "$app_dir/bin/hub-server"
 EOF
 chmod 755 "$app_dir/bin/run-hub-server"
 
+# On SIGTERM the server waits up to 30 seconds for the work still running,
+# 5 for open requests, then up to 30 for its Postgres to stop: ExitTimeOut
+# leaves room for all of it before launchd kills the server.
 cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -122,7 +125,7 @@ cat > "$plist" <<EOF
   <key>WorkingDirectory</key><string>$app_dir</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>ExitTimeOut</key><integer>30</integer>
+  <key>ExitTimeOut</key><integer>70</integer>
   <key>StandardOutPath</key><string>$log_dir/server.log</string>
   <key>StandardErrorPath</key><string>$log_dir/server.log</string>
 </dict>

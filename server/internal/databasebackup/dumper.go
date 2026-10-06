@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 )
 
 const (
@@ -59,10 +61,12 @@ func (dumper *Dumper) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if path, err := dumper.DumpIfDue(ctx); err != nil {
-			slog.Error("database backup failed", "error", err)
-		} else if path != "" {
-			slog.Info("database backed up", "file", path)
+		if !drain.IsDraining(ctx) {
+			if path, err := dumper.DumpIfDue(ctx); err != nil {
+				slog.Error("database backup failed", "error", err)
+			} else if path != "" {
+				slog.Info("database backed up", "file", path)
+			}
 		}
 		select {
 		case <-ctx.Done():

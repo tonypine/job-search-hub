@@ -14,6 +14,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/agents/jobfinder"
 	"github.com/tonypine/job-search-hub/server/agents/jobfixer"
 	"github.com/tonypine/job-search-hub/server/agents/profileseed"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -76,9 +77,13 @@ type errorResponse struct {
 }
 
 // RegisterAgentRunRoutes adds the agent-run routes, each wrapped in
-// requireOwner so that only the owner can start, finish or read a run.
-func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
+// requireOwner so that only the owner can start, finish or read a run. No run
+// starts while drainer drains; a nil drainer never does.
+func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *drain.Drain, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("POST /v1/agent-runs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !writeDrainingOrContinue(w, drainer) {
+			return
+		}
 		var request startAgentRunRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})

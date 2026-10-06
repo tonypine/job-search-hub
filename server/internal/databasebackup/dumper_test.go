@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
 
@@ -264,4 +265,40 @@ func TestAnImportsDumpIsNeverCountedOrRemoved(t *testing.T) {
 	if _, err := os.Stat(imported); err != nil {
 		t.Fatalf("the import's dump was removed: %v", err)
 	}
+}
+
+func TestNoPassStartsWhileTheHubDrains(t *testing.T) {
+	folder := t.TempDir()
+	ran := filepath.Join(folder, "ran")
+	pgDump := filepath.Join(folder, "pg_dump")
+	if err := os.WriteFile(pgDump, []byte("#!/bin/sh\ntouch "+ran+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dumper := NewDumper("postgres://nobody@localhost:1/nothing", t.TempDir(), pgDump)
+	dumper.now = func() time.Time { return at(t, "2026-09-30 03:10") }
+	hub := drain.New(time.Hour)
+	hub.Start()
+	ctx, cancel := context.WithCancel(drain.NewContext(context.Background(), hub))
+	stopped := make(chan struct{})
+	go func() {
+		dumper.Run(ctx, 10*time.Millisecond)
+		close(stopped)
+	}()
+	defer func() {
+		cancel()
+		<-stopped
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	if _, err := os.Stat(ran); err == nil {
+		t.Fatal("a backup pass ran while the hub drained")
+	}
+	hub.Cancel()
+	for range 200 {
+		if _, err := os.Stat(ran); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no pass ran once the drain was cancelled")
 }

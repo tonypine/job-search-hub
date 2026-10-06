@@ -8,9 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 )
 
 // writeFakeClaude writes a CLI that saves its arguments, one per line, and
@@ -72,4 +76,79 @@ func TestAMissingBinaryFails(t *testing.T) {
 	if _, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{}); err == nil || errors.Is(err, chatcompletions.ErrInvalidAnswer) {
 		t.Fatalf("error = %v, want a failure", err)
 	}
+}
+
+func TestNoRunStartsWhileTheHubDrains(t *testing.T) {
+	binary, argumentsFile := writeFakeClaude(t, `{"structured_output":{"match":"strong"}}`)
+	hub := drain.New(time.Hour)
+	var records []chatcompletions.RunRecord
+	client := &claudeprint.Client{Binary: binary, Directory: t.TempDir(), Drain: hub,
+		RecordRun: func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }}
+
+	hub.Start()
+	_, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_brief", Schema: json.RawMessage(`{}`)})
+	if !errors.Is(err, drain.ErrDraining) || !errors.Is(err, chatcompletions.ErrUnreachable) {
+		t.Fatalf("error = %v, want ErrDraining read as unreachable", err)
+	}
+	if _, statErr := os.Stat(argumentsFile); !errors.Is(statErr, os.ErrNotExist) || len(records) != 0 {
+		t.Fatalf("the CLI ran while draining: %v, records %+v", statErr, records)
+	}
+
+	hub.Cancel()
+	if _, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_brief", Schema: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("after the drain: %v", err)
+	}
+}
+
+func TestARunningRunIsListedAndFinishesWhileTheHubDrains(t *testing.T) {
+	folder := t.TempDir()
+	started, proceed := filepath.Join(folder, "started"), filepath.Join(folder, "proceed")
+	script := "#!/bin/sh\ntouch " + started + "\nwhile [ ! -f " + proceed + " ]; do sleep 0.02; done\necho '{\"structured_output\":{\"match\":\"strong\"}}'\n"
+	binary := filepath.Join(folder, "claude")
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hub := drain.New(time.Hour)
+	client := &claudeprint.Client{Binary: binary, Directory: t.TempDir(), Drain: hub}
+	jobID := uuid.New()
+
+	answered := make(chan error, 1)
+	go func() {
+		_, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{
+			SchemaName: "job_brief", Schema: json.RawMessage(`{}`), Task: chatcompletions.TaskLabel{SubjectID: &jobID},
+		})
+		answered <- err
+	}()
+	waitForFile(t, started)
+	hub.Start()
+	running := hub.Running()
+	if len(running) != 1 || running[0].Type != drain.TypeClaudeRun || running[0].Kind != "job_brief" || running[0].Subject != jobID.String() {
+		t.Fatalf("running = %+v", running)
+	}
+
+	if err := os.WriteFile(proceed, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("the running run failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the running run didn't finish")
+	}
+	if running := hub.Running(); len(running) != 0 {
+		t.Fatalf("still listed: %+v", running)
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	for range 500 {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never appeared", path)
 }
