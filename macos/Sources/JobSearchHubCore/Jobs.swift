@@ -87,6 +87,10 @@ public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
     public var unseenUpdates: Int
     /// The facts read from the job's text, by key; nil until read.
     public var facts: [String: JSONValue]?
+    /// Its brief's match, the full brief's over the pre-brief; nil until briefed.
+    public var match: JobMatch?
+    /// The pipeline phase its card is in; nil when it isn't on the pipeline.
+    public var pipelinePhase: String?
 
     public var id: UUID { job.id }
 
