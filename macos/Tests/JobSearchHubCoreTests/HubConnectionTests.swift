@@ -144,6 +144,20 @@ private struct RefusedByKeychain: Error {}
     #expect(connection.makeClient()?.token == "imported-token")
 }
 
+@MainActor @Test func aTypedTokenTheKeychainRefusesStillMakesAClient() async {
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:],
+        preferences: makePreferences(), isTeamSigned: true,
+        readKeychain: { nil }, saveKeychain: { _ in throw RefusedByKeychain() }
+    )
+    await connection.finishReadingToken()
+
+    connection.save(newToken: " typed-token \n")
+
+    #expect(connection.token == .unsaved("typed-token", reason: String(describing: RefusedByKeychain())))
+    #expect(connection.makeClient()?.token == "typed-token")
+}
+
 @MainActor @Test func aBuildWithoutATeamKeepsAnImportedTokenTheKeychainRefusedInItsPreferences() async {
     let preferences = makePreferences()
     let connection = HubConnection(
