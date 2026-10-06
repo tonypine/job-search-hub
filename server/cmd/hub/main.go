@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/tonypine/job-search-hub/server/internal/buildinfo"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -36,6 +37,7 @@ const usage = `usage:
   hub artifacts [--company <domain>]
                                     list your attached files, or a company's
   hub artifacts delete <id>         delete an attached file
+  hub --version                     print the hub's version
 `
 
 func main() {
@@ -46,6 +48,10 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Fprintln(stdout, "hub", buildinfo.Version())
+		return 0
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(stderr, err)

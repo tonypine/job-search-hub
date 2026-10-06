@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -18,9 +20,20 @@ import (
 
 var ownerToken = strings.Repeat("o", 64)
 
-type fakeAgentRuns struct{ running map[string]store.AgentRun }
+type fakeAgentRuns struct {
+	running map[string]store.AgentRun
+	devices map[string]store.Device
+	// appVersions are the versions the devices were seen with.
+	appVersions *[]string
+}
 
-func (runs fakeAgentRuns) GetActiveDeviceByTokenHash(context.Context, []byte) (store.Device, error) {
+func (runs fakeAgentRuns) GetActiveDeviceByTokenHash(_ context.Context, tokenHash []byte, appVersion string) (store.Device, error) {
+	for token, device := range runs.devices {
+		if bytes.Equal(tokens.HashToken(token), tokenHash) {
+			*runs.appVersions = append(*runs.appVersions, appVersion)
+			return device, nil
+		}
+	}
 	return store.Device{}, store.ErrDeviceNotFound
 }
 
@@ -51,6 +64,26 @@ func TestVerifierAcceptsARunningAgentRunsToken(t *testing.T) {
 	}
 	if !slices.Equal(info.Scopes, []string{tokens.ScopeAgentRun}) || !info.Expiration.Equal(run.TokenExpiresAt) || info.Extra["agent_run_id"] != run.ID {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+func TestVerifierNotesTheAppVersionAPairedPhoneCallsWith(t *testing.T) {
+	token, _ := tokens.NewDeviceToken()
+	device := store.Device{ID: uuid.New()}
+	var seen []string
+	verify := tokens.NewVerifier(ownerToken, fakeAgentRuns{devices: map[string]store.Device{token: device}, appVersions: &seen})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)
+	request.Header.Set("X-Hub-Client", "android/0.1.252")
+	info, err := verify(context.Background(), token, request)
+	if err != nil || info.Extra["device_id"] != device.ID {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	if _, err := verify(context.Background(), token, httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(seen, []string{"0.1.252", ""}) {
+		t.Fatalf("app versions = %q, want the header's, then none", seen)
 	}
 }
 

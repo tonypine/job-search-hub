@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/tonypine/job-search-hub/server/internal/hubclients"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -29,19 +30,25 @@ const DevicePrefix = "hubdev_"
 
 type tokenLookup interface {
 	GetRunningAgentRunByTokenHash(ctx context.Context, tokenHash []byte) (store.AgentRun, error)
-	GetActiveDeviceByTokenHash(ctx context.Context, tokenHash []byte) (store.Device, error)
+	GetActiveDeviceByTokenHash(ctx context.Context, tokenHash []byte, appVersion string) (store.Device, error)
 }
 
 // NewVerifier accepts the owner token; a paired device's token, which acts
-// as the owner; and the token of any agent run that is still running and
+// as the owner, noting the app version its X-Hub-Client header names; and the token of any agent run that is still running and
 // unexpired.
 func NewVerifier(ownerToken string, lookup tokenLookup) auth.TokenVerifier {
-	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+	return func(ctx context.Context, token string, r *http.Request) (*auth.TokenInfo, error) {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(ownerToken)) == 1 {
 			return &auth.TokenInfo{UserID: ScopeOwner, Scopes: []string{ScopeOwner}}, nil
 		}
 		if strings.HasPrefix(token, DevicePrefix) {
-			device, err := lookup.GetActiveDeviceByTokenHash(ctx, HashToken(token))
+			appVersion := ""
+			if r != nil {
+				if client, found := hubclients.FromRequest(r); found {
+					appVersion = client.Version
+				}
+			}
+			device, err := lookup.GetActiveDeviceByTokenHash(ctx, HashToken(token), appVersion)
 			if errors.Is(err, store.ErrDeviceNotFound) {
 				return nil, auth.ErrInvalidToken
 			}

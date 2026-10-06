@@ -22,6 +22,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/boarddiscovery"
 	"github.com/tonypine/job-search-hub/server/internal/boardfinder"
 	"github.com/tonypine/job-search-hub/server/internal/boardpoller"
+	"github.com/tonypine/job-search-hub/server/internal/buildinfo"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/comparisons"
@@ -37,6 +38,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/gmailwatch"
 	"github.com/tonypine/job-search-hub/server/internal/google"
 	"github.com/tonypine/job-search-hub/server/internal/hiringthread"
+	"github.com/tonypine/job-search-hub/server/internal/hubclients"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
 	"github.com/tonypine/job-search-hub/server/internal/interviewpacks"
 	"github.com/tonypine/job-search-hub/server/internal/jobalerts"
@@ -108,8 +110,16 @@ const (
 	abandonedRunInterval = 5 * time.Minute
 )
 
+// clientMinimums is the oldest app release the server serves, per platform.
+// None is turned away yet.
+var clientMinimums = map[string]string{}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		printVersion(os.Stdout)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := runHealthcheck(os.Getenv("HUB_ADDR")); err != nil {
 			slog.Error("healthcheck failed", "error", err)
@@ -162,6 +172,7 @@ func run() error {
 	rates := exchangerates.NewCache(exchangerates.DefaultAPIBase)
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool, database.postgresHealth()))
+	routes.Handle("GET /v1/version", api.NewVersionHandler())
 	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
 	go abandonedruns.NewCloser(hub).Run(ctx, abandonedRunInterval)
 	api.RegisterCompanyRoutes(routes, hub, requireOwner)
@@ -395,7 +406,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              settings.address,
-		Handler:           routes,
+		Handler:           hubclients.Gate{Minimums: clientMinimums, ServerVersion: buildinfo.Version()}.Wrap(routes),
 		ReadHeaderTimeout: readHeaderTimeout,
 		// Requests end with the server, so open event streams don't hold up
 		// a shutdown.
@@ -403,7 +414,7 @@ func run() error {
 	}
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.ListenAndServe() }()
-	slog.Info("hub-server listening", "address", settings.address)
+	slog.Info("hub-server listening", "address", settings.address, "version", buildinfo.Version())
 
 	select {
 	case err := <-serveResult:
