@@ -15,10 +15,11 @@
 #      finds it while the bundle doesn't carry one;
 #   3. writes ~/.config/job-search-hub/server.env from the repository's .env on
 #      a first install;
-#   4. quits the app, stops the server, puts the bundle in place, loads the
-#      server's agent from ~/Library/LaunchAgents, which runs the bundle's
-#      hub-server, waits for that version to answer, and reopens the app if it
-#      was open.
+#   4. quits the app, stops the server, moves a hub still on Docker's
+#      Postgres into the database the server owns, puts the bundle in place,
+#      loads the server's agent from ~/Library/LaunchAgents, which runs the
+#      bundle's hub-server, waits for that version to answer, and reopens the
+#      app if it was open.
 #
 # The hub is never left down: until the new server answers, the previous app,
 # engine, server.env and agent are kept, and any failure from the moment the
@@ -26,7 +27,12 @@
 #
 # It also moves a Mac off the layout install-native-server.sh left: its
 # binaries in bin/ go, and so does a HUB_CV_PRINT_BIN in server.env that points
-# at them.
+# at them. A server.env whose HUB_DATABASE_URL is the Postgres compose.yaml ran
+# on port 5434 has its data imported into the database the server owns, with
+# hub-server database move-from-compose, which drops the line only once every
+# table's rows match. A move that fails leaves server.env as it was, and the
+# server starts on Docker's Postgres as before. Docker's container and its
+# volume are never touched.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -56,6 +62,7 @@ app_swapped=false
 engine_swapped=false
 engine_new=
 previous_plist=
+moved=false
 keep_work=false
 work="$(mktemp -d "${TMPDIR:-/tmp}/install-app.XXXXXX")"
 
@@ -113,6 +120,9 @@ put_back() {
   if [ "$engine_swapped" = true ]; then rm -rf "$engine_dir"; fi
   if [ -d "$engine_dir.old" ] && [ ! -d "$engine_dir" ]; then mv "$engine_dir.old" "$engine_dir"; fi
   if [ -f "$work/previous.env" ]; then cp -p "$work/previous.env" "$env_file"; fi
+  if [ "$moved" = true ]; then
+    echo "server.env points at Docker's Postgres again, and the hub runs on it. The copy imported into the database the server owns stays there." >&2
+  fi
   if [ -z "$previous_plist" ]; then
     rm -f "$plist"
     echo "There was no agent before this install to put back." >&2
@@ -218,8 +228,7 @@ if [ ! -f "$env_file" ]; then
       echo "HUB_ADDR=127.0.0.1:8090"
       echo "HUB_OWNER_TOKEN=$HUB_OWNER_TOKEN"
       echo "HUB_PUBLIC_URL=${HUB_PUBLIC_URL:-http://localhost:8090}"
-      model_url="${HUB_JOB_FACTS_MODEL_URL-http://localhost:1234/v1}"
-      echo "HUB_JOB_FACTS_MODEL_URL=${model_url//host.docker.internal/localhost}"
+      echo "HUB_JOB_FACTS_MODEL_URL=${HUB_JOB_FACTS_MODEL_URL-http://localhost:1234/v1}"
       echo "HUB_JOB_FACTS_MODEL=${HUB_JOB_FACTS_MODEL:-qwen/qwen3.5-9b}"
       echo "HUB_GOOGLE_OAUTH_CLIENT_FILE=$config_dir/google-oauth-client.json"
       echo "HUB_AGENT_PROMPTS_DIR=$config_dir/agent-prompts"
@@ -319,6 +328,16 @@ if grep -Eq "$old_cvprint" "$env_file"; then
   echo "Dropped the HUB_CV_PRINT_BIN that pointed at the old bin/ from $env_file"
 fi
 
+# The new server does the move, while nothing writes to Docker's Postgres.
+# It changes server.env only once the import succeeded.
+cp -p "$env_file" "$work/before-move.env"
+if "$staged/Contents/Helpers/bin/hub-server" database move-from-compose "$env_file"; then
+  cmp -s "$work/before-move.env" "$env_file" || moved=true
+else
+  cp -p "$work/before-move.env" "$env_file"
+  echo "Couldn't move the hub's data out of Docker's Postgres, so server.env is as it was and the server runs on Docker's Postgres as before; the install goes on." >&2
+fi
+
 echo "==> Installing $installed"
 if [ -d "$installed" ]; then mv "$installed" "$installed.replaced"; fi
 # Set before the new app moves in, so an exit from here on removes it.
@@ -336,8 +355,17 @@ answered="$(curl -fsS "$hub_url/v1/version" 2>/dev/null | sed -n 's/.*"version":
 [ "$answered" = "$version" ] || fail "The server on $hub_url is version \"${answered:-unknown}\", not $version."
 loaded="$(launchctl print "$domain/$label" 2>/dev/null | sed -n 's/^[[:space:]]*program = //p' | head -n 1 || true)"
 [ "$loaded" = "$program" ] || fail "launchd runs \"${loaded:-nothing}\" as $label, not $program."
+# A moved hub runs the database the server owns, whose major /v1/health
+# reports.
+if [ "$moved" = true ]; then
+  major="$(curl -fsS "$hub_url/v1/health" 2>/dev/null | sed -n 's/.*"postgres":{"major":\([0-9]*\).*/\1/p' || true)"
+  [ -n "$major" ] || fail "The server on $hub_url doesn't report the database it owns on /v1/health; see $log_file."
+fi
 committed=true
 echo "hub-server $version is up on $hub_url, from $program"
+if [ "$moved" = true ]; then
+  echo "The hub moved off Docker's Postgres and runs on the database the server owns, Postgres $major. Docker's container and its volume are kept."
+fi
 
 rm -rf "$installed.replaced"
 if [ "$engine_swapped" = true ]; then rm -rf "$engine_dir.old"; fi

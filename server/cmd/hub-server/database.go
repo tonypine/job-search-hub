@@ -61,8 +61,8 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 	}
 	database.pool = pool
 	// A Postgres the server started is up already. One it didn't may still
-	// be starting: at login, launchd starts the server before Docker Desktop
-	// has Postgres up. Only the one the server runs is dumped before it is
+	// be starting, as when the server and that Postgres start at the same
+	// time. Only the one the server runs is dumped before it is
 	// migrated, with the engine's own pg_dump.
 	if database.cluster == nil {
 		if err := waitForDatabase(ctx, pool, startupDatabaseWait); err != nil {

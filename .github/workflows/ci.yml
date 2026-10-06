@@ -64,7 +64,7 @@ jobs:
               case "$file" in
                 # The Mac's bundle builds the server's commands too.
                 server/cmd/*|server/go.mod|server/go.sum) server=true macos=true ;;
-                server/*|compose.yaml) server=true ;;
+                server/*) server=true ;;
                 macos/*) macos=true ;;
                 android/*) android=true ;;
                 # The Mac's Postgres engine has a workflow of its own,
