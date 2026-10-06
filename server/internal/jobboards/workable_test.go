@@ -17,7 +17,7 @@ func TestAWorkableBoardIsVerifiedAndItsJobsRead(t *testing.T) {
 			{"title":"Senior Frontend Engineer","shortcode":"AB12","url":"https://apply.workable.com/j/AB12","employment_type":"Full-time",
 			 "telecommuting":"True","department":"Engineering","published_on":"2026-09-20",
 			 "locations":[{"city":"São Paulo","region":"SP","country":"Brazil"},{"city":"","region":"","country":"Portugal"}],
-			 "description":"<p>Build the app&#39;s UI.</p>"},
+			 "description":"<h3>About</h3><p>Build the app&#39;s UI.</p><ul><li>React</li></ul>"},
 			{"title":"Office Manager","shortcode":"CD34","url":"https://apply.workable.com/j/CD34","telecommuting":false,
 			 "locations":[{"city":"Lisbon","country":"Portugal"}],"description":""}]}`))
 	})
@@ -42,7 +42,7 @@ func TestAWorkableBoardIsVerifiedAndItsJobsRead(t *testing.T) {
 	first := postings[0]
 	if first.ExternalID != "AB12" || first.Title != "Senior Frontend Engineer" || first.Location != "São Paulo, SP, Brazil" ||
 		len(first.OtherLocations) != 1 || first.OtherLocations[0] != "Portugal" || first.WorkplaceType != "Remote" ||
-		first.EmploymentType != "Full-time" || first.Description != "Build the app's UI." || first.PublishedAt == nil {
+		first.EmploymentType != "Full-time" || first.Description != "### About\n\nBuild the app's UI.\n\n- React" || first.PublishedAt == nil {
 		t.Errorf("first = %+v", first)
 	}
 	if postings[1].WorkplaceType != "" || postings[1].Location != "Lisbon, Portugal" {

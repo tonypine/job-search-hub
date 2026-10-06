@@ -33,7 +33,7 @@ func TestAnEightfoldBoardIsSearchedByTheOwnersTermsAndEachDescriptionReadOnce(t 
 	})
 	routes.HandleFunc("GET /api/pcsx/position_details", func(w http.ResponseWriter, r *http.Request) {
 		detailReads.Add(1)
-		w.Write([]byte(`{"data":{"jobDescription":"<p>Build the checkout &amp; its UI.</p>"}}`))
+		w.Write([]byte(`{"data":{"jobDescription":"<h2>Role</h2><p>Build the checkout &amp; its UI.</p><ul><li>React</li></ul>"}}`))
 	})
 	server := httptest.NewServer(routes)
 	defer server.Close()
@@ -57,7 +57,7 @@ func TestAnEightfoldBoardIsSearchedByTheOwnersTermsAndEachDescriptionReadOnce(t 
 	}
 	first := postings[0]
 	if first.ExternalID != "11" || first.Location != "São Paulo,Brazil" || first.WorkplaceType != "Remote" || first.Department != "IT" ||
-		first.URL != server.URL+"/careers/job/11?domain=acme.com" || first.Description != "Build the checkout & its UI." || first.PublishedAt == nil {
+		first.URL != server.URL+"/careers/job/11?domain=acme.com" || first.Description != "### Role\n\nBuild the checkout & its UI.\n\n- React" || first.PublishedAt == nil {
 		t.Errorf("first = %+v", first)
 	}
 	if postings[1].WorkplaceType != "Hybrid" {

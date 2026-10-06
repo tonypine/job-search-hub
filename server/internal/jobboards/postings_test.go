@@ -29,7 +29,7 @@ func startPostingProviders(t *testing.T) *jobboards.Verifier {
 			"first_published":"2026-08-04T14:21:42-04:00","departments":[{"id":1,"name":"Engineering"}],
 			"offices":[{"id":1,"name":"Remote (Canada)"},{"id":2,"name":"Remote (Americas) "}],
 			"metadata":[{"id":1,"name":"Employment Type","value":"Full-time","value_type":"single_select"}],
-			"content":"&lt;p&gt;Build &amp;amp; ship.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;React&lt;/li&gt;&lt;li&gt;TypeScript&lt;/li&gt;&lt;/ul&gt;"}]}`))
+			"content":"&lt;h2&gt;About the role&lt;/h2&gt;&lt;p&gt;Build &amp;amp; ship.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;React&lt;/li&gt;&lt;li&gt;TypeScript&lt;/li&gt;&lt;/ul&gt;"}]}`))
 	})
 	routes.HandleFunc("GET /v0/postings/acme", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`[{"id":"69616656","text":"Full-stack Engineer","hostedUrl":"https://jobs.lever.co/acme/69616656","workplaceType":"remote",
@@ -58,7 +58,7 @@ func startPostingProviders(t *testing.T) *jobboards.Verifier {
 	return &jobboards.Verifier{HTTPClient: &http.Client{Timeout: time.Second}, GreenhouseAPIBase: server.URL, LeverAPIBase: server.URL, AshbyAPIBase: server.URL, AshbyBoardBase: server.URL}
 }
 
-func TestGreenhousePostingsBecomePlainText(t *testing.T) {
+func TestGreenhousePostingsKeepTheirHeadingsAndListsAsMarkdown(t *testing.T) {
 	postings, err := startPostingProviders(t).FetchPostings(context.Background(), jobboards.Greenhouse, "acme")
 	if err != nil || len(postings) != 1 {
 		t.Fatalf("postings = %+v, %v", postings, err)
@@ -67,7 +67,7 @@ func TestGreenhousePostingsBecomePlainText(t *testing.T) {
 	if posting.ExternalID != "4721289005" || posting.Location != "Remote (Americas)" || posting.URL != "https://job-boards.greenhouse.io/acme/jobs/4721289005" {
 		t.Fatalf("posting = %+v", posting)
 	}
-	if posting.Description != "Build &amp; ship.\nReact\nTypeScript" && posting.Description != "Build & ship.\nReact\nTypeScript" {
+	if posting.Description != "### About the role\n\nBuild & ship.\n\n- React\n- TypeScript" {
 		t.Fatalf("description = %q", posting.Description)
 	}
 	if len(posting.Raw) == 0 {
@@ -84,7 +84,7 @@ func TestLeverPostingsIncludeTheirLists(t *testing.T) {
 	if posting.Title != "Full-stack Engineer" || posting.WorkplaceType != "remote" || posting.Location != "Toronto, Ontario" {
 		t.Fatalf("posting = %+v", posting)
 	}
-	for _, want := range []string{"About the role.", "You will\nShip features\nTalk to customers", "Benefits."} {
+	for _, want := range []string{"About the role.", "### You will\n\n- Ship features\n- Talk to customers", "Benefits."} {
 		if !strings.Contains(posting.Description, want) {
 			t.Errorf("description lacks %q:\n%s", want, posting.Description)
 		}

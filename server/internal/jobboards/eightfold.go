@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // Eightfold boards are large employers' career sites at
@@ -201,7 +202,7 @@ func (verifier *Verifier) getEightfoldDescription(ctx context.Context, board eig
 	if json.Unmarshal(body, &answer) != nil {
 		return ""
 	}
-	text := convertHTMLToText(html.UnescapeString(answer.Data.JobDescription))
+	text := textextract.ConvertHTMLToMarkdown(html.UnescapeString(answer.Data.JobDescription))
 	verifier.eightfoldDescriptions.put(board.tenant+"/"+id, text)
 	return text
 }

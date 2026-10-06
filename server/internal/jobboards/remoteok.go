@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const RemoteOK = "remoteok"
@@ -62,7 +63,7 @@ func parseRemoteOKPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	}
 	posting := store.JobPosting{
 		ExternalID: fmt.Sprintf("%.0f", *job.ID.value), CompanyName: job.Company, Title: job.Position, Location: job.Location,
-		WorkplaceType: "Remote", URL: job.URL, Description: convertHTMLToText(job.Description),
+		WorkplaceType: "Remote", URL: job.URL, Description: textextract.ConvertHTMLToMarkdown(job.Description),
 	}
 	if published, err := time.Parse(time.RFC3339, job.Date); err == nil {
 		posting.PublishedAt = &published

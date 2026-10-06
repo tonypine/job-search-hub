@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const Pinpoint = "pinpoint"
@@ -67,10 +68,10 @@ func parsePinpointPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	}
 	job := store.JobPosting{
 		ExternalID: posting.ID, Title: posting.Title, URL: posting.URL,
-		Description: joinSections(convertHTMLToText(posting.Description),
-			joinNonEmpty("\n", posting.KeyResponsibilitiesTitle, convertHTMLToText(posting.KeyResponsibilities)),
-			joinNonEmpty("\n", posting.SkillsTitle, convertHTMLToText(posting.Skills)),
-			joinNonEmpty("\n", posting.BenefitsTitle, convertHTMLToText(posting.Benefits))),
+		Description: joinSections(textextract.ConvertHTMLToMarkdown(posting.Description),
+			formatSection(posting.KeyResponsibilitiesTitle, textextract.ConvertHTMLToMarkdown(posting.KeyResponsibilities)),
+			formatSection(posting.SkillsTitle, textextract.ConvertHTMLToMarkdown(posting.Skills)),
+			formatSection(posting.BenefitsTitle, textextract.ConvertHTMLToMarkdown(posting.Benefits))),
 		Location: joinNonEmpty(", ", posting.Location.City, posting.Location.Province),
 	}
 	if job.Location == "" {

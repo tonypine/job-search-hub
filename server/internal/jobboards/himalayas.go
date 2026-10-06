@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // Himalayas is the remote-jobs feed searched for postings open to the owner.
@@ -96,7 +97,7 @@ func parseHimalayasPosting(raw json.RawMessage) (store.JobPosting, error) {
 		Title:         job.Title,
 		WorkplaceType: "Remote",
 		URL:           job.ApplicationLink,
-		Description:   convertHTMLToText(job.Description),
+		Description:   textextract.ConvertHTMLToMarkdown(job.Description),
 		Raw:           raw,
 	}
 	switch restrictions := job.LocationRestrictions; {

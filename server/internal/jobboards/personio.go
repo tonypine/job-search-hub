@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const Personio = "personio"
@@ -62,7 +63,7 @@ func (verifier *Verifier) fetchPersonioPostings(ctx context.Context, boardToken 
 func convertPersonioPosition(base string, position personioPosition) store.JobPosting {
 	var sections []string
 	for _, description := range position.JobDescriptions {
-		sections = append(sections, joinNonEmpty("\n", description.Name, convertHTMLToText(description.Value)))
+		sections = append(sections, formatSection(description.Name, textextract.ConvertHTMLToMarkdown(description.Value)))
 	}
 	posting := store.JobPosting{
 		ExternalID: position.ID, Title: position.Name, URL: base + "/job/" + position.ID, Description: joinSections(sections...),

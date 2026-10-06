@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const Gupy = "gupy"
@@ -120,8 +121,8 @@ func parseGupyJobPage(jobURL string, page []byte) (store.JobPosting, bool, error
 	}
 	posting := store.JobPosting{
 		ExternalID: fmt.Sprintf("%.0f", *job.ID.value), Title: strings.TrimSpace(job.Name), URL: jobURL,
-		Description: joinSections(convertHTMLToText(job.Description), convertHTMLToText(job.Responsibilities),
-			convertHTMLToText(job.Prerequisites), convertHTMLToText(job.RelevantExperiences)),
+		Description: joinSections(textextract.ConvertHTMLToMarkdown(job.Description), textextract.ConvertHTMLToMarkdown(job.Responsibilities),
+			textextract.ConvertHTMLToMarkdown(job.Prerequisites), textextract.ConvertHTMLToMarkdown(job.RelevantExperiences)),
 		Location:      joinNonEmpty(", ", job.AddressCity, job.AddressState, job.AddressCountry),
 		WorkplaceType: gupyWorkplaceTypes[job.WorkplaceType],
 	}

@@ -19,7 +19,7 @@ var searchedAt = time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 func himalayasJob(guid string, published time.Time, restrictions, salary string) string {
 	return fmt.Sprintf(`{"guid":"https://himalayas.app/companies/acme/jobs/%[1]s","title":"Senior Frontend Engineer %[1]s","companyName":"Acme",
 		"applicationLink":"https://himalayas.app/companies/acme/jobs/%[1]s","employmentType":"Full Time",%[4]s
-		"locationRestrictions":%[3]s,"description":"<p>Build <strong>React</strong> apps.</p><ul><li>TypeScript</li></ul>",
+		"locationRestrictions":%[3]s,"description":"<h2>About</h2><p>Build <strong>React</strong> apps.</p><ul><li>TypeScript</li></ul>",
 		"pubDate":%[2]d,"expiryDate":%[5]d}`, guid, published.Unix(), restrictions, salary, published.Add(60*24*time.Hour).Unix())
 }
 
@@ -67,7 +67,7 @@ func TestHimalayasSearchStopsAtThePageWithNothingRecent(t *testing.T) {
 
 	worldwide, restricted := postings[0], postings[1]
 	if worldwide.Location != "Worldwide" || worldwide.CompanyName != "Acme" || worldwide.EmploymentType != "Full-time" ||
-		worldwide.WorkplaceType != "Remote" || worldwide.Description != "Build React apps.\nTypeScript" {
+		worldwide.WorkplaceType != "Remote" || worldwide.Description != "### About\n\nBuild **React** apps.\n\n- TypeScript" {
 		t.Fatalf("worldwide posting = %+v", worldwide)
 	}
 	if worldwide.Pay == nil || worldwide.Pay.Ranges[0].Interval != "month" || worldwide.Pay.Ranges[0].Max != 10000 {
