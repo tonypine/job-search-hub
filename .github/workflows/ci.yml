@@ -231,7 +231,14 @@ jobs:
       # -count=1: setup-go restores GOCACHE, and a cached result never touches
       # the database, so the weekly run would test nothing.
       - name: go test
-        run: go test -count=1 ./...
+        run: |
+          if go test -count=1 ./... > "$RUNNER_TEMP/go-test.log" 2>&1; then
+            tail -n 30 "$RUNNER_TEMP/go-test.log"
+          else
+            echo "go test failed; the last 250 lines of its output:"
+            tail -n 250 "$RUNNER_TEMP/go-test.log"
+            exit 1
+          fi
 
       # A release's build, with the version code release.yml would pass: the
       # server's --version, hub's, hub-update's and GET /v1/version all say 0.1.<N>.
