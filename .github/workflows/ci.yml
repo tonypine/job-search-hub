@@ -306,6 +306,11 @@ jobs:
       - name: Signing identity
         run: Scripts/signing-identity_test.sh
 
+      # install-app.sh's swap and rollback, against a fake launchd and server
+      # in a home folder of its own.
+      - name: Install script
+        run: Scripts/install-app_test.sh
+
       - name: swift build
         run: swift build
 
