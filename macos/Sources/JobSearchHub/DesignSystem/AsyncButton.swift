@@ -12,18 +12,21 @@ struct AsyncButton: View {
     /// Busy for a reason the button doesn't run itself, such as the same
     /// work started elsewhere.
     var isBusy = false
+    /// The key that does the same, shown beside the title: Pursue P.
+    var key: String?
     let action: @MainActor () async -> Void
     @State private var isRunning = false
 
     init(
         _ title: String, busyTitle: String, systemImage: String? = nil, role: ButtonRole? = nil, isBusy: Bool = false,
-        action: @escaping @MainActor () async -> Void
+        key: String? = nil, action: @escaping @MainActor () async -> Void
     ) {
         self.title = title
         self.busyTitle = busyTitle
         self.systemImage = systemImage
         self.role = role
         self.isBusy = isBusy
+        self.key = key
         self.action = action
     }
 
@@ -40,6 +43,8 @@ struct AsyncButton: View {
                     ProgressView().controlSize(.mini)
                     Text(busyTitle)
                 }
+            } else if let key {
+                KeyLabel(title: title, systemImage: systemImage, key: key)
             } else if let systemImage {
                 Label(title, systemImage: systemImage)
             } else {

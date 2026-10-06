@@ -67,7 +67,7 @@ struct PostingReader: View {
 
     private func reading(_ index: Int) -> some View {
         Text(style(index))
-            .font(.hubReading)
+            .font(.hubPosting)
             .lineSpacing(Self.lineSpacing)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

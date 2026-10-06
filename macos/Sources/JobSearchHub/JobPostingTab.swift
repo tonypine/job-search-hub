@@ -10,6 +10,9 @@ struct JobPostingTab: View {
     let details: JobDetails
     let client: HubClient
     let model: JobDetailModel
+    /// The id that "Open in posting" scrolls to: where the posting starts,
+    /// under the key facts.
+    let postingAnchor: String
     /// Facts in a row, as the inspector fits them.
     private let columns = 2
 
@@ -44,6 +47,7 @@ struct JobPostingTab: View {
                         }
                     }
                 }
+                .id(postingAnchor)
                 if document.blocks.isEmpty {
                     Text("The board kept no text for this posting; the original has it.").foregroundStyle(.secondary)
                 } else {

@@ -84,8 +84,10 @@ extension Font {
     static let hubSection = Font.headline
     /// Text to read.
     static let hubBody = Font.body
-    /// Text to read at length, such as a posting (P3 Reader): 13 pt.
-    static let hubReading = Font.system(size: 13)
+    /// Text read at length, such as a brief's verdict: a size up from body.
+    static let hubReading = Font.system(size: 14)
+    /// A posting read in the inspector (P3 Reader): 13 pt.
+    static let hubPosting = Font.system(size: 13)
     /// Company, location, reasons; shown in `.secondary`.
     static let hubSecondary = Font.callout
     /// Who wrote it and when.
@@ -102,6 +104,11 @@ extension View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(.background, in: RoundedRectangle(cornerRadius: Radius.card))
             .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(.separator))
+    }
+
+    /// Text read at length, at 1.3 line height.
+    func hubReading() -> some View {
+        font(.hubReading).lineSpacing(2)
     }
 
     /// Quoted or generated text, such as a drafted reply.

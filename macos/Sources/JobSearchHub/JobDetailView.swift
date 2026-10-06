@@ -13,6 +13,10 @@ final class JobDetailModel {
     private(set) var isReadingFacts = false
     var factsError: HubFailure?
     private(set) var isWritingFullBrief = false
+    /// Everyone at the job's company who can get you in; nil until read.
+    private(set) var people: [RelatedPerson]?
+    /// The job's company, for its size; nil until read.
+    private(set) var company: Company?
 
     func load(_ jobID: UUID, with client: HubClient) async {
         do {
@@ -48,6 +52,42 @@ extension JobDetailModel {
         } catch {
             factsError = HubFailure("Couldn't read the facts", error)
         }
+    }
+}
+
+extension JobDetailModel {
+    /// Reads the job's company and the people there, once per job: the
+    /// header shows its size, the People card who to write to.
+    func loadCompany(_ companyID: UUID, with client: HubClient) async {
+        async let people = try? client.get("v1/people", query: PeopleQuery.make(companyID: companyID), as: PeopleResponse.self).people
+        async let dossier = try? client.get("v1/companies/\(companyID.uuidString)", as: CompanyDossier.self)
+        self.people = await people
+        company = await dossier?.company
+    }
+
+    /// Asks the job's session for a message to the person, drafted with the
+    /// outreach prompt for the owner to send: typed into the running
+    /// session, or the first message of its latest resumed, or of a new one.
+    /// True once the session has it.
+    func draft(to person: RelatedPerson, about details: JobDetails, with client: HubClient) async -> Bool {
+        let prompt: String
+        do {
+            prompt = try await client.get("v1/agent-prompts/outreach_draft", as: AgentPrompt.self).body
+        } catch {
+            actionError = HubFailure("Couldn't read the outreach prompt", error)
+            return false
+        }
+        let request = JobOutreach.makeDraftRequest(prompt: prompt, to: person, aboutJob: details.job.title, at: details.companyName)
+        let session = ClaudeSessionPaneModel()
+        await session.load(.job(details.job.id), with: client)
+        if session.failure == nil {
+            await session.send(request, about: .job(details.job.id), with: client, host: .shared)
+        }
+        if let failure = session.failure {
+            actionError = failure
+            return false
+        }
+        return true
     }
 }
 
@@ -101,10 +141,10 @@ extension JobDetailModel {
     }
 }
 
-/// One job in the inspector: its header and actions, then Overview (the
-/// brief, the screen, the people), Prep once pursued (the CV and the
-/// interview pack), Posting (the key facts, then the posting to read) and its
-/// Session.
+/// One job in the inspector: its header with the verdict strip and its
+/// actions, then Overview (why it fits, the screen, the people), Prep once
+/// pursued (the CV and the interview pack), Posting (the key facts, then the
+/// posting to read) and its Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
@@ -117,12 +157,34 @@ struct JobDetailView: View {
     @State private var isAskingForFix = false
     @State private var followingUpApplicationID: UUID?
     @State private var followUpNote = ""
+    /// The card or section to scroll to, once its tab shows.
+    @State private var scrollTarget: String?
     @Environment(RemoteTaskRunner.self) private var taskRunner
+
+    /// The ids the strip and the screen scroll to.
+    private enum Anchor {
+        static let whyItFits = "why-it-fits"
+        static let screen = "screen"
+        static let people = "people"
+        static let posting = "posting"
+
+        static func getCard(of kind: VerdictCell.Kind) -> String {
+            switch kind {
+            case .match: whyItFits
+            // The Pay check is one of the screen's.
+            case .screen, .takeHome: screen
+            case .people: people
+            }
+        }
+    }
 
     var body: some View {
         Group {
             if let details = model.details, details.job.id == jobID {
-                EntityInspector(subject: .job(jobID), tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab) {
+                EntityInspector(
+                    subject: .job(jobID), tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab,
+                    scrollTarget: $scrollTarget
+                ) {
                     header(details)
                     actions(details)
                 } content: { tab in
@@ -139,14 +201,14 @@ struct JobDetailView: View {
                         if model.factsError != nil {
                             HubErrorView($model.factsError)
                         }
-                        JobPostingTab(jobID: jobID, details: details, client: client, model: model)
+                        JobPostingTab(jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting)
                             .id(jobID)
                     case .session:
                         InspectorSessionTab(subject: .job(jobID), client: client)
                     default:
-                        brief(details.brief)
-                        screen(details)
-                        people(details)
+                        whyItFits(details.brief).id(Anchor.whyItFits)
+                        screen(details).id(Anchor.screen)
+                        people(details).id(Anchor.people)
                     }
                 }
             } else if let loadError = model.loadError {
@@ -192,6 +254,9 @@ struct JobDetailView: View {
             if let details = model.details, details.unseenUpdates > 0 {
                 await unseen.markSeen(UpdateSelection(jobID: jobID), with: client)
             }
+            if let companyID = model.details?.job.companyID {
+                await model.loadCompany(companyID, with: client)
+            }
         }
     }
 
@@ -200,72 +265,118 @@ struct JobDetailView: View {
         details.decision?.decision == .pursue || details.cvID != nil
     }
 
-    /// The job's kind and company, its title and location, and up to three
-    /// chips: the brief's match, the screen, and where the job stands.
+    /// Shows a verdict's card on Overview.
+    private func open(_ kind: VerdictCell.Kind) {
+        tab = .overview
+        scrollTarget = Anchor.getCard(of: kind)
+    }
+
+    // MARK: Header
+
+    /// The company with its monogram and size, the title, one line of facts
+    /// and where the job stands, then the verdict strip.
     private func header(_ details: JobDetails) -> some View {
-        EntityHeader(
-            kind: "Job", parent: details.companyName, openParent: details.job.companyID.map { id -> () -> Void in { inspector.open(.company(id)) } },
-            title: details.job.title, facts: [details.job.location, describePosted(details.job)]
-        ) {
-            if let brief = details.brief {
-                ToneChip(brief.match)
+        VStack(alignment: .leading, spacing: Space.m) {
+            HStack(alignment: .top, spacing: Space.m) {
+                Monogram(name: details.companyName ?? details.job.title, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    companyLine(details)
+                    Text(details.job.title).font(.hubEntity).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(describeFacts(details.job)).font(.hubSecondary).foregroundStyle(.secondary)
+                    standing(details)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            ToneChip(screen: details.fit.level)
-            if details.job.dismissedAt != nil {
-                ToneChip("Skipped", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
-                    .help(details.job.dismissalReason.map { "Skipped: \($0)" } ?? "Skipped")
-            } else if let phase = details.phase {
-                ToneChip("In \(phase.name)", tone: .accent, symbol: "rectangle.split.3x1")
-            } else if details.decision?.decision == .later {
-                ToneChip("Later", tone: .neutral, symbol: "clock")
+            VerdictStrip(cells: details.getVerdicts(peopleYouKnow: getPeople(details).count(where: JobOutreach.isKnown))) { open($0) }
+        }
+    }
+
+    /// "Northwind · 51-200 people", the name opening the company.
+    private func companyLine(_ details: JobDetails) -> some View {
+        HStack(spacing: Space.xs) {
+            if let name = details.companyName, !name.isEmpty {
+                if let companyID = details.job.companyID {
+                    Button(name) { inspector.open(.company(companyID)) }
+                        .buttonStyle(.link)
+                        .help("Open \(name)")
+                } else {
+                    Text(name)
+                }
+            } else {
+                Text("Job").foregroundStyle(.secondary)
             }
+            if let size = model.company?.employeeCountRange, !size.isEmpty {
+                Text("· \(size) people").foregroundStyle(.secondary)
+            }
+        }
+        .font(.hubSecondary)
+        .lineLimit(1)
+    }
+
+    /// "Remote, Americas · Contractor · Posted 2 days ago".
+    private func describeFacts(_ job: Job) -> String {
+        [job.location, job.employmentType, describePosted(job)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Where the job stands, when it's out of the feed: skipped, in a phase
+    /// of the pipeline, or left for later.
+    @ViewBuilder
+    private func standing(_ details: JobDetails) -> some View {
+        if details.job.dismissedAt != nil {
+            ToneChip("Skipped", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
+                .help(details.job.dismissalReason.map { "Skipped: \($0)" } ?? "Skipped")
+        } else if let phase = details.phase {
+            ToneChip("In \(phase.name)", tone: .accent, symbol: "rectangle.split.3x1")
+        } else if details.decision?.decision == .later {
+            ToneChip("Later", tone: .neutral, symbol: "clock")
         }
     }
 
     /// The decision to make: Pursue, the one primary action, then Later and
-    /// Skip, with the posting and Fix in the overflow. A skipped job's next
-    /// step is Restore, one in an open phase of the pipeline is Followed
-    /// up…, and a closed one's is its posting.
+    /// Skip, each with its key, the posting as an icon and Fix in the
+    /// overflow. A skipped job's next step is Restore, one in an open phase
+    /// of the pipeline is Followed up…, and a closed one's is its posting.
     private func actions(_ details: JobDetails) -> some View {
-        VStack(alignment: .leading, spacing: Space.s) {
+        let isFollowingUp = details.application != nil && details.phase?.isClosed == false
+        let isPostingNext = details.job.dismissedAt == nil && details.phase != nil && !isFollowingUp
+        return VStack(alignment: .leading, spacing: Space.s) {
             ActionBar {
                 if details.job.dismissedAt != nil {
                     restoreButton
-                } else if let application = details.application, details.phase?.isClosed == false {
+                } else if isFollowingUp, let application = details.application {
                     Button("Followed up…", systemImage: "arrowshape.turn.up.right") {
                         followUpNote = ""
                         followingUpApplicationID = application.id
                     }
                     .help("Restarts the count to the next follow-up")
-                } else if details.phase != nil {
+                } else if isPostingNext {
                     openPostingButton(details)
                 } else {
-                    AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward") {
+                    AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward", key: "P") {
                         await model.decide(jobID, .pursue, through: decisions, with: client)
                     }
-                    .help("Put it on the pipeline")
+                    .help("Put it on the pipeline (P on Decide and Today)")
                 }
             } secondary: {
                 if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
-                    AsyncButton("Later", busyTitle: "Later", systemImage: "clock") {
+                    AsyncButton("Later", busyTitle: "Later", key: "L") {
                         await model.decide(jobID, .later, through: decisions, with: client)
                     }
-                    .help("Leave it for another day")
-                }
-                if details.phase?.isClosed == false && details.application != nil {
-                    openPostingButton(details)
+                    .help("Leave it for another day (L on Decide and Today)")
                 }
                 if details.job.dismissedAt == nil {
-                    Button("Skip…", systemImage: "eye.slash") { isAskingToSkip = true }
-                        .help("Take it out as not for you, with a reason")
+                    Button { isAskingToSkip = true } label: { KeyLabel(title: "Skip…", key: "S") }
+                        .help("Take it out as not for you, with a reason (S on Decide and Today)")
                 }
             } overflow: {
-                if details.phase == nil {
-                    openPostingButton(details)
-                }
                 Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
                     .disabled(taskRunner.fixingJobIDs.contains(jobID))
                     .help("Say what's wrong with its details, and an agent corrects them")
+            } accessory: {
+                if !isPostingNext {
+                    openPostingButton(details)
+                        .help("Open the posting on its board")
+                }
             }
             if let decision = details.decision {
                 Text(describeDecision(decision)).font(.hubCaption).foregroundStyle(.secondary)
@@ -318,81 +429,193 @@ struct JobDetailView: View {
         return text
     }
 
-    /// The brief the decision rests on: the match and why, then the strengths
-    /// and weaknesses with the knowledge-base entries behind them.
-    private func brief(_ brief: JobBrief?) -> some View {
-        HubSection("Brief") {
+    // MARK: Overview
+
+    /// The brief the decision rests on: its verdict at reading size, then
+    /// what speaks for you and against, side by side, each with what backs
+    /// it.
+    private func whyItFits(_ brief: JobBrief?) -> some View {
+        HubCard("Why it fits", meta: brief.map(describeAuthor)) {
             if let brief {
+                Text(brief.reason).hubReading().textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if !brief.strengths.isEmpty || !brief.weaknesses.isEmpty {
+                    HStack(alignment: .top, spacing: Space.l) {
+                        briefPoints("For you", brief.strengths, in: brief, isWeakness: false)
+                        briefPoints("Against", brief.weaknesses, in: brief, isWeakness: true)
+                    }
+                }
                 if brief.isStale {
-                    Label("Your knowledge base changed since", systemImage: "clock.arrow.circlepath")
+                    Label("Your knowledge base changed since it was written", systemImage: "clock.arrow.circlepath")
                         .font(.hubCaption)
                         .foregroundStyle(Tone.caution.color)
                 }
-                Text(brief.reason).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                briefPoints("Strengths", brief.strengths, in: brief, symbol: "plus.circle.fill", tone: .positive)
-                briefPoints("Weaknesses", brief.weaknesses, in: brief, symbol: "minus.circle.fill", tone: .caution)
             } else {
-                Text("Not briefed yet. The local model briefs the jobs that don't fail the screen once their facts are read.").foregroundStyle(.secondary)
+                Text("Not briefed yet. The local model briefs the jobs that don't fail the screen once their facts are read.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        } trailing: {
             if brief?.isFull != true {
-                AsyncButton("Write full brief", busyTitle: "Writing…", systemImage: "sparkles", isBusy: model.isWritingFullBrief) {
+                AsyncButton("Write full brief", busyTitle: "Writing…", isBusy: model.isWritingFullBrief) {
                     await model.writeFullBrief(jobID, with: client)
                 }
                 .help("Have Claude write a fuller brief now")
             }
-        } trailing: {
-            if let brief {
-                Text(brief.isFull ? "by Claude" : "by the local model").font(.hubCaption).foregroundStyle(.secondary)
-            }
         }
     }
 
-    @ViewBuilder
-    private func briefPoints(_ title: String, _ points: [JobBriefPoint], in brief: JobBrief, symbol: String, tone: Tone) -> some View {
-        if !points.isEmpty {
-            Text(title).font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
+    /// "local model · 2 days ago".
+    private func describeAuthor(_ brief: JobBrief) -> String {
+        "\(brief.isFull ? "Claude" : "local model") · \(brief.writtenAt.formatted(.relative(presentation: .named)))"
+    }
+
+    /// For you or Against: a line per point, with what backs it as a tag
+    /// and the knowledge-base entries it cites in its tooltip.
+    private func briefPoints(_ title: String, _ points: [JobBriefPoint], in brief: JobBrief, isWeakness: Bool) -> some View {
+        let tone: Tone = isWeakness ? .caution : .positive
+        return VStack(alignment: .leading, spacing: Space.s) {
+            Text(title.uppercased())
+                .font(.hubCaption.weight(.semibold))
+                .foregroundStyle(tone.color)
+                .accessibilityAddTraits(.isHeader)
+            if points.isEmpty {
+                Text("Nothing").foregroundStyle(.secondary)
+            }
             ForEach(Array(points.enumerated()), id: \.offset) { _, point in
-                VerdictRow(
-                    symbol: symbol, tone: tone, reason: point.point,
-                    note: brief.getEntries(of: point).map(\.label).joined(separator: "; ")
-                )
+                HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                    Image(systemName: isWeakness ? "minus" : "plus")
+                        .foregroundStyle(tone.color)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(point.point).fixedSize(horizontal: false, vertical: true)
+                        if let tag = brief.getTag(of: point, isWeakness: isWeakness) {
+                            Text(tag).font(.hubCaption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+                .help(brief.getEntries(of: point).map(\.label).joined(separator: "; "))
+                .accessibilityElement(children: .combine)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Whether a rule rules you out: the screen-out answers from the
-    /// posting's words, then the criteria checks they don't repeat.
-    @ViewBuilder
+    /// Whether a rule rules you out, exceptions first: the checks that fail
+    /// or are unclear, each with its quote and a link into the posting, then
+    /// the ones that pass as a row of chips, with what no rule judges.
     private func screen(_ details: JobDetails) -> some View {
-        let rows = details.screenRows
-        if !rows.isEmpty {
-            HubSection("Screen") {
-                // A screen-out answer and a criteria check can share a name.
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    VerdictRow(row.verdict, name: row.name, reason: row.reason, evidence: row.evidence)
+        let summary = ScreenBreakdown(details.screenRows, level: details.fit.level)
+        let hasPosting = details.job.description?.isEmpty == false
+        return HubCard("Screen", meta: summary.title) {
+            if summary.exceptions.isEmpty && summary.passes.isEmpty && summary.notes.isEmpty {
+                Text("Nothing judged yet. The screen reads the posting once its facts are read.").foregroundStyle(.secondary)
+            }
+            // A screen-out answer and a criteria check can share a name.
+            ForEach(Array(summary.exceptions.enumerated()), id: \.offset) { _, row in
+                ExceptionRow(row: row, openInPosting: hasPosting && row.evidence != nil ? { openInPosting() } : nil)
+            }
+            if !summary.passes.isEmpty || !summary.notes.isEmpty {
+                FlowRow {
+                    ForEach(Array(summary.passes.enumerated()), id: \.offset) { _, row in
+                        ToneChip(row.name, tone: .positive, symbol: "checkmark")
+                            .help(describePass(row))
+                            .accessibilityValue("passes: \(row.reason)")
+                    }
+                    ForEach(Array(summary.notes.enumerated()), id: \.offset) { _, row in
+                        ToneChip(row.name, tone: .neutral, symbol: "info.circle")
+                            .help(describePass(row))
+                            .accessibilityValue(row.reason)
+                    }
                 }
-            } trailing: {
-                ToneChip(details.fit.level)
             }
         }
     }
 
-    /// The people you know at the company, and a link to its People tab.
-    @ViewBuilder
+    /// A chip's tooltip: the reason, and the posting's words behind it.
+    private func describePass(_ row: ScreenRow) -> String {
+        guard let evidence = row.evidence, !evidence.isEmpty else { return row.reason }
+        return "\(row.reason): \u{201C}\(evidence)\u{201D}"
+    }
+
+    /// Shows the posting the screen quotes.
+    private func openInPosting() {
+        tab = .posting
+        scrollTarget = Anchor.posting
+    }
+
+    /// Who to write to at the company, the people you know first, each with
+    /// the message that fits: one about the job, or a request for an
+    /// introduction.
     private func people(_ details: JobDetails) -> some View {
-        let connections = details.connections ?? []
-        if !connections.isEmpty || details.job.companyID != nil {
-            HubSection("People") {
-                if connections.isEmpty {
-                    Text("No one you know at \(details.companyName ?? "this company") yet.").foregroundStyle(.secondary)
+        let everyone = getPeople(details)
+        let shown = Array(everyone.prefix(JobOutreach.shownLimit))
+        let known = everyone.count(where: JobOutreach.isKnown)
+        let companyName = details.companyName ?? "the company"
+        let total = model.people?.count ?? everyone.count
+        return HubCard("People", meta: known > 0 ? "\(known) you know at \(companyName)" : nil) {
+            if shown.isEmpty {
+                Text("No one you know at \(companyName) yet.").foregroundStyle(.secondary)
+            }
+            ForEach(shown) { person in
+                personRow(person, about: details)
+                if person.id != shown.last?.id {
+                    Divider()
                 }
-                ConnectionList(connections: connections)
-            } trailing: {
-                if let companyID = details.job.companyID {
-                    Button("Company") { inspector.open(.company(companyID), tab: .people) }
-                        .buttonStyle(.link)
-                        .help("Everyone at \(details.companyName ?? "the company")")
+            }
+        } trailing: {
+            if let companyID = details.job.companyID {
+                Button(total > 0 ? "All \(total)" : "Company") { inspector.open(.company(companyID), tab: .people) }
+                    .help("Everyone at \(companyName)")
+            }
+        }
+    }
+
+    /// The people at the job's company worth writing to, best first; the
+    /// job's own connections until the people list is read.
+    private func getPeople(_ details: JobDetails) -> [RelatedPerson] {
+        if let companyID = details.job.companyID, let people = model.people {
+            return JobOutreach.getPeople(companyID: companyID, among: people)
+        }
+        return (details.connections ?? []).map { RelatedPerson($0, companyID: details.job.companyID, companyName: details.companyName) }
+    }
+
+    /// A person: monogram, name and relation, their role and how close you
+    /// are, opening them on a click, and the message that fits.
+    private func personRow(_ person: RelatedPerson, about details: JobDetails) -> some View {
+        HStack(alignment: .center, spacing: Space.s) {
+            InitialsMonogram(person.name, size: 28)
+            Button { inspector.open(.person(person.reference)) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                        Text(person.name).fontWeight(.semibold).lineLimit(1)
+                        ToneChip(person.relationTitle, tone: .neutral)
+                    }
+                    let line = [person.role, person.closeness ?? person.note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !line.isEmpty {
+                        Text(line).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(person.name)")
+            AsyncButton(JobOutreach.getActionTitle(for: person), busyTitle: "Drafting…") {
+                if await model.draft(to: person, about: details, with: client) {
+                    tab = .session
+                }
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .help("The job's session drafts it with the outreach prompt; you send it yourself")
+        }
+        .contextMenu {
+            if let profile = person.profileURL.flatMap(URL.init(string:)) {
+                Button("Open profile") { NSWorkspace.shared.open(profile) }
+            }
+            if let email = person.email, let mail = URL(string: "mailto:\(email)") {
+                Button("Email \(email)") { NSWorkspace.shared.open(mail) }
             }
         }
     }

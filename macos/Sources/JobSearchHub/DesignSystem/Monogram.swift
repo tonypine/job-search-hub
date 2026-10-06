@@ -45,3 +45,26 @@ struct CardMonogram: View {
         name.first { $0.isLetter || $0.isNumber }.map { String($0).uppercased() } ?? "·"
     }
 }
+
+/// A person as their initials on a tinted square, beside their name. It
+/// repeats the name, so it's hidden from VoiceOver.
+struct InitialsMonogram: View {
+    let initials: String
+    var size: CGFloat = 32
+    var tone: Tone = .neutral
+
+    init(_ name: String, size: CGFloat = 32, tone: Tone = .neutral) {
+        initials = Initials.make(from: name)
+        self.size = size
+        self.tone = tone
+    }
+
+    var body: some View {
+        Text(initials)
+            .font(.system(size: max(size * 0.4, 10), weight: .semibold))
+            .foregroundStyle(tone.color)
+            .frame(width: size, height: size)
+            .background(tone.fill, in: RoundedRectangle(cornerRadius: size / 4))
+            .accessibilityHidden(true)
+    }
+}
