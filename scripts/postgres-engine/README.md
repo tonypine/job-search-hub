@@ -27,7 +27,9 @@ wherever it's unpacked. The binaries are signed ad hoc, as the linker signs them
 
 - `build.sh <out-dir> [<work-dir>]` downloads the source tarball, refuses it unless it matches the
   pinned SHA-256, builds it for macOS 26 on Apple Silicon, and writes the tarball and its
-  `.sha256` to `<out-dir>`. `build.sh --version` prints the version it builds.
+  `.sha256` to `<out-dir>`. `build.sh --version` prints the version it builds. The work dir's
+  path can't contain `postgres` or `pgsql`: Postgres would then install `lib/` and `share/` without
+  their `postgresql/` folders.
 - `check.sh <tarball>` unpacks it into a new folder, checks each binary and library with `lipo`,
   `codesign` and `otool -L`, then creates a cluster there with the hub's `initdb` options, starts
   it on a Unix socket alone, dumps a database with the types the hub uses and restores it into

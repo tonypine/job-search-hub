@@ -52,10 +52,16 @@ if [ $# -eq 2 ]; then
 	mkdir -p "$2"
 	work=$(cd "$2" && pwd)
 else
-	work=$(mktemp -d "${TMPDIR:-/tmp}/postgres-engine.XXXXXX")
+	work=$(mktemp -d "${TMPDIR:-/tmp}/pg-engine.XXXXXX")
 fi
 case $out$work in
 *[[:space:]]*) fail "The out and work dirs can't have spaces in their paths." ;;
+esac
+# Postgres installs lib/ and share/ without their postgresql/ folders when the
+# prefix's path already says postgres or pgsql (src/Makefile.global.in), and the
+# layout above, compiled into the binaries, needs those folders.
+case $work in
+*postgres* | *pgsql*) fail "The work dir's path can't contain 'postgres' or 'pgsql': Postgres would then install lib/ and share/ without their postgresql/ folders." ;;
 esac
 echo "Building Postgres $POSTGRES_VERSION in $work"
 
