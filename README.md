@@ -31,11 +31,11 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    curl -fsS localhost:8090/v1/health
    ```
 
-   The script builds the bundle with `macos/Scripts/make-app.sh` (see [The macOS app](#the-macos-app)) and installs it as `~/Applications/Job Search Hub.app`. The app registers the server's LaunchAgent from its bundle, so launchd runs `Contents/Helpers/bin/hub-server` from the installed app, starts it at login, and restarts it if it crashes; System Settings › General › Login Items lists it under Job Search Hub. Settings › Server in the app starts, stops and restarts it.
+   The script builds the bundle with `macos/Scripts/make-app.sh` (see [The macOS app](#the-macos-app)) and installs it as `~/Applications/Job Search Hub.app`. It writes the server's LaunchAgent to `~/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist` and loads it with `launchctl bootstrap`, so launchd runs `Contents/Helpers/bin/hub-server` from the installed app, starts it at login, and restarts it if it crashes; System Settings › General › Login Items lists it under Job Search Hub. The script checks that the new version answers on `/v1/health` and `/v1/version`. Until it does, it keeps the previous app, engine, `server.env` and agent, and on any failure it puts them back, starts the previous server and exits non-zero, so a failed install never leaves the hub down. It waits up to 90 seconds for an open app to quit, and changes nothing if it doesn't. Settings › Server in the app starts, stops and restarts the server.
 
-   The script also downloads the Postgres engine pinned in `server/postgres-engine.lock`, refuses it unless its SHA-256 matches, and installs it in `~/Library/Application Support/JobSearchHub/engines/postgres-18/`. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. The server reads that file itself at start (a variable already in its environment wins), puts Homebrew's and `~/.local/bin` on its `PATH`, and prints CVs with the `hub-cvprint` beside it in the bundle (`HUB_CV_PRINT_BIN` overrides). Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes. To remove the hub, stop the server in Settings › Server, turn Job Search Hub off in Login Items, and delete the app.
+   The script also downloads the Postgres engine pinned in `server/postgres-engine.lock`, refuses it unless its SHA-256 matches, and installs it in `~/Library/Application Support/JobSearchHub/engines/postgres-18/`. The first install writes the server's settings to `~/.config/job-search-hub/server.env` (chmod 600) from `.env`; later runs keep it. The server reads that file itself at start (a variable already in its environment wins), puts Homebrew's and `~/.local/bin` on its `PATH`, and prints CVs with the `hub-cvprint` beside it in the bundle (`HUB_CV_PRINT_BIN` overrides). Logs go to `~/Library/Logs/JobSearchHub/server.log`. Run the script again after pulling changes. To remove the hub, stop the server in Settings › Server, delete `~/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist`, and delete the app.
 
-   On a Mac set up with the old `server/scripts/install-native-server.sh`, the first `install-app.sh` moves it over: it removes that script's agent from `~/Library/LaunchAgents`, its binaries in `~/Library/Application Support/JobSearchHub/bin/`, and a `HUB_CV_PRINT_BIN` in `server.env` that points at them.
+   On a Mac set up with the old `server/scripts/install-native-server.sh`, the first `install-app.sh` moves it over: it points that script's agent in `~/Library/LaunchAgents` at the installed app, and removes its binaries in `~/Library/Application Support/JobSearchHub/bin/`, and a `HUB_CV_PRINT_BIN` in `server.env` that points at them.
 
    The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
 
@@ -131,6 +131,8 @@ Once `ci` passes on a merge to `main`, `.github/workflows/release.yml` releases 
 | both | both, with the same `N` |
 | only docs, CI or scripts | nothing |
 
+A release tags the commit it built, and GitHub lets the workflow's token tag a commit only while its `.github/workflows/` matches `main`'s tip: anything else counts as creating workflows, which takes a permission `GITHUB_TOKEN` can't have, and the release fails with `HTTP 403: Resource not accessible by integration`. So when a later merge changed `.github/workflows/` before a commit's release ran, that commit isn't released, the run says why, and the next release from `main` carries its changes. To release `main`'s tip by hand, use Actions › release › Run workflow with the tags left empty; an app that has never been released gets its first release that way.
+
 Each release's notes list the commits since that app's previous release that touch its paths, under New, Fixed and Other changes, each line tagged with the parts of the hub its commit touched (`Mac`, `Server`, `Phone`) and ending with its pull request. The Mac app reads that format for *What's new*, so `scripts/release/changelog_test.sh` pins it. `docs/design/updates.md` › Releases from CI and `docs/decisions/0001-android-release-distribution.md` say why it works this way.
 
 Before it publishes the Mac app, `scripts/release/verify-app.sh` refuses a bundle that fails `codesign --verify --strict --deep`, holds an executable signed ad hoc, by another team than `MAC_SIGNING_TEAM_ID` or without the hardened runtime, carries another version in its `Info.plist` or `hub-server --version`, or links a library outside the system and the bundle. The copy unzipped from the zip is checked again. The release isn't notarized: Apple doesn't notarize with a development certificate, so the first install from a browser asks to allow it once in System Settings › Privacy & Security.
@@ -165,14 +167,15 @@ Until an app's signing secrets exist, its release job fails at its first step, n
    | --- | --- |
    | `RELEASE_KEYSTORE_BASE64` | `base64 -i ~/job-search-hub-release.keystore \| pbcopy` |
    | `RELEASE_KEYSTORE_PASSWORD` | the keystore's password |
-   | `RELEASE_KEY_ALIAS` | `job-search-hub` |
    | `RELEASE_KEY_PASSWORD` | the same password |
    | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
-   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each Android release is posted as a Job Search Hub project update. |
+   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each release run is announced in one update on the initiative the Job Search Hub project belongs to: the version, a link per platform it released, and the changelog. A project in no initiative gets a project update instead, and the run warns. |
 
    Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
 
-3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next app change.
+   The key's alias isn't a secret: the job uses `job-search-hub`, or the repository variable `RELEASE_KEY_ALIAS` (Settings › Secrets and variables › Actions › Variables) for a key made with another alias. Don't make it a secret: Actions hides a secret's value in every log, and this one is the repository's name. A `RELEASE_KEY_ALIAS` secret left from an older setup is unused; delete it.
+
+3. **Ship the first release:** Actions › release › Run workflow, with the tags left empty, or merge the next app change.
 
 4. **Swap the debug build for the release**, once: a debug build is signed with another key, so the release can't install over it. Uninstall the app, install the release and pair again. Later releases install over it.
 
@@ -190,11 +193,11 @@ Until an app's signing secrets exist, its release job fails at its first step, n
 
    Then delete `~/job-search-hub-signing.p12`; the password manager keeps it.
 
-3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next server or Mac change.
+3. **Ship the first release:** Actions › release › Run workflow, with the tags left empty, or merge the next server or Mac change.
 
 The job imports the certificate into a keychain of its own, which it deletes once the app is signed, or after a failed step. It signs only with the identity of `MAC_SIGNING_TEAM_ID`'s team, and fails if the `.p12` holds none.
 
-A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
+A Linear update that failed can be posted again from Actions › release › Run workflow, with the run's release tags, e.g. `mac-v0.1.252 android-v0.1.252`.
 
 To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
 

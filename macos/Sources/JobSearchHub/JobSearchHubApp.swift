@@ -17,9 +17,6 @@ struct JobSearchHubApp: App {
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        if ProcessInfo.processInfo.arguments.contains("--register-server") {
-            ServerAgent.registerFromCommandLine()
-        }
         Self.importOwnerTokenIfAsked()
         _connection = State(initialValue: HubConnection())
         let jobFinder = CompanyJobFinder()

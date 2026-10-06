@@ -66,6 +66,37 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    /// The one thing the card says about where it stands, the most urgent
+    /// first: a follow-up overdue or due today, then that someone wrote
+    /// back, then when the next follow-up falls due; nil for a card with
+    /// none of them.
+    public func getStatus(now: Date, calendar: Calendar = .current) -> PipelineCardStatus? {
+        let followUp = getFollowUpStatus(now: now, calendar: calendar)
+        if let followUp, followUp.isDue {
+            return .followUp(followUp)
+        }
+        if let contactedAt = application.contactedAt {
+            return .heardBack(contactedAt)
+        }
+        return followUp.map(PipelineCardStatus.followUp)
+    }
+
+    /// What the card keeps off its face for its tooltip: the owner's notes,
+    /// why it closed and why it was skipped, one per line; empty for none.
+    public var tooltip: String {
+        var lines: [String] = []
+        if let notes = application.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+            lines.append(notes)
+        }
+        if let closedReason = application.closedReason, !closedReason.isEmpty {
+            lines.append("Closed: \(closedReason)")
+        }
+        if let dismissalReason, !dismissalReason.isEmpty {
+            lines.append("Skipped: \(dismissalReason)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The job's title, or the company's name for an application with no job.
     public var title: String { jobTitle ?? companyName ?? "Untitled" }
 
@@ -101,6 +132,43 @@ public struct PipelineBoard: Equatable, Sendable {
 
     public func getCards(in phase: PipelinePhase) -> [PipelineCard] {
         cards.filter { $0.application.phaseID == phase.id }
+    }
+
+    /// The phases a card is still moving through, in order: every phase but
+    /// the closed ones.
+    public var openPhases: [PipelinePhase] { phases.filter { !$0.isClosed } }
+
+    /// The phase a card goes to when it ends; nil on a board without one.
+    public var closedPhase: PipelinePhase? { phases.first(where: \.isClosed) }
+
+    /// The cards that ended, newest first.
+    public var closedCards: [PipelineCard] {
+        let closedPhaseIDs = Set(phases.filter(\.isClosed).map(\.id))
+        return cards.filter { closedPhaseIDs.contains($0.application.phaseID) }
+    }
+
+    /// The cards still moving through the phases.
+    public var openCards: [PipelineCard] {
+        let openPhaseIDs = Set(openPhases.map(\.id))
+        return cards.filter { openPhaseIDs.contains($0.application.phaseID) }
+    }
+
+    /// How many of a phase's cards have a follow-up due today or overdue,
+    /// for its column's header.
+    public func getDueTally(in phase: PipelinePhase, now: Date, calendar: Calendar = .current) -> DueTally {
+        var tally = DueTally()
+        for card in getCards(in: phase) {
+            switch card.getFollowUpStatus(now: now, calendar: calendar) {
+            case .overdue:
+                tally.due += 1
+                tally.overdue += 1
+            case .dueToday:
+                tally.due += 1
+            case .dueIn, nil:
+                break
+            }
+        }
+        return tally
     }
 
     /// How many applications went out and how many a person answered, so a
@@ -165,6 +233,40 @@ public struct PipelineBoard: Equatable, Sendable {
         guard let index = cards.firstIndex(where: { $0.id == application.id }) else { return }
         cards[index].application = application
         cards.sort { $0.application.phaseEnteredAt > $1.application.phaseEnteredAt }
+    }
+}
+
+/// The follow-ups due in a phase: today's and the overdue ones among them.
+public struct DueTally: Equatable, Sendable {
+    public var due: Int
+    public var overdue: Int
+
+    public init(due: Int = 0, overdue: Int = 0) {
+        self.due = due
+        self.overdue = overdue
+    }
+
+    /// "2 due", or nil when nothing is.
+    public var text: String? { due > 0 ? "\(due) due" : nil }
+}
+
+/// The one line a card says about where it stands.
+public enum PipelineCardStatus: Equatable, Sendable {
+    /// When the next follow-up falls due, or that it is due or overdue.
+    case followUp(FollowUpStatus)
+    /// When someone at the company first wrote back.
+    case heardBack(Date)
+
+    /// Due today or overdue: the card gets an edge in its tone.
+    public var isDue: Bool {
+        if case let .followUp(status) = self { return status.isDue }
+        return false
+    }
+
+    /// Overdue: the card offers its next route.
+    public var isOverdue: Bool {
+        if case .followUp(.overdue) = self { return true }
+        return false
     }
 }
 
@@ -286,6 +388,21 @@ public struct ReorderPipelinePhasesRequest: Encodable, Equatable, Sendable {
     }
 }
 
+public extension PipelinePhase {
+    /// What an empty column says goes there: the default phases' own words,
+    /// or the phase's name for one the owner added.
+    var emptyHint: String {
+        switch name.lowercased() {
+        case "saved": "Drop a card here to keep a job for later"
+        case "applied": "Drop a card here once the application goes out"
+        case "in contact": "Drop a card here when someone writes back"
+        case "interviewing": "Drop a card here when interviews start"
+        case "offer": "Drop a card here when an offer comes in"
+        default: "Drop a card here when it reaches \(name)"
+        }
+    }
+}
+
 public struct PipelinePhasesResponse: Decodable, Equatable, Sendable {
     public var phases: [PipelinePhase]
 }
@@ -315,8 +432,8 @@ public enum FollowUpStatus: Equatable, Sendable {
     public var text: String {
         switch self {
         case let .dueIn(days): days == 1 ? "Follow up tomorrow" : "Follow up in \(days) days"
-        case .dueToday: "Follow up today"
-        case let .overdue(days): days == 1 ? "Follow-up 1 day overdue" : "Follow-up \(days) days overdue"
+        case .dueToday: "Follow-up due today"
+        case let .overdue(days): days == 1 ? "Follow-up overdue 1 day" : "Follow-up overdue \(days) days"
         }
     }
 }

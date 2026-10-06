@@ -308,6 +308,11 @@ jobs:
       - name: Signing identity
         run: Scripts/signing-identity_test.sh
 
+      # install-app.sh's swap and rollback, against a fake launchd and server
+      # in a home folder of its own.
+      - name: Install script
+        run: Scripts/install-app_test.sh
+
       - name: swift build
         run: swift build
 
@@ -353,9 +358,7 @@ jobs:
             test "$(head -n 1 "$RUNNER_TEMP/$command-version")" = "$command $want"
             lipo -archs "$app/Contents/Helpers/bin/$command" | grep -qw arm64
           done
-          agent=$app/Contents/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
-          plutil -lint "$agent"
-          test "$(plutil -extract BundleProgram raw "$agent")" = "Contents/Helpers/bin/hub-server"
+          test ! -e "$app/Contents/Library/LaunchAgents"
           codesign --verify --strict --deep "$app"
           echo "The app and its commands are $want"
 

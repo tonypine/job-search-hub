@@ -3,6 +3,9 @@ import Foundation
 /// A column the Jobs table can sort by.
 public enum JobsSortColumn: Codable, Hashable, Sendable {
     case fit, title, company, location, firstSeen
+    /// The brief's match, the take-home the screen estimated, and when the
+    /// job was posted: the board's date, or else when the hub first saw it.
+    case match, takeHome, posted
     case pay, workplace, employment, department, published, source
     /// A fit check, by its name.
     case fitCheck(String)
@@ -42,6 +45,7 @@ public struct JobsSortComparator: SortComparator, Codable, Hashable, Sendable {
         case text(String)
         case date(Date)
         case rank(Int)
+        case number(Double)
         /// Pay sorts within its currency, since there's no rate to compare across them.
         case pay(currency: String, yearlyMaximum: Double)
 
@@ -52,6 +56,8 @@ public struct JobsSortComparator: SortComparator, Codable, Hashable, Sendable {
             case let (.date(left), .date(right)):
                 JobsSortComparator.compare(left, right)
             case let (.rank(left), .rank(right)):
+                JobsSortComparator.compare(left, right)
+            case let (.number(left), .number(right)):
                 JobsSortComparator.compare(left, right)
             case let (.pay(leftCurrency, leftAmount), .pay(rightCurrency, rightAmount)):
                 leftCurrency == rightCurrency ? JobsSortComparator.compare(leftAmount, rightAmount) : leftCurrency.compare(rightCurrency)
@@ -69,6 +75,9 @@ public struct JobsSortComparator: SortComparator, Codable, Hashable, Sendable {
         case .company: return getTextValue(item.companyName)
         case .location: return getTextValue(job.location)
         case .firstSeen: return .date(job.firstSeenAt)
+        case .match: return item.match.map { .rank(getMatchRank($0)) }
+        case .takeHome: return TakeHomeEstimate(item.getFitCheck("Pay")).map { .number($0.lowest) }
+        case .posted: return .date(job.postedAt)
         case .pay: return getPayValue(job.pay)
         case .workplace: return getTextValue(job.workplaceType)
         case .employment: return getTextValue(job.employmentType)
@@ -91,6 +100,16 @@ public struct JobsSortComparator: SortComparator, Codable, Hashable, Sendable {
         case .yes: 0
         case .unclear: 1
         case .no: 2
+        }
+    }
+
+    /// A strong match sorts first, a mismatch last.
+    private static func getMatchRank(_ match: JobMatch) -> Int {
+        switch match {
+        case .strong: 0
+        case .possible: 1
+        case .stretch: 2
+        case .mismatch: 3
         }
     }
 

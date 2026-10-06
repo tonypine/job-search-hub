@@ -5,15 +5,13 @@ import UserNotifications
 /// Shows the app's notifications as banners even while the app is in front;
 /// without a delegate, macOS keeps them out of sight. Also answers Control-
 /// Command-F with full screen, opens the main window when launch ends
-/// without one, registers the server's launch agent on the installed app's
-/// first launch, and starts looking for new versions.
+/// without one, and starts looking for new versions.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var fullScreenShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         fullScreenShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: Self.toggleFullScreenOnShortcut)
-        ServerAgent.registerAtLaunch()
         NewVersionChecker.shared.start()
         // Window state saved by a build whose main scene differs restores
         // nothing, and SwiftUI then opens no window: the app runs with none

@@ -36,6 +36,16 @@ public extension JobMatch {
         case .mismatch: .neutral
         }
     }
+
+    /// The match's symbol beside its word: fuller stars for better matches.
+    var symbolName: String {
+        switch self {
+        case .strong: "star.fill"
+        case .possible: "star.leadinghalf.filled"
+        case .stretch: "star"
+        case .mismatch: "minus.circle"
+        }
+    }
 }
 
 /// The screen: does a rule rule the job out? Good passes, poor fails.
@@ -73,6 +83,28 @@ public extension FollowUpStatus {
         case .overdue: .negative
         case .dueToday: .caution
         case .dueIn: .neutral
+        }
+    }
+}
+
+public extension DueTally {
+    /// Red while one is overdue, else the caution of due today.
+    var tone: Tone { overdue > 0 ? .negative : .caution }
+}
+
+public extension PipelineCardStatus {
+    var tone: Tone {
+        switch self {
+        case let .followUp(status): status.tone
+        case .heardBack: .positive
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .followUp(.dueIn): "clock"
+        case .followUp: "bell.fill"
+        case .heardBack: "arrowshape.turn.up.left.fill"
         }
     }
 }
