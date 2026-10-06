@@ -19,7 +19,8 @@ import (
 
 // When FAKE_LLAMA_SERVER is set, this test binary acts as llama-server: it
 // answers /health and says which model it loaded, so the runtime can be
-// tested without a GPU.
+// tested without a GPU. It exits once the test binary that started it is
+// gone, so a test killed or timed out mid-run leaves no server behind.
 func TestMain(m *testing.M) {
 	if os.Getenv("FAKE_LLAMA_SERVER") == "1" {
 		serveLikeLlamaServer()
@@ -38,6 +39,14 @@ func serveLikeLlamaServer() {
 			port = os.Args[index+1]
 		}
 	}
+	parent := os.Getppid()
+	go func() {
+		for range time.Tick(100 * time.Millisecond) {
+			if os.Getppid() != parent {
+				os.Exit(0)
+			}
+		}
+	}()
 	routes := http.NewServeMux()
 	routes.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(`{"status":"ok"}`)) })
 	routes.HandleFunc("/v1/model", func(w http.ResponseWriter, _ *http.Request) {
@@ -58,8 +67,17 @@ func startRuntime(t *testing.T, idle time.Duration) (*modelruntime.Runtime, cont
 		LogPath: filepath.Join(t.TempDir(), "llama-server.log"),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	go runtime.Run(ctx)
-	t.Cleanup(cancel)
+	stopped := make(chan struct{})
+	go func() {
+		runtime.Run(ctx)
+		close(stopped)
+	}()
+	// Run stops the server once ctx ends; wait for it, so the server is gone
+	// before the test binary exits.
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 	return runtime, cancel
 }
 
