@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // A fact read with its evidence is an object: the quote it rests on under
@@ -18,6 +20,7 @@ const jobFactEvidencePart = "evidence"
 // FlattenJobFacts turns each fact that's an object with evidence into its
 // value, its evidence, and one fact per other part, keyed "<fact>.<part>".
 // Plain facts pass through, so flattening flat facts changes nothing.
+// Evidence quotes the posting's words without its Markdown.
 func FlattenJobFacts(raw json.RawMessage) (values map[string]json.RawMessage, evidence map[string]string, err error) {
 	var facts map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &facts); err != nil {
@@ -34,8 +37,10 @@ func FlattenJobFacts(raw json.RawMessage) (values map[string]json.RawMessage, ev
 		values[key] = parts[valuePart]
 		if quoteJSON, has := parts[jobFactEvidencePart]; has {
 			var quote string
-			if json.Unmarshal(quoteJSON, &quote) == nil && strings.TrimSpace(quote) != "" {
-				evidence[key] = quote
+			if json.Unmarshal(quoteJSON, &quote) == nil {
+				if quote = strings.TrimSpace(textextract.ConvertMarkdownToText(quote)); quote != "" {
+					evidence[key] = quote
+				}
 			}
 		}
 		for part, partValue := range parts {

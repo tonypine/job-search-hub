@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const Recruitee = "recruitee"
@@ -65,7 +66,7 @@ func parseRecruiteePosting(raw json.RawMessage) (store.JobPosting, bool, error) 
 	}
 	posting := store.JobPosting{
 		ExternalID: strconv.FormatInt(offer.ID, 10), Title: offer.Title, URL: offer.CareersURL,
-		Description: joinSections(convertHTMLToText(offer.Description), convertHTMLToText(offer.Requirements)),
+		Description: joinSections(textextract.ConvertHTMLToMarkdown(offer.Description), textextract.ConvertHTMLToMarkdown(offer.Requirements)),
 	}
 	for _, location := range offer.Locations {
 		place := joinNonEmpty(", ", strings.TrimSpace(location.City), location.State, location.Country)

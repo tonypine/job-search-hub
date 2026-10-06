@@ -391,7 +391,7 @@ struct JobDetailView: View {
     private func posting(_ job: Job) -> some View {
         if let description = job.description, !description.isEmpty {
             HubSection("Posting") {
-                Text(description).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                MarkdownDocument(description)
             } trailing: {
                 if let url = URL(string: job.url) {
                     Link("Open", destination: url)

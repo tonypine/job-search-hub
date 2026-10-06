@@ -18,7 +18,7 @@ func startTenantBoards(t *testing.T) *Verifier {
 	routes.HandleFunc("GET /api/offers/", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"offers":[
 			{"id":101,"title":"Senior Frontend Engineer","status":"published","careers_url":"https://acme.recruitee.com/o/senior-frontend-engineer",
-			 "description":"<p>Build the app.</p>","requirements":"<ul><li>React</li></ul>","remote":true,"hybrid":false,
+			 "description":"<h2>About</h2><p>Build the app.</p>","requirements":"<ul><li>React</li></ul>","remote":true,"hybrid":false,
 			 "employment_type_code":"fulltime_permanent","department":"Engineering","published_at":"2026-09-25 18:00:43 UTC",
 			 "locations":[{"city":"São Paulo ","state":"São Paulo","country":"Brazil"},{"city":"Lisbon","state":"","country":"Portugal"}],
 			 "salary":{"min":"8000","max":"12000","period":"month","currency":"USD"}},
@@ -29,7 +29,7 @@ func startTenantBoards(t *testing.T) *Verifier {
 	})
 	routes.HandleFunc("GET /careers/7/detail", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"result":{"jobOpening":{"jobOpeningName":"Backend Engineer","jobOpeningStatus":"Open",
-			"jobOpeningShareUrl":"https://acme.bamboohr.com/careers/7","description":"<p>Write <strong>Go</strong>.</p>",
+			"jobOpeningShareUrl":"https://acme.bamboohr.com/careers/7","description":"<h2>Role</h2><p>Write <strong>Go</strong>.</p><ol><li>Design</li><li>Ship</li></ol>",
 			"departmentLabel":"Platform","employmentStatusLabel":"Full-Time","location":{"city":null,"state":null},
 			"atsLocation":{"country":"Brazil","state":null,"city":null},"isRemote":null,"locationType":"1","datePosted":"2026-09-16"}}}`)
 	})
@@ -40,8 +40,8 @@ func startTenantBoards(t *testing.T) *Verifier {
 		fmt.Fprint(w, `{"id":"11","name":"Web Developer","active":true,"postingUrl":"https://jobs.smartrecruiters.com/Acme/11-web-developer",
 			"releasedDate":"2026-08-05T13:41:17.883Z","department":null,"typeOfEmployment":{"label":"Full-time"},
 			"location":{"city":"Joinville","region":"SC","country":"br","remote":false,"hybrid":true,"fullLocation":"Joinville, SC, Brazil"},
-			"jobAd":{"sections":{"companyDescription":{"text":"<p>We make tools.</p>"},"jobDescription":{"text":"<p>Ship features.</p>"},
-			"qualifications":{"text":"<p>TypeScript.</p>"},"additionalInformation":{"text":""}}}}`)
+			"jobAd":{"sections":{"companyDescription":{"text":"<p>We make tools.</p>"},"jobDescription":{"text":"<h3>The role</h3><p>Ship features.</p>"},
+			"qualifications":{"text":"<ul><li>TypeScript</li></ul>"},"additionalInformation":{"text":""}}}}`)
 	})
 	routes.HandleFunc("GET /v1/companies/nobody/postings", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"offset":0,"limit":100,"totalFound":0,"content":[]}`)
@@ -50,7 +50,7 @@ func startTenantBoards(t *testing.T) *Verifier {
 		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><workzag-jobs><position><id>55</id><name>Fullstack Developer</name>
 			<office>Berlin</office><additionalOffices><office>Remote</office></additionalOffices><department>Tech</department>
 			<schedule>full-time</schedule><createdAt>2026-07-08T12:29:56+00:00</createdAt>
-			<jobDescriptions><jobDescription><name>Your tasks</name><value><![CDATA[<p>Build &amp; run.</p>]]></value></jobDescription></jobDescriptions>
+			<jobDescriptions><jobDescription><name>Your tasks</name><value><![CDATA[<p>Build &amp; run.</p><ul><li>Go</li></ul>]]></value></jobDescription></jobDescriptions>
 			<salaryInformation><min>60000.00</min><max>80000.00</max><currencyCode>EUR</currencyCode><type>yearly</type></salaryInformation>
 			</position></workzag-jobs>`)
 	})
@@ -71,7 +71,7 @@ func startTenantBoards(t *testing.T) *Verifier {
 			{"id":8,"title":"Banco de Talentos","type":"vacancy_type_talent_pool","workplace":{"workplaceType":"remote"}}]}`))
 	})
 	routes.HandleFunc("GET /jobs/7", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, nextPage(`{"job":{"id":"7","name":"Desenvolvedor(a) Front-end Sênior","description":"<p>Construa o app.</p>",
+		fmt.Fprint(w, nextPage(`{"job":{"id":"7","name":"Desenvolvedor(a) Front-end Sênior","description":"<h2>Sobre</h2><p>Construa o app.</p>",
 			"responsibilities":"<ul><li>React</li></ul>","prerequisites":"","relevantExperiences":null,"addressCity":"Curitiba",
 			"addressState":"Paraná","addressCountry":"Brasil","workplaceType":"remote","jobType":"vacancy_type_effective",
 			"status":"published","publishedAt":"2026-09-20T12:00:00.000Z"}}`))
@@ -92,19 +92,19 @@ func TestTenantBoardsAreReadWithTheirText(t *testing.T) {
 		want     store.JobPosting
 	}{
 		{Recruitee, store.JobPosting{ExternalID: "101", Title: "Senior Frontend Engineer", URL: "https://acme.recruitee.com/o/senior-frontend-engineer",
-			Location: "São Paulo, São Paulo, Brazil", WorkplaceType: "Remote", Description: "Build the app.\n\nReact",
+			Location: "São Paulo, São Paulo, Brazil", WorkplaceType: "Remote", Description: "### About\n\nBuild the app.\n\n- React",
 			BoardFacts: store.BoardFacts{EmploymentType: "Full-time", Department: "Engineering", OtherLocations: []string{"Lisbon, Portugal"}}}},
 		{BambooHR, store.JobPosting{ExternalID: "7", Title: "Backend Engineer", URL: "https://acme.bamboohr.com/careers/7", Location: "Brazil",
-			WorkplaceType: "Remote", Description: "Write Go.", BoardFacts: store.BoardFacts{EmploymentType: "Full-Time", Department: "Platform"}}},
+			WorkplaceType: "Remote", Description: "### Role\n\nWrite **Go**.\n\n1. Design\n2. Ship", BoardFacts: store.BoardFacts{EmploymentType: "Full-Time", Department: "Platform"}}},
 		{SmartRecruiters, store.JobPosting{ExternalID: "11", Title: "Web Developer", URL: "https://jobs.smartrecruiters.com/Acme/11-web-developer",
-			Location: "Joinville, SC, Brazil", WorkplaceType: "Hybrid", Description: "We make tools.\n\nShip features.\n\nTypeScript.",
+			Location: "Joinville, SC, Brazil", WorkplaceType: "Hybrid", Description: "We make tools.\n\n### The role\n\nShip features.\n\n- TypeScript",
 			BoardFacts: store.BoardFacts{EmploymentType: "Full-time"}}},
 		{Personio, store.JobPosting{ExternalID: "55", Title: "Fullstack Developer", Location: "Berlin", WorkplaceType: "Remote",
-			Description: "Your tasks\nBuild & run.", BoardFacts: store.BoardFacts{EmploymentType: "Full-time", Department: "Tech", OtherLocations: []string{"Remote"}}}},
+			Description: "### Your tasks\n\nBuild & run.\n\n- Go", BoardFacts: store.BoardFacts{EmploymentType: "Full-time", Department: "Tech", OtherLocations: []string{"Remote"}}}},
 		{Gupy, store.JobPosting{ExternalID: "7", Title: "Desenvolvedor(a) Front-end Sênior", Location: "Curitiba, Paraná, Brasil",
-			WorkplaceType: "Remote", Description: "Construa o app.\n\nReact"}},
+			WorkplaceType: "Remote", Description: "### Sobre\n\nConstrua o app.\n\n- React"}},
 		{Pinpoint, store.JobPosting{ExternalID: "9", Title: "Senior Software Engineer - React / Node.js", URL: "https://acme.pinpointhq.com/en/postings/9",
-			Location: "Remote", WorkplaceType: "Remote", Description: "Lead the web app.\n\nQualifications\n5+ years",
+			Location: "Remote", WorkplaceType: "Remote", Description: "Lead the web app.\n\n### Qualifications\n\n- 5+ years",
 			BoardFacts: store.BoardFacts{EmploymentType: "Full Time", Department: "Engineering"}}},
 	}
 	for _, testCase := range cases {
@@ -226,7 +226,7 @@ func TestRemoteOKsFeedIsReadPastItsTerms(t *testing.T) {
 		}
 		fmt.Fprint(w, `[{"last_updated":1790792682,"legal":"Please link back."},
 			{"id":"1137451","date":"2026-09-30T18:24:42+00:00","company":"Acme","position":"Senior Frontend Engineer","tags":["react"],
-			 "description":"<p>Build the <b>app</b>.</p>","location":"Worldwide","salary_min":90000,"salary_max":120000,
+			 "description":"<h2>Role</h2><p>Build the <b>app</b>.</p><ul><li>React</li></ul>","location":"Worldwide","salary_min":90000,"salary_max":120000,
 			 "url":"https://remoteOK.com/remote-jobs/1137451"},
 			{"id":"1137452","date":"2026-09-30T18:00:00+00:00","company":"Globex","position":"Designer","description":"","location":"",
 			 "salary_min":0,"salary_max":0,"url":"https://remoteOK.com/remote-jobs/1137452"}]`)
@@ -240,7 +240,7 @@ func TestRemoteOKsFeedIsReadPastItsTerms(t *testing.T) {
 	}
 	first := postings[0]
 	if first.ExternalID != "1137451" || first.CompanyName != "Acme" || first.Title != "Senior Frontend Engineer" || first.Location != "Worldwide" ||
-		first.WorkplaceType != "Remote" || first.Description != "Build the app." || first.ExpiresAt == nil || !first.ExpiresAt.After(time.Now()) ||
+		first.WorkplaceType != "Remote" || first.Description != "### Role\n\nBuild the **app**.\n\n- React" || first.ExpiresAt == nil || !first.ExpiresAt.After(time.Now()) ||
 		first.PublishedAt == nil ||
 		first.Pay == nil || first.Pay.Ranges[0].Min != 90000 || first.Pay.Ranges[0].Currency != "USD" || first.Pay.Ranges[0].Interval != "year" {
 		t.Errorf("first = %+v", first)

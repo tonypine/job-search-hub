@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
@@ -19,6 +21,9 @@ const (
 	maximumCareersPageJobs        = 300
 	maximumCareersPageDescription = 40_000
 )
+
+// pageMarkup finds the HTML of a page's text in a role's description.
+var pageMarkup = regexp.MustCompile(`(?i)<(p|div|br|li|ul|ol|h[1-6]|b|strong)\b[^>]*>`)
 
 type recordCompanyJobsInput struct {
 	CompanyID uuid.UUID        `json:"company_id"`
@@ -31,7 +36,7 @@ type careersPageJob struct {
 	Location       string `json:"location,omitempty"`
 	WorkplaceType  string `json:"workplace_type,omitempty" jsonschema:"Remote, Hybrid or On-site, when the page says"`
 	EmploymentType string `json:"employment_type,omitempty" jsonschema:"e.g. Full-time or Contract, when the page says"`
-	Description    string `json:"description,omitempty" jsonschema:"the role's text as its page shows it, in plain text; empty when only the list was read"`
+	Description    string `json:"description,omitempty" jsonschema:"the role's text as its page shows it, in Markdown: headings as ### lines, list items as - lines, bold as **…**; empty when only the list was read"`
 }
 
 func addCareersPageTools(server *mcp.Server, hub *store.Store) {
@@ -78,6 +83,10 @@ func convertCareersPageJobs(jobs []careersPageJob) ([]store.JobPosting, error) {
 		}
 		seen[link] = true
 		description := job.Description
+		// An agent that copies the page's HTML gets it kept as Markdown.
+		if pageMarkup.MatchString(description) {
+			description = textextract.ConvertHTMLToMarkdown(description)
+		}
 		if len(description) > maximumCareersPageDescription {
 			description = strings.ToValidUTF8(description[:maximumCareersPageDescription], "")
 		}

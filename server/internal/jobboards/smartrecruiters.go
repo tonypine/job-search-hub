@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const SmartRecruiters = "smartrecruiters"
@@ -93,8 +94,8 @@ func parseSmartRecruitersPosting(detail []byte) (store.JobPosting, bool, error) 
 	sections := posting.JobAd.Sections
 	job := store.JobPosting{
 		ExternalID: posting.ID, Title: posting.Name, URL: posting.PostingURL,
-		Description: joinSections(convertHTMLToText(sections.CompanyDescription.Text), convertHTMLToText(sections.JobDescription.Text),
-			convertHTMLToText(sections.Qualifications.Text), convertHTMLToText(sections.AdditionalInformation.Text)),
+		Description: joinSections(textextract.ConvertHTMLToMarkdown(sections.CompanyDescription.Text), textextract.ConvertHTMLToMarkdown(sections.JobDescription.Text),
+			textextract.ConvertHTMLToMarkdown(sections.Qualifications.Text), textextract.ConvertHTMLToMarkdown(sections.AdditionalInformation.Text)),
 		Location: posting.Location.FullLocation,
 	}
 	if job.Location == "" {

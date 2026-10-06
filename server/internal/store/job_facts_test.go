@@ -66,3 +66,44 @@ func TestJobsAwaitFactsUntilReadAndAgainWhenThePromptOrTheirTextChanges(t *testi
 		t.Fatalf("awaiting under a new prompt = %v, want the one open job", titles)
 	}
 }
+
+func TestAPostingWhoseTextChangesOnlyInItsMarkdownKeepsItsFacts(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	board := createBoard(t, hub)
+	plain := posting("1", "Engineer")
+	plain.Description = "About the role\nBuild & ship.\n\nYou have:\nReact\nTypeScript\nPay: $100k"
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{plain}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	jobs, _ := hub.ListJobsAwaitingFacts(ctx, prompt.ID, 100)
+	if len(jobs) != 1 {
+		t.Fatalf("awaiting = %+v, want the engineer", jobs)
+	}
+	if err := hub.SaveJobFacts(ctx, store.NewJobFacts{JobID: jobs[0].ID, PromptID: prompt.ID, Model: "test-model", TextHash: jobs[0].TextHash, Facts: json.RawMessage(`{"seniority":"Senior"}`)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next poll keeps the same words as Markdown.
+	markdown := posting("1", "Engineer")
+	markdown.Description = "### About the role\n\nBuild & ship.\n\nYou have:\n\n- React\n  1. TypeScript\n\n**Pay:** $100k"
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{markdown}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if titles := awaitingTitles(t, hub, prompt); len(titles) != 0 {
+		t.Fatalf("awaiting after a change of markup alone = %v, want none", titles)
+	}
+	if count, _ := hub.CountJobsAwaitingFacts(ctx, prompt.ID); count != 0 {
+		t.Fatalf("counted %d awaiting after a change of markup alone, want none", count)
+	}
+
+	reworded := posting("1", "Engineer")
+	reworded.Description = "### About the role\n\nBuild & ship.\n\nYou have:\n\n- React\n- Go\n\n**Pay:** $100k"
+	if _, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{reworded}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if titles := awaitingTitles(t, hub, prompt); len(titles) != 1 {
+		t.Fatalf("awaiting after a change of words = %v, want the engineer", titles)
+	}
+}

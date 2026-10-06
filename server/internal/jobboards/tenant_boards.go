@@ -29,6 +29,15 @@ func joinSections(sections ...string) string {
 	return joinNonEmpty("\n\n", sections...)
 }
 
+// formatSection is a titled part of a posting: its title as a heading over
+// its text.
+func formatSection(title, text string) string {
+	if title = strings.TrimSpace(title); title != "" {
+		title = "### " + title
+	}
+	return joinNonEmpty("\n\n", title, text)
+}
+
 func joinNonEmpty(separator string, parts ...string) string {
 	var kept []string
 	for _, part := range parts {

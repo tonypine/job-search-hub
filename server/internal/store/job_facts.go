@@ -28,8 +28,9 @@ type JobAwaitingFacts struct {
 }
 
 // jobTextHash is what job_facts.text_hash holds: the hash of the job text the
-// facts cover.
-const jobTextHash = `sha256(convert_to(jobs.title || E'\n' || jobs.location || E'\n' || jobs.description, 'UTF8'))`
+// facts cover. It reads the description's words, so a change to its Markdown
+// alone, or to its spacing, doesn't read the facts again.
+const jobTextHash = `sha256(convert_to(jobs.title || E'\n' || jobs.location || E'\n' || posting_words(jobs.description), 'UTF8'))`
 
 // ListJobsAwaitingFacts returns up to limit open, undismissed jobs with a description,
 // newest first, that have no facts, facts from another prompt version, or

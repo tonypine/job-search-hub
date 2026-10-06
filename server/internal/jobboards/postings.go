@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"html"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 // ErrPostingAPIOff means the board exists but its provider does not serve its
@@ -159,7 +159,7 @@ func parseGreenhousePosting(raw json.RawMessage) (store.JobPosting, bool, error)
 		Title:       job.Title,
 		Location:    job.Location.Name,
 		URL:         job.AbsoluteURL,
-		Description: convertHTMLToText(html.UnescapeString(job.Content)),
+		Description: textextract.ConvertHTMLToMarkdown(html.UnescapeString(job.Content)),
 	}
 	posting.PublishedAt = job.FirstPublished
 	var ranges []store.PayRange
@@ -217,7 +217,7 @@ func parseLeverPosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	}
 	sections := []string{posting.DescriptionPlain}
 	for _, list := range posting.Lists {
-		sections = append(sections, list.Text+"\n"+convertHTMLToText(list.Content))
+		sections = append(sections, formatSection(list.Text, textextract.ConvertHTMLToMarkdown(list.Content)))
 	}
 	sections = append(sections, posting.AdditionalPlain)
 	parsed := store.JobPosting{
@@ -375,24 +375,6 @@ func appendOtherLocation(otherLocations []string, mainLocation, location string)
 	return append(otherLocations, location)
 }
 
-var (
-	blockEndTag   = regexp.MustCompile(`(?i)</(p|div|li|h[1-6]|ul|ol)>|<br\s*/?>`)
-	anyTag        = regexp.MustCompile(`<[^>]*>`)
-	blankLineRuns = regexp.MustCompile(`\n{3,}`)
-)
-
-// convertHTMLToText keeps a description readable as plain text: block ends
-// become line breaks, other tags are dropped, entities are decoded.
-func convertHTMLToText(markup string) string {
-	withBreaks := blockEndTag.ReplaceAllString(markup, "\n")
-	text := html.UnescapeString(anyTag.ReplaceAllString(withBreaks, ""))
-	lines := strings.Split(text, "\n")
-	for index, line := range lines {
-		lines[index] = strings.TrimSpace(line)
-	}
-	return strings.TrimSpace(blankLineRuns.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
-}
-
 // parseWorkablePosting reads a job from Workable's widget API, which lists
 // every published job with its locations and description.
 func parseWorkablePosting(raw json.RawMessage) (store.JobPosting, bool, error) {
@@ -428,7 +410,7 @@ func parseWorkablePosting(raw json.RawMessage) (store.JobPosting, bool, error) {
 	}
 	posting := store.JobPosting{
 		ExternalID: job.Shortcode, Title: job.Title, URL: job.URL,
-		Description: convertHTMLToText(html.UnescapeString(job.Description)),
+		Description: textextract.ConvertHTMLToMarkdown(html.UnescapeString(job.Description)),
 	}
 	if len(places) > 0 {
 		posting.Location = places[0]

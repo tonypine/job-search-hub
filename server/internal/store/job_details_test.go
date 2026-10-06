@@ -43,9 +43,9 @@ func TestFactsReadWithEvidenceAreFlattenedIntoTheirValueAndParts(t *testing.T) {
 		"seniority":{"title":"Seniority","type":"object","properties":{"evidence":{"type":"string"},"as_written":{"type":"string"},"levels":{"type":"array"}}},
 		"years_of_experience":{"title":"Years","type":"object","properties":{"evidence":{"type":"string"},"value":{}}}}}`)
 	facts := json.RawMessage(`{
-		"location":{"evidence":"Remote within LATAM","restriction":"LATAM","open_to_brazil":"yes","reason":"LATAM contains Brazil."},
-		"seniority":{"evidence":"","as_written":"Senior","levels":["senior"]},
-		"years_of_experience":{"evidence":"5+ years","value":5}}`)
+		"location":{"evidence":"**Remote** within LATAM","restriction":"LATAM","open_to_brazil":"yes","reason":"LATAM contains Brazil."},
+		"seniority":{"evidence":"### ","as_written":"Senior","levels":["senior"]},
+		"years_of_experience":{"evidence":"  - 5+ years","value":5}}`)
 
 	entries, err := labelJobFacts(facts, schema)
 	if err != nil {

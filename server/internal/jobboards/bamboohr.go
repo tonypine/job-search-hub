@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 const BambooHR = "bamboohr"
@@ -86,7 +87,7 @@ func parseBambooHRPosting(id string, detail []byte) (store.JobPosting, bool, err
 	}
 	opening := answer.Result.JobOpening
 	posting := store.JobPosting{
-		ExternalID: id, Title: opening.Name, URL: opening.ShareURL, Description: convertHTMLToText(opening.Description),
+		ExternalID: id, Title: opening.Name, URL: opening.ShareURL, Description: textextract.ConvertHTMLToMarkdown(opening.Description),
 		Location: opening.Location.describe(),
 	}
 	if posting.Location == "" {

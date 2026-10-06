@@ -132,34 +132,12 @@ struct ProfileDocument: View {
     let markdown: String
 
     var body: some View {
-        let blocks = MarkdownBlocks.parse(markdown)
-        VStack(alignment: .leading, spacing: Space.s) {
-            if blocks.isEmpty {
-                Text("No profile yet. Edit to write one; agents read it as context for every run.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .heading(let level, let text):
-                    Text(inline(text))
-                        .font(level == 1 ? .largeTitle.bold() : .title3.bold())
-                        .padding(.top, level == 1 ? 0 : Space.s)
-                case .bullet(let text):
-                    HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                        Text("•")
-                        Text(inline(text))
-                    }
-                case .paragraph(let text):
-                    Text(inline(text))
-                }
-            }
+        if MarkdownBlocks.parse(markdown).isEmpty {
+            Text("No profile yet. Edit to write one; agents read it as context for every run.")
+                .foregroundStyle(.secondary)
+        } else {
+            MarkdownDocument(markdown)
         }
-        .textSelection(.enabled)
-    }
-
-    private func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
     }
 }
 
