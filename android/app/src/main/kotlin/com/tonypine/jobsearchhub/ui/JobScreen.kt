@@ -69,6 +69,7 @@ import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubErrorView
 import com.tonypine.jobsearchhub.ui.design.HubSection
 import com.tonypine.jobsearchhub.ui.design.HubCard
+import com.tonypine.jobsearchhub.ui.design.MarkdownDocument
 import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.ParentLink
 import com.tonypine.jobsearchhub.ui.design.PersonRow
@@ -359,7 +360,7 @@ private fun PostingSections(details: JobDetails) {
         HubSection("Read from the posting") { HubCard { FactGrid(facts) } }
     }
     details.job.description?.takeIf { it.isNotBlank() }?.let {
-        HubSection("Posting") { HubCard { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+        HubSection("Posting") { HubCard { MarkdownDocument(it) } }
     }
 }
 
