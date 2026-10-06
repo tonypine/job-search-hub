@@ -275,14 +275,25 @@ At 28 MB this takes seconds. `pg_upgrade` would be faster for a large database, 
 two engines plus checks of its own, and dump and restore is the path the backups already prove
 every night.
 
-If any step fails, the server removes `19.partial`, logs why, and runs on the 18 cluster with the
-18 engine it still ships, so the hub keeps working; the next start tries again. That holds only if
-the release's migrations run on both majors, so **a release that moves to a new major ships no
-migration that needs it.** `postgres/18/` stays until a later release removes it, after the new
-cluster has run for a while. An owner whose release no longer carries the old engine is told to
-restore the newest dump, which any newer `pg_restore` reads.
+All of it runs under the lock, before the server serves anything. If any step fails, the server
+removes `19.partial`, logs why, and runs on the 18 cluster with the 18 engine it still ships, so the
+hub keeps working; the next start tries again. While it does, `/v1/health` says so:
+`{"database":"ok","postgres":{"major":18,"upgrade_failed_to":19}}`, where a database on the newest
+major answers `{"database":"ok","postgres":{"major":19}}`. `postgres/18/` stays until a later
+release removes it, after the new cluster has run for a while. An owner whose release no longer
+carries the old engine is refused at start, with the newest dump in `backups/` named and the
+`hub-server database restore` command to restore it, which any newer `pg_restore` reads.
 
-The upgrade path is tested in CI from 17 to 18, so it works before the hub ever needs it.
+**The release rule.** A release that moves to a new major:
+
+- ships the old major's engine beside the new one, and every release keeps shipping it for a year
+  after, so an owner who skips releases still upgrades;
+- ships no migration that needs the new major, and neither does a release that still ships the old
+  engine: a failed upgrade runs the hub on the old one, migrations included.
+
+The upgrade path is tested in CI from 17 to 18 (`server-test` installs both, and
+`internal/postgresprocess` and `cmd/hub-server` run the move against them), so it works before the
+hub ever needs it.
 
 ### Backups
 
