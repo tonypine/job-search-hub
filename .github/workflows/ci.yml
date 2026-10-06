@@ -70,6 +70,8 @@ jobs:
                 # The Mac's Postgres engine has a workflow of its own,
                 # postgres-engine.yml; no job here runs its recipe.
                 scripts/postgres-engine/*|.github/workflows/postgres-engine.yml) ;;
+                # The macos job runs it on a real bundle.
+                scripts/release/verify-app.sh) scripts=true macos=true ;;
                 scripts/*) scripts=true ;;
                 .github/*) all=true ;;
               esac
@@ -343,6 +345,23 @@ jobs:
           test "$(plutil -extract BundleProgram raw "$agent")" = "Contents/Helpers/bin/hub-server"
           codesign --verify --strict --deep "$app"
           echo "The app and its commands are $want"
+
+      # release.yml's verify-app.sh, against real codesign, otool and plutil
+      # output: this ad hoc build fails on its signatures and nothing else, so
+      # its versions read right and it links only the system and the bundle.
+      - name: verify-app.sh refuses the ad hoc bundle, for its signatures alone
+        run: |
+          if ../scripts/release/verify-app.sh build/JobSearchHub.app 0.1.4242 OWNERTEAM1 2> "$RUNNER_TEMP/verify-app"; then
+            echo "::error::verify-app.sh passed an ad hoc bundle."
+            exit 1
+          fi
+          sed 's/^::error:://' "$RUNNER_TEMP/verify-app"
+          grep -q '^::error::Contents/Helpers/bin/hub-server is signed ad hoc' "$RUNNER_TEMP/verify-app"
+          grep -q '^::error::Contents/MacOS/JobSearchHub is signed ad hoc' "$RUNNER_TEMP/verify-app"
+          if grep -v -e 'is signed ad hoc, not by team' -e 'is not fit to publish' "$RUNNER_TEMP/verify-app"; then
+            echo "::error::verify-app.sh found more than the ad hoc signatures, above."
+            exit 1
+          fi
 
   android:
     needs: changes
