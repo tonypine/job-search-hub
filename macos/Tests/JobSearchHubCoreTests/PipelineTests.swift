@@ -1,4 +1,5 @@
 import Foundation
+import HubTestSupport
 @testable import JobSearchHubCore
 import Testing
 
