@@ -91,19 +91,32 @@ struct HubStatusFooter: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// What the local models are doing, or why the footer can't say or
+    /// couldn't pause them; a failed pause stays until the next try.
+    @ViewBuilder
     private var modelLine: some View {
-        let work = problem == nil ? modelWork.work : nil
-        return HStack(spacing: Space.s) {
-            Group {
-                if work?.running != nil && work?.paused == false {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: work?.paused == true ? "pause.circle" : "cpu")
-                }
+        if problem == nil, let failure = modelWork.pauseFailure ?? modelWork.failure {
+            HStack(spacing: Space.s) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .frame(width: Self.symbolWidth)
+                Text(failure.title)
             }
-            .frame(width: Self.symbolWidth)
-            Text(work?.statusLine ?? "Local models unknown")
-                .foregroundStyle(.secondary)
+            .foregroundStyle(Tone.negative.color)
+            .help([failure.report.advice, failure.report.details].compactMap { $0 }.joined(separator: "\n\n"))
+        } else {
+            let work = problem == nil ? modelWork.work : nil
+            HStack(spacing: Space.s) {
+                Group {
+                    if work?.running != nil && work?.paused == false {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: work?.paused == true ? "pause.circle" : "cpu")
+                    }
+                }
+                .frame(width: Self.symbolWidth)
+                Text(work?.statusLine ?? "Local models unknown")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -131,7 +144,7 @@ struct HubStatusFooter: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .disabled(modelWork.work == nil || problem != nil)
+        .disabled(modelWork.work == nil || modelWork.failure != nil || problem != nil)
         .help(paused ? "Resume the local models' background work" : "Pause the local models' background work; runs you start still go ahead")
     }
 
