@@ -1,0 +1,380 @@
+// Package postgresprocess runs one Postgres cluster as a child of the server:
+// it creates the cluster, starts it, waits for it, stops one an earlier server
+// left behind, and stops it again. The cluster listens only on a Unix socket in
+// its folder, and only the owner's user can reach it.
+package postgresprocess
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	// User owns the cluster and every object in it; DatabaseName is the hub's
+	// database in it.
+	User         = "hub"
+	DatabaseName = "hub"
+
+	lockFileName = "hub-server.lock"
+	port         = "5432"
+	socketName   = ".s.PGSQL." + port
+	// maxSocketPath is the longest socket path macOS takes: sun_path holds
+	// 104 bytes with the terminating NUL.
+	maxSocketPath = 103
+
+	startTimeout = 30 * time.Second
+	stopTimeout  = 20 * time.Second
+	logLinesKept = 20
+)
+
+// ErrLocked means another server, or a database command, holds the folder's
+// lock and owns the cluster.
+var ErrLocked = errors.New("another hub-server or database command owns this database")
+
+type Settings struct {
+	// Engine is a Postgres installation's folder, holding bin/initdb,
+	// bin/postgres and bin/pg_ctl. The folder it sits in is the engines
+	// folder: an orphan is stopped only if it runs a postgres from there.
+	Engine string
+	// Dir holds the lock, the socket and the clusters, one per major in
+	// <Dir>/<major>.
+	Dir string
+}
+
+// Cluster is a running Postgres the caller owns until Stop.
+type Cluster struct {
+	dir     string
+	dataDir string
+	lock    *os.File
+	command *exec.Cmd
+	log     *recentLines
+
+	// exited closes when postgres ends, whoever ended it.
+	exited   chan struct{}
+	exitErr  error
+	stopping atomic.Bool
+	stopOnce sync.Once
+}
+
+// Start takes the folder's lock, creates the cluster if there is none, stops
+// a Postgres an earlier server left running on it, and starts postgres as a
+// child. It returns once the hub database accepts connections.
+func Start(ctx context.Context, settings Settings) (*Cluster, error) {
+	engine, err := filepath.Abs(settings.Engine)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := filepath.Abs(settings.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if socket := filepath.Join(dir, socketName); len(socket) > maxSocketPath {
+		return nil, fmt.Errorf("the database socket's path, %s, is %d characters; macOS allows %d, so move the database folder somewhere shorter", socket, len(socket), maxSocketPath)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create the database folder: %w", err)
+	}
+	lock, err := takeLock(filepath.Join(dir, lockFileName))
+	if err != nil {
+		return nil, err
+	}
+	cluster, err := start(ctx, engine, dir, lock)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return cluster, nil
+}
+
+func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, error) {
+	major, err := getMajor(engine)
+	if err != nil {
+		return nil, err
+	}
+	dataDir := filepath.Join(dir, major)
+	if err := createIfMissing(ctx, engine, dataDir); err != nil {
+		return nil, err
+	}
+	if err := stopOrphan(ctx, engine, dataDir); err != nil {
+		return nil, err
+	}
+	if err := clearStaleSocketLock(engine, filepath.Join(dir, socketName+".lock")); err != nil {
+		return nil, err
+	}
+
+	command := exec.Command(filepath.Join(engine, "bin", "postgres"),
+		"-D", dataDir,
+		"-c", "listen_addresses=",
+		"-c", "port="+port,
+		"-c", "unix_socket_directories="+dir,
+		"-c", "unix_socket_permissions=0700",
+		"-c", "max_connections=30",
+	)
+	// The write end goes to postgres and its backends; Wait doesn't wait for
+	// it, so a crash is seen even while a dying backend still holds it.
+	logReader, logWriter, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	command.Stderr = logWriter
+	if err := command.Start(); err != nil {
+		logReader.Close()
+		logWriter.Close()
+		return nil, fmt.Errorf("start postgres: %w", err)
+	}
+	logWriter.Close()
+	cluster := &Cluster{dir: dir, dataDir: dataDir, lock: lock, command: command, log: &recentLines{}, exited: make(chan struct{})}
+	logDone := make(chan struct{})
+	go func() {
+		cluster.log.copyToSlog(logReader)
+		logReader.Close()
+		close(logDone)
+	}()
+	go func() {
+		waitErr := command.Wait()
+		if !cluster.stopping.Load() {
+			// Give the reader a moment to take the last lines it wrote.
+			select {
+			case <-logDone:
+			case <-time.After(2 * time.Second):
+			}
+			cluster.exitErr = cluster.describeExit(waitErr)
+			slog.Error("postgres stopped by itself", "error", cluster.exitErr)
+		}
+		close(cluster.exited)
+	}()
+	slog.Info("postgres starting", "data", dataDir, "pid", command.Process.Pid)
+
+	if err := cluster.waitUntilReady(ctx); err != nil {
+		cluster.stopPostgres()
+		return nil, err
+	}
+	slog.Info("postgres ready", "data", dataDir)
+	return cluster, nil
+}
+
+// URL is the hub database's connection URL, for pgx and pg_dump.
+func (cluster *Cluster) URL() string {
+	return databaseURL(cluster.dir, DatabaseName)
+}
+
+// DataDir is the cluster's data directory.
+func (cluster *Cluster) DataDir() string {
+	return cluster.dataDir
+}
+
+// PID is the postmaster's process ID.
+func (cluster *Cluster) PID() int {
+	return cluster.command.Process.Pid
+}
+
+// Exited closes when postgres has exited, after Stop or on its own.
+func (cluster *Cluster) Exited() <-chan struct{} {
+	return cluster.exited
+}
+
+// ExitError says why postgres exited on its own. It is nil while postgres
+// runs and after Stop stopped it.
+func (cluster *Cluster) ExitError() error {
+	select {
+	case <-cluster.exited:
+		return cluster.exitErr
+	default:
+		return nil
+	}
+}
+
+// Stop shuts postgres down, fast (SIGINT) and then, after 20 seconds,
+// immediately (SIGQUIT, recovered from the WAL at the next start), and
+// releases the folder's lock.
+func (cluster *Cluster) Stop() {
+	cluster.stopOnce.Do(func() {
+		cluster.stopPostgres()
+		cluster.lock.Close()
+	})
+}
+
+func (cluster *Cluster) stopPostgres() {
+	cluster.stopping.Store(true)
+	select {
+	case <-cluster.exited:
+	default:
+		_ = cluster.command.Process.Signal(syscall.SIGINT)
+		select {
+		case <-cluster.exited:
+		case <-time.After(stopTimeout):
+			slog.Warn("postgres didn't stop within the timeout; quitting it", "timeout", stopTimeout.String())
+			_ = cluster.command.Process.Signal(syscall.SIGQUIT)
+			<-cluster.exited
+		}
+		slog.Info("postgres stopped", "data", cluster.dataDir)
+	}
+}
+
+func (cluster *Cluster) waitUntilReady(ctx context.Context) error {
+	deadline := time.After(startTimeout)
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := createHubDatabase(attempt, cluster.dir)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-cluster.exited:
+			return fmt.Errorf("postgres exited while starting: %w", cluster.exitErr)
+		case <-deadline:
+			return fmt.Errorf("postgres didn't accept connections within %s: %v%s", startTimeout, err, cluster.log.String())
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// createHubDatabase connects to the maintenance database and creates the
+// hub's, which initdb doesn't, if it isn't there yet.
+func createHubDatabase(ctx context.Context, dir string) error {
+	connection, err := pgx.Connect(ctx, databaseURL(dir, "postgres"))
+	if err != nil {
+		return err
+	}
+	defer connection.Close(context.Background())
+	var exists bool
+	if err := connection.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", DatabaseName).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = connection.Exec(ctx, "CREATE DATABASE "+DatabaseName)
+	return err
+}
+
+func (cluster *Cluster) describeExit(waitErr error) error {
+	reason := "exited"
+	if waitErr != nil {
+		reason = waitErr.Error()
+	}
+	return fmt.Errorf("postgres %s%s", reason, cluster.log.String())
+}
+
+// databaseURL escapes a space as %20, not +, which libpq would keep as a plus.
+func databaseURL(dir, database string) string {
+	host := strings.ReplaceAll(url.QueryEscape(dir), "+", "%20")
+	return "postgres:///" + database + "?host=" + host + "&user=" + User
+}
+
+// takeLock holds an exclusive flock on path until the returned file closes,
+// or the process ends, however it ends.
+func takeLock(path string) (*os.File, error) {
+	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open the database lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		holder, _ := io.ReadAll(lock)
+		lock.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("%w: %s is held by %s", ErrLocked, path, describeHolder(string(holder)))
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	// Say who holds it, for the one that's refused.
+	if executable, err := os.Executable(); err == nil {
+		_ = lock.Truncate(0)
+		_, _ = lock.WriteAt(fmt.Appendf(nil, "%d %s\n", os.Getpid(), filepath.Base(executable)), 0)
+	}
+	return lock, nil
+}
+
+func describeHolder(holder string) string {
+	pid, command, found := strings.Cut(strings.TrimSpace(holder), " ")
+	if !found {
+		return "another process"
+	}
+	return fmt.Sprintf("%s (PID %s)", command, pid)
+}
+
+var versionPattern = regexp.MustCompile(`\(PostgreSQL\) (\d+)`)
+
+// getMajor asks the engine's postgres for its major version, which names
+// the cluster's folder.
+func getMajor(engine string) (string, error) {
+	output, err := exec.Command(filepath.Join(engine, "bin", "postgres"), "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("ask the Postgres engine in %s for its version: %w", engine, err)
+	}
+	match := versionPattern.FindSubmatch(output)
+	if match == nil {
+		return "", fmt.Errorf("unexpected postgres --version output: %q", output)
+	}
+	return string(match[1]), nil
+}
+
+func createIfMissing(ctx context.Context, engine, dataDir string) error {
+	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	slog.Info("creating the database cluster", "data", dataDir)
+	output, err := exec.CommandContext(ctx, filepath.Join(engine, "bin", "initdb"),
+		"-D", dataDir,
+		"--username="+User,
+		"--auth-local=trust",
+		"--encoding=UTF8",
+		"--locale-provider=builtin",
+		"--builtin-locale=C.UTF-8",
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("initdb: %w: %s", err, output)
+	}
+	return nil
+}
+
+// recentLines logs postgres's output and keeps its last lines for errors.
+type recentLines struct {
+	mutex sync.Mutex
+	lines []string
+}
+
+func (recent *recentLines) copyToSlog(reader io.Reader) {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		slog.Info(line, "process", "postgres")
+		recent.mutex.Lock()
+		recent.lines = append(recent.lines, line)
+		if len(recent.lines) > logLinesKept {
+			recent.lines = recent.lines[len(recent.lines)-logLinesKept:]
+		}
+		recent.mutex.Unlock()
+	}
+}
+
+// String is the last lines, on lines of their own after a colon, or nothing.
+func (recent *recentLines) String() string {
+	recent.mutex.Lock()
+	defer recent.mutex.Unlock()
+	if len(recent.lines) == 0 {
+		return ""
+	}
+	return "; its last log lines:\n" + strings.Join(recent.lines, "\n")
+}
