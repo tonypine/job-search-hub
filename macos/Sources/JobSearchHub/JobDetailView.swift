@@ -57,7 +57,7 @@ extension JobDetailModel {
 
 extension JobDetailModel {
     /// Reads the job's company and the people there, once per job: the
-    /// header shows its size, the People card who to write to.
+    /// header shows its industry and size, the People card who to write to.
     func loadCompany(_ companyID: UUID, with client: HubClient) async {
         async let people = try? client.get("v1/people", query: PeopleQuery.make(companyID: companyID), as: PeopleResponse.self).people
         async let dossier = try? client.get("v1/companies/\(companyID.uuidString)", as: CompanyDossier.self)
@@ -292,7 +292,8 @@ struct JobDetailView: View {
         }
     }
 
-    /// "Northwind · 51-200 people", the name opening the company.
+    /// "Northwind · Developer tools · 51-200 people", the name opening the
+    /// company.
     private func companyLine(_ details: JobDetails) -> some View {
         HStack(spacing: Space.xs) {
             if let name = details.companyName, !name.isEmpty {
@@ -306,8 +307,8 @@ struct JobDetailView: View {
             } else {
                 Text("Job").foregroundStyle(.secondary)
             }
-            if let size = model.company?.employeeCountRange, !size.isEmpty {
-                Text("· \(size) people").foregroundStyle(.secondary)
+            if let facts = model.company?.industryAndSize {
+                Text("· \(facts)").foregroundStyle(.secondary)
             }
         }
         .font(.hubSecondary)

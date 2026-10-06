@@ -11,6 +11,8 @@ public struct Company: Codable, Equatable, Identifiable, Sendable {
     public var websiteURL: String?
     public var careersURL: String?
     public var headquartersCountry: String?
+    /// The company's market, e.g. "Developer tools"; nil until researched.
+    public var industry: String?
     public var employeeCountRange: String?
     public var summary: String?
     public var foundVia: String?
@@ -18,9 +20,16 @@ public struct Company: Codable, Equatable, Identifiable, Sendable {
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, name, domain, headquartersCountry, employeeCountRange, summary, foundVia, createdAt, updatedAt
+        case id, name, domain, headquartersCountry, industry, employeeCountRange, summary, foundVia, createdAt, updatedAt
         case websiteURL = "websiteUrl"
         case careersURL = "careersUrl"
+    }
+
+    /// "Developer tools · 51-200 people", what follows the company's name in
+    /// a job's header; nil when the hub knows neither.
+    public var industryAndSize: String? {
+        let facts = [industry, employeeCountRange.map { "\($0) people" }].compactMap { $0 }.filter { !$0.isEmpty }
+        return facts.isEmpty ? nil : facts.joined(separator: " · ")
     }
 }
 
