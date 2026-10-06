@@ -54,7 +54,11 @@ if [ -z "$log" ]; then
 	exit 0
 fi
 
-printf '%s\n' "$log" | awk '
+# awk reads bytes in the C locale. The Mac's awk takes substr by bytes but,
+# under a UTF-8 locale, refuses a toupper of half a character, as when a
+# subject reads "feat: ⌘K …". In C, every awk passes those bytes through and
+# capitalizes only ASCII letters, so both releases write the same notes.
+printf '%s\n' "$log" | LC_ALL=C awk '
 	function add(section, text) {
 		line = "- " (tags != "" ? tags ": " : "") text "\n"
 		if (section == "new") new = new line
