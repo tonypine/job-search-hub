@@ -11,21 +11,38 @@
 #
 # workflow_run runs this file from main with the repository's secrets, so it
 # only ever builds a commit already on main, never a pull request's code.
+#
+# GITHUB_TOKEN may only tag a commit whose .github/workflows matches main's
+# tip: anything else counts as creating workflows, which takes the workflows
+# permission no GITHUB_TOKEN can have, and the release API answers "HTTP 403:
+# Resource not accessible by integration". So a commit that a later merge
+# changing .github/workflows left behind is not released, and the next release
+# from main carries its changes. See scripts/release/tag-allowed.sh. For the
+# same reason, a failed run re-run after main has moved on may release
+# nothing; Run workflow with no tag releases main's tip instead.
 name: release
 
 on:
   workflow_run:
     workflows: [ci]
     types: [completed]
-  # Posts the Linear update for existing releases again.
+  # From main: with no tags, releases what main's tip changed since each
+  # app's previous release, and gives an app without one its first. With
+  # tags, only posts those releases' Linear update again.
   workflow_dispatch:
     inputs:
       tags:
-        description: The run's release tags to post to Linear, e.g. mac-v0.1.123 android-v0.1.123
-        required: true
+        description: The run's release tags to post to Linear again, e.g. mac-v0.1.123 android-v0.1.123. Leave it empty to release main's tip.
+        required: false
+        default: ""
 
 permissions:
   contents: read
+
+env:
+  # The commit a release builds and tags: the one ci passed on, or main's tip
+  # for a run by hand.
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 # One release at a time, in merge order, and a running one is never cancelled.
 # GitHub keeps only the newest waiting run; one it drops is harmless, since the
@@ -34,10 +51,12 @@ permissions:
 # own, so it never takes a waiting release's place.
 concurrency:
   group: >-
-    ${{ github.event_name == 'workflow_run' &&
+    ${{ (github.event_name == 'workflow_run' &&
     github.event.workflow_run.conclusion == 'success' &&
     github.event.workflow_run.event == 'push' &&
-    github.event.workflow_run.head_branch == 'main' &&
+    github.event.workflow_run.head_branch == 'main' ||
+    github.event_name == 'workflow_dispatch' && inputs.tags == '' &&
+    github.ref == 'refs/heads/main') &&
     'release-main' || format('release-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -48,7 +67,9 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event.workflow_run.head_repository.full_name == github.repository ||
+      github.event_name == 'workflow_dispatch' && inputs.tags == '' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -61,16 +82,33 @@ jobs:
       android_previous_tag: ${{ steps.plan.outputs.android_previous_tag }}
       android_tag: ${{ steps.plan.outputs.android_tag }}
     steps:
+      # fetch-depth 0 fetches every branch too, so origin/main is main's tip.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.SHA }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
 
+      # Plans nothing, so no job builds, when the commit can't be tagged.
       - id: plan
         run: |
-          scripts/release/plan.sh > "$RUNNER_TEMP/plan"
+          status=0
+          why=$(scripts/release/tag-allowed.sh "$SHA" "$(git rev-parse origin/main:.github/workflows)") || status=$?
+          case $status in
+            0) ;;
+            1)
+              echo "::notice::$why"
+              echo "$why" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            *) exit "$status" ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            scripts/release/plan.sh --manual > "$RUNNER_TEMP/plan"
+          else
+            scripts/release/plan.sh > "$RUNNER_TEMP/plan"
+          fi
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/plan"
 
   # The Mac app, with the server and its commands inside, signed with the
@@ -84,8 +122,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
       TAG: ${{ needs.plan.outputs.mac_tag }}
       VERSION_CODE: ${{ needs.plan.outputs.version_code }}
       VERSION_NAME: ${{ needs.plan.outputs.version_name }}
@@ -206,11 +245,28 @@ jobs:
           scripts/release/changelog.sh "$PREVIOUS_TAG" "$SHA" server/ macos/ > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
 
-      # Creates the tag at the built commit along with the release.
+      # Creates the tag at the built commit along with the release, if
+      # GitHub lets the workflow's token tag it (see the top of this file).
+      # The tag goes to the linear job only once it's published.
       - name: Publish the release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # main may have moved on while the app built.
+          main_tree=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github?ref=main" \
+            --jq '.[] | select(.name == "workflows" and .type == "dir") | .sha')
+          status=0
+          why=$(scripts/release/tag-allowed.sh "$SHA" "$main_tree") || status=$?
+          case $status in
+            0) ;;
+            1)
+              echo "::warning::$why"
+              echo "$why" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            *) exit "$status" ;;
+          esac
           gh release create "$TAG" \
             "$RUNNER_TEMP/assets/Job-Search-Hub-$VERSION_NAME.zip" \
             "$RUNNER_TEMP/assets/Job-Search-Hub-$VERSION_NAME.zip.sha256" \
@@ -218,6 +274,7 @@ jobs:
             --target "$SHA" \
             --title "Job Search Hub $VERSION_NAME for Mac" \
             --notes-file "$RUNNER_TEMP/notes.md"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   android:
     needs: plan
@@ -226,8 +283,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
       TAG: ${{ needs.plan.outputs.android_tag }}
       VERSION_CODE: ${{ needs.plan.outputs.version_code }}
       VERSION_NAME: ${{ needs.plan.outputs.version_name }}
@@ -238,11 +296,10 @@ jobs:
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           missing=
-          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_PASSWORD; do
             if [ -z "$(printenv "$name")" ]; then
               echo "::error::The repository secret $name is missing. See the README's Releases › One-time setup."
               missing=1
@@ -289,11 +346,13 @@ jobs:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
 
+      # The key's alias is no secret: as one, its value, the repository's
+      # name, came out as *** in every log.
       - name: Build the release APK
         working-directory: android
         env:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_ALIAS: ${{ vars.RELEASE_KEY_ALIAS || 'job-search-hub' }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           export RELEASE_KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
@@ -314,28 +373,46 @@ jobs:
           scripts/release/changelog.sh "$PREVIOUS_TAG" "$SHA" android/ > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
 
-      # Creates the tag at the built commit along with the release.
+      # Creates the tag at the built commit along with the release, if
+      # GitHub lets the workflow's token tag it (see the top of this file).
+      # The tag goes to the linear job only once it's published.
       - name: Publish the release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # main may have moved on while the app built.
+          main_tree=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github?ref=main" \
+            --jq '.[] | select(.name == "workflows" and .type == "dir") | .sha')
+          status=0
+          why=$(scripts/release/tag-allowed.sh "$SHA" "$main_tree") || status=$?
+          case $status in
+            0) ;;
+            1)
+              echo "::warning::$why"
+              echo "$why" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            *) exit "$status" ;;
+          esac
           gh release create "$TAG" "$RUNNER_TEMP/job-search-hub-$VERSION_NAME.apk" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SHA" \
             --title "Android $VERSION_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-  # Announces every platform this run released in one Linear update, so a
-  # platform whose job failed is left out. Optional: without
-  # LINEAR_RELEASE_API_KEY it only says so. If Linear refuses, this job fails
-  # and the releases stay published; run the workflow by hand with the tags to
-  # post again.
+  # Announces every platform this run published in one Linear update, so a
+  # platform whose job failed, or whose commit couldn't be tagged, is left
+  # out. Optional: without LINEAR_RELEASE_API_KEY it only says so. If Linear
+  # refuses, this job fails and the releases stay published; run the workflow
+  # by hand with the tags to post again.
   linear:
-    needs: [plan, mac, android]
+    needs: [mac, android]
     if: >-
       always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      needs.mac.result == 'success' || needs.android.result == 'success')
+      (needs.mac.outputs.tag != '' || needs.android.outputs.tag != '' ||
+      github.event_name == 'workflow_dispatch' && inputs.tags != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -346,15 +423,15 @@ jobs:
       - name: Post the Linear update
         env:
           DISPATCH_TAGS: ${{ inputs.tags }}
-          MAC_TAG: ${{ needs.mac.result == 'success' && needs.plan.outputs.mac_tag || '' }}
-          ANDROID_TAG: ${{ needs.android.result == 'success' && needs.plan.outputs.android_tag || '' }}
+          MAC_TAG: ${{ needs.mac.outputs.tag }}
+          ANDROID_TAG: ${{ needs.android.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_RELEASE_API_KEY }}
           LINEAR_PROJECT: Job Search Hub
         # $tags is split on purpose, one argument a tag, and never globbed.
         run: |
           set -f
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          if [ -n "$DISPATCH_TAGS" ]; then
             tags=$DISPATCH_TAGS
           else
             tags="$MAC_TAG $ANDROID_TAG"
