@@ -18,7 +18,7 @@ import Observation
 @Observable
 public final class HubConnection {
     public static let defaultHubURL = "http://localhost:8090"
-    public static let qaModeArgument = "--qa-mode"
+    public nonisolated static let qaModeArgument = "--qa-mode"
     private static let hubURLPreferenceKey = "hubURL"
 
     public var hubURLText: String
