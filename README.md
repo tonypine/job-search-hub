@@ -162,6 +162,18 @@ A Linear update that failed can be posted again from Actions › release › Run
 
 To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
 
+### Versions
+
+Every part of the hub carries one version, `0.1.<N>`, where `N` is the commit count on `main`, as the APK's `versionCode` is: the Mac app (`CFBundleShortVersionString` and `CFBundleVersion`), `hub-server`, `hub` and `hub-cvprint`. `scripts/release/version.sh` prints it. A release build passes `HUB_VERSION_CODE=<N>`, as `release.yml` passes `-PversionCode` to Gradle; any other build is `0.1.0-dev.<short commit>`. `macos/Scripts/make-app.sh`, `macos/Scripts/build-cvprint.sh` and `server/scripts/install-native-server.sh` stamp it, the Go commands with `version.sh --go-ldflags`.
+
+- **About Job Search Hub** shows the app's version, and Settings › Phones each phone's, once it has called the hub.
+- `hub-server --version` prints the version, the commit and the newest migration it knows; `hub --version` and `hub-cvprint --version` print theirs.
+- `GET /v1/version`, which needs no token, answers `{"version":"0.1.<N>","commit":"…","newest_migration":84}`.
+
+The apps send `X-Hub-Client: macos/<version>` or `android/<version>` with every request, and the server keeps each paired phone's. It can answer an app it no longer serves with `426 Upgrade Required` and a message, which the app shows in place of the page; `clientMinimums` in `server/cmd/hub-server/main.go` sets the oldest release per platform, and none is turned away yet.
+
+The server refuses to start on a database migrated past its newest migration, by a newer release, and logs `The database is at migration 91; this server knows up to 88. Install 0.1.<M> or later, or restore a backup from before it.` Each release records itself in the database as the first to know its newest migration, which is how an older server names `0.1.<M>`.
+
 ### Moving to a new Postgres major
 
 The server runs its database on the newest engine in `engines/`. When an update adds a newer major beside the one the database is on, say `postgres-19` beside `postgres-18`, the next start moves the data: it dumps the 18 cluster with 19's `pg_dump` to `backups/hub-pre-upgrade-18-to-19-<date>.dump`, restores the dump into a new cluster, `postgres/19.partial`, checks that every table has the rows it had, renames it to `postgres/19/`, and starts on it. The old `postgres/18/` stays; a later release removes it.
