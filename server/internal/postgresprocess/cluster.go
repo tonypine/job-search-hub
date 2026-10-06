@@ -39,8 +39,16 @@ const (
 	maxSocketPath = 103
 
 	startTimeout = 30 * time.Second
-	stopTimeout  = 20 * time.Second
 	logLinesKept = 20
+)
+
+var (
+	// stopTimeout is how long a fast shutdown, or initdb's own cleanup, may
+	// take before it is cut short.
+	stopTimeout = 20 * time.Second
+	// quitTimeout is how long postgres may take to quit after SIGQUIT. It
+	// gives its children 5 seconds before it kills them.
+	quitTimeout = 10 * time.Second
 )
 
 // ErrLocked means another server, or a database command, holds the folder's
@@ -201,8 +209,9 @@ func (cluster *Cluster) ExitError() error {
 	}
 }
 
-// Stop shuts postgres down, fast (SIGINT) and then, after 20 seconds,
-// immediately (SIGQUIT, recovered from the WAL at the next start), and
+// Stop shuts postgres down, fast (SIGINT); after 20 seconds, immediately
+// (SIGQUIT, recovered from the WAL at the next start); and after 10 more, as
+// one that is suspended or stuck never takes either, with SIGKILL. Then it
 // releases the folder's lock.
 func (cluster *Cluster) Stop() {
 	cluster.stopOnce.Do(func() {
@@ -222,7 +231,13 @@ func (cluster *Cluster) stopPostgres() {
 		case <-time.After(stopTimeout):
 			slog.Warn("postgres didn't stop within the timeout; quitting it", "timeout", stopTimeout.String())
 			_ = cluster.command.Process.Signal(syscall.SIGQUIT)
-			<-cluster.exited
+			select {
+			case <-cluster.exited:
+			case <-time.After(quitTimeout):
+				slog.Warn("postgres didn't quit within the timeout; killing it", "timeout", quitTimeout.String())
+				_ = cluster.command.Process.Kill()
+				<-cluster.exited
+			}
 		}
 		slog.Info("postgres stopped", "data", cluster.dataDir)
 	}

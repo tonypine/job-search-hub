@@ -576,3 +576,76 @@ func TestACreateDatabaseSlowerThanAConnectionAttemptDoesntFailTheStart(t *testin
 		t.Fatalf("current_database() = %q", got)
 	}
 }
+
+func TestAPidFileAndSocketLockThatNameNoProcessStopTheStartAndAreKept(t *testing.T) {
+	dir, dataDir := newStoppedCluster(t)
+	// What a crash while Postgres wrote both can leave.
+	pidFile := filepath.Join(dataDir, "postmaster.pid")
+	socketLock := filepath.Join(dir, ".s.PGSQL.5432.lock")
+	for _, path := range []string{pidFile, socketLock} {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := startExpectingFailure(t, dir); !strings.Contains(err.Error(), "can't tell whether a Postgres is using the cluster") {
+		t.Fatalf("a malformed postmaster.pid beside a malformed socket lock: %v", err)
+	}
+	assertContent(t, pidFile, "")
+	assertContent(t, socketLock, "")
+}
+
+func TestASocketLockThatCantBeReadStopsTheStartAndIsKept(t *testing.T) {
+	for name, test := range map[string]struct {
+		content string
+		mode    os.FileMode
+	}{
+		"malformed":  {content: "not a pid\n", mode: 0o600},
+		"unreadable": {content: pidFileContent(os.Getpid(), "/data", "/socket"), mode: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := newStoppedCluster(t)
+			socketLock := filepath.Join(dir, ".s.PGSQL.5432.lock")
+			if err := os.WriteFile(socketLock, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(socketLock, test.mode); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := startExpectingFailure(t, dir); !strings.Contains(err.Error(), "can't tell whether another Postgres is using the socket") {
+				t.Fatalf("a %s socket lock: %v", name, err)
+			}
+			if err := os.Chmod(socketLock, 0o600); err != nil {
+				t.Fatalf("the file is gone: %v", err)
+			}
+			assertContent(t, socketLock, test.content)
+		})
+	}
+}
+
+func TestStopKillsAPostgresThatIgnoresItsSignals(t *testing.T) {
+	postgresprocess.ShortenStopTimeouts(t, time.Second, time.Second)
+	cluster := start(t, newDir(t))
+	pid := cluster.PID()
+	// A suspended postmaster keeps SIGINT and SIGQUIT pending.
+	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
+
+	stopped := make(chan struct{})
+	go func() {
+		cluster.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Stop didn't return")
+	}
+	waitUntilGone(t, pid)
+	if err := cluster.ExitError(); err != nil {
+		t.Fatalf("a stop by the owner is reported as %v", err)
+	}
+}
