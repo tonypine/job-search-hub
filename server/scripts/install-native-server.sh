@@ -132,9 +132,20 @@ EOF
 echo "==> Starting $label"
 stop_agent
 if [[ -n "$engine_new" ]]; then
+  # A swap that fails or is interrupted puts the old engine back: the
+  # server ignores postgres-18.old, so the next start would find none.
+  restore_engine() {
+    if [[ ! -d "$engine_dir" && -d "$engine_dir.old" ]]; then mv "$engine_dir.old" "$engine_dir"; fi
+  }
+  trap 'restore_engine; exit 1' INT TERM HUP
   rm -rf "$engine_dir.old"
   if [[ -d "$engine_dir" ]]; then mv "$engine_dir" "$engine_dir.old"; fi
-  mv "$engine_new/$engine_name" "$engine_dir"
+  mv "$engine_new/$engine_name" "$engine_dir" || {
+    restore_engine
+    echo "Couldn't install the engine in $engine_dir." >&2
+    exit 1
+  }
+  trap - INT TERM HUP
   rm -rf "$engine_dir.old" "$engine_new"
   echo "Installed Postgres $engine_version in $engine_dir"
 fi

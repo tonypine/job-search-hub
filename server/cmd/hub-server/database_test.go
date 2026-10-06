@@ -5,13 +5,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
+	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
 
 // ownedDatabaseSettings is a server without HUB_DATABASE_URL whose engines
@@ -121,5 +124,77 @@ func TestNoEngineStopsTheStartBeforeAnyDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "postgres")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the database folder was created: %v", err)
+	}
+}
+
+// externalDatabaseURL is a new, migrated database's URL, like a
+// HUB_DATABASE_URL naming Docker's Postgres.
+func externalDatabaseURL(t *testing.T) string {
+	t.Helper()
+	var name string
+	if err := testdatabase.New(t).QueryRow(context.Background(), "SELECT current_database()").Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	address, err := url.Parse(os.Getenv("HUB_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address.Path = "/" + name
+	return address.String()
+}
+
+func TestADatabaseURLKeepsTheServerOnThatPostgres(t *testing.T) {
+	databaseURL := externalDatabaseURL(t)
+	ctx := context.Background()
+	database := openOwnedDatabase(t, config{databaseURL: databaseURL})
+
+	var companies int
+	if err := database.pool.QueryRow(ctx, "SELECT count(*) FROM companies").Scan(&companies); err != nil {
+		t.Fatalf("the database isn't migrated: %v", err)
+	}
+	if database.url != databaseURL {
+		t.Fatalf("url = %s, want %s", database.url, databaseURL)
+	}
+	// Dumps use the pg_dump on the PATH, as before the server ran Postgres.
+	if database.pgDump != "pg_dump" {
+		t.Fatalf("pg_dump = %s, want pg_dump", database.pgDump)
+	}
+	if database.cluster != nil {
+		t.Fatal("the server started a Postgres of its own")
+	}
+	if database.Exited() != nil || database.ExitError() != nil {
+		t.Fatalf("a Postgres the server doesn't run exited: %v", database.ExitError())
+	}
+
+	pgDump := "/usr/lib/postgresql/18/bin/pg_dump"
+	if kept := openOwnedDatabase(t, config{databaseURL: databaseURL, pgDump: pgDump}); kept.pgDump != pgDump {
+		t.Fatalf("pg_dump = %s, want %s", kept.pgDump, pgDump)
+	}
+}
+
+func TestTheServersPostgresStoppingByItselfIsSignalled(t *testing.T) {
+	settings, _ := ownedDatabaseSettings(t)
+	database := openOwnedDatabase(t, settings)
+	if err := syscall.Kill(database.cluster.PID(), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-database.Exited():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Exited didn't close after postgres was killed")
+	}
+	if database.ExitError() == nil {
+		t.Fatal("ExitError is nil after postgres was killed")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		database.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close hung after postgres was killed")
 	}
 }
