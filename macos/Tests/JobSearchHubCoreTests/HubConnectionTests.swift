@@ -11,15 +11,18 @@ private func makePreferences() -> UserDefaults {
 }
 
 @MainActor @Test func inQAModeTheClientUsesHUB_OWNER_TOKENWithNoKeychainEntry() async {
+    let preferences = makePreferences()
+    preferences.set("preferences-token", forKey: HubConnection.ownerTokenPreferenceKey)
     let connection = HubConnection(
         arguments: ["JobSearchHub", "--qa-mode"], environment: ["HUB_OWNER_TOKEN": "qa-token"],
-        preferences: makePreferences(), readKeychain: { nil }
+        preferences: preferences, isTeamSigned: false, readKeychain: { nil }
     )
     await connection.finishReadingToken()
 
     let client = connection.makeClient()
     #expect(client?.token == "qa-token")
     #expect(client?.baseURL == URL(string: HubConnection.defaultHubURL))
+    #expect(connection.tokenSource == .environment)
 }
 
 @MainActor @Test func outsideQAModeHUB_OWNER_TOKENIsIgnoredAndTheKeychainTokenIsUsed() async {
