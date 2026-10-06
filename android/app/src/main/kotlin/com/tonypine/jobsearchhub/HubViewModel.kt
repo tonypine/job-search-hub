@@ -53,6 +53,11 @@ data class HubState(
     val error: HubFailure? = null,
     /** When the lists last read the hub without an error. */
     val readAt: Instant? = null,
+    /**
+     * The hub's words when it no longer serves this version of the app, kept until a read succeeds, so a retry
+     * doesn't flash the pages between two refusals.
+     */
+    val tooOld: String? = null,
 ) {
     val shownJobs: List<JobListItem> get() = JobsOrder.pick(jobs, includesUnclear)
 
@@ -80,7 +85,11 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     private val client: HubClient? get() = state.value.pairing?.let { HubClient(it, BuildConfig.VERSION_NAME) }
 
+    /** The app's own new versions, which Today, Settings and the too-old screen offer. */
+    val versions = app.versions
+
     init {
+        versions.checkSoon()
         refresh()
         registerForPushes()
         viewModelScope.launch { app.pushes.collect { refresh() } }
@@ -169,11 +178,14 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
                     if (it.pairing != pairing) it
                     else it.copy(
                         updates = updates, jobs = jobs.jobs, openJobCount = jobs.total, decisionQueue = queue, pipeline = pipeline,
-                        recruiters = recruiters, isLoading = false, error = null, readAt = Instant.now(),
+                        recruiters = recruiters, isLoading = false, error = null, readAt = Instant.now(), tooOld = null,
                     )
                 }
             } catch (error: HubException) {
-                mutableState.update { if (it.pairing != pairing) it else it.copy(isLoading = false, error = HubFailure.of(error)) }
+                mutableState.update {
+                    if (it.pairing != pairing) it
+                    else it.copy(isLoading = false, error = HubFailure.of(error), tooOld = if (error.isUpgradeRequired) error.message else it.tooOld)
+                }
             }
         }
     }

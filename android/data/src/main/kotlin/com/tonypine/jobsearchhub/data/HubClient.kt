@@ -45,6 +45,11 @@ class HubClient(
 ) {
     suspend fun getUpdates(): UpdatesResponse = get("/v1/updates?limit=100")
 
+    /** Asks the hub for the least it serves, so a check in the background learns whether it still serves this version. */
+    suspend fun checkServed() {
+        fetch("GET", "/v1/updates?limit=1", null)
+    }
+
     /** Every open job, read a page at a time until the hub's total, so the oldest ones are not left out. */
     suspend fun getJobs(): JobsResponse {
         val first = getOpenJobsPage(offset = 0)

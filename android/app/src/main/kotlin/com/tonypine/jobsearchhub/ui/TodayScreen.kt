@@ -48,6 +48,7 @@ import com.tonypine.jobsearchhub.ui.design.OverflowMenu
 import com.tonypine.jobsearchhub.ui.design.SegmentedGroup
 import com.tonypine.jobsearchhub.ui.design.Spacing
 import com.tonypine.jobsearchhub.ui.design.ToneChip
+import com.tonypine.jobsearchhub.versions.VersionState
 
 /** How many of a source's items Today shows before *See all*. */
 private const val SHOWN = 3
@@ -72,6 +73,8 @@ fun TodayScreen(
     onOpenCompany: (String) -> Unit,
     onAskTheMac: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    version: VersionState,
+    versionActions: VersionActions,
     selected: Detail? = null,
 ) {
     var isAsking by rememberSaveable { mutableStateOf(false) }
@@ -100,6 +103,7 @@ fun TodayScreen(
         }
         PullToRefreshBox(isRefreshing = state.isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                if (version.showsCard()) item { NewVersionCard(version, versionActions) }
                 item { PageSummary(Today.summary(state.decisionQueue.size, followUps.map { it.second }, state.updates)) }
                 state.error?.let { item { HubErrorView("Couldn't reach the hub", it, onRetry = onRefresh) } }
                 if (state.decisionQueue.isNotEmpty()) item {

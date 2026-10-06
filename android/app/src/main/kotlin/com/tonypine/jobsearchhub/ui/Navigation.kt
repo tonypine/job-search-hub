@@ -79,8 +79,15 @@ private val topLevels = listOf(
 @Composable
 fun HubNavigation(viewModel: HubViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val version by viewModel.versions.state.collectAsStateWithLifecycle()
+    val versionActions = rememberVersionActions(viewModel.versions)
+    InstallPrompts(viewModel.versions, version)
     if (state.pairing == null) {
         PairScreen(error = state.error?.message, onPair = viewModel::pair)
+        return
+    }
+    state.tooOld?.let { message ->
+        TooOldScreen(message, version, versionActions, onRetry = viewModel::refresh)
         return
     }
     AskToNotify()
@@ -203,7 +210,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                                         .fold({ say("Sent to the Mac. The result comes as an update.") }, { say(it.message ?: "Couldn't reach the Mac.") })
                                 }
                             },
-                            onOpenSettings = openSettings, selected = todayDetails.root,
+                            onOpenSettings = openSettings, version = version, versionActions = versionActions, selected = todayDetails.root,
                         )
                     }
                 }
@@ -245,7 +252,7 @@ fun HubNavigation(viewModel: HubViewModel) {
                     }
                 }
                 composable(SETTINGS) {
-                    SettingsScreen(state, onBack = { navigation.popBackStack() }, onUnpair = viewModel::unpair)
+                    SettingsScreen(state, version, versionActions, onBack = { navigation.popBackStack() }, onUnpair = viewModel::unpair)
                 }
                 // On a phone, a job or company opened from a notification, over the page.
                 composable(JOB, arguments = listOf(navArgument("id") { type = NavType.StringType })) { backStack ->
