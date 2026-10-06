@@ -70,6 +70,50 @@ func TestOnlyTheNewestDumpsAreKept(t *testing.T) {
 	}
 }
 
+func TestOnlyTheNewestPreMigrationDumpsAreKept(t *testing.T) {
+	folder := t.TempDir()
+	written := at(t, "2026-09-01 03:00")
+	// Version 70 is written last, as after a restore of an older dump.
+	for order, version := range []string{"77", "78", "79", "80", "81", "82", "70"} {
+		path := filepath.Join(folder, preMigrationPrefix+version+dumpSuffix)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		modified := written.Add(time.Duration(order) * time.Hour)
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nightly := dumpPrefix + "2026-08-01" + dumpSuffix
+	for _, name := range []string{nightly, "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := removeOldPreMigrationDumps(folder); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	want := []string{"hub-2026-08-01.dump", "hub-pre-migration-70.dump", "hub-pre-migration-79.dump", "hub-pre-migration-80.dump", "hub-pre-migration-81.dump", "hub-pre-migration-82.dump", "notes.txt"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("kept %v, want %v", names, want)
+	}
+
+	// The nightly listing leaves the pre-migration dumps out.
+	days, err := NewDumper("", folder, "").listDumpDays()
+	if err != nil || !slices.Equal(days, []string{"2026-08-01"}) {
+		t.Fatalf("nightly dumps = %v, %v", days, err)
+	}
+}
+
 func TestThePasswordStaysOffTheCommandLine(t *testing.T) {
 	command, err := buildDumpCommand(context.Background(), "pg_dump", "postgres://hub:s3cret@localhost:5434/hub", "out.dump")
 	if err != nil {

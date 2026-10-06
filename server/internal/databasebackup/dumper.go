@@ -1,5 +1,6 @@
-// Package databasebackup dumps the hub's database once a night into a
-// private folder on this machine and keeps the newest dumps.
+// Package databasebackup dumps the hub's database into a private folder on
+// this machine: once a night, and before migrations change it. It keeps the
+// newest dumps of each.
 package databasebackup
 
 import (
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,12 +21,17 @@ import (
 const (
 	// keptDumps is how many nightly dumps stay; older ones are removed.
 	keptDumps = 14
+	// keptPreMigrationDumps is how many dumps taken before migrations stay.
+	keptPreMigrationDumps = 5
 	// dueHour is the local hour from which the day's dump is due.
 	dueHour = 3
 
 	dumpPrefix     = "hub-"
 	dumpSuffix     = ".dump"
 	dumpDateLayout = "2006-01-02"
+	// A dump taken before migrations is named by the migration version it
+	// holds. The nightly dumps' listing leaves it out: its name holds no day.
+	preMigrationPrefix = "hub-pre-migration-"
 )
 
 // Dumper writes one pg_dump a day of the database at databaseURL into
@@ -85,26 +92,44 @@ func isDumpDue(now time.Time, days []string) bool {
 // Dump writes the database to the folder as the dump of now's day, then
 // removes the dumps beyond keptDumps. A failed dump leaves no file behind.
 func (dumper *Dumper) Dump(ctx context.Context, now time.Time) (string, error) {
-	if err := os.MkdirAll(dumper.folder, 0o700); err != nil {
-		return "", fmt.Errorf("create the backups folder: %w", err)
-	}
 	path := filepath.Join(dumper.folder, dumpPrefix+now.Format(dumpDateLayout)+dumpSuffix)
-	partial := path + ".partial"
-	command, err := buildDumpCommand(ctx, dumper.pgDump, dumper.databaseURL, partial)
-	if err != nil {
-		return "", err
-	}
-	if output, err := command.CombinedOutput(); err != nil {
-		_ = os.Remove(partial)
-		return "", fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	if err := os.Chmod(partial, 0o600); err != nil {
-		return "", err
-	}
-	if err := os.Rename(partial, path); err != nil {
+	if err := writeDump(ctx, dumper.pgDump, dumper.databaseURL, path); err != nil {
 		return "", err
 	}
 	return path, dumper.removeOldDumps()
+}
+
+// DumpBeforeMigration writes the database at databaseURL, migrated up to
+// version, to folder as hub-pre-migration-<version>.dump with the pg_dump at
+// pgDump, so a migration that goes wrong can be undone. Then it removes all
+// but the newest keptPreMigrationDumps of them.
+func DumpBeforeMigration(ctx context.Context, pgDump, databaseURL, folder string, version int64) (string, error) {
+	path := filepath.Join(folder, preMigrationPrefix+strconv.FormatInt(version, 10)+dumpSuffix)
+	if err := writeDump(ctx, pgDump, databaseURL, path); err != nil {
+		return "", err
+	}
+	return path, removeOldPreMigrationDumps(folder)
+}
+
+// writeDump dumps the database to path, through a partial file renamed into
+// place once pg_dump succeeds, so a failed dump leaves no file behind.
+func writeDump(ctx context.Context, pgDump, databaseURL, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create the backups folder: %w", err)
+	}
+	partial := path + ".partial"
+	command, err := buildDumpCommand(ctx, pgDump, databaseURL, partial)
+	if err != nil {
+		return err
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		_ = os.Remove(partial)
+		return fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.Chmod(partial, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(partial, path)
 }
 
 // buildDumpCommand runs pg_dump in its custom format into file. The password
@@ -159,6 +184,45 @@ func (dumper *Dumper) removeOldDumps() error {
 	}
 	for _, day := range days[:len(days)-keptDumps] {
 		if err := os.Remove(filepath.Join(dumper.folder, dumpPrefix+day+dumpSuffix)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeOldPreMigrationDumps keeps the keptPreMigrationDumps written last. A
+// dump of an older version can be the newest, after a restore.
+func removeOldPreMigrationDumps(folder string) error {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return err
+	}
+	type dump struct {
+		name     string
+		modified time.Time
+	}
+	var dumps []dump
+	for _, entry := range entries {
+		version, isDump := strings.CutPrefix(entry.Name(), preMigrationPrefix)
+		version, hasSuffix := strings.CutSuffix(version, dumpSuffix)
+		if !isDump || !hasSuffix || !entry.Type().IsRegular() {
+			continue
+		}
+		if _, err := strconv.ParseInt(version, 10, 64); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		dumps = append(dumps, dump{entry.Name(), info.ModTime()})
+	}
+	if len(dumps) <= keptPreMigrationDumps {
+		return nil
+	}
+	slices.SortFunc(dumps, func(a, b dump) int { return a.modified.Compare(b.modified) })
+	for _, old := range dumps[:len(dumps)-keptPreMigrationDumps] {
+		if err := os.Remove(filepath.Join(folder, old.name)); err != nil {
 			return err
 		}
 	}
