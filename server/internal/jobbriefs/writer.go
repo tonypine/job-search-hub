@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/prompts"
@@ -71,11 +72,13 @@ func (writer *Writer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := writer.WriteOnce(ctx)
-		if err != nil {
-			slog.Error("job briefs pass stopped", "error", err, "written", summary.Written, "failed", summary.Failed)
-		} else if summary.Written > 0 || summary.Failed > 0 {
-			slog.Info("job briefs pass done", "written", summary.Written, "failed", summary.Failed, "skipped", summary.Skipped)
+		if !drain.IsDraining(ctx) {
+			summary, err := writer.WriteOnce(ctx)
+			if err != nil {
+				slog.Error("job briefs pass stopped", "error", err, "written", summary.Written, "failed", summary.Failed)
+			} else if summary.Written > 0 || summary.Failed > 0 {
+				slog.Info("job briefs pass done", "written", summary.Written, "failed", summary.Failed, "skipped", summary.Skipped)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -176,14 +179,16 @@ func (writer *Writer) RunNightly(ctx context.Context, interval time.Duration) {
 	defer ticker.Stop()
 	var lastNight string
 	for {
-		now := time.Now()
-		if isNightDue(now, lastNight) {
-			lastNight = now.Format(time.DateOnly)
-			summary, err := writer.WriteNightlyFullBriefs(ctx)
-			if err != nil {
-				slog.Error("nightly full briefs stopped", "error", err, "written", summary.Written, "failed", summary.Failed)
-			} else {
-				slog.Info("nightly full briefs done", "written", summary.Written, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			now := time.Now()
+			if isNightDue(now, lastNight) {
+				lastNight = now.Format(time.DateOnly)
+				summary, err := writer.WriteNightlyFullBriefs(ctx)
+				if err != nil {
+					slog.Error("nightly full briefs stopped", "error", err, "written", summary.Written, "failed", summary.Failed)
+				} else {
+					slog.Info("nightly full briefs done", "written", summary.Written, "failed", summary.Failed)
+				}
 			}
 		}
 		select {

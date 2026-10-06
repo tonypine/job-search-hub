@@ -50,7 +50,7 @@ func startHub(t *testing.T) hubUnderTest {
 	verifier := tokens.NewVerifier(testOwnerToken, hub)
 	routes := http.NewServeMux()
 	requireOwner := auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true})
-	api.RegisterAgentRunRoutes(routes, hub, requireOwner)
+	api.RegisterAgentRunRoutes(routes, hub, nil, requireOwner)
 	api.RegisterUpdateRoutes(routes, hub, hubevents.NewRecorder(hub, hubevents.NewBroadcaster()), requireOwner)
 	boards := jobboards.NewVerifier()
 	routes.Handle("/mcp", mcptools.NewHandler(mcptools.NewServer(hub, boards, boardpoller.New(hub, boards), noRates{}),

@@ -92,10 +92,13 @@ type Settings struct {
 type Queue struct {
 	settings Settings
 
-	mutex   sync.Mutex
-	paused  bool
-	running *queuedTicket
-	waiting []*queuedTicket
+	mutex  sync.Mutex
+	paused bool
+	// draining holds every call, dispatched ones too, while the hub drains
+	// before a restart.
+	draining bool
+	running  *queuedTicket
+	waiting  []*queuedTicket
 	// lastModel is the model of the last call granted, the loaded one when
 	// the settings can't say.
 	lastModel string
@@ -155,6 +158,15 @@ func (queue *Queue) SetPaused(paused bool) {
 	queue.grantNext()
 }
 
+// SetDraining holds every waiting call while the hub drains, dispatched
+// ones too; the running call finishes. Unlike a pause, it isn't kept.
+func (queue *Queue) SetDraining(draining bool) {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+	queue.draining = draining
+	queue.grantNext()
+}
+
 // Status reports the pause, the running call and the waiting ones, in the
 // order they would run.
 func (queue *Queue) Status() Status {
@@ -186,10 +198,10 @@ func (queue *Queue) getWaitingInOrder() []*queuedTicket {
 	return ordered
 }
 
-// grantNext gives the turn to the next call when none runs. It runs with the
-// mutex held.
+// grantNext gives the turn to the next call when none runs and the hub
+// doesn't drain. It runs with the mutex held.
 func (queue *Queue) grantNext() {
-	if queue.running != nil {
+	if queue.running != nil || queue.draining {
 		return
 	}
 	next := queue.chooseNext()

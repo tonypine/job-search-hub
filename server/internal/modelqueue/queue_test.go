@@ -183,3 +183,30 @@ func TestAPriorityTravelsInTheContext(t *testing.T) {
 		t.Fatal("priority lost")
 	}
 }
+
+func TestNoCallGetsATurnWhileTheHubDrainsAndTheRunningOneFinishes(t *testing.T) {
+	queue := modelqueue.New(false, modelqueue.Settings{})
+	order := make(chan string, 4)
+	releaseRunning := waitAsync(t, queue, "facts", modelqueue.Ticket{Kind: "facts", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	if got := receive(t, order); got != "facts" {
+		t.Fatalf("first = %s", got)
+	}
+
+	queue.SetDraining(true)
+	releaseDispatched := waitAsync(t, queue, "dispatched", modelqueue.Ticket{Kind: "dispatched", Model: "big", Priority: modelqueue.PriorityDispatched}, order)
+	releaseRunning()
+	select {
+	case got := <-order:
+		t.Fatalf("draining, yet %s got a turn", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if status := queue.Status(); status.Running != nil || len(status.Waiting) != 1 {
+		t.Fatalf("status while draining = %+v", status)
+	}
+
+	queue.SetDraining(false)
+	if got := receive(t, order); got != "dispatched" {
+		t.Fatalf("after the drain: %s", got)
+	}
+	releaseDispatched()
+}

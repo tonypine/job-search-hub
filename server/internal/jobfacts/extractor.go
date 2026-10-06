@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -48,11 +49,13 @@ func (extractor *Extractor) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := extractor.ExtractOnce(ctx)
-		if err != nil {
-			slog.Error("job facts pass stopped", "error", err, "read", summary.Read, "failed", summary.Failed)
-		} else if summary.Read > 0 || summary.Failed > 0 {
-			slog.Info("job facts pass done", "read", summary.Read, "failed", summary.Failed)
+		if !drain.IsDraining(ctx) {
+			summary, err := extractor.ExtractOnce(ctx)
+			if err != nil {
+				slog.Error("job facts pass stopped", "error", err, "read", summary.Read, "failed", summary.Failed)
+			} else if summary.Read > 0 || summary.Failed > 0 {
+				slog.Info("job facts pass done", "read", summary.Read, "failed", summary.Failed)
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -43,13 +44,15 @@ func (poller *Poller) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		summary, err := poller.PollOnce(ctx)
-		if err != nil {
-			slog.Error("board poll failed", "error", err)
-		} else {
-			slog.Info("board poll done", "boards", summary.Boards, "skipped", summary.Skipped, "failed", summary.Failed,
-				"created", summary.Totals.Created, "adopted", summary.Totals.Adopted, "closed", summary.Totals.Closed,
-				"reopened", summary.Totals.Reopened, "seen", summary.Totals.Seen, "dropped", summary.Totals.Dropped)
+		if !drain.IsDraining(ctx) {
+			summary, err := poller.PollOnce(ctx)
+			if err != nil {
+				slog.Error("board poll failed", "error", err)
+			} else {
+				slog.Info("board poll done", "boards", summary.Boards, "skipped", summary.Skipped, "failed", summary.Failed,
+					"created", summary.Totals.Created, "adopted", summary.Totals.Adopted, "closed", summary.Totals.Closed,
+					"reopened", summary.Totals.Reopened, "seen", summary.Totals.Seen, "dropped", summary.Totals.Dropped)
+			}
 		}
 		select {
 		case <-ctx.Done():

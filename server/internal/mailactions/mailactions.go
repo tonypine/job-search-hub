@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/mailmatch"
 	"github.com/tonypine/job-search-hub/server/internal/mailtriage"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -74,11 +75,13 @@ func (handler *Handler) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		acted, err := handler.ActOnce(ctx)
-		if err != nil {
-			slog.Error("mail actions stopped", "error", err, "acted", acted)
-		} else if acted > 0 {
-			slog.Info("mail actions done", "acted", acted)
+		if !drain.IsDraining(ctx) {
+			acted, err := handler.ActOnce(ctx)
+			if err != nil {
+				slog.Error("mail actions stopped", "error", err, "acted", acted)
+			} else if acted > 0 {
+				slog.Info("mail actions done", "acted", acted)
+			}
 		}
 		select {
 		case <-ctx.Done():

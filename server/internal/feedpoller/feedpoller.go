@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -47,19 +48,21 @@ func (poller *Poller) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		result, err := poller.PollOnce(ctx)
-		if err != nil {
-			slog.Error("feed poll failed", "feed", jobboards.Himalayas, "error", err)
-		} else {
-			slog.Info("feed poll done", "feed", jobboards.Himalayas, "created", result.Created, "closed", result.Closed,
-				"reopened", result.Reopened, "seen", result.Seen, "listed on board", result.ListedOnBoard)
-		}
-		remoteOK, err := poller.PollRemoteOK(ctx)
-		if err != nil {
-			slog.Error("feed poll failed", "feed", jobboards.RemoteOK, "error", err)
-		} else {
-			slog.Info("feed poll done", "feed", jobboards.RemoteOK, "created", remoteOK.Created, "closed", remoteOK.Closed,
-				"reopened", remoteOK.Reopened, "seen", remoteOK.Seen, "listed on board", remoteOK.ListedOnBoard, "dropped", remoteOK.Dropped)
+		if !drain.IsDraining(ctx) {
+			result, err := poller.PollOnce(ctx)
+			if err != nil {
+				slog.Error("feed poll failed", "feed", jobboards.Himalayas, "error", err)
+			} else {
+				slog.Info("feed poll done", "feed", jobboards.Himalayas, "created", result.Created, "closed", result.Closed,
+					"reopened", result.Reopened, "seen", result.Seen, "listed on board", result.ListedOnBoard)
+			}
+			remoteOK, err := poller.PollRemoteOK(ctx)
+			if err != nil {
+				slog.Error("feed poll failed", "feed", jobboards.RemoteOK, "error", err)
+			} else {
+				slog.Info("feed poll done", "feed", jobboards.RemoteOK, "created", remoteOK.Created, "closed", remoteOK.Closed,
+					"reopened", remoteOK.Reopened, "seen", remoteOK.Seen, "listed on board", remoteOK.ListedOnBoard, "dropped", remoteOK.Dropped)
+			}
 		}
 		select {
 		case <-ctx.Done():
