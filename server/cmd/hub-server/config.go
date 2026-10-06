@@ -181,20 +181,7 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		}
 	}
 	parsed.pgDump = lookup("HUB_PG_DUMP")
-	parsed.postgresEngines = lookup("HUB_POSTGRES_ENGINES")
-	if parsed.postgresEngines == "" {
-		// The engines sit beside the server's own folder, wherever the
-		// app puts it.
-		if executable, err := os.Executable(); err == nil {
-			parsed.postgresEngines = filepath.Join(filepath.Dir(executable), "..", "engines")
-		}
-	}
-	parsed.postgresDir = lookup("HUB_POSTGRES_DIR")
-	if parsed.postgresDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			parsed.postgresDir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "postgres")
-		}
-	}
+	parsed.postgresEngines, parsed.postgresDir = parseDatabasePaths(lookup)
 	parsed.claudeBinary = lookup("HUB_CLAUDE_BIN")
 	if parsed.claudeBinary == "" {
 		parsed.claudeBinary = "claude"
@@ -228,6 +215,26 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		}
 	}
 	return parsed, nil
+}
+
+// parseDatabasePaths reads where the engines and the clusters of the database
+// the server owns are, which the database commands need without the rest.
+func parseDatabasePaths(lookup func(string) string) (engines, dir string) {
+	engines = lookup("HUB_POSTGRES_ENGINES")
+	if engines == "" {
+		// The engines sit beside the server's own folder, wherever the
+		// app puts it.
+		if executable, err := os.Executable(); err == nil {
+			engines = filepath.Join(filepath.Dir(executable), "..", "engines")
+		}
+	}
+	dir = lookup("HUB_POSTGRES_DIR")
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "postgres")
+		}
+	}
+	return engines, dir
 }
 
 func parseInterval(lookup func(string) string, name string, fallback time.Duration) (time.Duration, error) {

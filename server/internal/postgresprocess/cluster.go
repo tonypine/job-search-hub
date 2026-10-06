@@ -1,7 +1,8 @@
 // Package postgresprocess runs one Postgres cluster as a child of the server:
 // it creates the cluster, starts it, waits for it, stops one an earlier server
-// left behind, and stops it again. The cluster listens only on a Unix socket in
-// its folder, and only the owner's user can reach it.
+// left behind, and stops it again. It also replaces the cluster with one
+// restored from a dump. The cluster listens only on a Unix socket in its
+// folder, and only the owner's user can reach it.
 package postgresprocess
 
 import (
@@ -81,25 +82,12 @@ type Cluster struct {
 }
 
 // Start takes the folder's lock, refuses a cluster of a newer major than the
-// engine's, creates the cluster if there is none, stops a Postgres an earlier
-// server left running on it, and starts postgres as a child. It returns once
-// the hub database accepts connections.
+// engine's, and refuses to start when a killed restore left the old cluster
+// moved aside and none in its place. It creates the cluster if there is none,
+// stops a Postgres an earlier server left running on it, and starts postgres
+// as a child. It returns once the hub database accepts connections.
 func Start(ctx context.Context, settings Settings) (*Cluster, error) {
-	engine, err := filepath.Abs(settings.Engine)
-	if err != nil {
-		return nil, err
-	}
-	dir, err := filepath.Abs(settings.Dir)
-	if err != nil {
-		return nil, err
-	}
-	if socket := filepath.Join(dir, socketName); len(socket) > maxSocketPath {
-		return nil, fmt.Errorf("the database socket's path, %s, is %d characters; macOS allows %d, so move the database folder somewhere shorter", socket, len(socket), maxSocketPath)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create the database folder: %w", err)
-	}
-	lock, err := takeLock(filepath.Join(dir, lockFileName))
+	engine, dir, lock, err := lockDir(settings)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +99,27 @@ func Start(ctx context.Context, settings Settings) (*Cluster, error) {
 	return cluster, nil
 }
 
+// lockDir makes settings' paths absolute, creates the database folder, and
+// takes its lock, which the caller closes.
+func lockDir(settings Settings) (engine, dir string, lock *os.File, err error) {
+	if engine, err = filepath.Abs(settings.Engine); err != nil {
+		return "", "", nil, err
+	}
+	if dir, err = filepath.Abs(settings.Dir); err != nil {
+		return "", "", nil, err
+	}
+	if socket := filepath.Join(dir, socketName); len(socket) > maxSocketPath {
+		return "", "", nil, fmt.Errorf("the database socket's path, %s, is %d characters; macOS allows %d, so move the database folder somewhere shorter", socket, len(socket), maxSocketPath)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", nil, fmt.Errorf("create the database folder: %w", err)
+	}
+	if lock, err = takeLock(filepath.Join(dir, lockFileName)); err != nil {
+		return "", "", nil, err
+	}
+	return engine, dir, lock, nil
+}
+
 func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, error) {
 	major, err := getMajor(engine)
 	if err != nil {
@@ -120,14 +129,26 @@ func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, er
 		return nil, err
 	}
 	dataDir := filepath.Join(dir, major)
+	if err := refuseHalfRestored(dataDir); err != nil {
+		return nil, err
+	}
 	if err := createIfMissing(ctx, engine, dataDir); err != nil {
 		return nil, err
 	}
-	socketLock := filepath.Join(dir, socketName+".lock")
-	if err := stopOrphan(ctx, engine, dataDir, socketLock); err != nil {
+	if err := stopOrphan(ctx, engine, dataDir, socketLockPath(dir)); err != nil {
 		return nil, err
 	}
-	if err := clearStaleSocketLock(engine, socketLock); err != nil {
+	return run(ctx, engine, dir, dataDir, lock)
+}
+
+func socketLockPath(dir string) string {
+	return filepath.Join(dir, socketName+".lock")
+}
+
+// run starts postgres on dataDir, with its socket in dir, and waits until the
+// hub database takes connections. The cluster's Stop closes lock.
+func run(ctx context.Context, engine, dir, dataDir string, lock *os.File) (*Cluster, error) {
+	if err := clearStaleSocketLock(engine, socketLockPath(dir)); err != nil {
 		return nil, err
 	}
 
@@ -372,11 +393,25 @@ func createIfMissing(ctx context.Context, engine, dataDir string) error {
 	}
 	slog.Info("creating the database cluster", "data", dataDir)
 	partial := dataDir + ".partial"
-	if err := os.RemoveAll(partial); err != nil {
+	if err := createCluster(ctx, engine, partial); err != nil {
+		return err
+	}
+	if err := os.Rename(partial, dataDir); err != nil {
+		return fmt.Errorf("move the new cluster into place: %w", err)
+	}
+	// Without this, a power cut could undo the rename after the hub has
+	// written to the cluster, and the next start would remove it as unfinished.
+	return syncDir(filepath.Dir(dataDir))
+}
+
+// createCluster runs initdb into dataDir, after removing what an earlier one,
+// killed mid-way, left there.
+func createCluster(ctx context.Context, engine, dataDir string) error {
+	if err := os.RemoveAll(dataDir); err != nil {
 		return fmt.Errorf("remove an unfinished cluster: %w", err)
 	}
 	command := exec.CommandContext(ctx, filepath.Join(engine, "bin", "initdb"),
-		"-D", partial,
+		"-D", dataDir,
 		"--username="+User,
 		"--auth-local=trust",
 		"--encoding=UTF8",
@@ -389,15 +424,10 @@ func createIfMissing(ctx context.Context, engine, dataDir string) error {
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("initdb: %w: %s", err, output)
 	}
-	if err := excludeFromBackups(partial); err != nil {
+	if err := excludeFromBackups(dataDir); err != nil {
 		slog.Warn("the database stays in Time Machine's backups", "data", dataDir, "error", err)
 	}
-	if err := os.Rename(partial, dataDir); err != nil {
-		return fmt.Errorf("move the new cluster into place: %w", err)
-	}
-	// Without this, a power cut could undo the rename after the hub has
-	// written to the cluster, and the next start would remove it as unfinished.
-	return syncDir(filepath.Dir(dataDir))
+	return nil
 }
 
 func syncDir(path string) error {

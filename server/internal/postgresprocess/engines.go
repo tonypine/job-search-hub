@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -75,4 +76,31 @@ func refuseNewerCluster(dir, major string) error {
 		}
 	}
 	return nil
+}
+
+// refuseHalfRestored fails when there is no cluster in dataDir but a
+// <major>.replaced-… folder beside it: a restore was stopped between moving
+// the old cluster aside and moving the new one in, and a fresh cluster would
+// hide the data in both.
+func refuseHalfRestored(dataDir string) error {
+	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Dir(dataDir))
+	if err != nil {
+		return fmt.Errorf("read the database folder: %w", err)
+	}
+	// The dates in the names sort in time, and ReadDir sorts by name.
+	replaced := ""
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), filepath.Base(dataDir)+replacedInfix) {
+			replaced = filepath.Join(filepath.Dir(dataDir), entry.Name())
+		}
+	}
+	if replaced == "" {
+		return nil
+	}
+	return fmt.Errorf("there is no database cluster in %s, but there is %s: a restore was stopped between moving that old cluster aside and moving the new one in; rename %s back to %s and start the hub again, or run hub-server database restore again", dataDir, replaced, replaced, dataDir)
 }

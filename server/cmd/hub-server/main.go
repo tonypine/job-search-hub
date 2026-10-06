@@ -117,6 +117,16 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "database" {
+		// A command run from a terminal: only warnings and errors are logged,
+		// in text, and the progress goes to stdout.
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		if err := runDatabaseCommand(os.Args[2:], os.Getenv, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "hub-server database:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("hub-server stopped", "error", err)
 		os.Exit(1)
