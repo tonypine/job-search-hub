@@ -6,7 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -60,4 +62,27 @@ func TestTheAnswersLibraryIsEditedAndAnImportNeverReplacesAnAnswer(t *testing.T)
 // an updated_at timestamp can hold "555" by chance.
 func holdsThePhoneNumber(answer store.ApplicationAnswer) bool {
 	return strings.Contains(answer.Question, "555 0100") || strings.Contains(answer.Answer, "555 0100")
+}
+
+// An answer's ID and updated_at can hold "555" by chance, as one did in CI on
+// 2026-10-06 ("2026-10-06T05:53:27.584555Z"). Only the question and answer
+// decide whether the phone number the import must reject got through.
+func TestAnAnswersPhoneNumberIsDecidedByItsQuestionAndAnswer(t *testing.T) {
+	answer := store.ApplicationAnswer{
+		ID:        uuid.MustParse("00000000-0000-0000-0555-000000000000"),
+		Question:  "Notice period",
+		Answer:    "Two weeks",
+		UpdatedAt: time.Date(2026, 10, 6, 5, 53, 27, 584555000, time.UTC),
+	}
+	if holdsThePhoneNumber(answer) {
+		t.Fatal("an answer whose only 555 is in its ID and updated_at was flagged")
+	}
+	answer.Answer = "call +1 555 0100"
+	if !holdsThePhoneNumber(answer) {
+		t.Fatal("the phone number in the answer wasn't found")
+	}
+	answer.Question = "Mobile phone number +1 555 0100?"
+	if !holdsThePhoneNumber(answer) {
+		t.Fatal("the phone number in the question wasn't found")
+	}
 }
