@@ -16,9 +16,6 @@ struct JobSearchHubApp: App {
     @State private var jobDecisions = JobDecisions()
 
     init() {
-        if ProcessInfo.processInfo.arguments.contains("--register-server") {
-            ServerAgent.registerFromCommandLine()
-        }
         Self.importOwnerTokenIfAsked()
         _connection = State(initialValue: HubConnection())
         let jobFinder = CompanyJobFinder()
