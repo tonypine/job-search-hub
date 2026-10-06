@@ -122,15 +122,30 @@ The prompts live only in the database; none are in this repo. A fresh database t
 
 ## Releases
 
-Each merge to `main` that changes `android/` becomes a GitHub Release once `ci` passes: `android-v0.1.<N>`, where `N` is the commit count on `main`, with the signed `job-search-hub-0.1.<N>.apk` and a changelog of the app's commits since the previous release. A merge that touches only the server or the Mac app releases nothing. `.github/workflows/release.yml` does it, and `docs/decisions/0001-android-release-distribution.md` says why it works this way.
+Once `ci` passes on a merge to `main`, `.github/workflows/release.yml` releases each app the merge changed, as a GitHub Release, both numbered `0.1.<N>`, where `N` is the commit count on `main`:
 
-To install a release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+| The merge changed | Release |
+| --- | --- |
+| `server/` or `macos/` | `mac-v0.1.<N>`, "Job Search Hub 0.1.<N> for Mac": the signed app, server inside, as `Job-Search-Hub-0.1.<N>.zip`, and its `Job-Search-Hub-0.1.<N>.zip.sha256` |
+| `android/` | `android-v0.1.<N>`: the signed `job-search-hub-0.1.<N>.apk` |
+| both | both, with the same `N` |
+| only docs, CI or scripts | nothing |
+
+Each release's notes list the commits since that app's previous release that touch its paths, under New, Fixed and Other changes, each line tagged with the parts of the hub its commit touched (`Mac`, `Server`, `Phone`) and ending with its pull request. The apps will read that format, so `scripts/release/changelog_test.sh` pins it. `docs/design/updates.md` › Releases from CI and `docs/decisions/0001-android-release-distribution.md` say why it works this way.
+
+Before it publishes the Mac app, `scripts/release/verify-app.sh` refuses a bundle that fails `codesign --verify --strict --deep`, holds an executable signed ad hoc, by another team than `MAC_SIGNING_TEAM_ID` or without the hardened runtime, carries another version in its `Info.plist` or `hub-server --version`, or links a library outside the system and the bundle. The copy unzipped from the zip is checked again. The release isn't notarized: Apple doesn't notarize with a development certificate, so the first install from a browser asks to allow it once in System Settings › Privacy & Security.
+
+To install a phone release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+
+To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
 
 The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
 
 ### One-time setup
 
-Until the signing secrets exist, the release job fails at its first step, naming the missing ones, and publishes nothing.
+Until an app's signing secrets exist, its release job fails at its first step, naming the missing ones, and publishes nothing.
+
+**The Android app:**
 
 1. **Make the release key** on the Mac, outside the repository:
 
@@ -151,7 +166,7 @@ Until the signing secrets exist, the release job fails at its first step, naming
    | `RELEASE_KEY_ALIAS` | `job-search-hub` |
    | `RELEASE_KEY_PASSWORD` | the same password |
    | `GOOGLE_SERVICES_JSON_BASE64` | optional: `base64 -i android/app/google-services.json \| pbcopy`. Without it, releases have pushes off and the run warns. |
-   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each release is posted as a Job Search Hub project update. |
+   | `LINEAR_RELEASE_API_KEY` | optional: a Linear personal API key made only for releases (Linear › Settings › Security & access › Personal API keys), not Symphony's. With it, each Android release is posted as a Job Search Hub project update. |
 
    Then delete `~/job-search-hub-release.keystore`; the password manager keeps it.
 
@@ -159,9 +174,35 @@ Until the signing secrets exist, the release job fails at its first step, naming
 
 4. **Swap the debug build for the release**, once: a debug build is signed with another key, so the release can't install over it. Uninstall the app, install the release and pair again. Later releases install over it.
 
+**The Mac app**, signed with the owner's personal Apple Development certificate, the one `make-app.sh` signs local builds with, never a work one:
+
+1. **Export the certificate** with its private key: in Keychain Access › login › My Certificates, find "Apple Development: <your Apple ID> (…)", the one whose Organizational Unit (in Get Info) is your personal team's ID, and check that it holds a private key. Pick it, then File › Export Items…, as Personal Information Exchange (`.p12`), to `~/job-search-hub-signing.p12` outside the repository, with a new password. **Store the file and its password in the password manager.**
+
+2. **Add the repository secrets**, as above:
+
+   | Secret | Value |
+   | --- | --- |
+   | `MAC_SIGNING_CERTIFICATE_BASE64` | `base64 -i ~/job-search-hub-signing.p12 \| pbcopy` |
+   | `MAC_SIGNING_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+   | `MAC_SIGNING_TEAM_ID` | the team ID, ten capital letters and digits: the certificate's Organizational Unit, or `cat ~/.config/job-search-hub/codesign-team-id` once a local build has pinned it |
+
+   Then delete `~/job-search-hub-signing.p12`; the password manager keeps it.
+
+3. **Ship the first release:** re-run the failed `release` run in the Actions tab, or merge the next server or Mac change.
+
+The job imports the certificate into a keychain of its own, which it deletes once the app is signed, or after a failed step. It signs only with the identity of `MAC_SIGNING_TEAM_ID`'s team, and fails if the `.p12` holds none.
+
 A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
 
 To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
+
+### Renewing the Mac certificate
+
+An Apple Development certificate lasts a year. The Mac release job writes its expiry date in the run's summary, warns there and in an annotation from 30 days before it, and fails, naming the certificate, once it has expired. To renew it:
+
+1. In Xcode › Settings › Accounts, pick the personal team, Manage Certificates…, and add an Apple Development certificate. The new one keeps the common name and the team, so the app's designated requirement, and the Keychain's trust in it, stay the same.
+2. Export it as in the one-time setup, step 1, and replace `MAC_SIGNING_CERTIFICATE_BASE64` and `MAC_SIGNING_CERTIFICATE_PASSWORD` with the new file and password. `MAC_SIGNING_TEAM_ID` stays.
+3. Re-run the failed `release` run, or merge the next server or Mac change.
 
 ### Versions
 
