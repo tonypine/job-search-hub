@@ -15,6 +15,7 @@ import com.tonypine.jobsearchhub.core.NewVersions
 import com.tonypine.jobsearchhub.core.Postponed
 import com.tonypine.jobsearchhub.core.ReadyVersion
 import com.tonypine.jobsearchhub.data.ReleaseClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -123,6 +124,8 @@ class VersionUpdater(private val context: Context, private val scope: CoroutineS
                 }
                 ready?.version == newest.version.toString() && File(ready.apkPath).exists() -> store.problem = null
                 anyNetwork || isUnmetered() -> download(newest)
+                // Said in Settings, which would otherwise call the phone up to date.
+                else -> store.problem = "${newest.version} downloads on Wi-Fi, or tap Check now."
             }
         } catch (error: IOException) {
             store.problem = "Couldn't check for new versions: ${error.message}"
@@ -205,9 +208,13 @@ class VersionUpdater(private val context: Context, private val scope: CoroutineS
             store.installing = ready.version
             try {
                 installer.install(File(ready.apkPath)) { progress -> mutableState.update { it.copy(install = InstallStep.Working(progress)) } }
-            } catch (error: IOException) {
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // PackageInstaller throws more than IOException, such as SecurityException; none may crash the app.
                 store.installing = null
                 fail("Couldn't hand the update to Android: ${error.message}")
+                Log.w(TAG, "Couldn't hand the update to Android", error)
             }
         }
     }
