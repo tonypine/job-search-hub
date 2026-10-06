@@ -42,7 +42,6 @@ struct SettingsWindow: View {
 struct ConnectionSettings: View {
     @Environment(HubConnection.self) private var connection
     @State private var tokenField = ""
-    @State private var saveFailure: HubFailure?
 
     var body: some View {
         @Bindable var connection = connection
@@ -59,8 +58,15 @@ struct ConnectionSettings: View {
                     Button("Save") { save() }
                         .keyboardShortcut(.defaultAction)
                 }
-                if saveFailure != nil {
-                    HubErrorView($saveFailure)
+                if case .unsaved(_, let reason) = connection.token {
+                    Label {
+                        Text("The Keychain didn't keep the token, so the app uses it until it quits. \(reason)")
+                            .textSelection(.enabled)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    .font(.hubCaption)
+                    .foregroundStyle(.secondary)
                 }
             }
             Section {
@@ -86,14 +92,9 @@ struct ConnectionSettings: View {
     }
 
     private func save() {
-        do {
-            try connection.save(newToken: tokenField)
-            tokenField = ""
-            saveFailure = nil
-            Task { await connection.check() }
-        } catch {
-            saveFailure = HubFailure("Couldn't save the token", error)
-        }
+        connection.save(newToken: tokenField)
+        tokenField = ""
+        Task { await connection.check() }
     }
 
     private var tokenPrompt: String {
@@ -101,6 +102,7 @@ struct ConnectionSettings: View {
         case .reading: "Waiting for Keychain access"
         case .present: "Saved in the Keychain; enter a new one to replace it"
         case .missing: "HUB_OWNER_TOKEN from the hub's .env"
+        case .unsaved: "In use until the app quits; enter a new one to replace it"
         }
     }
 }

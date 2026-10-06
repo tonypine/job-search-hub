@@ -92,7 +92,7 @@ open ~/Applications/Job\ Search\ Hub.app
 
 `make-app.sh` builds one bundle per version: the app, and in `Contents/Helpers/bin/` the server (`hub-server`), the CV printer (`hub-cvprint`), the `hub` command and the installer (`hub-update`, which only reports its version for now), for Apple silicon, with the server's LaunchAgent in `Contents/Library/LaunchAgents/`. Without Go, as in Symphony's QA VM, it builds the app alone, and Settings › Server says the build has no server. A build in `macos/build/` runs too, for trying a change: it leaves the installed app's server alone, and `Scripts/screenshot-page.sh` captures its pages without touching the installed app.
 
-In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. When the Keychain refuses it, as in a VM with no usable login keychain, the app still uses it until it quits, and Connection says why the Keychain didn't keep it. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a

@@ -63,10 +63,13 @@ public enum OwnerTokenKeychain {
 
 /// The owner token as the app holds it: still being read, which takes as
 /// long as a Keychain access prompt stays up, or read, with or without a token.
+/// A token the Keychain refused to keep, as in a VM with no usable login
+/// keychain, is still used until the app quits.
 public enum OwnerTokenState: Equatable, Sendable {
     case reading
     case missing
     case present(String)
+    case unsaved(String, reason: String)
 
     /// The state after a read; an empty token counts as missing.
     public init(read token: String?) {
@@ -77,8 +80,22 @@ public enum OwnerTokenState: Equatable, Sendable {
         }
     }
 
+    /// The state after saving a token: kept in the Keychain, or held in
+    /// memory with the reason the Keychain gave for refusing it.
+    public init(saving token: String, with save: (String) throws -> Void = OwnerTokenKeychain.save) {
+        do {
+            try save(token)
+            self = .present(token)
+        } catch {
+            self = .unsaved(token, reason: String(describing: error))
+        }
+    }
+
     public var value: String? {
-        if case .present(let token) = self { token } else { nil }
+        switch self {
+        case .present(let token), .unsaved(let token, _): token
+        case .reading, .missing: nil
+        }
     }
 }
 

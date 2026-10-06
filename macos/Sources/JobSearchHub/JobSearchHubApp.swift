@@ -17,8 +17,7 @@ struct JobSearchHubApp: App {
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        Self.importOwnerTokenIfAsked()
-        _connection = State(initialValue: HubConnection())
+        _connection = State(initialValue: HubConnection(importedToken: Self.ownerTokenToImport()))
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
@@ -122,16 +121,18 @@ struct JobSearchHubApp: App {
         return UUID(uuidString: arguments[flagIndex + 1])
     }
 
-    /// `--import-owner-token` saves HUB_OWNER_TOKEN from the app's environment
-    /// into the Keychain, for setting up without typing the token:
+    /// `--import-owner-token` takes HUB_OWNER_TOKEN from the app's environment,
+    /// for setting up without typing the token:
     /// `open JobSearchHub.app --env HUB_OWNER_TOKEN=… --args --import-owner-token`.
-    /// The app writes the item itself, which is what keeps later reads free of
-    /// Keychain prompts.
-    private static func importOwnerTokenIfAsked() {
+    /// The connection saves it in the Keychain, and uses it even when the
+    /// Keychain refuses it. The app writes the item itself, which is what keeps
+    /// later reads free of Keychain prompts.
+    private static func ownerTokenToImport() -> String? {
         guard ProcessInfo.processInfo.arguments.contains("--import-owner-token"),
-              let token = ProcessInfo.processInfo.environment["HUB_OWNER_TOKEN"], !token.isEmpty
-        else { return }
-        try? OwnerTokenKeychain.save(token)
+              let token = ProcessInfo.processInfo.environment["HUB_OWNER_TOKEN"]?
+                  .trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty
+        else { return nil }
+        return token
     }
 }
 
