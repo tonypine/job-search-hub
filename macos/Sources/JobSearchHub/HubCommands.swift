@@ -16,15 +16,27 @@ extension FocusedValues {
     @Entry var isShowingPalette: Binding<Bool>?
 }
 
-/// The app's menu commands: the page's Add in the File menu, Refresh in the
-/// View menu for when the event stream missed something, and Jump to… (⌘K)
-/// in the Go menu.
+/// The app's menu commands: Check for New Version… in the app menu, the
+/// page's Add in the File menu, Refresh in the View menu for when the event
+/// stream missed something, and Jump to… (⌘K) in the Go menu.
 struct HubCommands: Commands {
     let events: HubEventStream
+    let newVersions: NewVersionChecker
     @FocusedValue(\.pageAdd) private var pageAdd
     @FocusedBinding(\.isShowingPalette) private var isShowingPalette
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
 
     var body: some Commands {
+        // Checks right away, and opens Settings › Version, which says
+        // "Checking…", then what it found.
+        CommandGroup(after: .appInfo) {
+            Button("Check for New Version…") {
+                newVersions.checkNow()
+                settingsTab = .version
+                openSettings()
+            }
+        }
         CommandGroup(replacing: .newItem) {
             Button(pageAdd?.title ?? "Add…") { pageAdd?.perform() }
                 .keyboardShortcut("n")
