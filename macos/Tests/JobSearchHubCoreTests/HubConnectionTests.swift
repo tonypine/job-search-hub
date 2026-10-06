@@ -56,9 +56,20 @@ private func makePreferences() -> UserDefaults {
     }
 }
 
+@MainActor @Test func anImportedTokenTheKeychainRefusedIsUsedWithoutReadingTheKeychain() async {
+    let connection = HubConnection(
+        importedToken: .unsaved("imported-token", reason: "locked"),
+        arguments: ["JobSearchHub"], environment: [:],
+        preferences: makePreferences(), readKeychain: { "keychain-token" }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.makeClient()?.token == "imported-token")
+}
+
 private struct KeychainRefusal: Error {}
 
-@MainActor @Test func aTokenTheKeychainRefusesStillMakesAClient() async {
+@MainActor @Test func aTypedTokenTheKeychainRefusesStillMakesAClient() async {
     let connection = HubConnection(
         arguments: ["JobSearchHub"], environment: [:],
         preferences: makePreferences(), readKeychain: { nil }, saveToKeychain: { _ in throw KeychainRefusal() }
@@ -67,18 +78,6 @@ private struct KeychainRefusal: Error {}
 
     connection.save(newToken: " typed-token \n")
 
-    #expect(connection.token.value == "typed-token")
+    #expect(connection.token == .unsaved("typed-token", reason: String(describing: KeychainRefusal())))
     #expect(connection.makeClient()?.token == "typed-token")
-}
-
-@MainActor @Test func anImportedTokenTheKeychainRefusesIsUsedWithoutReadingTheKeychain() async {
-    let connection = HubConnection(
-        arguments: ["JobSearchHub"], environment: [:], preferences: makePreferences(),
-        importedToken: "imported-token", readKeychain: { "keychain-token" },
-        saveToKeychain: { _ in throw KeychainRefusal() }
-    )
-    await connection.finishReadingToken()
-
-    #expect(connection.token == .unsaved("imported-token", reason: String(describing: KeychainRefusal())))
-    #expect(connection.makeClient()?.token == "imported-token")
 }

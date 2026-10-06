@@ -8,7 +8,8 @@ import Observation
 /// The token is read once, off the main thread, and held in memory: when the
 /// Keychain item's access list doesn't name this build, the read waits on the
 /// Keychain's access prompt, and the window stays responsive meanwhile. A
-/// token the Keychain refuses to keep is still used until the app quits.
+/// token the Keychain refuses, as in a VM whose login keychain is locked, is
+/// still used until the app quits.
 ///
 /// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
 /// instead, for a QA machine whose Keychain won't keep it. Without the flag
@@ -28,25 +29,25 @@ public final class HubConnection {
     @ObservationIgnored private let saveToKeychain: (String) throws -> Void
     @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
-    /// With an imported token, saves it and uses it whether or not the
-    /// Keychain keeps it, without reading the Keychain.
+    /// With an imported token, from `--import-owner-token`, the app uses it
+    /// rather than read the Keychain, which may have refused it.
     public init(
+        importedToken: OwnerTokenState? = nil,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
-        importedToken: String? = nil,
         readKeychain: @escaping @Sendable () async -> String? = { await OwnerTokenKeychain.readOffMainThread() },
         saveToKeychain: @escaping (String) throws -> Void = OwnerTokenKeychain.save
     ) {
         self.preferences = preferences
         self.saveToKeychain = saveToKeychain
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
-        if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
-            token = .present(qaToken)
+        if let importedToken {
+            token = importedToken
             return
         }
-        if let importedToken {
-            token = OwnerTokenState(saving: importedToken, with: saveToKeychain)
+        if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
+            token = .present(qaToken)
             return
         }
         tokenRead = Task {
@@ -80,13 +81,13 @@ public final class HubConnection {
     }
 
     /// Saves the URL, and the token when one is given; an empty token field
-    /// keeps the stored token. A token the Keychain refuses is used until
-    /// the app quits, and `token` says why it wasn't kept.
+    /// keeps the stored token. A token the Keychain refuses is unsaved, and
+    /// used until the app quits.
     public func save(newToken: String) {
         preferences.set(hubURLText, forKey: Self.hubURLPreferenceKey)
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedToken.isEmpty {
-            token = OwnerTokenState(saving: trimmedToken, with: saveToKeychain)
+            token = .saving(trimmedToken, with: saveToKeychain)
         }
     }
 

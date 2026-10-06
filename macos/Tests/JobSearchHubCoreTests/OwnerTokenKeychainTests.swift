@@ -28,19 +28,19 @@ import Testing
 
 @Test func aSavedTokenIsPresent() {
     var saved: String?
-    let state = OwnerTokenState(saving: "owner-token") { saved = $0 }
+    #expect(OwnerTokenState.saving("owner-token") { saved = $0 } == .present("owner-token"))
     #expect(saved == "owner-token")
-    #expect(state == .present("owner-token"))
 }
 
-@Test func aTokenTheKeychainRefusesIsStillUsed() {
-    let state = OwnerTokenState(saving: "owner-token") { _ in throw KeychainError(status: errSecNoSuchKeychain) }
-    #expect(state.value == "owner-token")
-    guard case .unsaved(_, let reason) = state else {
+@Test func aTokenTheKeychainRefusesIsKeptUnsaved() {
+    let state = OwnerTokenState.saving("owner-token") { _ in throw KeychainError(status: errSecInteractionNotAllowed) }
+    guard case .unsaved(let token, let reason) = state else {
         Issue.record("expected an unsaved token, got \(state)")
         return
     }
-    #expect(reason.hasPrefix("Keychain error \(errSecNoSuchKeychain):"))
+    #expect(token == "owner-token")
+    #expect(reason.hasPrefix("Keychain error \(errSecInteractionNotAllowed):"))
+    #expect(state.value == "owner-token")
 }
 
 @Test func waitingOnTheKeychainIsSaidSo() {
