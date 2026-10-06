@@ -173,6 +173,8 @@ struct ContentView: View {
     @State private var replyDraft = RecruiterReplyDraft()
     @State private var requests = PageRequests()
     @State private var palette = PaletteModel()
+    /// Moves on the palette's Try again, so its read starts over.
+    @State private var paletteReloads = 0
     @State private var isShowingPalette = false
     /// What an action run from the palette did, or why it failed.
     @State private var toast: ToastMessage?
@@ -288,7 +290,8 @@ struct ContentView: View {
                         actions: PaletteAction.getAvailable(
                             isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count, hasReadyVersion: newVersions.facts.ready != nil
                         ),
-                        choose: choose
+                        choose: choose,
+                        retry: { paletteReloads += 1 }
                     ) {
                         isShowingPalette = false
                     }
@@ -296,7 +299,8 @@ struct ContentView: View {
                 }
             }
         }
-        .task(id: isShowingPalette) {
+        // Closing the palette cancels its read; Try again starts a new one.
+        .task(id: isShowingPalette ? paletteReloads : nil) {
             if isShowingPalette, let client = connection.makeClient() {
                 await palette.load(with: client)
             }
