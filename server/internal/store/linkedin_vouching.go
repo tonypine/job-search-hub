@@ -166,7 +166,7 @@ func (s *Store) ListEndorsedSkills(ctx context.Context) ([]EndorsedSkill, error)
 	rows, err := s.pool.Query(ctx, `
 		SELECT skill, count(*) FROM linkedin_endorsements
 		WHERE direction = 'received' AND status <> 'rejected' AND btrim(skill) <> ''
-		GROUP BY skill ORDER BY count(*) DESC, skill`)
+		GROUP BY skill ORDER BY count(*) DESC, lower(skill), skill`)
 	if err != nil {
 		return nil, err
 	}

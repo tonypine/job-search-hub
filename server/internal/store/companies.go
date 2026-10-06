@@ -120,7 +120,7 @@ func (s *Store) FindCompanies(ctx context.Context, query string) ([]Company, err
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+companyColumns+` FROM companies
 		WHERE strpos(lower(name), $1) > 0 OR strpos(domain, $2) > 0
-		ORDER BY name LIMIT $3`, nameQuery, domainQuery, maximumFoundCompanies)
+		ORDER BY lower(name), name LIMIT $3`, nameQuery, domainQuery, maximumFoundCompanies)
 	if err != nil {
 		return nil, err
 	}

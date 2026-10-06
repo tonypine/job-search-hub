@@ -24,16 +24,88 @@ const (
 	restoreLinesKept = 10
 )
 
-// Restore replaces the cluster with one restored from dump, a pg_dump in its
-// custom format. It takes the folder's lock, so it fails with ErrLocked while
-// a server runs the cluster. It builds the new cluster in <major>.partial,
-// after removing one a killed restore left, restores the dump into its hub
-// database, and runs check on it, which may migrate it. Only then does it
-// swap it in, keeping the old cluster as <major>.replaced-<date>, whose path
-// it returns; "" means there was no cluster to replace. A restore that fails
-// leaves the current cluster as it was. Progress, pg_restore's included, goes
-// to progress.
+// Owner holds the database folder's lock for a database command, so no
+// server starts the cluster while the command works on it.
+type Owner struct {
+	engine string
+	dir    string
+	major  string
+	lock   *os.File
+}
+
+// Own takes the folder's lock, so it fails with ErrLocked while a server runs
+// the cluster, and refuses a cluster of a newer major than the engine's. The
+// caller releases the lock with Release.
+func Own(settings Settings) (*Owner, error) {
+	settings, lock, err := lockDir(settings)
+	if err != nil {
+		return nil, err
+	}
+	engine, dir := settings.Engine, settings.Dir
+	major, err := getMajor(engine)
+	if err == nil {
+		err = refuseNewerCluster(dir, major)
+	}
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return &Owner{engine: engine, dir: dir, major: major, lock: lock}, nil
+}
+
+// Release releases the folder's lock.
+func (owner *Owner) Release() {
+	owner.lock.Close()
+}
+
+func (owner *Owner) dataDir() string {
+	return filepath.Join(owner.dir, owner.major)
+}
+
+// Inspect starts the current cluster, runs inspect on its hub database, and
+// stops it again. It reports false, without running inspect, when there is
+// no cluster, and refuses when a killed restore left the old cluster moved
+// aside and none in its place.
+func (owner *Owner) Inspect(ctx context.Context, inspect func(ctx context.Context, databaseURL string) error) (found bool, err error) {
+	dataDir := owner.dataDir()
+	if err := refuseHalfRestored(dataDir); err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if err := stopOrphan(ctx, owner.engine, dataDir, socketLockPath(owner.dir)); err != nil {
+		return false, err
+	}
+	cluster, err := run(ctx, owner.engine, owner.dir, dataDir, nil)
+	if err != nil {
+		return false, err
+	}
+	defer cluster.stopPostgres()
+	return true, inspect(ctx, cluster.URL())
+}
+
+// Restore takes the folder's lock and restores dump as Owner.Restore does.
 func Restore(ctx context.Context, settings Settings, dump string, check func(ctx context.Context, databaseURL string) error, progress io.Writer) (replaced string, err error) {
+	owner, err := Own(settings)
+	if err != nil {
+		return "", err
+	}
+	defer owner.Release()
+	return owner.Restore(ctx, dump, check, progress)
+}
+
+// Restore replaces the cluster with one restored from dump, a pg_dump in its
+// custom format. It builds the new cluster in <major>.partial, after removing
+// one a killed restore left, restores the dump into its hub database, and
+// runs check on it, which may migrate it. Only then does it swap it in,
+// keeping the old cluster as <major>.replaced-<date>, whose path it returns;
+// "" means there was no cluster to replace. A restore that fails leaves the
+// current cluster as it was. Progress, pg_restore's included, goes to
+// progress.
+func (owner *Owner) Restore(ctx context.Context, dump string, check func(ctx context.Context, databaseURL string) error, progress io.Writer) (replaced string, err error) {
 	if _, err := os.Stat(dump); err != nil {
 		return "", fmt.Errorf("read the dump: %w", err)
 	}
@@ -41,20 +113,8 @@ func Restore(ctx context.Context, settings Settings, dump string, check func(ctx
 	if err != nil {
 		return "", err
 	}
-	settings, lock, err := lockDir(settings)
-	if err != nil {
-		return "", err
-	}
-	defer lock.Close()
-	engine, dir := settings.Engine, settings.Dir
-	major, err := getMajor(engine)
-	if err != nil {
-		return "", err
-	}
-	if err := refuseNewerCluster(dir, major); err != nil {
-		return "", err
-	}
-	dataDir := filepath.Join(dir, major)
+	engine, dir := owner.engine, owner.dir
+	dataDir := owner.dataDir()
 	partial := dataDir + ".partial"
 
 	// A killed server may have left its Postgres running on the cluster, and

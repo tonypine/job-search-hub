@@ -41,7 +41,7 @@ func (s *Store) SaveMarketGaps(ctx context.Context, gaps []MarketGap) error {
 // ListMarketGaps returns the stored gaps, the most asked for first.
 func (s *Store) ListMarketGaps(ctx context.Context) ([]MarketGap, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT technology, job_count, good_fits, job_ids, plan_kind, plan, computed_at FROM market_gaps ORDER BY job_count DESC, technology`)
+		SELECT technology, job_count, good_fits, job_ids, plan_kind, plan, computed_at FROM market_gaps ORDER BY job_count DESC, lower(technology), technology`)
 	if err != nil {
 		return nil, err
 	}

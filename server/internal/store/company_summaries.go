@@ -34,7 +34,7 @@ func (s *Store) ListCompanySummaries(ctx context.Context) ([]CompanySummary, err
 			ON counted.company_id = companies.id
 		LEFT JOIN (SELECT company_id, count(*) AS connection_count FROM connections GROUP BY company_id) AS known
 			ON known.company_id = companies.id
-		ORDER BY companies.name`)
+		ORDER BY lower(companies.name), companies.name`)
 	if err != nil {
 		return nil, err
 	}
