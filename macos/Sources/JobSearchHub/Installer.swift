@@ -325,6 +325,8 @@ final class Installer {
             "StandardOutPath": updates.root.appending(path: "hub-update.log").path,
             "StandardErrorPath": updates.root.appending(path: "hub-update.log").path,
             "LimitLoadToSessionType": "Aqua",
+            // The steps window it starts outlives it by a few seconds.
+            "AbandonProcessGroup": true,
         ]
         try fileManager.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
         try PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0).write(to: plist, options: .atomic)
@@ -366,12 +368,50 @@ final class Installer {
             if state.step.isFinished {
                 try? fileManager.removeItem(at: updates.lastInstallURL)
                 try? fileManager.moveItem(at: updates.stateURL, to: updates.lastInstallURL)
-            } else if (state.step == .openingApp || state.step == .checkingApp) && state.to == HubClient.appVersion {
-                launchedMarkDue = true
             } else {
-                installUnderWay = state
+                if (state.step == .openingApp || state.step == .checkingApp) && state.to == HubClient.appVersion {
+                    launchedMarkDue = true
+                } else {
+                    installUnderWay = state
+                }
+                // hub-update opened this app before it finished: the banner
+                // waits for the end.
+                watchInstallEnd()
             }
         }
+        readNotice()
+        if let record = updates.readReopenRecord() {
+            try? fileManager.removeItem(at: updates.reopenURL)
+            if record.isFresh(at: .now) { reopenRecord = record }
+        }
+    }
+
+    /// Looks at the install `hub-update` is finishing every second, until
+    /// it ends; then says how, as at a launch.
+    private func watchInstallEnd() {
+        Task { [weak self] in
+            // Its longest wait, for migrations, is minutes.
+            for _ in 0..<(30 * 60) {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                guard let state = self.updates.readState() else {
+                    self.installUnderWay = nil
+                    return
+                }
+                guard state.step.isFinished else { continue }
+                try? FileManager.default.removeItem(at: self.updates.lastInstallURL)
+                try? FileManager.default.moveItem(at: self.updates.stateURL, to: self.updates.lastInstallURL)
+                self.installUnderWay = nil
+                self.readNotice()
+                // What's new in the version just installed.
+                NewVersionChecker.shared.checkNow()
+                return
+            }
+        }
+    }
+
+    /// The banner for the last install, unless dismissed or a day old.
+    private func readNotice() {
         if let data = try? Data(contentsOf: updates.lastInstallURL), let last = try? InstallState.decode(data),
            let outcome = InstallOutcome.make(last) {
             let endedAt = last.finishedAt ?? (try? updates.lastInstallURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .now
@@ -379,10 +419,6 @@ final class Installer {
             if Date.now.timeIntervalSince(endedAt) < Self.bannerLifetime, UserDefaults.standard.string(forKey: Self.dismissedKey) != shown.key {
                 notice = shown
             }
-        }
-        if let record = updates.readReopenRecord() {
-            try? fileManager.removeItem(at: updates.reopenURL)
-            if record.isFresh(at: .now) { reopenRecord = record }
         }
     }
 

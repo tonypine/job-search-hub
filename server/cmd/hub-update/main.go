@@ -11,8 +11,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -74,6 +76,12 @@ func install(statePath string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	state, err := machine.Run(ctx)
+	if errors.Is(err, fs.ErrNotExist) {
+		// The app moved the state aside once it read how the install ended:
+		// there's nothing left to run.
+		fmt.Fprintln(stdout, "No install to run:", statePath)
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "hub-update:", err)
 		return 1

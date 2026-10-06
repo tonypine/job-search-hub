@@ -27,10 +27,23 @@ func TestAnythingElsePrintsTheUsage(t *testing.T) {
 	}
 }
 
-func TestAnInstallWithoutItsStateStopsForLaunchdToRunAgain(t *testing.T) {
+func TestAnInstallWithoutItsStateHasNothingToRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"install", filepath.Join(t.TempDir(), "state.json")}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "state.json") {
+	// Exiting 0, launchd doesn't run it again.
+	if code := run([]string{"install", filepath.Join(t.TempDir(), "state.json")}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "No install to run") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestAStateThatCantBeReadStopsForLaunchdToRunAgain(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	state := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(state, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"install", state}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "state.json") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
