@@ -29,6 +29,12 @@ private let ready = ReadyVersion(
     #expect(NewVersionStatus.make(facts, now: now) == .localBuild(commit: "abc1234"))
 }
 
+@Test func aLocalBuildSaysSoEvenWhenADownloadWasRefused() {
+    let failed = FailedVersion(version: HubVersion("0.1.252")!, problem: .runningAppUnsigned)
+    let facts = NewVersionFacts(running: HubVersion("0.1.0-dev.abc1234")!, lastCheckedAt: now, failed: failed)
+    #expect(NewVersionStatus.make(facts, now: now) == .localBuild(commit: "abc1234"))
+}
+
 @Test func aNewerDownloadThatFailedItsChecksIsNamed() {
     let failed = FailedVersion(version: HubVersion("0.1.253")!, problem: .otherTeam(found: "OTHERTEAM9", expected: "OWNERTEAM1"))
     #expect(NewVersionStatus.make(NewVersionFacts(running: running, ready: ready, failed: failed), now: now) == .failedChecks(failed))

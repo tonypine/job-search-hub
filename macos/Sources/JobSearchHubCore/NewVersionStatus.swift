@@ -102,7 +102,9 @@ public enum NewVersionStatus: Equatable, Sendable {
 
     /// The state that matters most: a check under way, then a withdrawn
     /// version, a newer download that failed its checks, a day without a
-    /// check, a local build, then a ready version or none.
+    /// check, a local build, then a ready version or none. A local build
+    /// never names a failed download: one unsigned, as `swift run` builds
+    /// it, refuses every version.
     public static func make(_ facts: NewVersionFacts, now: Date) -> NewVersionStatus {
         if facts.isChecking {
             return .checking
@@ -110,7 +112,7 @@ public enum NewVersionStatus: Equatable, Sendable {
         if facts.isRunningWithdrawn {
             return .withdrawn(facts.running)
         }
-        if let failed = facts.failed, failed.version > (facts.ready?.version ?? facts.running) {
+        if let failed = facts.failed, !facts.running.isLocalBuild, failed.version > (facts.ready?.version ?? facts.running) {
             return .failedChecks(failed)
         }
         if let since = facts.failingSince, now.timeIntervalSince(since) >= staleAfter {

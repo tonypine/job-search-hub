@@ -25,14 +25,19 @@ final class NewVersionChecker {
     /// The running version's release page, when it's a release.
     private(set) var runningReleaseURL: URL?
 
-    @ObservationIgnored let updates = UpdatesFolder.makeDefault(home: FileManager.default.homeDirectoryForCurrentUser)
+    @ObservationIgnored let updates: UpdatesFolder
     @ObservationIgnored private let feed = ReleaseFeed()
-    @ObservationIgnored private let inspector = CodesignInspector()
+    @ObservationIgnored private let inspector: any BundleInspecting
     @ObservationIgnored private var runningSigning: BundleSigning?
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var check: Task<Void, Never>?
 
-    init() {
+    init(
+        updates: UpdatesFolder = .makeDefault(home: FileManager.default.homeDirectoryForCurrentUser),
+        inspector: any BundleInspecting = CodesignInspector()
+    ) {
+        self.updates = updates
+        self.inspector = inspector
         let running = HubVersion(HubClient.appVersion) ?? HubVersion("0.1.0-dev")!
         let defaults = UserDefaults.standard
         facts = NewVersionFacts(
@@ -146,9 +151,13 @@ final class NewVersionChecker {
     }
 
     /// Downloads the release's zip and checksum, then runs the checks in
-    /// order: the checksum, `ditto`'s unpacking, then the bundle's.
-    private func download(_ release: MacRelease) async throws(DownloadProblem) -> CheckedVersion {
+    /// order: the checksum, `ditto`'s unpacking, then the bundle's. An
+    /// unsigned running app, as `swift run` builds it, can't match any
+    /// download, so it refuses one before fetching it.
+    func download(_ release: MacRelease) async throws(DownloadProblem) -> CheckedVersion {
         guard let zipAsset = release.zipAsset, let checksumAsset = release.checksumAsset else { throw .missingAssets }
+        let running = await readRunningSigning()
+        guard running.teamID != nil, running.designatedRequirement != nil else { throw .runningAppUnsigned }
         let folder: URL
         do {
             folder = try updates.prepareFolder(for: release.version)
@@ -175,7 +184,6 @@ final class NewVersionChecker {
         guard unpacked.status == 0 else { throw .noApp(unpacked.output) }
         guard let app = UpdatesFolder.findApp(in: folder) else { throw .noApp("The zip holds no .app.") }
 
-        let running = await readRunningSigning()
         let checked = try await BundleChecks.check(
             app, expected: release.version, running: running, runningServer: runningServer, inspector: inspector
         )
@@ -212,8 +220,8 @@ final class NewVersionChecker {
         return await inspector.readServerBuild(of: Bundle.main.bundleURL)
     }
 
-    /// What's on disk: the version in `previous/`, the install log, and a
-    /// download an earlier launch checked.
+    /// What's on disk: the version in `previous/` and whether the install
+    /// log exists.
     private func readLocalState() {
         previousVersion = updates.readPreviousVersion()
         hasInstallLog = FileManager.default.fileExists(atPath: updates.logURL.path)
