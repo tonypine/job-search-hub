@@ -12,30 +12,49 @@ import Observation
 /// Launched with `--qa-mode`, the app takes the token from HUB_OWNER_TOKEN
 /// instead, for a QA machine whose Keychain won't keep it. Without the flag
 /// the variable is ignored.
+///
+/// A build no Apple team signed, such as the ad hoc build in Symphony's QA
+/// VM, keeps the token in its preferences when the Keychain refuses it, and
+/// reads it from there first. A team-signed build only ever uses the Keychain.
 @MainActor
 @Observable
 public final class HubConnection {
     public static let defaultHubURL = "http://localhost:8090"
     public static let qaModeArgument = "--qa-mode"
     private static let hubURLPreferenceKey = "hubURL"
+    static let ownerTokenPreferenceKey = "ownerToken"
 
     public var hubURLText: String
     public private(set) var token: OwnerTokenState = .reading
+    /// Where the token came from, or went on the last save.
+    public private(set) var tokenSource: OwnerTokenSource = .keychain
     public private(set) var status: ConnectionStatus = .unchecked
     public private(set) var isChecking = false
     @ObservationIgnored private let preferences: UserDefaults
+    @ObservationIgnored private let saveKeychain: (String) throws -> Void
+    @ObservationIgnored private let isTeamSigned: Bool
     @ObservationIgnored private var tokenRead: Task<Void, Never>?
 
     public init(
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         preferences: UserDefaults = .standard,
-        readKeychain: @escaping @Sendable () async -> String? = { await OwnerTokenKeychain.readOffMainThread() }
+        isTeamSigned: Bool = BuildSignature.hasTeam,
+        readKeychain: @escaping @Sendable () async -> String? = { await OwnerTokenKeychain.readOffMainThread() },
+        saveKeychain: @escaping (String) throws -> Void = { try OwnerTokenKeychain.save($0) }
     ) {
         self.preferences = preferences
+        self.saveKeychain = saveKeychain
+        self.isTeamSigned = isTeamSigned
         hubURLText = preferences.string(forKey: Self.hubURLPreferenceKey) ?? Self.defaultHubURL
         if let qaToken = Self.qaModeToken(arguments: arguments, environment: environment) {
             token = .present(qaToken)
+            tokenSource = .environment
+            return
+        }
+        if !isTeamSigned, let saved = OwnerTokenState(read: preferences.string(forKey: Self.ownerTokenPreferenceKey)).value {
+            token = .present(saved)
+            tokenSource = .preferences
             return
         }
         tokenRead = Task {
@@ -69,14 +88,23 @@ public final class HubConnection {
     }
 
     /// Saves the URL, and the token when one is given; an empty token field
-    /// keeps the stored token.
+    /// keeps the stored token. A build without a team keeps the token in its
+    /// preferences when the Keychain refuses it, and drops that copy once the
+    /// Keychain takes one.
     public func save(newToken: String) throws {
         preferences.set(hubURLText, forKey: Self.hubURLPreferenceKey)
         let trimmedToken = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedToken.isEmpty {
-            try OwnerTokenKeychain.save(trimmedToken)
-            token = .present(trimmedToken)
+        guard !trimmedToken.isEmpty else { return }
+        do {
+            try saveKeychain(trimmedToken)
+            preferences.removeObject(forKey: Self.ownerTokenPreferenceKey)
+            tokenSource = .keychain
+        } catch {
+            guard !isTeamSigned else { throw error }
+            preferences.set(trimmedToken, forKey: Self.ownerTokenPreferenceKey)
+            tokenSource = .preferences
         }
+        token = .present(trimmedToken)
     }
 
     public func check() async {
@@ -97,4 +125,13 @@ public final class HubConnection {
     func finishReadingToken() async {
         await tokenRead?.value
     }
+}
+
+/// Where the app holds the owner token.
+public enum OwnerTokenSource: Equatable, Sendable {
+    case keychain
+    /// This build's preferences, for a build without a team whose Keychain refused it.
+    case preferences
+    /// HUB_OWNER_TOKEN, in QA mode.
+    case environment
 }

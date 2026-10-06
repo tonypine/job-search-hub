@@ -67,7 +67,8 @@ struct ConnectionSettings: View {
                 StatusRow(
                     "Hub", symbol: "network", state: connection.status.title, stateTone: connection.status.tone,
                     detail: connection.status == .connected ? connection.hubURLText : nil,
-                    help: "The app reaches the hub at this address with the owner token, which it keeps in the Keychain. "
+                    help: "The app reaches the hub at this address with the owner token, which it keeps in the Keychain "
+                        + "(a build no Apple team signed keeps it in its preferences when the Keychain refuses it). "
                         + "Settings is for how the app connects; what you search for is on the Criteria page, under You in the sidebar."
                 ) {
                     AsyncButton("Test", busyTitle: "Testing…", isBusy: connection.isChecking) { await connection.check() }
@@ -99,7 +100,12 @@ struct ConnectionSettings: View {
     private var tokenPrompt: String {
         switch connection.token {
         case .reading: "Waiting for Keychain access"
-        case .present: "Saved in the Keychain; enter a new one to replace it"
+        case .present:
+            switch connection.tokenSource {
+            case .keychain: "Saved in the Keychain; enter a new one to replace it"
+            case .preferences: "Saved in this build's preferences; enter a new one to replace it"
+            case .environment: "From HUB_OWNER_TOKEN in QA mode; enter a new one to replace it"
+            }
         case .missing: "HUB_OWNER_TOKEN from the hub's .env"
         }
     }

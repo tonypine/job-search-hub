@@ -55,3 +55,72 @@ private func makePreferences() -> UserDefaults {
         #expect(connection.makeClient()?.token == "keychain-token")
     }
 }
+
+private struct RefusedByKeychain: Error {}
+
+@MainActor @Test func aBuildWithoutATeamKeepsTheTokenInItsPreferencesWhenTheKeychainRefusesIt() async throws {
+    let preferences = makePreferences()
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false,
+        readKeychain: { nil }, saveKeychain: { _ in throw RefusedByKeychain() }
+    )
+    await connection.finishReadingToken()
+
+    try connection.save(newToken: " saved-token \n")
+
+    #expect(connection.makeClient()?.token == "saved-token")
+    #expect(connection.tokenSource == .preferences)
+
+    let relaunched = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false,
+        readKeychain: { Issue.record("read the Keychain with a token in preferences"); return nil }
+    )
+    await relaunched.finishReadingToken()
+    #expect(relaunched.makeClient()?.token == "saved-token")
+    #expect(relaunched.tokenSource == .preferences)
+}
+
+@MainActor @Test func aTeamSignedBuildStillFailsTheSaveWhenTheKeychainRefusesIt() async {
+    let preferences = makePreferences()
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: true,
+        readKeychain: { nil }, saveKeychain: { _ in throw RefusedByKeychain() }
+    )
+    await connection.finishReadingToken()
+
+    #expect(throws: RefusedByKeychain.self) { try connection.save(newToken: "saved-token") }
+    #expect(connection.makeClient() == nil)
+    #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == nil)
+}
+
+@MainActor @Test func aTeamSignedBuildIgnoresATokenInPreferences() async {
+    let preferences = makePreferences()
+    preferences.set("preferences-token", forKey: HubConnection.ownerTokenPreferenceKey)
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: true,
+        readKeychain: { "keychain-token" }
+    )
+    await connection.finishReadingToken()
+
+    #expect(connection.makeClient()?.token == "keychain-token")
+    #expect(connection.tokenSource == .keychain)
+}
+
+@MainActor @Test func aSaveTheKeychainTakesDropsTheCopyInPreferences() async throws {
+    let preferences = makePreferences()
+    preferences.set("old-token", forKey: HubConnection.ownerTokenPreferenceKey)
+    var keychainToken: String?
+    let connection = HubConnection(
+        arguments: ["JobSearchHub"], environment: [:], preferences: preferences, isTeamSigned: false,
+        readKeychain: { nil }, saveKeychain: { keychainToken = $0 }
+    )
+    await connection.finishReadingToken()
+    #expect(connection.tokenSource == .preferences)
+
+    try connection.save(newToken: "new-token")
+
+    #expect(keychainToken == "new-token")
+    #expect(connection.makeClient()?.token == "new-token")
+    #expect(connection.tokenSource == .keychain)
+    #expect(preferences.string(forKey: HubConnection.ownerTokenPreferenceKey) == nil)
+}
