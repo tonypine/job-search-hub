@@ -142,6 +142,8 @@ To install a phone release the first time, open its page on the phone, download 
 
 The Mac app looks for its own releases: at launch and every hour it asks GitHub's API for the `mac-v*` releases, without a token and without the server, skipping drafts and pre-releases. It downloads the newest one above its own version into `~/Library/Application Support/JobSearchHub/Updates/<version>/` and checks it, in order: the zip's SHA-256 against its `.sha256`, `codesign --verify --strict --deep`, the running app's team ID and designated requirement, the version in its `Info.plist` and `hub-server --version`, and whether its newest migration is ahead of the running server's. Only a version that passes shows, as *New version 0.1.<N>* at the foot of the sidebar; one that fails is deleted and named in Settings › Version, along with what's new across every release since the running one. *Job Search Hub › Check for New Version…* checks right away. Marking a release as a pre-release on GitHub withdraws it. Installing from the app comes with a later version; until then:
 
+To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
+
 To walk through a new version before a real `mac-v*` release exists, QA points the app at a stub feed: in QA mode (a QA build, or launched with `--qa-mode`), it reads the releases from `HUB_RELEASES_URL` instead of GitHub, when the variable holds an http(s) URL. Outside QA mode the variable is ignored. Serve a JSON list in the API's shape from a folder of its own:
 
 ```bash
@@ -158,8 +160,6 @@ python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
 Then, in another terminal, `open macos/build/JobSearchHub.app --env HUB_RELEASES_URL=http://localhost:8765/releases.json --args --qa-mode`, adding `--env HUB_OWNER_TOKEN=…` as above. A build signed ad hoc, as in Symphony's QA VM, refuses any download, so Settings › Version names 0.1.9999 as refused, with its *What's new*. To see it as ready instead, with *New version 0.1.9999* at the foot of the sidebar, leave a download that passed its checks before launching: an `Updates/0.1.9999/` folder in `~/Library/Application Support/JobSearchHub/` holding `JobSearchHub.app/Contents/Info.plist` (any file) and a `checked.json` of `{"version": "0.1.9999", "app": "JobSearchHub.app", "changesDatabase": false, "checkedAt": "2026-01-01T00:00:00Z"}`. Marking the stub's release `"prerelease": true` withdraws it on the next check. Delete the `Updates/0.1.9999/` folder afterwards.
-
-To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
 
 The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
 
