@@ -1,8 +1,9 @@
 // Package postgresprocess runs one Postgres cluster as a child of the server:
 // it creates the cluster, starts it, waits for it, stops one an earlier server
-// left behind, and stops it again. It also replaces the cluster with one
-// restored from a dump. The cluster listens only on a Unix socket in its
-// folder, and only the owner's user can reach it.
+// left behind, and stops it again. It moves an older major's cluster to the
+// engine's major, and replaces the cluster with one restored from a dump. The
+// cluster listens only on a Unix socket in its folder, and only the owner's
+// user can reach it.
 package postgresprocess
 
 import (
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,15 +66,24 @@ type Settings struct {
 	// Dir holds the lock, the socket and the clusters, one per major in
 	// <Dir>/<major>.
 	Dir string
+	// Engines holds the engines by major, postgres-<major>/. Start finds the
+	// engine of an older major's cluster here, to move it to Engine's major.
+	Engines string
+	// Backups is the folder Start dumps an older major's cluster to before
+	// moving it, and whose newest dump it names when it can't.
+	Backups string
 }
 
 // Cluster is a running Postgres the caller owns until Stop.
 type Cluster struct {
 	dir     string
 	dataDir string
+	major   int
 	lock    *os.File
 	command *exec.Cmd
 	log     *recentLines
+	// upgradeErr says why the cluster is an older major's, still.
+	upgradeErr *UpgradeError
 
 	// exited closes when postgres ends, whoever ended it.
 	exited   chan struct{}
@@ -83,15 +94,17 @@ type Cluster struct {
 
 // Start takes the folder's lock, refuses a cluster of a newer major than the
 // engine's, and refuses to start when a killed restore left the old cluster
-// moved aside and none in its place. It creates the cluster if there is none,
-// stops a Postgres an earlier server left running on it, and starts postgres
-// as a child. It returns once the hub database accepts connections.
+// moved aside and none in its place. When there is only an older major's
+// cluster, it moves it to the engine's major first (see upgrade), and runs the
+// older one with its own engine if that fails. It creates the cluster if there
+// is none, stops a Postgres an earlier server left running on it, and starts
+// postgres as a child. It returns once the hub database accepts connections.
 func Start(ctx context.Context, settings Settings) (*Cluster, error) {
-	engine, dir, lock, err := lockDir(settings)
+	settings, lock, err := lockDir(settings)
 	if err != nil {
 		return nil, err
 	}
-	cluster, err := start(ctx, engine, dir, lock)
+	cluster, err := start(ctx, settings, lock)
 	if err != nil {
 		lock.Close()
 		return nil, err
@@ -99,28 +112,32 @@ func Start(ctx context.Context, settings Settings) (*Cluster, error) {
 	return cluster, nil
 }
 
-// lockDir makes settings' paths absolute, creates the database folder, and
+// lockDir makes settings' engine and folder absolute, creates the folder, and
 // takes its lock, which the caller closes.
-func lockDir(settings Settings) (engine, dir string, lock *os.File, err error) {
-	if engine, err = filepath.Abs(settings.Engine); err != nil {
-		return "", "", nil, err
+func lockDir(settings Settings) (Settings, *os.File, error) {
+	var err error
+	if settings.Engine, err = filepath.Abs(settings.Engine); err != nil {
+		return Settings{}, nil, err
 	}
-	if dir, err = filepath.Abs(settings.Dir); err != nil {
-		return "", "", nil, err
+	if settings.Dir, err = filepath.Abs(settings.Dir); err != nil {
+		return Settings{}, nil, err
 	}
+	dir := settings.Dir
 	if socket := filepath.Join(dir, socketName); len(socket) > maxSocketPath {
-		return "", "", nil, fmt.Errorf("the database socket's path, %s, is %d characters; macOS allows %d, so move the database folder somewhere shorter", socket, len(socket), maxSocketPath)
+		return Settings{}, nil, fmt.Errorf("the database socket's path, %s, is %d characters; macOS allows %d, so move the database folder somewhere shorter", socket, len(socket), maxSocketPath)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", nil, fmt.Errorf("create the database folder: %w", err)
+		return Settings{}, nil, fmt.Errorf("create the database folder: %w", err)
 	}
-	if lock, err = takeLock(filepath.Join(dir, lockFileName)); err != nil {
-		return "", "", nil, err
+	lock, err := takeLock(filepath.Join(dir, lockFileName))
+	if err != nil {
+		return Settings{}, nil, err
 	}
-	return engine, dir, lock, nil
+	return settings, lock, nil
 }
 
-func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, error) {
+func start(ctx context.Context, settings Settings, lock *os.File) (*Cluster, error) {
+	engine, dir := settings.Engine, settings.Dir
 	major, err := getMajor(engine)
 	if err != nil {
 		return nil, err
@@ -132,13 +149,41 @@ func start(ctx context.Context, engine, dir string, lock *os.File) (*Cluster, er
 	if err := refuseHalfRestored(dataDir); err != nil {
 		return nil, err
 	}
+	oldMajor, err := findOlderCluster(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if oldMajor != "" {
+		oldEngine, err := findEngine(settings.Engines, oldMajor)
+		if err != nil {
+			return nil, err
+		}
+		if oldEngine == "" {
+			return nil, refuseWithoutOldEngine(dir, settings.Backups, oldMajor, major)
+		}
+		if err := upgrade(ctx, oldEngine, engine, dir, settings.Backups, oldMajor, major); err != nil {
+			return startOlder(ctx, oldEngine, dir, oldMajor, major, lock, err)
+		}
+	}
 	if err := createIfMissing(ctx, engine, dataDir); err != nil {
 		return nil, err
 	}
+	return startCluster(ctx, engine, dir, major, lock)
+}
+
+// startCluster stops the Postgres an earlier server left running on the
+// cluster of major in dir, if there is one, and runs the cluster with engine.
+func startCluster(ctx context.Context, engine, dir, major string, lock *os.File) (*Cluster, error) {
+	dataDir := filepath.Join(dir, major)
 	if err := stopOrphan(ctx, engine, dataDir, socketLockPath(dir)); err != nil {
 		return nil, err
 	}
-	return run(ctx, engine, dir, dataDir, lock)
+	cluster, err := run(ctx, engine, dir, dataDir, lock)
+	if err != nil {
+		return nil, err
+	}
+	cluster.major, _ = strconv.Atoi(major)
+	return cluster, nil
 }
 
 func socketLockPath(dir string) string {
@@ -206,6 +251,17 @@ func run(ctx context.Context, engine, dir, dataDir string, lock *os.File) (*Clus
 // URL is the hub database's connection URL, for pgx and pg_dump.
 func (cluster *Cluster) URL() string {
 	return databaseURL(cluster.dir, DatabaseName)
+}
+
+// Major is the cluster's Postgres major.
+func (cluster *Cluster) Major() int {
+	return cluster.major
+}
+
+// UpgradeError says why Start ran an older major's cluster rather than move
+// it to the engine's major; nil when it ran the engine's.
+func (cluster *Cluster) UpgradeError() *UpgradeError {
+	return cluster.upgradeErr
 }
 
 // DataDir is the cluster's data directory.

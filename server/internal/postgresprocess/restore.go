@@ -37,10 +37,11 @@ type Owner struct {
 // the cluster, and refuses a cluster of a newer major than the engine's. The
 // caller releases the lock with Release.
 func Own(settings Settings) (*Owner, error) {
-	engine, dir, lock, err := lockDir(settings)
+	settings, lock, err := lockDir(settings)
 	if err != nil {
 		return nil, err
 	}
+	engine, dir := settings.Engine, settings.Dir
 	major, err := getMajor(engine)
 	if err == nil {
 		err = refuseNewerCluster(dir, major)

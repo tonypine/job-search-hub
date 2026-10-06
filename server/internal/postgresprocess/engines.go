@@ -104,3 +104,57 @@ func refuseHalfRestored(dataDir string) error {
 	}
 	return fmt.Errorf("there is no database cluster in %s, but there is %s: a restore was stopped between moving that old cluster aside and moving the new one in; rename %s back to %s and start the hub again, or run hub-server database restore again", dataDir, replaced, replaced, dataDir)
 }
+
+// findEngine is the engine for major in engines, postgres-<major>/ with its
+// symlinks resolved, or "" when there is none.
+func findEngine(engines, major string) (string, error) {
+	if engines == "" {
+		return "", nil
+	}
+	engine := filepath.Join(engines, "postgres-"+major)
+	if _, err := os.Stat(filepath.Join(engine, "bin", "postgres")); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", fmt.Errorf("read the Postgres %s engine in %s: %w", major, engines, err)
+	}
+	resolved, err := filepath.EvalSymlinks(engine)
+	if err != nil {
+		return "", fmt.Errorf("resolve the Postgres engine %s: %w", engine, err)
+	}
+	return resolved, nil
+}
+
+// findOlderCluster is the major of the newest finished cluster beside
+// dataDir that is older than dataDir's, when dataDir holds no cluster yet:
+// an app update brought a new major, and the data is still in the old one.
+// It is "" when dataDir holds a cluster, or there is no older one.
+func findOlderCluster(dataDir string) (string, error) {
+	if _, err := os.Stat(filepath.Join(dataDir, "PG_VERSION")); err == nil {
+		return "", nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	major, err := strconv.Atoi(filepath.Base(dataDir))
+	if err != nil {
+		return "", fmt.Errorf("the cluster folder %s isn't named by a major", dataDir)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dataDir))
+	if err != nil {
+		return "", fmt.Errorf("read the database folder: %w", err)
+	}
+	older, olderMajor := "", -1
+	for _, entry := range entries {
+		if !entry.IsDir() || !clusterPattern.MatchString(entry.Name()) {
+			continue
+		}
+		clusterMajor, err := strconv.Atoi(entry.Name())
+		if err != nil || clusterMajor >= major || clusterMajor <= olderMajor {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(filepath.Dir(dataDir), entry.Name(), "PG_VERSION")); err != nil {
+			continue
+		}
+		older, olderMajor = entry.Name(), clusterMajor
+	}
+	return older, nil
+}

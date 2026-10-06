@@ -35,7 +35,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
 
-   - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in `engines/` (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both.
+   - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in `engines/` (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both. When an update brings a new Postgres major, the server moves the database to it at start (see [Moving to a new Postgres major](#moving-to-a-new-postgres-major)).
    - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
 
    Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
@@ -161,6 +161,14 @@ Until the signing secrets exist, the release job fails at its first step, naming
 A Linear update that failed can be posted again from Actions › release › Run workflow, with the release's tag.
 
 To build a signed release locally, set the four `RELEASE_*` variables Gradle reads (`RELEASE_KEYSTORE_PATH` is the keystore file's path) and run `./gradlew :app:assembleRelease` in `android/`. With none of them set the release APK is unsigned; with only some, the build fails and names the missing ones.
+
+### Moving to a new Postgres major
+
+The server runs its database on the newest engine in `engines/`. When an update adds a newer major beside the one the database is on, say `postgres-19` beside `postgres-18`, the next start moves the data: it dumps the 18 cluster with 19's `pg_dump` to `backups/hub-pre-upgrade-18-to-19-<date>.dump`, restores the dump into a new cluster, `postgres/19.partial`, checks that every table has the rows it had, renames it to `postgres/19/`, and starts on it. The old `postgres/18/` stays; a later release removes it.
+
+If any step fails, the server removes `19.partial`, logs why, and runs on the 18 cluster with the 18 engine; the next start tries again. `/v1/health` then answers `{"database":"ok","postgres":{"major":18,"upgrade_failed_to":19}}`. If the update no longer carries the 18 engine, the server refuses to start and names the newest dump to restore with `hub-server database restore`.
+
+**Release rule:** a release that moves to a new Postgres major ships the old major's engine too, and every release keeps shipping it for a year after. None of them ships a migration that needs the new major, since a failed move runs the hub on the old one. See `docs/design/owned-database.md` › Engine upgrades with app updates.
 
 ## Where it runs
 
