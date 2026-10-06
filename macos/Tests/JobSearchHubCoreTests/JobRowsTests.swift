@@ -82,13 +82,3 @@ private func makeItem(_ title: String, firstSeen: Date = Date(timeIntervalSince1
     let oldestFirst = JobGroups.make(Array(items.prefix(1)) + [items[1]], newestFirst: false, now: now, calendar: calendar)
     #expect(oldestFirst.map(\.kind) == [.earlier, .newSinceYesterday])
 }
-
-@Test func aMonogramIsTheFirstLetterOnAHueThatStays() {
-    #expect(Monograms.getLetter(for: "northwind") == "N")
-    #expect(Monograms.getLetter(for: "  (acme)") == "A")
-    #expect(Monograms.getLetter(for: "37signals") == "S")
-    #expect(Monograms.getLetter(for: "") == "?")
-    #expect(Monograms.getHueIndex(for: "Northwind", count: 6) == Monograms.getHueIndex(for: "northwind", count: 6))
-    #expect((0..<6).contains(Monograms.getHueIndex(for: "Globex", count: 6)))
-    #expect(Monograms.getHueIndex(for: "Globex", count: 0) == 0)
-}

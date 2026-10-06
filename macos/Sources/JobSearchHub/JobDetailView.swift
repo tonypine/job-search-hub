@@ -585,7 +585,7 @@ struct JobDetailView: View {
     /// are, opening them on a click, and the message that fits.
     private func personRow(_ person: RelatedPerson, about details: JobDetails) -> some View {
         HStack(alignment: .center, spacing: Space.s) {
-            InitialsMonogram(person.name, size: 28)
+            Monogram(name: person.name, size: 28)
             Button { inspector.open(.person(person.reference)) } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
