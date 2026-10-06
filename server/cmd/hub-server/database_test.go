@@ -305,8 +305,10 @@ func TestPendingMigrationsAreDumpedFirstAndAStartWithNonePendingTakesNoDump(t *t
 
 	openOwnedDatabase(t, settings).Close()
 	dump := fmt.Sprintf("hub-pre-migration-%d.dump", version)
-	if names := listFolder(t, settings.backupsDir); len(names) != 1 || names[0] != dump {
-		t.Fatalf("backups = %v, want [%s]", names, dump)
+	// The mark of the tables' writes after migrating sits beside it.
+	mark := fmt.Sprintf("hub-pre-migration-%d.counts.json", version)
+	if names := listFolder(t, settings.backupsDir); len(names) != 2 || names[0] != mark || names[1] != dump {
+		t.Fatalf("backups = %v, want [%s %s]", names, mark, dump)
 	}
 	output, err := exec.Command(filepath.Join(engine, "bin", "pg_restore"), "--list", filepath.Join(settings.backupsDir, dump)).CombinedOutput()
 	if err != nil {
@@ -318,7 +320,7 @@ func TestPendingMigrationsAreDumpedFirstAndAStartWithNonePendingTakesNoDump(t *t
 
 	// Migrated now: the next start has nothing to dump.
 	openOwnedDatabase(t, settings).Close()
-	if names := listFolder(t, settings.backupsDir); len(names) != 1 {
+	if names := listFolder(t, settings.backupsDir); len(names) != 2 {
 		t.Fatalf("a start with nothing pending dumped: %v", names)
 	}
 }
