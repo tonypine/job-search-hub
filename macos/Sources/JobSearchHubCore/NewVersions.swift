@@ -372,23 +372,24 @@ public struct ReleaseFeed: Sendable {
     private let appVersion: String
 
     /// Without a URL, the feed reads GitHub's, or QA's from
-    /// HUB_RELEASES_URL in QA mode.
+    /// HUB_RELEASES_URL in QA mode: a QA build, or `--qa-mode`.
     public init(
         session: URLSession = .shared,
         url: URL? = nil,
         appVersion: String = HubClient.appVersion,
         arguments: [String] = ProcessInfo.processInfo.arguments,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true
     ) {
         self.session = session
-        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment)
+        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild)
         self.appVersion = appVersion
     }
 
     /// HUB_RELEASES_URL when the app runs in QA mode and the variable holds
     /// an http(s) URL; GitHub's releases otherwise.
-    public static func makeURL(arguments: [String], environment: [String: String]) -> URL {
-        guard arguments.contains(HubConnection.qaModeArgument),
+    public static func makeURL(arguments: [String], environment: [String: String], isQABuild: Bool = false) -> URL {
+        guard isQABuild || arguments.contains(HubConnection.qaModeArgument),
               let text = environment[urlVariable]?.trimmingCharacters(in: .whitespaces),
               let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host() != nil
         else { return GitHubRepository.releasesAPIURL }

@@ -393,6 +393,7 @@ struct JobsPage: View {
             }
         }
         .alternatingRowBackgrounds(.disabled)
+        .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
             Button("Pursue") { decide(ids, .pursue, with: client) }

@@ -74,6 +74,28 @@ xcrun actool Assets/Assets.xcassets --compile "$APP_DIR/Contents/Resources" \
   --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor \
   --output-partial-info-plist build/assets-info.plist >/dev/null
 
+# Scripts/signing-identity.sh picks the owner's team and its identity: pinned
+# by CODESIGN_TEAM_ID or ~/.config/job-search-hub/codesign-team-id, else the
+# keychain's one Apple Development identity, whose team it pins. Without one,
+# as in CI and Symphony's QA VM, or with CODESIGN_IDENTITY=-, it's ad hoc,
+# without the hardened runtime.
+SIGNING="$(Scripts/signing-identity.sh)"
+read -r IDENTITY TEAM_ID <<<"$SIGNING"
+
+# A build with neither a team nor Go, as in Symphony's QA VM, is a QA build:
+# the app runs in QA mode at every launch, starting from empty connection
+# settings. HUB_QA_BUILD=1 or 0 decides it instead.
+QA_BUILD="${HUB_QA_BUILD:-}"
+if [ -z "$QA_BUILD" ]; then
+  if [ "$IDENTITY" = "-" ] && ! command -v go >/dev/null; then QA_BUILD=1; else QA_BUILD=0; fi
+fi
+QA_BUILD_PLIST=""
+if [ "$QA_BUILD" = "1" ]; then
+  echo "==> QA build: the app starts from empty connection settings at every launch"
+  QA_BUILD_PLIST="<key>HubQABuild</key>
+	<true/>"
+fi
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -105,19 +127,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	$QA_BUILD_PLIST
 </dict>
 </plist>
 PLIST
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
 echo "==> Signing"
-# Scripts/signing-identity.sh picks the owner's team and its identity: pinned
-# by CODESIGN_TEAM_ID or ~/.config/job-search-hub/codesign-team-id, else the
-# keychain's one Apple Development identity, whose team it pins. Without one,
-# as in CI and Symphony's QA VM, or with CODESIGN_IDENTITY=-, it's ad hoc,
-# without the hardened runtime.
-SIGNING="$(Scripts/signing-identity.sh)"
-read -r IDENTITY TEAM_ID <<<"$SIGNING"
 if [ "$IDENTITY" = "-" ]; then
   SIGN_OPTIONS=(--sign -)
 else
