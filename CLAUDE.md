@@ -58,6 +58,7 @@ These are for a person at the Mac. Agent runs never launch the Mac app, `screens
 
 ```bash
 cd macos
-./Scripts/make-app.sh                            # builds and signs build/JobSearchHub.app
-./Scripts/screenshot-page.sh companies out.png   # opens a page and captures its window
+./Scripts/make-app.sh                            # builds and signs build/JobSearchHub.app, server included
+./Scripts/install-app.sh                         # builds it and installs it in ~/Applications, then restarts the server from it
+./Scripts/screenshot-page.sh companies out.png   # opens build/JobSearchHub.app on a page and captures its window
 ```

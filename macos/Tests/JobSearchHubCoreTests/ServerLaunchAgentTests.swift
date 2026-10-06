@@ -5,10 +5,10 @@ import Testing
 private let runningOutput = """
 gui/501/com.tonypine.jobsearchhub.server = {
 \tactive count = 1
-\tpath = /Users/ada/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
+\tpath = /Users/ada/Applications/Job Search Hub.app/Contents/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
 \tstate = running
 
-\tprogram = /Users/ada/Library/Application Support/JobSearchHub/bin/run-hub-server
+\tprogram = /Users/ada/Applications/Job Search Hub.app/Contents/Helpers/bin/hub-server
 \tendpoints = {
 \t\tstate = active
 \t}
