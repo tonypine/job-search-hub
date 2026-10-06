@@ -41,11 +41,12 @@ func Restore(ctx context.Context, settings Settings, dump string, check func(ctx
 	if err != nil {
 		return "", err
 	}
-	engine, dir, lock, err := lockDir(settings)
+	settings, lock, err := lockDir(settings)
 	if err != nil {
 		return "", err
 	}
 	defer lock.Close()
+	engine, dir := settings.Engine, settings.Dir
 	major, err := getMajor(engine)
 	if err != nil {
 		return "", err
