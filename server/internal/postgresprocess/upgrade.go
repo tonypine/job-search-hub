@@ -40,7 +40,7 @@ func (upgradeError *UpgradeError) Unwrap() error {
 // builds the new cluster in <to>.partial, after removing one a killed upgrade
 // left, restores the dump with engine's pg_restore, checks that every table
 // has the rows it had, and renames it to <to>. The old cluster stays. On a
-// failure, no <to>.partial is left.
+// failure, neither <to>.partial nor <to> is left.
 func upgrade(ctx context.Context, oldEngine, engine, dir, backups, from, to string) (err error) {
 	oldDataDir := filepath.Join(dir, from)
 	dataDir := filepath.Join(dir, to)
@@ -80,13 +80,25 @@ func upgrade(ctx context.Context, oldEngine, engine, dir, backups, from, to stri
 	if err := restoreInto(ctx, engine, dir, partial, dump, check, io.Discard); err != nil {
 		return err
 	}
-	if err := os.Rename(partial, dataDir); err != nil {
-		return fmt.Errorf("move the new cluster into place: %w", err)
-	}
-	if err := syncDir(dir); err != nil {
+	if err := moveIntoPlace(partial, dataDir); err != nil {
 		return err
 	}
 	slog.Info("database moved to a new Postgres major", "data", dataDir, "kept", oldDataDir)
+	return nil
+}
+
+// moveIntoPlace renames the finished cluster partial to dataDir. Once the
+// rename is done, dataDir is the database the next start runs, so a failure
+// to sync their folder only gets logged: returning it would make Start fall
+// back to the old cluster, and what it took in that session would be lost
+// when the next start found dataDir and ran it.
+func moveIntoPlace(partial, dataDir string) error {
+	if err := os.Rename(partial, dataDir); err != nil {
+		return fmt.Errorf("move the new cluster into place: %w", err)
+	}
+	if err := syncDir(filepath.Dir(dataDir)); err != nil {
+		slog.Warn("the new cluster's move into place may not survive a power cut", "data", dataDir, "error", err)
+	}
 	return nil
 }
 
