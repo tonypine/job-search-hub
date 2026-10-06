@@ -20,5 +20,7 @@ let package = Package(
         // The hub server prints CVs with it: WebKit, offscreen, no window.
         .executableTarget(name: "CVPrint"),
         .testTarget(name: "JobSearchHubCoreTests", dependencies: ["JobSearchHubCore"]),
+        // The app's views, drawn offscreen with ImageRenderer.
+        .testTarget(name: "JobSearchHubTests", dependencies: ["JobSearchHub", "JobSearchHubCore"]),
     ]
 )
