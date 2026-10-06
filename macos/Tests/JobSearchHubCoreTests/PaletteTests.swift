@@ -155,10 +155,21 @@ private func getTitles(_ sections: [PaletteSection]) -> [[String]] {
 
 @Test func theActionsOfferedFollowWhatTheyWouldChange() {
     #expect(PaletteAction.getAvailable(isModelWorkPaused: false, unseenUpdates: 0) == [
-        .addCompany, .addCompanyFromSuggestions, .addJobByURL, .generateMissingCVs, .pauseLocalModels,
+        .addCompany, .addCompanyFromSuggestions, .addJobByURL, .generateMissingCVs, .pauseLocalModels, .checkForNewVersion,
     ])
-    #expect(PaletteAction.getAvailable(isModelWorkPaused: true, unseenUpdates: 2).suffix(2) == [.resumeLocalModels, .markAllUpdatesSeen])
+    #expect(PaletteAction.getAvailable(isModelWorkPaused: true, unseenUpdates: 2).suffix(3) == [.resumeLocalModels, .markAllUpdatesSeen, .checkForNewVersion])
+    #expect(PaletteAction.getAvailable(isModelWorkPaused: nil, unseenUpdates: 0, hasReadyVersion: true).suffix(3) == [
+        .installNewVersion, .showWhatsNew, .checkForNewVersion,
+    ])
     #expect(!PaletteAction.getAvailable(isModelWorkPaused: nil, unseenUpdates: 0).contains { $0 == .pauseLocalModels || $0 == .resumeLocalModels })
+}
+
+@Test func versionFindsTheNewVersionActions() {
+    let available = PaletteAction.getAvailable(isModelWorkPaused: false, unseenUpdates: 0, hasReadyVersion: true)
+
+    let sections = PaletteSearch.rank(pages + available.map(PaletteItem.action), query: "version")
+
+    #expect(getTitles(sections) == [["Install new version", "Check for new version", "What's new"]])
 }
 
 @Test func keysDecideTheSelectedJob() {
