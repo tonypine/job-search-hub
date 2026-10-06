@@ -2,6 +2,8 @@ package main
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,13 +34,37 @@ func TestParseEnvironmentNamesEveryMissingVariable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for missing variables")
 	}
-	for _, name := range []string{"HUB_DATABASE_URL", "HUB_OWNER_TOKEN"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("error %q does not name %s", err, name)
+	if !strings.Contains(err.Error(), "HUB_OWNER_TOKEN") {
+		t.Errorf("error %q does not name HUB_OWNER_TOKEN", err)
+	}
+	// Without a URL, the server runs its own database.
+	for _, name := range []string{"HUB_ADDR", "HUB_DATABASE_URL"} {
+		if strings.Contains(err.Error(), name) {
+			t.Errorf("error %q names %s, which isn't missing", err, name)
 		}
 	}
-	if strings.Contains(err.Error(), "HUB_ADDR") {
-		t.Errorf("error %q names HUB_ADDR, which is set", err)
+}
+
+func TestWithoutADatabaseURLTheServerRunsItsOwnFromTheEnginesBesideIt(t *testing.T) {
+	environment := maps.Clone(validEnvironment)
+	delete(environment, "HUB_DATABASE_URL")
+	parsed, err := parseEnvironment(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("no database URL: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEngines := filepath.Join(filepath.Dir(filepath.Dir(executable)), "engines")
+	if parsed.databaseURL != "" || parsed.postgresEngines != wantEngines ||
+		!strings.HasSuffix(parsed.postgresDir, "/Library/Application Support/JobSearchHub/postgres") {
+		t.Fatalf("database %q, engines %q (want %q), folder %q", parsed.databaseURL, parsed.postgresEngines, wantEngines, parsed.postgresDir)
+	}
+
+	environment["HUB_POSTGRES_ENGINES"], environment["HUB_POSTGRES_DIR"] = "/opt/engines", "/srv/hub-postgres"
+	if parsed, err = parseEnvironment(lookupFrom(environment)); err != nil || parsed.postgresEngines != "/opt/engines" || parsed.postgresDir != "/srv/hub-postgres" {
+		t.Fatalf("engines %q, folder %q, err %v", parsed.postgresEngines, parsed.postgresDir, err)
 	}
 }
 
@@ -135,12 +161,12 @@ func TestTheModelRuntimeHasDefaultsAndChecksItsPort(t *testing.T) {
 	}
 }
 
-func TestBackupsGoToApplicationSupportWithPgDumpFromThePath(t *testing.T) {
+func TestBackupsGoToApplicationSupportWithTheDefaultPgDump(t *testing.T) {
 	parsed, err := parseEnvironment(lookupFrom(validEnvironment))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(parsed.backupsDir, "/Library/Application Support/JobSearchHub/backups") || parsed.pgDump != "pg_dump" {
+	if !strings.HasSuffix(parsed.backupsDir, "/Library/Application Support/JobSearchHub/backups") || parsed.pgDump != "" {
 		t.Fatalf("backups: %q with %q", parsed.backupsDir, parsed.pgDump)
 	}
 

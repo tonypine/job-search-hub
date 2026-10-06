@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// databaseWaitLimit is how long the server waits for Postgres at startup.
-// At login, launchd starts the server before Docker Desktop has Postgres up.
+// databaseWaitLimit is how long the server waits at startup for a Postgres
+// it doesn't run. At login, launchd starts the server before Docker Desktop
+// has Postgres up.
 const databaseWaitLimit = 3 * time.Minute
 
 type pinger interface {

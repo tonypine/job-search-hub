@@ -26,8 +26,13 @@ const (
 )
 
 type config struct {
-	address           string
+	address string
+	// databaseURL is a Postgres the server uses as it is; empty, the server
+	// runs its own, from the newest engine in postgresEngines, with its
+	// clusters in postgresDir.
 	databaseURL       string
+	postgresEngines   string
+	postgresDir       string
 	ownerToken        string
 	boardPollInterval time.Duration
 	feedPollInterval  time.Duration
@@ -67,7 +72,8 @@ type config struct {
 	runtimePort        int
 	runtimeIdleTimeout time.Duration
 	// backupsDir is the private folder nightly database dumps go to, and
-	// pgDump the pg_dump binary that writes them.
+	// pgDump the pg_dump binary that writes them; empty, the engine's own
+	// when the server runs the database, or pg_dump from the PATH.
 	backupsDir string
 	pgDump     string
 	// claudeBinary is the Claude Code CLI full briefs are written with,
@@ -101,9 +107,6 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 	var missing []string
 	if parsed.address == "" {
 		missing = append(missing, "HUB_ADDR")
-	}
-	if parsed.databaseURL == "" {
-		missing = append(missing, "HUB_DATABASE_URL")
 	}
 	if parsed.ownerToken == "" {
 		missing = append(missing, "HUB_OWNER_TOKEN")
@@ -178,8 +181,19 @@ func parseEnvironment(lookup func(string) string) (config, error) {
 		}
 	}
 	parsed.pgDump = lookup("HUB_PG_DUMP")
-	if parsed.pgDump == "" {
-		parsed.pgDump = "pg_dump"
+	parsed.postgresEngines = lookup("HUB_POSTGRES_ENGINES")
+	if parsed.postgresEngines == "" {
+		// The engines sit beside the server's own folder, wherever the
+		// app puts it.
+		if executable, err := os.Executable(); err == nil {
+			parsed.postgresEngines = filepath.Join(filepath.Dir(executable), "..", "engines")
+		}
+	}
+	parsed.postgresDir = lookup("HUB_POSTGRES_DIR")
+	if parsed.postgresDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			parsed.postgresDir = filepath.Join(home, "Library", "Application Support", "JobSearchHub", "postgres")
+		}
 	}
 	parsed.claudeBinary = lookup("HUB_CLAUDE_BIN")
 	if parsed.claudeBinary == "" {
