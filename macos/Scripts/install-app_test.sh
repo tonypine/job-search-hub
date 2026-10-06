@@ -408,7 +408,6 @@ expect "another Postgres: the move is asked, and imports nothing" "1 0" "$(lines
 expect "another Postgres: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
 
 [ "$failures" -eq 0 ] || {
-
   echo "$failures failed"
   exit 1
 }
