@@ -12,6 +12,14 @@
 #   FAKE_DEAD_VERSION    a server of it never answers
 #   FAKE_ANSWER_VERSION  every server says it is this version on /v1/version
 #   FAKE_PRINT_PROGRAM   launchd says it runs this program, whatever it loaded
+#   FAKE_MOVE_FAILS      the new server's move off Docker's Postgres fails
+#   FAKE_NO_POSTGRES     /v1/health never reports the database the server owns
+#
+# The fake server moves a server.env off Docker's Postgres as the real one
+# does, without the import: it drops HUB_DATABASE_URL and
+# HUB_DATABASE_PASSWORD when the URL is compose.yaml's, and logs the import.
+# The fake /v1/health reports the database the server owns while the run's
+# server.env has no HUB_DATABASE_URL.
 set -euo pipefail
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/install-app-test.XXXXXX")"
@@ -71,8 +79,12 @@ fi
 [ -f "$FAKE/loaded" ] || exit 7
 version="$("$(cat "$FAKE/loaded")" --version | sed -n 's/^hub-server //p')"
 [ "$version" != "${FAKE_DEAD_VERSION:-}" ] || exit 7
+postgres=
+if [ -n "${FAKE_ENV_FILE:-}" ] && [ -z "${FAKE_NO_POSTGRES:-}" ] && ! grep -q '^HUB_DATABASE_URL=' "$FAKE_ENV_FILE"; then
+  postgres=',"postgres":{"major":18}'
+fi
 case "$url" in
-*/v1/health) echo '{"status":"ok"}' ;;
+*/v1/health) printf '{"status":"ok"%s}\n' "$postgres" ;;
 */v1/version) printf '{"version":"%s","commit":"abc1234","newest_migration":1}\n' "${FAKE_ANSWER_VERSION:-$version}" ;;
 *) exit 22 ;;
 esac
@@ -103,10 +115,26 @@ FAKE
 printf '#!/bin/sh\n' > "$work/bin/sleep"
 chmod +x "$work/bin"/*
 
-# fake_server PATH VERSION writes a hub-server that prints VERSION.
+# fake_server PATH VERSION writes a hub-server that prints VERSION, and
+# moves a server.env off Docker's Postgres.
 fake_server() {
   mkdir -p "$(dirname "$1")"
-  printf '#!/bin/sh\necho "hub-server %s"\necho "commit abc1234"\n' "$2" > "$1"
+  cat > "$1" <<'SERVER'
+#!/bin/sh
+if [ "$1 $2" = "database move-from-compose" ]; then
+  echo "$3" >> "$FAKE/moves.log"
+  if [ -n "${FAKE_MOVE_FAILS:-}" ]; then
+    echo "hub-server database: the import failed: the imported database's row counts differ from the source's in companies" >&2
+    exit 1
+  fi
+  grep -q '^HUB_DATABASE_URL=postgres://hub:[^@]*@localhost:5434/hub$' "$3" || exit 0
+  echo "$3" >> "$FAKE/imports.log"
+  grep -v -e '^HUB_DATABASE_URL=' -e '^HUB_DATABASE_PASSWORD=' "$3" > "$3.moving"
+  mv "$3.moving" "$3"
+  exit 0
+fi
+SERVER
+  printf 'echo "hub-server %s"\necho "commit abc1234"\n' "$2" >> "$1"
   chmod +x "$1"
 }
 
@@ -158,7 +186,7 @@ setup() {
 # run [VAR=value...] runs the script on the build, setting status, out and err.
 run() {
   status=0
-  env HOME="$home" TMPDIR="$case_dir/tmp" FAKE="$fake" FAKE_ENGINE="$work/engine.tar.gz" PATH="$work/bin:$PATH" CODESIGN_TEAM_ID=OWNERTEAM1 "$@" \
+  env HOME="$home" TMPDIR="$case_dir/tmp" FAKE="$fake" FAKE_ENGINE="$work/engine.tar.gz" FAKE_ENV_FILE="$env_file" PATH="$work/bin:$PATH" CODESIGN_TEAM_ID=OWNERTEAM1 "$@" \
     "$script" "$build" > "$case_dir/out" 2> "$case_dir/err" || status=$?
   out="$(cat "$case_dir/out")"
   err="$(cat "$case_dir/err")"
@@ -188,6 +216,13 @@ contains() {
 health() {
   FAKE="$fake" FAKE_DEAD_VERSION="${1:-}" "$work/bin/curl" -fsS http://127.0.0.1:18090/v1/health 2>/dev/null || echo down
 }
+# on_compose points the case's server.env at Docker's Postgres, as one from
+# before the server owned its database.
+on_compose() {
+  printf 'HUB_DATABASE_URL=postgres://hub:0123abcd@localhost:5434/hub\nHUB_DATABASE_PASSWORD=0123abcd\n' >> "$env_file"
+  cp "$env_file" "$case_dir/env.before"
+}
+lines() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 loaded_version() { "$(cat "$fake/loaded")" --version | sed -n 's/^hub-server //p'; }
 same() { cmp -s "$1" "$2" && echo same || echo changed; }
 exists() { [ -e "$1" ] && echo yes || echo no; }
@@ -325,7 +360,55 @@ expect "a new server that won't stop: the previous app and engine are kept" "hub
 expect "a new server that won't stop: the previous agent is kept" same "$(same "$case_dir/plist.before" "$kept_plist")"
 expect "a new server that won't stop: the previous server.env is kept" same "$(same "$case_dir/env.before" "$kept_env")"
 
+setup compose app
+on_compose
+run
+expect "on Docker's Postgres: installs" 0 "$status"
+expect "on Docker's Postgres: the data is imported once" 1 "$(lines "$fake/imports.log")"
+expect "on Docker's Postgres: server.env loses the database URL and password, alone" "$(printf 'HUB_ADDR=127.0.0.1:18090\nHUB_OWNER_TOKEN=test-token')" "$(cat "$env_file")"
+expect "on Docker's Postgres: the new server runs" 0.1.0-new "$(loaded_version)"
+contains "on Docker's Postgres: says the hub runs the database the server owns" "runs on the database the server owns, Postgres 18" "$out"
+cp "$env_file" "$case_dir/env.moved"
+run
+expect "a second install after the move: installs" 0 "$status"
+expect "a second install after the move: imports nothing" 1 "$(lines "$fake/imports.log")"
+expect "a second install after the move: server.env is as the move left it" same "$(same "$case_dir/env.moved" "$env_file")"
+
+setup compose-move-fails app
+on_compose
+run FAKE_MOVE_FAILS=1
+expect "a move that fails: the install goes on" 0 "$status"
+expect "a move that fails: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
+expect "a move that fails: the new server runs, on Docker's Postgres" 0.1.0-new "$(loaded_version)"
+contains "a move that fails: says why" "row counts differ" "$err"
+contains "a move that fails: says the hub stays on Docker's Postgres" "server.env is as it was and the server runs on Docker's Postgres as before" "$err"
+
+setup compose-moved-dead app
+on_compose
+run FAKE_DEAD_VERSION=0.1.0-new
+expect "moved, but the new server never answers: fails" 1 "$status"
+expect "moved, but the new server never answers: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
+expect "moved, but the new server never answers: the old server runs again" 0.1.0-old "$(loaded_version)"
+contains "moved, but the new server never answers: says the hub is back on Docker's Postgres" "server.env points at Docker's Postgres again" "$err"
+
+setup compose-no-postgres app
+on_compose
+run FAKE_NO_POSTGRES=1
+expect "moved, but /v1/health doesn't report the owned database: fails" 1 "$status"
+contains "moved, but /v1/health doesn't report the owned database: says so" "doesn't report the database it owns on /v1/health" "$err"
+expect "moved, but /v1/health doesn't report the owned database: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
+expect "moved, but /v1/health doesn't report the owned database: the old server runs again" 0.1.0-old "$(loaded_version)"
+
+setup other-database app
+printf 'HUB_DATABASE_URL=postgres://hub:0123abcd@db.example:5432/hub\n' >> "$env_file"
+cp "$env_file" "$case_dir/env.before"
+run
+expect "another Postgres: installs" 0 "$status"
+expect "another Postgres: the move is asked, and imports nothing" "1 0" "$(lines "$fake/moves.log") $(lines "$fake/imports.log")"
+expect "another Postgres: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
+
 [ "$failures" -eq 0 ] || {
+
   echo "$failures failed"
   exit 1
 }
