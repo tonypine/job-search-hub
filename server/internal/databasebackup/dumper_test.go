@@ -176,14 +176,14 @@ func TestTheNewestDumpIsTheOneWrittenLastOfAnyKind(t *testing.T) {
 }
 
 func TestThePasswordStaysOffTheCommandLine(t *testing.T) {
-	command, err := buildDumpCommand(context.Background(), "pg_dump", "postgres://hub:s3cret@localhost:5434/hub", "out.dump")
+	command, err := buildDumpCommand(context.Background(), "pg_dump", "postgres://hub:s3cret@db.example:5432/hub", "out.dump")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(command.Args, " "), "s3cret") {
 		t.Fatalf("the password is in the arguments: %v", command.Args)
 	}
-	if !slices.Contains(command.Args, "--dbname=postgres://hub@localhost:5434/hub") {
+	if !slices.Contains(command.Args, "--dbname=postgres://hub@db.example:5432/hub") {
 		t.Errorf("args = %v, want the URL without its password", command.Args)
 	}
 	if !slices.Contains(command.Env, "PGPASSWORD=s3cret") {

@@ -2,7 +2,7 @@
 
 A local hub for running a job search. Target companies go on a watch list, and agents fill in each company's dossier: its job board, and the people worth contacting. The hub tracks whether anyone at the company writes back, since contact is the first barrier to an offer.
 
-It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions through Claude Code, and native clients to follow.
+It runs on one Mac: a Go server that runs its own Postgres, agent sessions through Claude Code, and native clients for the Mac and Android.
 
 ## What works today
 
@@ -40,9 +40,9 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
 
    - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in the bundle's `Contents/Helpers/engines/` once the bundle carries one, and in `~/Library/Application Support/JobSearchHub/engines/` until then (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both. When an update brings a new Postgres major, the server moves the database to it at start (see [Moving to a new Postgres major](#moving-to-a-new-postgres-major)).
-   - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
+   - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. This is for a server on a host other than a Mac, which runs against any Postgres 18, a managed one included.
 
-   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
+   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise, or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
 
    To restore a dump into the database the server owns, stop the hub in Settings › Server, then run:
 
@@ -52,22 +52,15 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
 
-   **Moving your data out of Docker.** A `server.env` that still sets `HUB_DATABASE_URL` keeps the hub on Docker's Postgres. To move it into the database the server owns:
+   **A hub still on the old Docker database moves itself.** A `server.env` from before the server owned its database points `HUB_DATABASE_URL` at the Postgres the old Compose file ran on `localhost:5434`. The next `install-app.sh` moves it, with nothing for you to do: while the server is stopped for the update, the new server's `hub-server database move-from-compose` imports that database as `hub-server database import` does (below), and only once each table holds as many rows as in the old one removes `HUB_DATABASE_URL` and `HUB_DATABASE_PASSWORD` from `server.env`. The script then checks that `/v1/health` reports the database the server owns (`"postgres":{"major":18}`). If any step fails, `server.env` is put back as it was, the hub keeps running on the old database, and the script says why. The old container and its `hub-db` volume are left as they are. A `HUB_DATABASE_URL` that names any other Postgres is never moved.
 
-   1. Stop the hub in Settings › Server, so nothing is written between the dump and the switch.
-   2. Import Docker's database, with the password from `.env`'s `HUB_DATABASE_PASSWORD`:
+   To import a hub database from another Postgres by hand, stop the hub in Settings › Server, then run:
 
-      ```bash
-      ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database import "postgres://hub:<password>@localhost:5434/hub"
-      ```
+   ```bash
+   ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database import "postgres://<user>:<password>@<host>:<port>/<database>"
+   ```
 
-      It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in Docker's database and in the new one. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`.
-   3. Remove the `HUB_DATABASE_URL` line from `~/.config/job-search-hub/server.env`, then start the hub in Settings › Server.
-   4. Check Today, the Pipeline and a company's dossier in the Mac app, and that the phone gets updates. The companies list keeps its order: names sort ignoring case, as they did on Docker.
-   5. `docker compose stop db`, keeping its volume. The hub keeps working.
-   6. After two weeks of nightly dumps from the owned database, `docker compose down` and `docker volume rm job-search-hub_hub-db`.
-
-   To go back before step 6: stop the hub, put `HUB_DATABASE_URL` back in `server.env`, `docker compose start db`, and start the hub. Writes made since step 3 stay only in the database the server owns. To keep them, dump it before stopping the hub, with the engine's `pg_dump` (`engines/postgres-18/bin/pg_dump --format=custom --file=<file> "postgres:///hub?host=$HOME/Library/Application%20Support/JobSearchHub/postgres&user=hub"`), and once Docker's runs, restore the file into it with `pg_restore --clean --no-owner --dbname=<Docker's URL> <file>`.
+   It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in both databases. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`. Then remove `HUB_DATABASE_URL` from `server.env`, if it's there, and start the hub.
 
 2. **Install the CLI.** In the Mac app's Settings › Server, click *Install* on the *hub command* row. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
 
@@ -104,6 +97,12 @@ In Settings (⌘,) › Connection, enter the hub URL and the owner token. The to
 ```bash
 set -a && . ./.env && set +a
 open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
+```
+
+On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
+
+```bash
+open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --qa-mode
 ```
 
 The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
@@ -233,9 +232,9 @@ If any step fails, the server removes `19.partial`, logs why, and runs on the 18
 
 The hub stays on the Mac rather than moving to an always-on PC (decided October 2026). The reasons:
 
-- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and Postgres restarts with Docker Desktop, so a locked screen doesn't take the hub down.
+- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and owns its database, a Postgres it starts and stops itself, so a locked screen doesn't take the hub down.
 - **Downtime loses nothing.** Gmail catches up from the stored history ID, Pub/Sub holds notifications for 7 days, alert emails of the last 30 days are read on the next pass, and board and feed polls pick up where they stopped. Moving would only add gathering while the Mac is shut or away.
-- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. The nightly `pg_dump` (see Setup) runs only with the native server, because the Docker image has no `pg_dump`. All of that would have to be set up again on a Windows Docker host.
+- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. All of that would have to be set up again on the PC, where the server would run against a Postgres of its own through `HUB_DATABASE_URL`.
 
 Revisit this if the PC turns out to run the local models well. If it does, move the model worker there first and leave the hub where it is.
 
@@ -255,7 +254,6 @@ The ruleset and these settings need a repository admin, once:
 ## Layout
 
 ```
-compose.yaml              Postgres and hub-server
 server/cmd/hub-server     the server
 server/cmd/hub            the CLI
 server/internal/…         store, MCP tools, REST API, prompts, stream parsing
