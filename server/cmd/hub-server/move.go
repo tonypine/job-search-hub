@@ -44,10 +44,15 @@ type databaseMove struct {
 
 // run moves the data of the database envFile's HUB_DATABASE_URL names, when
 // isOld says it's compose.yaml's: it imports it as hub-server database import
-// does, without --replace, and only once the import succeeded writes envFile
-// again without HUB_DATABASE_URL and HUB_DATABASE_PASSWORD, every other line
-// as it was. A failure leaves envFile untouched, so the server starts on the
-// old database again. Any other HUB_DATABASE_URL, or none, moves nothing.
+// --replace does, and only once the import succeeded writes envFile again
+// without HUB_DATABASE_URL and HUB_DATABASE_PASSWORD, every other line as it
+// was. A failure leaves envFile untouched, so the server starts on the old
+// database again. Any other HUB_DATABASE_URL, or none, moves nothing.
+//
+// It replaces because a server.env that still names compose.yaml's Postgres
+// never ran on the database the server owns: whatever that holds is the copy
+// of a move an install rolled back, kept beside it once replaced. After a
+// move, envFile names it no more, so no second import replaces the hub's data.
 func (move databaseMove) run(ctx context.Context, envFile string, out io.Writer) (moved bool, err error) {
 	settings, err := os.ReadFile(envFile)
 	if err != nil {
@@ -71,7 +76,7 @@ func (move databaseMove) run(ctx context.Context, envFile string, out io.Writer)
 	}
 
 	fmt.Fprintln(out, "Moving the hub's data from compose.yaml's Postgres into the database the server owns")
-	if err := importDatabase(ctx, move.engines, move.dir, move.backups, source, false, move.check, out); err != nil {
+	if err := importDatabase(ctx, move.engines, move.dir, move.backups, source, true, move.check, out); err != nil {
 		return false, err
 	}
 	if err := writeEnvFileWithout(envFile, settings, composeVariables); err != nil {

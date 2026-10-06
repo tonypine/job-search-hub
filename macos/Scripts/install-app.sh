@@ -31,8 +31,10 @@
 # on port 5434 has its data imported into the database the server owns, with
 # hub-server database move-from-compose, which drops the line only once every
 # table's rows match. A move that fails leaves server.env as it was, and the
-# server starts on Docker's Postgres as before. Docker's container and its
-# volume are never touched.
+# server starts on Docker's Postgres as before. So does an install rolled back
+# after a move: the copy it imported stays in the database the server owns,
+# and the next install's move replaces it. Docker's container and its volume
+# are never touched.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -121,7 +123,7 @@ put_back() {
   if [ -d "$engine_dir.old" ] && [ ! -d "$engine_dir" ]; then mv "$engine_dir.old" "$engine_dir"; fi
   if [ -f "$work/previous.env" ]; then cp -p "$work/previous.env" "$env_file"; fi
   if [ "$moved" = true ]; then
-    echo "server.env points at Docker's Postgres again, and the hub runs on it. The copy imported into the database the server owns stays there." >&2
+    echo "server.env points at Docker's Postgres again, and the hub runs on it. The copy imported into the database the server owns stays there until the next install, which tries the move again and replaces it." >&2
   fi
   if [ -z "$previous_plist" ]; then
     rm -f "$plist"
