@@ -153,9 +153,10 @@ public struct AddJobResponse: Codable, Equatable, Sendable {
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
-    /// All is every job that isn't skipped; skipped ones only show under
-    /// Skipped. The hub calls them dismissed.
-    case open, closed, all, dismissed
+    /// Later is the open jobs left for later. All is every job that isn't
+    /// skipped; skipped ones only show under Skipped. The hub calls them
+    /// dismissed.
+    case open, later, closed, dismissed, all
 
     public var id: String { rawValue }
     public var title: String { self == .dismissed ? "Skipped" : rawValue.capitalized }
@@ -197,6 +198,12 @@ public extension HubClient {
             response.jobs += page.jobs
         }
         return response
+    }
+
+    /// How many jobs the status and search hold, for a scope's count: one
+    /// row asked for, and the total kept.
+    func getJobCount(search: String, status: JobStatusFilter) async throws -> Int {
+        try await get("v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: 1), as: JobsResponse.self).total
     }
 }
 

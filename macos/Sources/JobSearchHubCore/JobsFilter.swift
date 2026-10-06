@@ -103,3 +103,86 @@ public struct JobsFilterChoices: Equatable, Sendable {
         }
     }
 }
+
+/// A filter that is on, as the page header's chip says it. Removing a chip
+/// turns its whole filter off.
+public struct JobsFilterChip: Identifiable, Equatable, Sendable {
+    public enum Kind: Hashable, Sendable {
+        case screen
+        /// Hides the jobs that fail the check of that name.
+        case checkFailure(String)
+        case sources
+        case workplaces
+        case employmentTypes
+        case withPay
+        case new
+    }
+
+    public var kind: Kind
+    public var title: String
+
+    public var id: Kind { kind }
+}
+
+extension JobsFilter {
+    /// The screen levels that keep only the jobs that pass.
+    public static let passesScreenHiddenLevels: Set<FitLevel> = [.unclear, .poor]
+
+    /// The filters that are on, in the order the menu lists them. A filter of
+    /// values names what it keeps when that's one value, else what it hides.
+    public func getChips(choices: JobsFilterChoices, getCheckTitle: (String) -> String) -> [JobsFilterChip] {
+        var chips: [JobsFilterChip] = []
+        if !hiddenFitLevels.isEmpty {
+            let shown = [FitLevel.good, .unclear, .poor].filter { !hiddenFitLevels.contains($0) }
+            let title = switch shown.count {
+            case 0: "Screen: none"
+            case 1: shown[0].label
+            default: "Screen: " + shown.map(\.title).joined(separator: ", ")
+            }
+            chips.append(JobsFilterChip(kind: .screen, title: title))
+        }
+        for name in hiddenCheckFailures.sorted() {
+            chips.append(JobsFilterChip(kind: .checkFailure(name), title: "Doesn't fail \(getCheckTitle(name))"))
+        }
+        let valueFilters: [(JobsFilterChip.Kind, Set<String>, [JobsFilterChoice], (String) -> String)] = [
+            (.sources, hiddenSources, choices.sources, Job.getSourceName),
+            (.workplaces, hiddenWorkplaces, choices.workplaces, { $0 }),
+            (.employmentTypes, hiddenEmploymentTypes, choices.employmentTypes, { $0 }),
+        ]
+        for (kind, hidden, values, getTitle) in valueFilters where !hidden.isEmpty {
+            chips.append(JobsFilterChip(kind: kind, title: Self.describeHidden(hidden, among: values, getTitle: getTitle)))
+        }
+        if showsOnlyJobsWithPay {
+            chips.append(JobsFilterChip(kind: .withPay, title: "Lists pay"))
+        }
+        if showsOnlyNewJobs {
+            chips.append(JobsFilterChip(kind: .new, title: "New since last visit"))
+        }
+        return chips
+    }
+
+    /// The filter without the chip's part.
+    public func removing(_ kind: JobsFilterChip.Kind) -> JobsFilter {
+        var filter = self
+        switch kind {
+        case .screen: filter.hiddenFitLevels = []
+        case let .checkFailure(name): filter.hiddenCheckFailures.remove(name)
+        case .sources: filter.hiddenSources = []
+        case .workplaces: filter.hiddenWorkplaces = []
+        case .employmentTypes: filter.hiddenEmploymentTypes = []
+        case .withPay: filter.showsOnlyJobsWithPay = false
+        case .new: filter.showsOnlyNewJobs = false
+        }
+        return filter
+    }
+
+    /// "Remote" when one value of the loaded jobs is left, else "Not Indeed
+    /// alert" or "Not Contract and 2 more".
+    private static func describeHidden(_ hidden: Set<String>, among values: [JobsFilterChoice], getTitle: (String) -> String) -> String {
+        let shown = values.filter { !hidden.contains($0.value) }
+        if shown.count == 1 { return shown[0].title }
+        let titlesByValue = Dictionary(values.map { ($0.value, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let hiddenTitles = hidden.map { titlesByValue[$0] ?? getTitle($0) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        return hiddenTitles.count == 1 ? "Not \(hiddenTitles[0])" : "Not \(hiddenTitles[0]) and \(hiddenTitles.count - 1) more"
+    }
+}

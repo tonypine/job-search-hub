@@ -8,9 +8,18 @@ final class PeopleModel {
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
     var filter = PeopleFilter()
+    var search = ""
     var selectedKey: String?
 
-    var shownPeople: [RelatedPerson] { filter.apply(to: people) }
+    /// The people the filter keeps whose name, company or role holds the search.
+    var shownPeople: [RelatedPerson] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        let filtered = filter.apply(to: people)
+        guard !query.isEmpty else { return filtered }
+        return filtered.filter { person in
+            [person.name, person.companyName, person.role].contains { $0?.localizedStandardContains(query) == true }
+        }
+    }
     var selected: RelatedPerson? { people.first { $0.key == selectedKey } }
 
     func load(with client: HubClient) async {
@@ -38,6 +47,7 @@ struct PeoplePage: View {
         Group {
             if let client = connection.makeClient() {
                 VStack(alignment: .leading, spacing: 0) {
+                    header
                     table
                     Text("Contacts come from company research, connections and recruiters from your LinkedIn import, introducers from what you add on a company.")
                         .font(.hubCaption).foregroundStyle(.secondary)
@@ -51,24 +61,45 @@ struct PeoplePage: View {
                 .onChange(of: details.getEntry(on: .people)) {
                     if details.getEntry(on: .people) == nil { model.selectedKey = nil }
                 }
-                .toolbar {
-                    Picker("Relation", selection: $model.filter.relation) {
-                        Text("All").tag(PersonRelation?.none)
-                        ForEach(PersonRelation.allCases) { relation in
-                            Text(relation.pluralTitle).tag(PersonRelation?.some(relation))
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .help("Show one relation")
-                    Toggle("Hiring now", systemImage: "briefcase", isOn: $model.filter.hiringNowOnly)
-                        .help("Only people whose company has open jobs in the feed")
-                    Toggle("Unanswered", systemImage: "arrowshape.turn.up.left", isOn: $model.filter.unansweredOnly)
-                        .help("Only people who wrote and you never answered")
-                }
             }
         }
         .navigationTitle("People")
         .navigationSubtitle(PeopleFilter.describeCounts(model.people))
+    }
+
+    /// The page's controls, in its header rather than in the window's
+    /// toolbar: the relations as scopes, the filters that are on as chips.
+    private var header: some View {
+        PageHeader(chips: filterChips) {
+            TabStrip(items: relationScopes, selection: $model.filter.relation)
+        } trailing: {
+            PageSearchField(text: $model.search, prompt: "Search people")
+                .help("Search names, companies and roles")
+        } filterMenu: {
+            Toggle("Hiring now", isOn: $model.filter.hiringNowOnly)
+                .help("Only people whose company has open jobs in the feed")
+            Toggle("Unanswered", isOn: $model.filter.unansweredOnly)
+                .help("Only people who wrote and you never answered")
+        }
+    }
+
+    /// Everyone, then each relation, with how many people it holds.
+    private var relationScopes: [TabStripItem<PersonRelation?>] {
+        [TabStripItem<PersonRelation?>(id: nil, title: "All", count: model.people.count)]
+            + PersonRelation.allCases.map { relation in
+                TabStripItem<PersonRelation?>(id: relation, title: relation.pluralTitle, count: model.people.count { $0.relation == relation })
+            }
+    }
+
+    private var filterChips: [PageFilterChip] {
+        var chips: [PageFilterChip] = []
+        if model.filter.hiringNowOnly {
+            chips.append(PageFilterChip(id: "hiringNow", title: "Hiring now") { model.filter.hiringNowOnly = false })
+        }
+        if model.filter.unansweredOnly {
+            chips.append(PageFilterChip(id: "unanswered", title: "Unanswered") { model.filter.unansweredOnly = false })
+        }
+        return chips
     }
 
     private var table: some View {
@@ -112,7 +143,14 @@ struct PeoplePage: View {
                     description: Text("Import your LinkedIn archive in Settings › Accounts, research a company, or add someone who can introduce you on a company.")
                 )
             } else if model.shownPeople.isEmpty && !model.isLoading {
-                ContentUnavailableView("No one matches the filters", systemImage: "line.3.horizontal.decrease.circle")
+                ContentUnavailableView {
+                    Label("No one matches the filters", systemImage: "line.3.horizontal.decrease.circle")
+                } actions: {
+                    Button("Clear filters") {
+                        model.filter = PeopleFilter()
+                        model.search = ""
+                    }
+                }
             }
         }
     }

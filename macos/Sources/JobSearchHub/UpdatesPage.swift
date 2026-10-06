@@ -38,15 +38,19 @@ struct UpdatesPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                list(client: client)
-                    .task { await model.load(with: client) }
-                    .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
-                    .toolbar {
+                VStack(spacing: 0) {
+                    PageHeader {
+                        EmptyView()
+                    } trailing: {
                         Button("Mark all seen", systemImage: "checkmark.circle") {
                             Task { await unseen.markSeen(UpdateSelection(all: true), with: client) }
                         }
                         .disabled(unseen.count == 0)
                     }
+                    list(client: client)
+                }
+                .task { await model.load(with: client) }
+                .onChange(of: [events.revision, unseen.revision]) { Task { await model.load(with: client) } }
             }
         }
         .navigationTitle("Updates")

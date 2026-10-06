@@ -2,18 +2,26 @@ import AppKit
 import JobSearchHubCore
 import SwiftUI
 
+/// What the Pipeline page shows: the board, only its cards whose
+/// follow-up is due, or the skipped cards.
+enum PipelineScope: String, CaseIterable, Identifiable {
+    case active, due, skipped
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
 @MainActor
 @Observable
 final class PipelineModel {
-    private(set) var board = PipelineBoard()
+    private(set) var activeBoard = PipelineBoard()
+    private(set) var skippedBoard = PipelineBoard()
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
     private(set) var movingCardID: UUID?
     /// Why the last change to a card failed: a move, a follow-up, a skip.
     var actionError: HubFailure?
-    var showsOnlyDue = false
-    /// Shows the skipped cards instead of the board.
-    var showsSkipped = false
+    var scope = PipelineScope.active
     /// Everyone who can get the owner in, read while a card waits for a
     /// second route; nil until read.
     private(set) var people: [RelatedPerson]?
@@ -23,11 +31,23 @@ final class PipelineModel {
     /// its follow-up.
     private(set) var draftedTo: [UUID: String] = [:]
 
-    /// The board's cards for a phase, only the due ones when asked.
+    /// The board the scope shows: the skipped cards, or the active ones.
+    var board: PipelineBoard { scope == .skipped ? skippedBoard : activeBoard }
+
+    /// The board's cards for a phase, only the due ones in the Due scope.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
         let cards = board.getCards(in: phase)
-        guard showsOnlyDue else { return cards }
+        guard scope == .due else { return cards }
         return cards.filter { $0.getFollowUpStatus(now: .now)?.isDue == true }
+    }
+
+    /// How many cards each scope holds.
+    func getCount(_ scope: PipelineScope) -> Int {
+        switch scope {
+        case .active: activeBoard.cards.count
+        case .due: activeBoard.getDueCount(now: .now)
+        case .skipped: skippedBoard.cards.count
+        }
     }
 
     /// Records a follow-up, then reads the board again for its new due date.
@@ -66,12 +86,15 @@ final class PipelineModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            board = PipelineBoard(try await showsSkipped ? client.getDismissedPipeline() : client.getPipeline())
+            // Both, so every scope's count is right whichever shows.
+            async let active = client.getPipeline()
+            async let skipped = client.getDismissedPipeline()
+            (activeBoard, skippedBoard) = try await (PipelineBoard(active), PipelineBoard(skipped))
             loadError = nil
         } catch {
             loadError = HubFailure("Couldn't load the pipeline", error)
         }
-        guard !showsSkipped && !board.getUnansweredPastFollowUp(now: .now).isEmpty else { return }
+        guard scope != .skipped && !activeBoard.getUnansweredPastFollowUp(now: .now).isEmpty else { return }
         do {
             people = try await client.get("v1/people", as: PeopleResponse.self).people
         } catch {
@@ -84,10 +107,10 @@ final class PipelineModel {
     /// nobody on file. No card has any until the people are read, and the
     /// skipped cards never do.
     func getSecondRoutes(now: Date) -> [UUID: [RelatedPerson]] {
-        guard !showsSkipped, let people else { return [:] }
-        let unanswered = board.getUnansweredPastFollowUp(now: now)
+        guard scope != .skipped, let people else { return [:] }
+        let unanswered = activeBoard.getUnansweredPastFollowUp(now: now)
         var routes: [UUID: [RelatedPerson]] = [:]
-        for card in board.cards where unanswered.contains(card.id) {
+        for card in activeBoard.cards where unanswered.contains(card.id) {
             guard let companyID = card.application.companyID else { continue }
             routes[card.id] = SecondRoute.getCandidates(companyID: companyID, among: people)
         }
@@ -150,7 +173,11 @@ final class PipelineModel {
                 "PATCH", "v1/applications/\(cardID.uuidString)",
                 body: MoveApplicationRequest(phaseID: phase.id, closedReason: closedReason), as: ApplicationResponse.self
             )
-            board.replaceApplication(response.application)
+            if scope == .skipped {
+                skippedBoard.replaceApplication(response.application)
+            } else {
+                activeBoard.replaceApplication(response.application)
+            }
         } catch {
             actionError = HubFailure("Couldn't move the card", error)
         }
@@ -193,7 +220,7 @@ struct PipelinePage: View {
         Group {
             if let client = connection.makeClient() {
                 VStack(spacing: 0) {
-                    controls
+                    header
                     board(client: client)
                 }
                 .task {
@@ -203,9 +230,10 @@ struct PipelinePage: View {
                     }
                 }
                 .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                .onChange(of: model.showsSkipped) {
+                .onChange(of: model.scope) {
                     selectedCardID = nil
-                    Task { await model.load(with: client) }
+                    // The people to write to are read for the active cards.
+                    if model.scope != .skipped { Task { await model.load(with: client) } }
                 }
                 .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
                 .onChange(of: details.getEntry(on: .pipeline)) {
@@ -220,7 +248,7 @@ struct PipelinePage: View {
 
     private func describeCount() -> String {
         let count = model.board.cards.count
-        if model.showsSkipped {
+        if model.scope == .skipped {
             return count == 1 ? "1 skipped" : "\(count) skipped"
         }
         let applications = count == 1 ? "1 application" : "\(count) applications"
@@ -228,16 +256,18 @@ struct PipelinePage: View {
         return "\(applications) · \(contacts)"
     }
 
-    /// The page's controls, on a bar over the board rather than in the
-    /// window's toolbar, which reaches over the details inspector.
-    private var controls: some View {
-        PageBar {
-            Toggle("Due only", systemImage: "bell.badge", isOn: $model.showsOnlyDue)
-                .help("Show only the cards whose follow-up is due")
-            Toggle("Skipped", systemImage: SetAside.skipped.symbolName, isOn: $model.showsSkipped)
-                .help("Show the skipped cards, where they can be restored")
+    /// The page's controls, in its header over the board rather than in
+    /// the window's toolbar, which reaches over the details inspector: the
+    /// board, its cards whose follow-up is due, or the skipped cards.
+    private var header: some View {
+        PageHeader {
+            TabStrip(
+                items: PipelineScope.allCases.map { scope in TabStripItem(id: scope, title: scope.title, count: model.getCount(scope)) },
+                selection: $model.scope
+            )
+        } trailing: {
+            EmptyView()
         }
-        .toggleStyle(.button)
     }
 
     private func board(client: HubClient) -> some View {

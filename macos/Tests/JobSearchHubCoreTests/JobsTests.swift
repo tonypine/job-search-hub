@@ -117,6 +117,11 @@ private func makeItem(_ title: String, _ level: FitLevel, firstSeen: TimeInterva
     #expect(JobStatusFilter.dismissed.title == "Skipped")
 }
 
+@Test func theJobsScopesAreInTheHeadersOrder() {
+    #expect(JobStatusFilter.allCases.map(\.title) == ["Open", "Later", "Closed", "Skipped", "All"])
+    #expect(JobsQuery.makeItems(search: "", status: .later, limit: 1).contains(URLQueryItem(name: "status", value: "later")))
+}
+
 @Test func aCompanysOpenJobsAreAskedForByItsID() {
     let companyID = UUID()
     let query = CompanyJobs.makeQuery(companyID: companyID)

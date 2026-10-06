@@ -8,6 +8,14 @@ final class CompaniesModel {
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
     var selectedID: UUID?
+    var search = ""
+
+    /// The companies whose name or domain holds the search.
+    var shownSummaries: [CompanySummary] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return summaries }
+        return summaries.filter { $0.company.name.localizedStandardContains(query) || $0.company.domain.localizedStandardContains(query) }
+    }
 
     func load(with client: HubClient) async {
         isLoading = true
@@ -36,58 +44,72 @@ struct CompaniesPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                companyTable
-                    .task { await model.load(with: client) }
-                    .onChange(of: [events.revision, unseen.revision, research.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
-                    .sheet(isPresented: $isShowingSuggestions) {
-                        CompanySuggestionsSheet(client: client) { suggestion in
-                            research.start(company: suggestion.researchTarget, foundVia: suggestion.origin, client: client)
-                            isShowingSuggestions = false
-                            isAddingCompany = true
-                        }
+                VStack(spacing: 0) {
+                    header
+                    companyTable
+                }
+                .task { await model.load(with: client) }
+                .onChange(of: [events.revision, unseen.revision, research.revision, jobFinder.revision]) { Task { await model.load(with: client) } }
+                .sheet(isPresented: $isShowingSuggestions) {
+                    CompanySuggestionsSheet(client: client) { suggestion in
+                        research.start(company: suggestion.researchTarget, foundVia: suggestion.origin, client: client)
+                        isShowingSuggestions = false
+                        isAddingCompany = true
                     }
-                    .sheet(isPresented: $isAddingCompany) {
-                        AddCompanySheet(client: client, getCompanyName: { id in model.summaries.first { $0.id == id }?.company.name }) { companyID in
-                            model.selectedID = companyID
-                            Task { await model.load(with: client) }
-                        }
+                }
+                .sheet(isPresented: $isAddingCompany) {
+                    AddCompanySheet(client: client, getCompanyName: { id in model.summaries.first { $0.id == id }?.company.name }) { companyID in
+                        model.selectedID = companyID
+                        Task { await model.load(with: client) }
                     }
-                    .onChange(of: model.selectedID, initial: true) {
-                        details.show(model.selectedID.map(InspectorSubject.company), from: .companies)
+                }
+                .onChange(of: model.selectedID, initial: true) {
+                    details.show(model.selectedID.map(InspectorSubject.company), from: .companies)
+                }
+                .onChange(of: details.getEntry(on: .companies)) {
+                    if details.getEntry(on: .companies) == nil { model.selectedID = nil }
+                }
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Company…") { isAddingCompany = true })
+                .onPageRequest(.companies) { request in
+                    switch request {
+                    case .addCompany: isAddingCompany = true
+                    case .addCompanyFromSuggestions: isShowingSuggestions = true
+                    default: break
                     }
-                    .onChange(of: details.getEntry(on: .companies)) {
-                        if details.getEntry(on: .companies) == nil { model.selectedID = nil }
-                    }
-                    .toolbar {
-                        if research.isRunning {
-                            Button {
-                                isAddingCompany = true
-                            } label: {
-                                HStack(spacing: Space.s) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Researching \(research.company)")
-                                }
-                            }
-                            .help("Show the research's progress")
-                        }
-                        Menu("Add", systemImage: "plus") {
-                            Button("Company…") { isAddingCompany = true }
-                            Button("From suggestions…") { isShowingSuggestions = true }
-                                .help("Companies you follow on LinkedIn, or remote ones on startups.gallery, to research")
-                        }
-                        .help("Add a company (⌘N), or pick one from suggestions")
-                    }
-                    .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Company…") { isAddingCompany = true })
-                    .onPageRequest(.companies) { request in
-                        switch request {
-                        case .addCompany: isAddingCompany = true
-                        case .addCompanyFromSuggestions: isShowingSuggestions = true
-                        default: break
-                        }
-                    }
+                }
             }
         }
         .navigationTitle("Companies")
+        .navigationSubtitle(model.summaries.count == 1 ? "1 company" : "\(model.summaries.count) companies")
+    }
+
+    /// The page's controls, in its header rather than in the window's
+    /// toolbar: the research going on, the search and Add.
+    private var header: some View {
+        PageHeader {
+            if research.isRunning {
+                Button {
+                    isAddingCompany = true
+                } label: {
+                    HStack(spacing: Space.s) {
+                        ProgressView().controlSize(.small)
+                        Text("Researching \(research.company)")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .help("Show the research's progress")
+            }
+        } trailing: {
+            PageSearchField(text: $model.search, prompt: "Search companies")
+                .help("Search names and domains")
+            Menu("Add", systemImage: "plus") {
+                Button("Company…") { isAddingCompany = true }
+                Button("From suggestions…") { isShowingSuggestions = true }
+                    .help("Companies you follow on LinkedIn, or remote ones on startups.gallery, to research")
+            }
+            .fixedSize()
+            .help("Add a company (⌘N), or pick one from suggestions")
+        }
     }
 
     private func reload() async {
@@ -95,7 +117,7 @@ struct CompaniesPage: View {
     }
 
     private var companyTable: some View {
-        Table(model.summaries, selection: $model.selectedID) {
+        Table(model.shownSummaries, selection: $model.selectedID) {
             TableColumn("Company") { summary in
                 HStack(spacing: Space.s) {
                     UnseenDot(count: summary.unseenUpdates)
@@ -126,6 +148,8 @@ struct CompaniesPage: View {
         .overlay {
             if let loadError = model.loadError {
                 HubErrorView(loadError, style: .page) { Task { await reload() } }
+            } else if model.shownSummaries.isEmpty && !model.summaries.isEmpty {
+                ContentUnavailableView.search(text: model.search)
             }
         }
     }
