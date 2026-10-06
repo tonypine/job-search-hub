@@ -15,7 +15,15 @@ struct PhonesSection: View {
     @State private var revokingID: Device.ID?
 
     var body: some View {
-        Section("Paired phones") {
+        Section {
+            StatusRow(
+                "Phones", symbol: "iphone", tileTone: .neutral, state: state, stateTone: pairedCount == 0 ? .neutral : .positive, detail: detail,
+                help: "A paired phone reaches the hub with a token of its own, through the address you give it when pairing, such as this Mac's "
+                    + "Tailscale address. Revoke a lost phone and it loses the hub at once."
+            ) {
+                Button("Pair…") { isPairing = true }
+                    .help("Pair a phone through a QR code")
+            }
             ForEach(devices) { device in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -39,7 +47,6 @@ struct PhonesSection: View {
             if failure != nil {
                 HubErrorView($failure)
             }
-            Button("Pair a phone", systemImage: "qrcode") { isPairing = true }
         }
         .task { await load() }
         .confirmationDialog(
@@ -54,6 +61,23 @@ struct PhonesSection: View {
         .sheet(isPresented: $isPairing, onDismiss: { Task { await load() } }) {
             PairPhoneSheet(client: client)
         }
+    }
+
+    private var pairedCount: Int {
+        devices.count { $0.revokedAt == nil }
+    }
+
+    private var state: String {
+        pairedCount == 0 ? "None paired" : "\(pairedCount) paired"
+    }
+
+    /// The phone seen last, and when.
+    private var detail: String? {
+        let seen = devices.filter { $0.revokedAt == nil }
+            .compactMap { device in device.lastSeenAt.map { (name: device.name, at: $0) } }
+            .max { $0.at < $1.at }
+        guard let seen else { return nil }
+        return "\(seen.name) seen \(seen.at.formatted(.relative(presentation: .named)))"
     }
 
     private func describe(_ device: Device) -> String {

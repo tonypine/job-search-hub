@@ -53,22 +53,30 @@ struct ConnectionSettings: View {
                     prompt: Text(tokenPrompt)
                 )
                 HStack {
+                    Spacer()
                     Button("Save") { save() }
                         .keyboardShortcut(.defaultAction)
-                    AsyncButton("Test connection", busyTitle: "Testing…", isBusy: connection.isChecking) { await connection.check() }
                 }
                 if saveFailure != nil {
                     HubErrorView($saveFailure)
                 }
             }
             Section {
-                Label(connection.status.message, systemImage: statusSymbol)
-                    .foregroundStyle(connection.status.tone.color)
-            } header: {
-                Text("Status")
-            } footer: {
-                Text("Settings is for how the app connects. What you search for is on the Criteria page, under You in the sidebar.")
-                    .foregroundStyle(.secondary)
+                StatusRow(
+                    "Hub", symbol: "network", state: connection.status.title, stateTone: connection.status.tone,
+                    detail: connection.status == .connected ? connection.hubURLText : nil,
+                    help: "The app reaches the hub at this address with the owner token, which it keeps in the Keychain. "
+                        + "Settings is for how the app connects; what you search for is on the Criteria page, under You in the sidebar."
+                ) {
+                    AsyncButton("Test", busyTitle: "Testing…", isBusy: connection.isChecking) { await connection.check() }
+                        .help("Test the connection")
+                }
+                if connection.status != .connected, connection.status != .unchecked {
+                    Text(connection.status.message)
+                        .font(.hubCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
         .formStyle(.grouped)
@@ -93,31 +101,20 @@ struct ConnectionSettings: View {
         case .missing: "HUB_OWNER_TOKEN from the hub's .env"
         }
     }
-
-    private var statusSymbol: String {
-        switch connection.status {
-        case .connected: "checkmark.circle.fill"
-        case .unchecked: "circle.dashed"
-        case .waitingForKeychain: "lock"
-        default: "exclamationmark.triangle.fill"
-        }
-    }
 }
 
 /// The server on this Mac, which starts and stops without a connection.
 struct ServerSettings: View {
-    @Environment(HubConnection.self) private var connection
-
     var body: some View {
         Form {
-            ServerSection(client: connection.makeClient())
+            ServerSection()
         }
         .formStyle(.grouped)
     }
 }
 
-/// The accounts the hub reads: Google, the LinkedIn export, and the folder
-/// Claude sessions can read on this Mac.
+/// The accounts the hub reads, each a status row: Google, the LinkedIn
+/// export, and the folder Claude sessions can read on this Mac.
 struct AccountsSettings: View {
     @Environment(HubConnection.self) private var connection
 

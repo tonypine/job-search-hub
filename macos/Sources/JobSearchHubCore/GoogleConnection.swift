@@ -16,6 +16,20 @@ public struct GoogleStatus: Decodable, Equatable, Sendable {
         return "Connected as \(connection.email) since \(connection.connectedAt.formatted(date: .abbreviated, time: .shortened))."
     }
 
+    /// The connection's state in a word or two, for its status row.
+    public var stateTitle: String {
+        guard configured else { return "Not set up" }
+        guard let connection else { return "Not connected" }
+        if connection.needsReconnectSince != nil { return "Signed out" }
+        if missingScopes?.isEmpty == false { return "Needs more access" }
+        return "Connected"
+    }
+
+    public var stateTone: Tone {
+        guard configured, let connection else { return .neutral }
+        return connection.needsReconnectSince != nil || missingScopes?.isEmpty == false ? .caution : .positive
+    }
+
     public var needsSignIn: Bool {
         configured && (connection == nil || connection?.needsReconnectSince != nil || missingScopes?.isEmpty == false)
     }

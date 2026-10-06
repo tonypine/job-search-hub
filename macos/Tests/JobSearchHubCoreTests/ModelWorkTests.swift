@@ -53,3 +53,17 @@ private let workJSON = #"""
     work.waiting = []
     #expect(work.statusLine == "Job facts")
 }
+
+@Test func theStatusRowSaysTheStateInAWordAndWhatRuns() throws {
+    var work = try HubJSON.makeDecoder().decode(ModelWork.self, from: Data(workJSON.utf8))
+
+    #expect(work.stateTitle == "Paused" && work.stateTone == .caution)
+    #expect(work.stateDetail == "2 waiting")
+    work.paused = false
+    #expect(work.stateTitle == "Working" && work.stateTone == .positive)
+    #expect(work.stateDetail == "Job facts on Qwen3.8-27B-Q4_K_M.gguf · 2 waiting")
+    work.running = nil
+    work.waiting = []
+    #expect(work.stateTitle == "Idle" && work.stateTone == .neutral)
+    #expect(work.stateDetail == nil)
+}
