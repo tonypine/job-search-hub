@@ -213,7 +213,7 @@ struct JobDetailView: View {
                     }
                 }
             } else if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(jobID, with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(jobID, with: client) } })
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }

@@ -433,7 +433,7 @@ struct JobsPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
             } else if model.items.isEmpty && !model.isLoading && model.status == .dismissed {
                 ContentUnavailableView("No skipped jobs", systemImage: "tray", description: Text("Jobs skipped from the list show here, where they can be restored."))
             } else if model.items.isEmpty && !model.isLoading && model.status == .later {

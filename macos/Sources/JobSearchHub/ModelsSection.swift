@@ -53,7 +53,7 @@ struct ModelsSection: View {
                 }
             }
             if let failure {
-                HubErrorView(failure) { Task { await load() } }
+                HubErrorView(failure, retry: { Task { await load() } })
             }
         }
         .task { await load() }
