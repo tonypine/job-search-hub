@@ -25,7 +25,8 @@ func serverEnvPath(home string) string {
 func prepareEnvironment() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("find the home folder: %w", err)
+		// No home, as in a bare container: no settings file either.
+		return nil
 	}
 	if err := loadEnvFile(serverEnvPath(home), os.LookupEnv, os.Setenv); err != nil {
 		return err
