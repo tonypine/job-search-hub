@@ -7,6 +7,8 @@ public enum ConnectionStatus: Equatable, Sendable {
     case missingToken
     case serverUnreachable(String)
     case tokenRefused
+    /// The hub no longer serves this version of the app, in its words.
+    case upgradeRequired(String)
     case connected
     case failed(String)
 
@@ -17,6 +19,7 @@ public enum ConnectionStatus: Equatable, Sendable {
         case .missingToken: "No owner token saved."
         case .serverUnreachable(let reason): "The hub is not reachable: \(reason)"
         case .tokenRefused: "The hub refused the token."
+        case .upgradeRequired(let message): message
         case .connected: "Connected."
         case .failed(let reason): "The check failed: \(reason)"
         }
@@ -40,6 +43,8 @@ public enum ConnectionStatus: Equatable, Sendable {
             return .connected
         } catch HubError.unauthorized, HubError.forbidden {
             return .tokenRefused
+        } catch HubError.upgradeRequired(let message) {
+            return .upgradeRequired(message)
         } catch {
             return .failed(String(describing: error))
         }

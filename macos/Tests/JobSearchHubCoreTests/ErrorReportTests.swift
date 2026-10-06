@@ -30,6 +30,7 @@ import Testing
     let errors: [HubError] = [
         .unreachable(""), .unauthorized, .forbidden, .notFound,
         .server(status: 409, message: ""), .server(status: 502, message: "bad gateway"), .undecodable(""),
+        .upgradeRequired("Update the app to 0.1.200 or later."),
     ]
     #expect(errors.allSatisfy { !ErrorReport($0).advice.isEmpty })
 }

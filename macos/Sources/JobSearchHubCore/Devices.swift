@@ -7,6 +7,9 @@ public struct Device: Codable, Equatable, Identifiable, Sendable {
     public var createdAt: Date
     public var lastSeenAt: Date?
     public var revokedAt: Date?
+    /// The version of the app the phone last called the hub with; nil until
+    /// it sends one.
+    public var appVersion: String?
 }
 
 public struct DevicesResponse: Decodable, Sendable {

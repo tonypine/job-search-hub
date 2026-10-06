@@ -16,12 +16,50 @@ struct HubClientTests {
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
     }
 
+    @Test func requestsNameTheAppAndItsVersion() {
+        let client = HubClient(baseURL: hubURL, token: "owner-token", appVersion: "0.1.252")
+        let request = client.makeRequest(method: "GET", path: "v1/jobs", body: nil)
+
+        #expect(request.value(forHTTPHeaderField: "X-Hub-Client") == "macos/0.1.252")
+    }
+
+    @Test func aHubThatNoLongerServesTheAppReachesTheErrorViewInItsOwnWords() async {
+        let message = "This app (0.1.199) is too old for the hub, which runs 0.1.250. Update the app to 0.1.200 or later."
+        let (session, _) = StubHub.makeSession(answers: [
+            "/v1/jobs": .init(status: 426, body: #"{"error":"\#(message)"}"#),
+        ])
+        let client = HubClient(baseURL: hubURL, token: "owner-token", appVersion: "0.1.199", session: session)
+        do {
+            _ = try await client.get("v1/jobs", as: OwnerProfile.self)
+            Issue.record("a 426 didn't throw")
+        } catch {
+            #expect(error as? HubError == .upgradeRequired(message))
+            #expect(ErrorReport(error).advice == message)
+        }
+    }
+
+    @Test func theConnectionCheckSaysTheAppIsTooOld() async {
+        let (session, _) = StubHub.makeSession(answers: [
+            "/v1/health": .init(status: 200, body: #"{"database":"ok"}"#),
+            "/v1/profile": .init(status: 426, body: #"{"error":"Update the app to 0.1.200 or later."}"#),
+        ])
+        let status = await ConnectionStatus.check(baseURL: hubURL, token: "owner-token", session: session)
+        #expect(status == .upgradeRequired("Update the app to 0.1.200 or later."))
+        #expect(status.message == "Update the app to 0.1.200 or later.")
+    }
+
     @Test func answersMapToErrors() {
         #expect(HubClient.mapFailure(status: 200, body: Data()) == nil)
         #expect(HubClient.mapFailure(status: 401, body: Data()) == .unauthorized)
         #expect(HubClient.mapFailure(status: 403, body: Data()) == .forbidden)
         #expect(HubClient.mapFailure(status: 404, body: Data()) == .notFound)
         #expect(HubClient.mapFailure(status: 500, body: Data(#"{"error":"database down"}"#.utf8)) == .server(status: 500, message: "database down"))
+        #expect(HubClient.mapFailure(status: 426, body: Data(#"{"error":"Update the app."}"#.utf8)) == .upgradeRequired("Update the app."))
+        if case let .upgradeRequired(message) = HubClient.mapFailure(status: 426, body: Data()) {
+            #expect(!message.isEmpty)
+        } else {
+            Issue.record("a 426 without a body isn't upgradeRequired")
+        }
     }
 
     @Test func goDatesDecodeWithAndWithoutFractionalSeconds() throws {
@@ -63,6 +101,13 @@ struct HubClientTests {
         let (session, _) = StubHub.makeSession(answers: ["/v1/health": .init(status: 200, body: "{}")])
         #expect(await ConnectionStatus.check(baseURL: hubURL, token: nil, session: session) == .missingToken)
     }
+}
+
+@Test func aPhonesAppVersionDecodesWhenTheHubKnowsIt() throws {
+    let json = #"{"devices":[{"id":"6b0c3f4e-3c7a-4c38-9a59-8f2a3b1c9d10","name":"Sam's phone","created_at":"2026-10-01T09:00:00Z","app_version":"0.1.252"},{"id":"7c1d4f5e-3c7a-4c38-9a59-8f2a3b1c9d10","name":"Old phone","created_at":"2026-10-01T09:00:00Z"}]}"#
+    let devices = try HubJSON.makeDecoder().decode(DevicesResponse.self, from: Data(json.utf8)).devices
+
+    #expect(devices.map(\.appVersion) == ["0.1.252", nil])
 }
 
 @Test func onlyAnAddressOffTheMacReachesAPhone() {

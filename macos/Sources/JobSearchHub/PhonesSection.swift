@@ -3,8 +3,9 @@ import CoreImage.CIFilterBuiltins
 import JobSearchHubCore
 import SwiftUI
 
-/// The phones paired with the hub: pair one through a QR code, and revoke
-/// one that is lost, once the owner confirms.
+/// The phones paired with the hub, each with the app version it last called
+/// the hub with: pair one through a QR code, and revoke one that is lost, once
+/// the owner confirms.
 struct PhonesSection: View {
     let client: HubClient
     @State private var devices: [Device] = []
@@ -18,7 +19,13 @@ struct PhonesSection: View {
             ForEach(devices) { device in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.name)
+                        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                            Text(device.name)
+                            if let appVersion = device.appVersion {
+                                Text(appVersion).font(.hubCaption.monospacedDigit()).foregroundStyle(.secondary)
+                                    .help("The version of the app the phone last called the hub with")
+                            }
+                        }
                         Text(describe(device)).font(.hubCaption).foregroundStyle(.secondary)
                     }
                     Spacer()
