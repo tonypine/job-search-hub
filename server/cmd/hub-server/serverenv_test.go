@@ -64,12 +64,3 @@ func TestTheServersPathPutsHomebrewAndTheUsersToolsFirst(t *testing.T) {
 		t.Fatalf("PATH = %q, want %q", got, want)
 	}
 }
-
-func TestTheLogPathFromLaunchdIsInTheHomeFolder(t *testing.T) {
-	if got, want := expandHome("~/Library/Logs/JobSearchHub/server.log", "/Users/ada"), "/Users/ada/Library/Logs/JobSearchHub/server.log"; got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-	if got := expandHome("/var/log/hub.log", "/Users/ada"); got != "/var/log/hub.log" {
-		t.Fatalf("an absolute path changed: %q", got)
-	}
-}

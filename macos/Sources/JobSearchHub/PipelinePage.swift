@@ -2,10 +2,10 @@ import AppKit
 import JobSearchHubCore
 import SwiftUI
 
-/// What the Pipeline page shows: the board, only its cards whose
-/// follow-up is due, or the skipped cards.
+/// What the Pipeline page shows: the board's open phases, only their cards
+/// whose follow-up is due, the closed cards, or the skipped cards.
 enum PipelineScope: String, CaseIterable, Identifiable {
-    case active, due, skipped
+    case active, due, closed, skipped
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -34,6 +34,17 @@ final class PipelineModel {
     /// The board the scope shows: the skipped cards, or the active ones.
     var board: PipelineBoard { scope == .skipped ? skippedBoard : activeBoard }
 
+    /// The phases the board shows as columns: the open ones, with Closed
+    /// folded into a drawer at the end, or every phase for the skipped cards.
+    var columns: [PipelinePhase] { scope == .skipped ? skippedBoard.phases : activeBoard.openPhases }
+
+    /// The phase the drawer at the board's end closes a card into; nil on
+    /// the skipped cards' board and on a board without one.
+    var drawerPhase: PipelinePhase? { scope == .skipped ? nil : activeBoard.closedPhase }
+
+    /// The cards that ended, for the Closed scope and the drawer's count.
+    var closedCards: [PipelineCard] { activeBoard.closedCards }
+
     /// The board's cards for a phase, only the due ones in the Due scope.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
         let cards = board.getCards(in: phase)
@@ -44,8 +55,9 @@ final class PipelineModel {
     /// How many cards each scope holds.
     func getCount(_ scope: PipelineScope) -> Int {
         switch scope {
-        case .active: activeBoard.cards.count
+        case .active: activeBoard.openCards.count
         case .due: activeBoard.getDueCount(now: .now)
+        case .closed: activeBoard.closedCards.count
         case .skipped: skippedBoard.cards.count
         }
     }
@@ -102,15 +114,15 @@ final class PipelineModel {
         }
     }
 
-    /// Who to write to next about each card nobody answered past its
-    /// follow-up, best first, by card; empty for a card whose company has
+    /// Who to write to next about each card nobody answered whose follow-up
+    /// is overdue, best first, by card; empty for a card whose company has
     /// nobody on file. No card has any until the people are read, and the
     /// skipped cards never do.
     func getSecondRoutes(now: Date) -> [UUID: [RelatedPerson]] {
         guard scope != .skipped, let people else { return [:] }
         let unanswered = activeBoard.getUnansweredPastFollowUp(now: now)
         var routes: [UUID: [RelatedPerson]] = [:]
-        for card in activeBoard.cards where unanswered.contains(card.id) {
+        for card in activeBoard.cards where unanswered.contains(card.id) && card.getStatus(now: now)?.isOverdue == true {
             guard let companyID = card.application.companyID else { continue }
             routes[card.id] = SecondRoute.getCandidates(companyID: companyID, among: people)
         }
@@ -194,6 +206,7 @@ struct PipelinePage: View {
     private static let columnSpacing = Space.m
     private static let boardPadding = Space.l
     private static let columnWidthRange: ClosedRange<CGFloat> = 180...320
+    private static let closedCardWidthRange: ClosedRange<CGFloat> = 220...320
 
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
@@ -221,7 +234,7 @@ struct PipelinePage: View {
             if let client = connection.makeClient() {
                 VStack(spacing: 0) {
                     header
-                    board(client: client)
+                    content(client: client)
                 }
                 .task {
                     await model.load(with: client)
@@ -247,18 +260,24 @@ struct PipelinePage: View {
     }
 
     private func describeCount() -> String {
-        let count = model.board.cards.count
-        if model.scope == .skipped {
+        switch model.scope {
+        case .skipped:
+            let count = model.getCount(.skipped)
             return count == 1 ? "1 skipped" : "\(count) skipped"
+        case .closed:
+            let count = model.getCount(.closed)
+            return count == 1 ? "1 closed" : "\(count) closed"
+        case .active, .due:
+            let active = "\(model.getCount(.active)) active"
+            guard let contacts = model.board.getContactTally(now: .now).text else { return active }
+            return "\(active) · \(contacts)"
         }
-        let applications = count == 1 ? "1 application" : "\(count) applications"
-        guard let contacts = model.board.getContactTally(now: .now).text else { return applications }
-        return "\(applications) · \(contacts)"
     }
 
     /// The page's controls, in its header over the board rather than in
     /// the window's toolbar, which reaches over the details inspector: the
-    /// board, its cards whose follow-up is due, or the skipped cards.
+    /// board, its cards whose follow-up is due, the closed cards, or the
+    /// skipped cards.
     private var header: some View {
         PageHeader {
             TabStrip(
@@ -270,33 +289,14 @@ struct PipelinePage: View {
         }
     }
 
-    private func board(client: HubClient) -> some View {
-        GeometryReader { geometry in
-            let columnWidth = getColumnWidth(availableWidth: geometry.size.width)
-            let secondRoutes = makeSecondRoutes(with: client)
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: Self.columnSpacing) {
-                    ForEach(model.board.phases) { phase in
-                        PipelineColumn(
-                            phase: phase, cards: model.getShownCards(in: phase), phases: model.board.phases,
-                            movingCardID: model.movingCardID, width: columnWidth, selectedCardID: $selectedCardID,
-                            secondRoutes: secondRoutes,
-                            onFollowUp: { cardID in
-                                followUpNote = model.draftedTo[cardID].map { "Wrote to \($0)" } ?? ""
-                                followUpCardID = cardID
-                            },
-                            onSkip: { cardID in
-                                skipNote = ""
-                                skippingCardID = cardID
-                            },
-                            onRestore: { cardID in Task { await model.restore(cardID, with: client) } }
-                        ) { cardID, target in
-                            requestMove(cardID, to: target, with: client)
-                        }
-                    }
-                }
-                .padding(Self.boardPadding)
-                .frame(height: geometry.size.height, alignment: .top)
+    /// The board, or the closed cards in the Closed scope, with the
+    /// questions a card's actions ask and the errors they meet.
+    private func content(client: HubClient) -> some View {
+        Group {
+            if model.scope == .closed {
+                closedList(client: client)
+            } else {
+                board(client: client)
             }
         }
         .alert("Followed up", isPresented: Binding(get: { followUpCardID != nil }, set: { if !$0 { followUpCardID = nil } })) {
@@ -340,7 +340,89 @@ struct PipelinePage: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Why did it end? The reason stays on the card.")
+            Text("Why did it end? The reason stays with the card, in its tooltip and details.")
+        }
+    }
+
+    /// What a card's click, drag and menu do, the same on the board and in
+    /// the Closed scope.
+    private func makeCardActions(with client: HubClient) -> PipelineCardActions {
+        PipelineCardActions(
+            phases: model.board.phases, movingCardID: model.movingCardID, selectedCardID: $selectedCardID,
+            onFollowUp: { cardID in
+                followUpNote = model.draftedTo[cardID].map { "Wrote to \($0)" } ?? ""
+                followUpCardID = cardID
+            },
+            onSkip: { cardID in
+                skipNote = ""
+                skippingCardID = cardID
+            },
+            onRestore: { cardID in Task { await model.restore(cardID, with: client) } },
+            onMove: { cardID, target in requestMove(cardID, to: target, with: client) }
+        )
+    }
+
+    private func board(client: HubClient) -> some View {
+        GeometryReader { geometry in
+            let columns = model.columns
+            let drawerPhase = model.drawerPhase
+            let columnWidth = getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
+            let secondRoutes = makeSecondRoutes(with: client)
+            let actions = makeCardActions(with: client)
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: Self.columnSpacing) {
+                    ForEach(columns) { phase in
+                        PipelineColumn(
+                            phase: phase, cards: model.getShownCards(in: phase), dueTally: model.board.getDueTally(in: phase, now: .now),
+                            emptyText: getEmptyText(for: phase), width: columnWidth, secondRoutes: secondRoutes, actions: actions
+                        )
+                    }
+                    if let drawerPhase {
+                        ClosedDrawer(count: model.getCount(.closed), isEnabled: model.movingCardID == nil) {
+                            model.scope = .closed
+                        } onDrop: { cardID in
+                            requestMove(cardID, to: drawerPhase, with: client)
+                        }
+                    }
+                }
+                .padding(Self.boardPadding)
+                .frame(height: geometry.size.height, alignment: .top)
+            }
+        }
+    }
+
+    /// The closed cards, side by side in as many columns as fit, newest
+    /// first. A card goes back on the board from its menu.
+    private func closedList(client: HubClient) -> some View {
+        let cards = model.closedCards
+        let actions = makeCardActions(with: client)
+        return ScrollView(.vertical) {
+            if cards.isEmpty {
+                Text("No application has ended. Drop a card on Closed, at the board's end, when one does.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(Space.xxl)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: Self.closedCardWidthRange.lowerBound, maximum: Self.closedCardWidthRange.upperBound), spacing: Self.columnSpacing, alignment: .top)],
+                    alignment: .leading, spacing: Self.columnSpacing
+                ) {
+                    ForEach(cards) { card in
+                        PipelineCardItem(card: card, secondRoute: nil, actions: actions)
+                    }
+                }
+                .padding(Self.boardPadding)
+            }
+        }
+    }
+
+    /// What an empty column says: what goes there, or that nothing in it is
+    /// due or skipped.
+    private func getEmptyText(for phase: PipelinePhase) -> String {
+        switch model.scope {
+        case .due: "Nothing due"
+        case .skipped: "Nothing skipped"
+        case .active, .closed: phase.emptyHint
         }
     }
 
@@ -395,11 +477,13 @@ struct PipelinePage: View {
         Task { await model.load(with: client) }
     }
 
-    /// Shares the width among the columns so every phase shows at once, down
-    /// to a readable minimum; below it the board scrolls sideways.
-    private func getColumnWidth(availableWidth: CGFloat) -> CGFloat {
-        let count = CGFloat(max(model.board.phases.count, 1))
-        let widthForColumns = availableWidth - Self.boardPadding * 2 - Self.columnSpacing * (count - 1)
+    /// Shares the width left of the Closed drawer among the columns so every
+    /// phase shows at once, down to a readable minimum; below it the board
+    /// scrolls sideways.
+    private func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
+        let count = CGFloat(max(columnCount, 1))
+        let drawerWidth = hasDrawer ? ClosedDrawer.width + Self.columnSpacing : 0
+        let widthForColumns = availableWidth - Self.boardPadding * 2 - Self.columnSpacing * (count - 1) - drawerWidth
         return min(max(widthForColumns / count, Self.columnWidthRange.lowerBound), Self.columnWidthRange.upperBound)
     }
 
@@ -413,57 +497,48 @@ struct PipelinePage: View {
     }
 }
 
-struct PipelineColumn: View {
-    let phase: PipelinePhase
-    let cards: [PipelineCard]
+/// What a card's click, drag and menu do: select it, carry it to another
+/// phase, follow up, close, skip or restore it.
+struct PipelineCardActions {
     let phases: [PipelinePhase]
     let movingCardID: UUID?
-    let width: CGFloat
-    @Binding var selectedCardID: UUID?
-    let secondRoutes: SecondRoutes
+    let selectedCardID: Binding<UUID?>
     let onFollowUp: (UUID) -> Void
     let onSkip: (UUID) -> Void
     let onRestore: (UUID) -> Void
     let onMove: (UUID, PipelinePhase) -> Void
+}
+
+struct PipelineColumn: View {
+    let phase: PipelinePhase
+    let cards: [PipelineCard]
+    /// The follow-ups due among the phase's cards, for the header's chip.
+    let dueTally: DueTally
+    /// What the column says while it has no cards.
+    let emptyText: String
+    let width: CGFloat
+    let secondRoutes: SecondRoutes
+    let actions: PipelineCardActions
     @State private var isTargeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            HStack {
-                Text(phase.name).font(.hubSection)
-                Spacer()
-                Text("\(cards.count)").monospacedDigit().foregroundStyle(.secondary)
-            }
-            ScrollView(.vertical) {
-                LazyVStack(spacing: Space.s) {
-                    ForEach(cards) { card in
-                        let secondRoute = secondRoutes.makeRow(for: card) { onFollowUp(card.id) }
-                        PipelineCardView(card: card, isMoving: card.id == movingCardID, isSelected: card.id == selectedCardID, secondRoute: secondRoute)
-                            .onTapGesture { selectedCardID = card.id }
-                            .draggable(card.id.uuidString)
-                            .contextMenu {
-                                if let jobURL = card.jobURL.flatMap(URL.init(string:)) {
-                                    Button("Open posting") { NSWorkspace.shared.open(jobURL) }
-                                }
-                                if card.dismissedAt != nil {
-                                    Button("Restore") { onRestore(card.id) }
-                                } else {
-                                    Button("Followed up…") { onFollowUp(card.id) }
-                                    Menu("Move to") {
-                                        ForEach(phases.filter { $0.id != card.application.phaseID }) { target in
-                                            Button(target.name) { onMove(card.id, target) }
-                                        }
-                                    }
-                                    .disabled(movingCardID != nil)
-                                    Divider()
-                                    // Ends the application with an outcome; Skip takes it out as not for you.
-                                    if let closedPhase = phases.first(where: \.isClosed), closedPhase.id != card.application.phaseID {
-                                        Button("Close…") { onMove(card.id, closedPhase) }
-                                            .disabled(movingCardID != nil)
-                                    }
-                                    Button("Skip…") { onSkip(card.id) }
-                                }
-                            }
+            header
+            if cards.isEmpty {
+                Text(emptyText)
+                    .font(.hubCaption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(Space.m)
+                    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            } else {
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: Space.s) {
+                        ForEach(cards) { card in
+                            let secondRoute = secondRoutes.makeRow(for: card) { actions.onFollowUp(card.id) }
+                            PipelineCardItem(card: card, secondRoute: secondRoute, actions: actions)
+                        }
                     }
                 }
             }
@@ -474,72 +549,197 @@ struct PipelineColumn: View {
         .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
         .dropDestination(for: String.self) { items, _ in
             guard let cardID = items.first.flatMap(UUID.init(uuidString:)) else { return false }
-            onMove(cardID, phase)
+            actions.onMove(cardID, phase)
             return true
         } isTargeted: { isTargeted = $0 }
     }
 
+    /// The phase, its count, and a chip when something in it is due: red
+    /// while one is overdue.
+    private var header: some View {
+        HStack(spacing: Space.s) {
+            Text(phase.name).font(.hubSection).lineLimit(1)
+            Text("\(cards.count)").monospacedDigit().foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            if let dueText = dueTally.text {
+                ToneChip(dueText, tone: dueTally.tone, symbol: "bell.fill")
+                    .help(describeDue())
+            }
+        }
+        .frame(height: 22)
+    }
+
+    private func describeDue() -> String {
+        let dueToday = dueTally.due - dueTally.overdue
+        return [
+            dueTally.overdue > 0 ? "\(dueTally.overdue) overdue" : nil,
+            dueToday > 0 ? "\(dueToday) due today" : nil,
+        ].compactMap { $0 }.joined(separator: ", ")
+    }
 }
 
+/// Closed, folded into a narrow drawer at the board's end: its count, a
+/// click lists the closed cards, and a card dropped on it closes, asking
+/// why it ended.
+struct ClosedDrawer: View {
+    static let width: CGFloat = 44
+
+    let count: Int
+    /// False while a card is moving, since one moves at a time.
+    let isEnabled: Bool
+    let onOpen: () -> Void
+    let onDrop: (UUID) -> Void
+    @State private var isTargeted = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(spacing: Space.s) {
+                Image(systemName: SetAside.closed.symbolName)
+                    .foregroundStyle(.secondary)
+                Text("Closed")
+                    .font(.hubSection)
+                    .fixedSize()
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 20, height: 56)
+                Text("\(count)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, Space.m)
+            .frame(width: Self.width)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
+        .dropDestination(for: String.self) { items, _ in
+            guard isEnabled, let cardID = items.first.flatMap(UUID.init(uuidString:)) else { return false }
+            onDrop(cardID)
+            return true
+        } isTargeted: { isTargeted = $0 }
+        .help("Drop a card here to close it, with the reason it ended. Click to list the closed cards.")
+        .accessibilityLabel(count == 1 ? "Closed, 1 card" : "Closed, \(count) cards")
+    }
+}
+
+/// A card with what a click, a drag and its menu do.
+struct PipelineCardItem: View {
+    let card: PipelineCard
+    /// Who to write to next, for an overdue card nobody answered.
+    let secondRoute: SecondRouteRow?
+    let actions: PipelineCardActions
+
+    var body: some View {
+        PipelineCardView(
+            card: card, isMoving: card.id == actions.movingCardID, isSelected: card.id == actions.selectedCardID.wrappedValue,
+            secondRoute: secondRoute
+        )
+        .onTapGesture { actions.selectedCardID.wrappedValue = card.id }
+        .draggable(card.id.uuidString)
+        .contextMenu {
+            if let jobURL = card.jobURL.flatMap(URL.init(string:)) {
+                Button("Open posting") { NSWorkspace.shared.open(jobURL) }
+            }
+            if card.dismissedAt != nil {
+                Button("Restore") { actions.onRestore(card.id) }
+            } else {
+                Button("Followed up…") { actions.onFollowUp(card.id) }
+                Menu("Move to") {
+                    ForEach(actions.phases.filter { $0.id != card.application.phaseID }) { target in
+                        Button(target.name) { actions.onMove(card.id, target) }
+                    }
+                }
+                .disabled(actions.movingCardID != nil)
+                Divider()
+                // Ends the application with an outcome; Skip takes it out as not for you.
+                if let closedPhase = actions.phases.first(where: \.isClosed), closedPhase.id != card.application.phaseID {
+                    Button("Close…") { actions.onMove(card.id, closedPhase) }
+                        .disabled(actions.movingCardID != nil)
+                }
+                Button("Skip…") { actions.onSkip(card.id) }
+            }
+        }
+    }
+}
+
+/// A card says one thing at most per line: the company with its age in the
+/// phase, the job, the most urgent of its follow-up and its reply, and, on
+/// an overdue card nobody answered, who to write to next. A due card is
+/// edged in its status's tone. Its notes and the reasons it closed or was
+/// skipped wait in its tooltip and the inspector.
 struct PipelineCardView: View {
+    private static let edgeWidth: CGFloat = 3
+
     let card: PipelineCard
     let isMoving: Bool
     let isSelected: Bool
-    /// Who to write to next, for a card nobody answered past its follow-up.
+    /// Who to write to next, for an overdue card nobody answered.
     var secondRoute: SecondRouteRow?
 
     var body: some View {
+        let status = card.getStatus(now: .now)
         VStack(alignment: .leading, spacing: Space.xs) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(card.title).fontWeight(.medium).lineLimit(2)
+            HStack(spacing: Space.s) {
+                CardMonogram(name: companyName)
+                Text(companyName).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 0)
                 if card.unseenUpdates > 0 {
                     UnseenDot(count: card.unseenUpdates)
                 }
+                if isMoving {
+                    ProgressView().controlSize(.small)
+                }
+                age
             }
-            if card.jobTitle != nil, let companyName = card.companyName {
-                Text(companyName).foregroundStyle(.secondary)
-            }
-            if let contactedAt = card.application.contactedAt {
-                HeardBackLabel(contactedAt: contactedAt)
-            }
-            if let status = card.getFollowUpStatus(now: .now) {
-                ToneChip(status)
+            Text(card.jobTitle ?? "Outreach, no posting").fontWeight(.semibold).lineLimit(2)
+            if let status {
+                Label(describe(status), systemImage: status.symbolName)
+                    .font(.hubCaption.weight(.medium))
+                    .foregroundStyle(status.tone.color)
+                    .lineLimit(1)
             }
             if let secondRoute {
                 secondRoute
             }
-            if let closedReason = card.application.closedReason {
-                Label(closedReason, systemImage: SetAside.closed.symbolName)
-                    .font(.hubCaption).foregroundStyle(SetAside.closed.tone.color).lineLimit(2)
-            }
-            if let dismissalReason = card.dismissalReason, !dismissalReason.isEmpty {
-                Label(dismissalReason, systemImage: SetAside.skipped.symbolName)
-                    .font(.hubCaption).foregroundStyle(SetAside.skipped.tone.color).lineLimit(2)
-            }
-            HStack {
-                Text(getTimeInPhaseText(days: card.getDaysInPhase(now: .now)))
-                Spacer()
-                if isMoving {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .font(.hubCaption)
-            .foregroundStyle(.secondary)
         }
         .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background, in: RoundedRectangle(cornerRadius: Radius.card))
+        .background(.background)
+        .overlay(alignment: .leading) {
+            if let status, status.isDue {
+                Rectangle().fill(status.tone.color).frame(width: Self.edgeWidth)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(isSelected ? AnyShapeStyle(Tone.accent.color) : AnyShapeStyle(.separator), lineWidth: isSelected ? 2 : 1))
         .opacity(isMoving ? 0.6 : 1)
-        .help(card.application.notes ?? "")
+        .help(card.tooltip)
     }
 
-    private func getTimeInPhaseText(days: Int) -> String {
-        switch days {
+    private var companyName: String { card.companyName ?? "No company" }
+
+    /// Days in the phase, in the corner: "12 d".
+    private var age: some View {
+        let days = card.getDaysInPhase(now: .now)
+        let text = switch days {
         case 0: "Entered today"
         case 1: "1 day in phase"
         default: "\(days) days in phase"
+        }
+        return Text("\(days) d")
+            .font(.hubCaption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            .help(text)
+            .accessibilityLabel(text)
+    }
+
+    private func describe(_ status: PipelineCardStatus) -> String {
+        switch status {
+        case let .followUp(followUp): followUp.text
+        case let .heardBack(contactedAt): "Heard back \(contactedAt.formatted(.dateTime.day().month(.abbreviated)))"
         }
     }
 }
@@ -555,8 +755,8 @@ struct HeardBackLabel: View {
     }
 }
 
-/// What the board needs to offer each card nobody answered past its
-/// follow-up its next route.
+/// What the board needs to offer each overdue card nobody answered its
+/// next route.
 @MainActor
 struct SecondRoutes {
     /// Who to write to, best first, by card; empty for a card whose company
@@ -580,9 +780,9 @@ struct SecondRoutes {
     }
 }
 
-/// A card's next route once nobody answered it past its follow-up: write to
-/// someone at the company or someone who can introduce you, or find who to
-/// write to, then record the follow-up.
+/// An overdue card's next route, on one line: write to someone at the
+/// company or someone who can introduce you (the others in its menu), or
+/// find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
@@ -592,7 +792,7 @@ struct SecondRouteRow: View {
     let onFollowUp: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.s) {
             if let first = candidates.first {
                 Menu {
                     ForEach(candidates) { person in
@@ -608,19 +808,20 @@ struct SecondRouteRow: View {
                 .menuIndicator(.visible)
                 .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
             } else if isFindingPeople {
-                HStack(spacing: Space.s) {
-                    ProgressView().controlSize(.small)
-                    Text("Finding people…").foregroundStyle(.secondary)
-                }
+                ProgressView().controlSize(.small)
+                Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Button("Find people", systemImage: "person.2") { onFindPeople() }
                     .buttonStyle(.link)
+                    .lineLimit(1)
                     .disabled(!canFindPeople)
                     .help(findPeopleHelp)
             }
-            Button("Followed up…") { onFollowUp() }
-                .buttonStyle(.link)
-                .help("Record the message you sent; it restarts the count to the next follow-up")
+            Spacer(minLength: 0)
+            Button("Followed up…", systemImage: "checkmark") { onFollowUp() }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Followed up…: record the message you sent; it restarts the count to the next follow-up")
         }
         .font(.hubCaption)
     }

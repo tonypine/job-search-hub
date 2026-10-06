@@ -271,6 +271,17 @@ struct JobDetailView: View {
             if let decision = details.decision {
                 Text(describeDecision(decision)).font(.hubCaption).foregroundStyle(.secondary)
             }
+            // What the pipeline card keeps off its face.
+            if details.phase?.isClosed == true, let closedReason = details.application?.closedReason, !closedReason.isEmpty {
+                Label("Closed: \(closedReason)", systemImage: SetAside.closed.symbolName).font(.hubCaption).foregroundStyle(.secondary)
+            }
+            if details.job.dismissedAt != nil, let dismissalReason = details.job.dismissalReason, !dismissalReason.isEmpty,
+               details.decision?.reason != dismissalReason {
+                Label("Skipped: \(dismissalReason)", systemImage: SetAside.skipped.symbolName).font(.hubCaption).foregroundStyle(.secondary)
+            }
+            if let notes = details.application?.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+                Label(notes, systemImage: "note.text").font(.hubCaption).foregroundStyle(.secondary)
+            }
             if taskRunner.fixingJobIDs.contains(jobID) {
                 Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
             }

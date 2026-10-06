@@ -311,16 +311,20 @@ Job Search Hub.app/Contents/
   Helpers/bin/hub                             the hub command
   Helpers/bin/hub-update                      the installer
   Helpers/engines/postgres-18/                the owned database's engine, once it ships
-  Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist
   Resources/…
 ```
 
-- **The server runs from inside the bundle.** The app registers the LaunchAgent with
-  `SMAppService.agent(plistName:)`, whose plist names the server by its path in the bundle
-  (`BundleProgram`). Replacing the bundle replaces the server that the next start runs. System
-  Settings › General › Login Items lists it under the app's name and icon, instead of as an unknown
-  item. The agent's `KeepAlive` becomes `SuccessfulExit = false`, so the server isn't restarted
-  when it exits cleanly to be swapped, and is when it crashes.
+- **The server runs from inside the bundle.** The LaunchAgent is a plist in `~/Library/LaunchAgents`
+  whose `ProgramArguments` names the installed bundle's `Contents/Helpers/bin/hub-server`, loaded
+  with `launchctl bootstrap`. Replacing the bundle replaces the server that the next start runs. Its
+  `AssociatedBundleIdentifiers` makes System Settings › General › Login Items list it under the
+  app's name and icon, instead of as an unknown item. The agent's `KeepAlive` becomes
+  `SuccessfulExit = false`, so the server isn't restarted when it exits cleanly to be swapped, and
+  is when it crashes. TP-587 first registered a plist inside the bundle with
+  `SMAppService.agent(plistName:)`, but on the owner's Mac `register()` failed with EPERM, both
+  from `install-app.sh` and from the app at launch, and left the hub down (TP-718). Loading the
+  agent with `launchctl` is what has run the server there all along, and the installer can roll it
+  back.
 - **The server reads its own settings** from `~/.config/job-search-hub/server.env`, which every
   version shares. Today `run-hub-server` loads that file and sets the `PATH`; the server does both
   itself, so the wrapper script goes.
@@ -358,8 +362,9 @@ Development keeps working:
 ### Moving to it
 
 Once, at the switch: the supervisor runs `install-app.sh` from `main`, as the last manual deploy.
-It installs the bundle to `~/Applications`, registers the new LaunchAgent and removes the old one
-(`~/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist`, `bin/`), and drops a
+It installs the bundle to `~/Applications`, points the LaunchAgent
+(`~/Library/LaunchAgents/com.tonypine.jobsearchhub.server.plist`) at the bundle's server, removes
+the old `bin/` once the new server answers, and drops a
 `HUB_CV_PRINT_BIN` in `server.env` that points at the old `bin/`. From then on, the app updates
 itself. Anything that launches `macos/build/JobSearchHub.app` (the supervisor's deploy steps,
 `screenshot-page.sh`, UI checks) moves to the installed path or to a build of its own.
@@ -774,7 +779,8 @@ These are the choices the tickets build on, each cheaper to change now than afte
 2. **One version number for both platforms**, `0.1.<commit count>`.
 3. **One Linear initiative update per release run**, replacing Android's project update.
 4. **The server, `hub-cvprint`, `hub` and the engine live inside the app bundle**, in
-   `~/Applications`, with the LaunchAgent registered through `SMAppService`.
+   `~/Applications`, with a LaunchAgent in `~/Library/LaunchAgents` that runs the bundle's server
+   (`SMAppService` refused to register one on the owner's Mac; TP-718).
 5. **The app and `hub-update` install updates, not Sparkle** (Proposal 1).
 6. **A sidebar label, no notification per release** (Proposal 2).
 7. **The owner chooses when, by default; night installs are an opt-in** that waits for the crash
@@ -793,7 +799,7 @@ In the order they should land. Each ships on its own and keeps the hub working.
 |---|---|---|
 | TP-585 | **One version everywhere**: `0.1.<N>` stamped into the app, `hub-server`, `hub`, `hub-cvprint`; `GET /v1/version`; `hub-server --version` with the newest migration; clients send `X-Hub-Client`, the server keeps each phone's version, and Settings › Phones shows it; `426 Upgrade Required` for a client the server can't serve; the server refuses a database newer than its migrations; About shows the version | — |
 | TP-586 | **Server restarts without breaking work**: drain mode (`/v1/drain`), a 30-second graceful stop, and MCP sessions that survive a restart | — |
-| TP-587 | **One bundle**: `make-app.sh` builds the server, `hub-cvprint`, `hub` and `hub-update` into `Contents/Helpers/bin/`; the LaunchAgent through `SMAppService` with `SuccessfulExit = false`; the server reads `server.env` itself and finds `hub-cvprint` beside it; signing pinned by team ID; `install-app.sh` installs to `~/Applications`; *Install the hub command*; the one-time move from today's layout | TP-585 |
+| TP-587 | **One bundle**: `make-app.sh` builds the server, `hub-cvprint`, `hub` and `hub-update` into `Contents/Helpers/bin/`; the LaunchAgent through `SMAppService` with `SuccessfulExit = false` (TP-718 moved it to `~/Library/LaunchAgents` and `launchctl`); the server reads `server.env` itself and finds `hub-cvprint` beside it; signing pinned by team ID; `install-app.sh` installs to `~/Applications`; *Install the hub command*; the one-time move from today's layout | TP-585 |
 | TP-588 | **Mac releases from CI**: `plan.sh` per platform, the macOS job, the signing secrets and temporary keychain, `verify-app.sh`, the zip and checksum, `mac-v0.1.<N>`; the changelog's tags and pull requests; the README's setup | TP-587 |
 | TP-589 | **A Linear initiative update per release run**, for both platforms, replacing the project update | TP-588 |
 | TP-590 | **The Mac app finds new versions**: the hourly GitHub check, download and checks, withdrawn releases, Settings › Version, the sidebar label, *Check for New Version…*, ⌘K, *What's new* | TP-588 |

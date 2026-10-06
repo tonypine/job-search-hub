@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +35,10 @@ func startPostingProviders(t *testing.T) *jobboards.Verifier {
 			"categories":{"location":"Toronto, Ontario","allLocations":["Toronto, Ontario","Vancouver, British Columbia"],
 				"commitment":"Full-time","department":"Engineering","team":"Payments"},
 			"createdAt":1786394912472,"salaryRange":{"min":120000,"max":150000,"currency":"CAD","interval":"per-year-salary"},
-			"descriptionPlain":"About the role.",
-			"lists":[{"text":"You will","content":"<li>Ship features</li><li>Talk to customers</li>"}],"additionalPlain":"Benefits."}]`))
+			"description":"<div><b>About the role</b></div><div>We build <b>payments</b>.</div><ul><li>Remote first</li><li>Small team</li></ul>",
+			"descriptionPlain":"About the role\nWe build payments.\nRemote first\nSmall team",
+			"lists":[{"text":"You will","content":"<li>Ship features</li><li>Talk to customers</li>"}],
+			"additional":"<h3>Benefits</h3><ul><li>Health</li><li>Equipment</li></ul>","additionalPlain":"Benefits\nHealth\nEquipment"}]`))
 	})
 	routes.HandleFunc("GET /posting-api/job-board/acme", func(w http.ResponseWriter, r *http.Request) {
 		compensation := ""
@@ -49,7 +50,9 @@ func startPostingProviders(t *testing.T) *jobboards.Verifier {
 		w.Write([]byte(`{"jobs":[
 			{"id":"c3fe","title":"Senior Product Engineer","location":"Americas","workplaceType":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/c3fe",` + compensation + `
 				"employmentType":"FullTime","department":"Engineering","publishedAt":"2026-09-02T10:22:06.450+00:00",
-				"secondaryLocations":[{"location":"EMEA","address":{}}],"descriptionPlain":"Plain text.","isListed":true},
+				"secondaryLocations":[{"location":"EMEA","address":{}}],"isListed":true,
+				"descriptionHtml":"<h2>About the role</h2><p>Build <strong>scheduling</strong>.</p><ul><li><p>Go</p></li><li><p>Swift</p></li></ul>",
+				"descriptionPlain":"ABOUT THE ROLE\n\nBuild scheduling.\n\n- Go\n\n- Swift"},
 			{"id":"b7aa","title":"Support Engineer","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/b7aa","descriptionPlain":"No pay here.","isListed":true},
 			{"id":"hidden","title":"Internal role","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/hidden","descriptionPlain":"","isListed":false}]}`))
 	})
@@ -75,7 +78,7 @@ func TestGreenhousePostingsKeepTheirHeadingsAndListsAsMarkdown(t *testing.T) {
 	}
 }
 
-func TestLeverPostingsIncludeTheirLists(t *testing.T) {
+func TestLeverPostingsKeepTheirHeadingsAndListsAsMarkdown(t *testing.T) {
 	postings, err := startPostingProviders(t).FetchPostings(context.Background(), jobboards.Lever, "acme")
 	if err != nil || len(postings) != 1 {
 		t.Fatalf("postings = %+v, %v", postings, err)
@@ -84,10 +87,22 @@ func TestLeverPostingsIncludeTheirLists(t *testing.T) {
 	if posting.Title != "Full-stack Engineer" || posting.WorkplaceType != "remote" || posting.Location != "Toronto, Ontario" {
 		t.Fatalf("posting = %+v", posting)
 	}
-	for _, want := range []string{"About the role.", "### You will\n\n- Ship features\n- Talk to customers", "Benefits."} {
-		if !strings.Contains(posting.Description, want) {
-			t.Errorf("description lacks %q:\n%s", want, posting.Description)
-		}
+	want := "**About the role**\n\nWe build **payments**.\n\n- Remote first\n- Small team\n\n### You will\n\n- Ship features\n- Talk to customers\n\n### Benefits\n\n- Health\n- Equipment"
+	if posting.Description != want {
+		t.Fatalf("description = %q, want %q", posting.Description, want)
+	}
+}
+
+func TestAshbyPostingsKeepTheirHeadingsAndListsAsMarkdown(t *testing.T) {
+	postings, err := startPostingProviders(t).FetchPostings(context.Background(), jobboards.Ashby, "acme")
+	if err != nil || len(postings) != 2 {
+		t.Fatalf("postings = %+v, %v", postings, err)
+	}
+	if want := "### About the role\n\nBuild **scheduling**.\n\n- Go\n- Swift"; postings[0].Description != want {
+		t.Errorf("description = %q, want %q", postings[0].Description, want)
+	}
+	if postings[1].Description != "No pay here." {
+		t.Errorf("a posting without HTML stored %q, want its plain text", postings[1].Description)
 	}
 }
 
@@ -229,6 +244,10 @@ func TestFetchPostingReadsOnePostingPerProvider(t *testing.T) {
 		if err != nil || posting.Title != wantTitle || posting.URL == "" {
 			t.Errorf("%+v: %+v, %v", reference, posting, err)
 		}
+	}
+	lever, _ := verifier.FetchPosting(context.Background(), jobboards.PostingReference{Provider: "lever", BoardToken: "acme", PostingID: "abc"})
+	if lever.Description != "About." {
+		t.Errorf("a Lever posting without HTML stored %q, want its plain text", lever.Description)
 	}
 	if _, err := verifier.FetchPosting(context.Background(), jobboards.PostingReference{Provider: "ashby", BoardToken: "acme", PostingID: "gone"}); err == nil {
 		t.Error("expected an error for a posting the Ashby board doesn't list")
