@@ -469,8 +469,8 @@ never shown, so the owner never waits on one.
 - **Footer**: *Check now*, *Show install log*, and *Release notes on GitHub*.
 
 Its other states, in the same mockup: checking; up to date; a local build; a version that couldn't
-be downloaded or failed its checks ("0.1.252 didn't pass its signature check, so it wasn't
-installed"); and a withdrawn version that's running.
+be downloaded or failed its checks ("0.1.252 didn't pass its checks, so it wasn't offered"); and a
+withdrawn version that's running.
 
 ### 3. Installing
 
@@ -525,8 +525,9 @@ See [Failures](#failures) for what happens underneath. On screen:
   start, so the hub went back to 0.1.247. Nothing was lost." and *Show install log*.
 - **The new version crashed** in its first day: on the next launch, a sheet: "Job Search Hub 0.1.252
   quit unexpectedly. Go back to 0.1.247?", with the cost if migrations ran, and *Stay on 0.1.252*.
-- **Going back**, from Settings › Version: a sheet with what it would lose, counted from the change
-  log, and the advice to stay and wait for a fix, which with daily merges is often better.
+- **Going back**, from Settings › Version: a sheet with what it would lose, counted from Postgres's
+  per-table counters (see [Failures](#failures)), and the advice to stay and wait for a fix, which
+  with daily merges is often better.
 - **A withdrawn version**: a banner "0.1.252 was withdrawn. Go back to 0.1.247?", and a
   notification if the app is in the background.
 
@@ -662,8 +663,11 @@ app's next launch) finishes or undoes it, never leaving half a switch:
    answers with the new version and `GET /v1/health` with `ok`. Otherwise, roll back.
 6. **Reopen the app**, if it was open, with the version it came from, so it shows the banner and
    reopens its sessions.
-7. **Check the app**: it writes `launched` to `state.json` once its window is up and connected. If
-   that doesn't happen within 60 seconds, or it exits, roll back.
+7. **Check the app**, if step 6 reopened it: it writes `launched` to `state.json` once its window
+   is up and connected. If that doesn't happen within 60 seconds, or it exits, roll back. After
+   *Install when I quit* the app stays closed, so there's nothing to wait for: step 5's server
+   check is the whole check, and the app's next launch is covered by the first-day crash prompt
+   (see [Failures](#failures)).
 8. **Record the install**: from, to, the dump's name and the time, which *Go back* reads.
 
 A version that installs `hub-update` replaces it like any other part; the next install runs the new
@@ -704,9 +708,36 @@ Every failure leaves the hub on a version that works, and says so in Settings �
 **What a rollback can lose.** The server is stopped before the new one dumps the database, so the
 dump holds every write the old server made. The new server listens only after migrating, but from
 then until it fails its check it can serve requests: a session's MCP call, the phone, a background
-pass. Before restoring, the rollback counts the `changes` rows written after the dump, which only the
-new server can have written. When there are none, or no migration ran and nothing is restored, it
-says "Nothing was lost"; otherwise it names them, in the words *Go back* uses.
+pass.
+
+The `changes` table can't count those writes: only some store files call `insertChange`, and the
+feed's `updates`, `mail_messages`, job briefs and facts, CV screens, interview packs, fresh
+matches, follow-up reminders, alert jobs, agent runs and task runs write without it. So the count
+comes from Postgres itself, which keeps per-table counters of rows inserted, updated and deleted
+(`n_tup_ins`, `n_tup_upd`, `n_tup_del` in `pg_stat_user_tables`), for every table and every
+writer:
+
+- **The mark**: after migrating and before it listens, the new server reads every table's counters
+  and writes them beside the dump (`hub-pre-migration-0.1.252.counts.json`), with the time and the
+  database's `stats_reset` and start time. Migrations' own writes come before the mark, so they
+  don't count.
+- **The count**: once the new server has stopped, its connections are closed and their counters
+  flushed. The rollback reads the counters again and subtracts the mark, table by table.
+- **The words**: a table in the store maps to how the owner says it: rows added to `jobs` are
+  "jobs found", `applications` updates are "cards moved", `updates` rows are "updates",
+  `mail_messages` are "emails". A table without words counts under "other changes". A short,
+  reviewed list names bookkeeping the owner doesn't lose anything by (a phone's `last_seen_at` in
+  `devices`), and a store test fails when a table is in neither, so a new table can't slip past
+  the count.
+- **When the count can't be trusted**: Postgres drops its counters when it crashes, and
+  `pg_stat_reset` clears them. If `stats_reset` or the start time changed since the mark without a
+  clean shutdown, or any counter went down, the rollback doesn't guess. It says "Anything written
+  between 03:31 and 03:33 couldn't be counted, and was lost" instead.
+
+The counters can count a write that didn't commit, so they can overstate what was lost, never
+understate it. "Nothing was lost" shows only when no migration ran (nothing is restored), or every
+counter outside the bookkeeping list matches the mark; otherwise the rollback names what was, in
+the words *Go back* uses.
 
 ### Going back later
 
@@ -715,8 +746,10 @@ says "Nothing was lost"; otherwise it names them, in the words *Go back* uses.
 - **If no migration ran since 0.1.247**, it's an install in reverse, from `Updates/previous/`, and
   nothing is lost. The sheet says so.
 - **If migrations ran**, it also restores `hub-pre-migration-0.1.252.dump`, and loses what was
-  written since. The sheet counts it from the change log: "Since then: 3 jobs found, 1 card moved,
-  2 people added, 4 updates. These would be lost." And: "Or stay on 0.1.252 and wait for a fix."
+  written since. The sheet counts it the same way, from the counters against the mark: "Since
+  then: 3 jobs found, 1 card moved, 2 people added, 4 updates. These would be lost." And: "Or stay
+  on 0.1.252 and wait for a fix." If the counts can't be trusted (a Postgres crash since), the
+  sheet says it can't tell what was written since the install, and that all of it would be lost.
 - **A version the owner went back from** is marked bad on this Mac, and isn't offered again.
 - **Older versions** than the previous one download again from GitHub, through *Install an older
   version…*, listed only when their pre-migration dump is still on disk (the newest five are kept)
@@ -764,7 +797,7 @@ In the order they should land. Each ships on its own and keeps the hub working.
 | TP-588 | **Mac releases from CI**: `plan.sh` per platform, the macOS job, the signing secrets and temporary keychain, `verify-app.sh`, the zip and checksum, `mac-v0.1.<N>`; the changelog's tags and pull requests; the README's setup | TP-587 |
 | TP-589 | **A Linear initiative update per release run**, for both platforms, replacing the project update | TP-588 |
 | TP-590 | **The Mac app finds new versions**: the hourly GitHub check, download and checks, withdrawn releases, Settings › Version, the sidebar label, *Check for New Version…*, ⌘K, *What's new* | TP-588 |
-| TP-591 | **The Mac app installs them**: `hub-update`'s state machine, the install sheet and drain list, *Install when I quit*, the steps window, the server check, automatic rollback with the dump and the count of what it lost, reopened sessions, the *Now on* banner, recovery after a crash mid-install | TP-586, TP-590 |
+| TP-591 | **The Mac app installs them**: `hub-update`'s state machine, the install sheet and drain list, *Install when I quit*, the steps window, the server check, automatic rollback with the dump and the count of what it lost (the per-table counter mark, the words for each table, and the test that every table has them), reopened sessions, the *Now on* banner, recovery after a crash mid-install | TP-586, TP-590 |
 | TP-592 | **Going back**: *Go back to …* with its cost, older versions from GitHub, the crash-in-the-first-day prompt, going back from a withdrawn version, marking versions bad | TP-591 |
 | TP-593 | **Night installs**, opt-in: the 03:30 run, the idle rules, the setting, and the failed-install update on the phone | TP-592 |
 | TP-594 | **The phone finds and installs new versions**: the daily GitHub check, Today's card, Settings › App version, the in-app install through `PackageInstaller`, the *too old* screen on `426`, the notification rules | TP-585, TP-588 |
