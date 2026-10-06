@@ -10,8 +10,8 @@ struct JobPostingTab: View {
     let details: JobDetails
     let client: HubClient
     let model: JobDetailModel
-    /// Facts in a row: two in the inspector, three on a page.
-    var columns = 2
+    /// Facts in a row, as the inspector fits them.
+    private let columns = 2
 
     @State private var isShowingFacts = false
     @State private var isFinding = false

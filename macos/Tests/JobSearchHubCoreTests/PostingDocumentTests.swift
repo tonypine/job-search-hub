@@ -77,6 +77,28 @@ private func getMarkedText(_ marks: [PostingMark], in document: PostingDocument)
     #expect(getMarkedText(marks, in: document) == ["Own the checkout rebuild", "with a small team"])
 }
 
+@Test func aQuoteCutWithThreeDotsMarksEachPartAndDropsPartsTooShortToPlace() {
+    let document = PostingDocument(markdown: posting)
+    let marks = document.findMarks(for: [quote("Own the checkout rebuild ... to ... with a small team")])
+
+    #expect(getMarkedText(marks, in: document) == ["Own the checkout rebuild", "with a small team"])
+}
+
+@Test func aQuoteWithMarkdownEmphasisOrAHeadingMarkerIsMarked() {
+    let document = PostingDocument(markdown: posting)
+    let marks = document.findMarks(for: [quote("**6+ years** building web products"), quote("### What you bring")])
+
+    #expect(marks.map(\.span.block) == [5, 4])
+    #expect(getMarkedText(marks, in: document) == ["6+ years building web products", "What you bring"])
+}
+
+@Test func aQuoteEndingInOtherPunctuationIsMarkedWithoutIt() {
+    let document = PostingDocument(markdown: posting)
+    let marks = document.findMarks(for: [quote("Ship every week with a small team!")])
+
+    #expect(getMarkedText(marks, in: document) == ["Ship every week with a small team"])
+}
+
 @Test func aQuoteNotInThePostingHasNoMark() {
     let document = PostingDocument(markdown: posting)
 

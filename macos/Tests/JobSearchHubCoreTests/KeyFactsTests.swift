@@ -35,6 +35,8 @@ private let unreadJSON = #"""
  "unseen_updates":0}
 """#
 
+private let seniorityEntry = #"{"key":"seniority","title":"Seniority","value":"Senior","evidence":"Senior engineer"},"#
+
 private func decode(_ json: String) throws -> JobDetails {
     try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(json.utf8))
 }
@@ -65,6 +67,22 @@ private func decode(_ json: String) throws -> JobDetails {
     #expect(details.keyFacts[0].text == "Not published" && details.keyFacts[0].source == nil)
 }
 
+@Test func payReadFromThePostingShowsWhenTheBoardHasNone() throws {
+    var details = try decode(readJSON.replacingOccurrences(of: seniorityEntry, with: #"{"key":"pay_in_text","title":"Pay","value":"$120K"},"#))
+    details.job.pay = nil
+
+    #expect(details.keyFacts[0].text == "$120K" && details.keyFacts[0].source == .posting)
+}
+
+@Test func levelIsTheYearsAloneWhenThePostingStatesNoSeniority() throws {
+    let withoutSeniority = readJSON.replacingOccurrences(of: seniorityEntry, with: "")
+
+    let level = try decode(withoutSeniority).keyFacts[4]
+    #expect(level.text == "6+ years" && level.source == .posting)
+    let oneYear = try decode(withoutSeniority.replacingOccurrences(of: #""value":6,"#, with: #""value":1,"#)).keyFacts[4]
+    #expect(oneYear.text == "1+ year")
+}
+
 @Test func theScreensQuotesAreItsJudgedRowsWithEvidence() throws {
     let quotes = try decode(readJSON).postingQuotes
 
@@ -80,6 +98,8 @@ private func decode(_ json: String) throws -> JobDetails {
     job.url = "https://example.com/careers/1"
     #expect(job.describeSource(companyName: "Northwind") == "From Northwind's board")
     #expect(job.describeSource(companyName: nil) == "From the company's board")
+    job.source = "careers_page"
+    #expect(job.describeSource(companyName: "Northwind") == "From Northwind's careers page")
     job.source = "linkedin"
     #expect(job.describeSource(companyName: "Northwind") == "From LinkedIn alert")
     job.source = "manual"
