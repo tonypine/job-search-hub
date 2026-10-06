@@ -127,7 +127,7 @@ public extension ConnectionStatus {
         case .connected: .positive
         case .unchecked, .waitingForKeychain: .neutral
         case .missingToken, .serverUnreachable: .caution
-        case .tokenRefused, .failed: .negative
+        case .tokenRefused, .upgradeRequired, .failed: .negative
         }
     }
 }
