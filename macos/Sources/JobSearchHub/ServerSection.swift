@@ -106,66 +106,46 @@ final class HubCommandControl {
     }
 }
 
-/// Settings' control panel for the server: its state, start, stop, restart
-/// and log, and pausing the hub's background model work. Starting needs no
-/// connection, so it works while the hub is down.
+/// Settings' control panel for the server, as status rows: the server's
+/// state with Start, or Restart with Stop and its log in a menu, and the
+/// terminal's hub command. Starting needs no connection, so it works while
+/// the hub is down.
 struct ServerSection: View {
-    let client: HubClient?
     @State private var control = ServerControl()
     @State private var hubCommand = HubCommandControl()
-    @State private var modelWork = ModelWorkModel()
     @State private var isConfirmingStop = false
 
     var body: some View {
-        Section("Server on this Mac") {
-            if !control.bundleCarriesServer {
-                Text("This build of the app doesn't carry the server. Install one with macos/Scripts/install-app.sh from the repository.")
-                    .foregroundStyle(.secondary)
-            } else {
-                Label(describeState(), systemImage: stateSymbol).foregroundStyle(control.state?.tone.color ?? Tone.neutral.color)
-                HStack {
-                    if control.state == .stopped {
-                        if control.canRegister {
-                            AsyncButton("Start", busyTitle: "Starting…") { await control.start() }
-                        } else {
-                            Text("Start it from the installed app in ~/Applications.")
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        AsyncButton("Restart", busyTitle: "Restarting…") { await control.perform(.restart) }
-                        Button("Stop") { isConfirmingStop = true }
-                            .disabled(control.isWorking)
-                    }
-                    Button("Show log") { NSWorkspace.shared.open(control.logURL) }
-                }
-                if control.failure != nil {
-                    HubErrorView($control.failure)
-                }
+        Section {
+            StatusRow(
+                "Server on this Mac", symbol: "server.rack", tileTone: .neutral, state: stateTitle, stateTone: control.state?.tone ?? .neutral,
+                detail: stateDetail,
+                help: control.bundleCarriesServer
+                    ? "The hub's server runs in the background on this Mac, and launchd starts it again when it stops or the Mac restarts. "
+                        + "The phone, this app and the agents reach the hub through it."
+                    : "This build of the app doesn't carry the server. Install one with macos/Scripts/install-app.sh from the repository."
+            ) {
+                serverAction
+            }
+            if control.failure != nil {
+                HubErrorView($control.failure)
             }
             if hubCommand.target != nil {
-                hubCommandRow
-            }
-            if client != nil, let work = modelWork.work {
-                HStack {
-                    Text(work.paused ? "Model work is paused" : "Model work is running")
-                    Spacer()
-                    AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…") {
-                        if let client { await modelWork.setPaused(!work.paused, with: client) }
+                StatusRow(
+                    "hub command", symbol: "terminal.fill", tileTone: .neutral, state: hubCommandState.title, stateTone: hubCommandState.tone,
+                    detail: "~/.local/bin/hub", help: describeHubCommand()
+                ) {
+                    if hubCommand.state != .linked {
+                        Button("Install") { hubCommand.install() }
                     }
                 }
-                if modelWork.pauseFailure != nil {
-                    HubErrorView($modelWork.pauseFailure)
-                }
-                if modelWork.failure != nil {
-                    HubErrorView($modelWork.failure)
+                if hubCommand.failure != nil {
+                    HubErrorView($hubCommand.failure)
                 }
             }
         }
         .task { await control.watch() }
         .task { hubCommand.readState() }
-        .task(id: client == nil) {
-            if let client { await modelWork.watch(with: client) }
-        }
         .confirmationDialog("Stop the hub?", isPresented: $isConfirmingStop) {
             Button("Stop", role: .destructive) { Task { await control.perform(.stop) } }
         } message: {
@@ -173,22 +153,58 @@ struct ServerSection: View {
         }
     }
 
-    /// The terminal's `hub`, linked to this app's so it is always the
-    /// installed version's.
-    @ViewBuilder private var hubCommandRow: some View {
-        if hubCommand.state == .linked {
-            Label("The hub command is installed in ~/.local/bin", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Tone.positive.color)
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Button("Install the hub command") { hubCommand.install() }
-                Text(describeHubCommand())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    /// Start while stopped; Restart while loaded, with Stop and the log in
+    /// its menu.
+    @ViewBuilder
+    private var serverAction: some View {
+        if control.bundleCarriesServer {
+            if control.isWorking {
+                ProgressView().controlSize(.small)
+            } else if control.state == .stopped {
+                if control.canRegister {
+                    Button("Start") { Task { await control.start() } }
+                } else {
+                    Button("Show log") { NSWorkspace.shared.open(control.logURL) }
+                        .help("Start it from the installed app in ~/Applications.")
+                }
+            } else if control.state != nil {
+                Menu("Restart") {
+                    Button("Stop…") { isConfirmingStop = true }
+                    Button("Show log") { NSWorkspace.shared.open(control.logURL) }
+                } primaryAction: {
+                    Task { await control.perform(.restart) }
+                }
+                .menuStyle(.button)
+                .fixedSize()
             }
         }
-        if hubCommand.failure != nil {
-            HubErrorView($hubCommand.failure)
+    }
+
+    private var stateTitle: String {
+        guard control.bundleCarriesServer else { return "Not in this build" }
+        switch control.state {
+        case .running: return "Running"
+        case .waiting: return "Restarting"
+        case .stopped: return "Stopped"
+        case nil: return "Checking…"
+        }
+    }
+
+    private var stateDetail: String? {
+        guard control.bundleCarriesServer else { return nil }
+        switch control.state {
+        case let .running(pid): return "process \(pid)"
+        case let .waiting(lastExitCode): return lastExitCode.map { "launchd restarts it · last exit code \($0)" } ?? "launchd restarts it"
+        case .stopped: return control.canRegister ? nil : "Start it from the installed app in ~/Applications"
+        case nil: return nil
+        }
+    }
+
+    private var hubCommandState: (title: String, tone: Tone) {
+        switch hubCommand.state {
+        case .linked: ("Installed", .positive)
+        case .missing: ("Not installed", .neutral)
+        case .other: ("Another version", .caution)
         }
     }
 
@@ -196,26 +212,8 @@ struct ServerSection: View {
         let links = "Links ~/.local/bin/hub to this app's, so hub in a terminal is always this version. ~/.local/bin needs to be on your PATH."
         switch hubCommand.state {
         case .missing, .linked: return links
-        case let .other(destination?): return links + " It replaces the link to \(destination)."
-        case .other(destination: nil): return links + " It replaces the hub there now."
-        }
-    }
-
-    private func describeState() -> String {
-        switch control.state {
-        case let .running(pid): "Running (process \(pid))"
-        case let .waiting(lastExitCode): "Not running; launchd restarts it" + (lastExitCode.map { " (last exit code \($0))" } ?? "")
-        case .stopped: "Stopped"
-        case nil: "Checking…"
-        }
-    }
-
-    private var stateSymbol: String {
-        switch control.state {
-        case .running: "checkmark.circle.fill"
-        case .waiting: "arrow.clockwise.circle"
-        case .stopped: "stop.circle"
-        case nil: "circle.dotted"
+        case let .other(destination?): return links + " Installing replaces the link to \(destination)."
+        case .other(destination: nil): return links + " Installing replaces the hub there now."
         }
     }
 }
