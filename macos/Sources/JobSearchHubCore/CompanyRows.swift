@@ -116,16 +116,6 @@ public enum CompanyBoards {
     }
 }
 
-/// A person's initials for a face in a row: "Ada Example" is "AE".
-public enum Faces {
-    public static func getInitials(_ name: String) -> String {
-        let words = name.split(separator: " ").filter { $0.contains(where: \.isLetter) }
-        let letters = [words.first, words.count > 1 ? words.last : nil].compactMap { $0 }
-            .compactMap { word in word.first(where: \.isLetter).map { String($0).uppercased() } }
-        return letters.isEmpty ? "?" : letters.joined()
-    }
-}
-
 /// The step a company's research is on, read from the lines `hub company
 /// add` prints: one per tool the agent calls, as "  · WebFetch {…}".
 public struct ResearchStep: Equatable, Sendable {

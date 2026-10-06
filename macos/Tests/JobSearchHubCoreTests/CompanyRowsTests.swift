@@ -62,13 +62,6 @@ private var utc: Calendar {
     #expect(CompanyScope.allCases.map(\.title) == ["Watching", "With open jobs", "Suggested"])
 }
 
-@Test func facesAreInitials() {
-    #expect(Faces.getInitials("Ada Example") == "AE")
-    #expect(Faces.getInitials("Kim Ray Example") == "KE")
-    #expect(Faces.getInitials("Ada") == "A")
-    #expect(Faces.getInitials("") == "?")
-}
-
 @Test func aResearchIsMatchedToItsRowByNameDomainOrLink() throws {
     let northwind = try makeRows()[0]
     #expect(northwind.isResearched(as: "Northwind"))

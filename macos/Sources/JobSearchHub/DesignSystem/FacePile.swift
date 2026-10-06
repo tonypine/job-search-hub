@@ -12,7 +12,7 @@ struct FacePile: View {
         HStack(spacing: Space.xs) {
             HStack(spacing: -size * 0.25) {
                 ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { _, name in
-                    Text(Faces.getInitials(name))
+                    Text(Initials.make(from: name))
                         .font(.system(size: size * 0.4, weight: .semibold))
                         .foregroundStyle(Tone.neutral.color)
                         .frame(width: size, height: size)
