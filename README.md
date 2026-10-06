@@ -127,7 +127,7 @@ Once `ci` passes on a merge to `main`, `.github/workflows/release.yml` releases 
 | The merge changed | Release |
 | --- | --- |
 | `server/` or `macos/` | `mac-v0.1.<N>`, "Job Search Hub 0.1.<N> for Mac": the signed app, server inside, as `Job-Search-Hub-0.1.<N>.zip`, and its `Job-Search-Hub-0.1.<N>.zip.sha256` |
-| `android/` | `android-v0.1.<N>`: the signed `job-search-hub-0.1.<N>.apk` |
+| `android/` | `android-v0.1.<N>`: the signed `job-search-hub-0.1.<N>.apk`, and its `job-search-hub-0.1.<N>.apk.sha256` |
 | both | both, with the same `N` |
 | only docs, CI or scripts | nothing |
 
@@ -135,7 +135,7 @@ Each release's notes list the commits since that app's previous release that tou
 
 Before it publishes the Mac app, `scripts/release/verify-app.sh` refuses a bundle that fails `codesign --verify --strict --deep`, holds an executable signed ad hoc, by another team than `MAC_SIGNING_TEAM_ID` or without the hardened runtime, carries another version in its `Info.plist` or `hub-server --version`, or links a library outside the system and the bundle. The copy unzipped from the zip is checked again. The release isn't notarized: Apple doesn't notarize with a development certificate, so the first install from a browser asks to allow it once in System Settings › Privacy & Security.
 
-To install a phone release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+To install a phone release the first time, open its page on the phone, download the APK and open it; Android asks to allow installs from the browser. From then on the app finds its own new versions and installs them (see `android/README.md` › New versions). Each release installs over the previous one and keeps the pairing.
 
 To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
 

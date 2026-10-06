@@ -44,3 +44,13 @@ Both halves of the setup stay out of the repo:
 
 - **App:** the Firebase project's `google-services.json` goes in `app/`, which git ignores. A build without it runs normally, with pushes off.
 - **Hub:** a service account key from the same project goes in `~/.config/job-search-hub/firebase-service-account.json` (Firebase console › Project settings › Service accounts). Without it the hub logs "pushes stay off" and carries on.
+
+## New versions
+
+The app finds, downloads and installs its own releases (`docs/design/updates.md` › Proposal 4):
+
+- **Finding them.** It asks GitHub's public API for the repository's releases when it opens (at most every 15 minutes) and once a day in the background (`WorkManager`), and takes the newest `android-v*` release above its own version that isn't a draft or a pre-release (a withdrawn version). A local build, `0.1.0-dev.<commit>`, is older than every release.
+- **Checking them.** It downloads the APK on Wi-Fi, or on any network for *Check now* and *Update*, and offers it only when its SHA-256 matches the release's `.sha256` asset and Android reads it as this app, at the version the release names, newer than the installed one, and signed with the installed app's certificate. A version that fails is deleted, never downloaded again, and named in Settings › App version. A debug build, signed with the debug key, refuses every release this way.
+- **Offering them.** Today shows a card, "Version 0.1.<N> is ready", with its first two New lines, *Update* and *Later*; *Later* hides it until a newer release, or for three days. Settings › App version shows the installed version and the newest, what's new in every release since, *Check now* and *Update*. When the hub answers `426 Upgrade Required`, a full screen, "This app is too old for your hub", replaces the pages, with *Update*.
+- **Installing them.** *Update* hands the APK to Android's `PackageInstaller` (`REQUEST_INSTALL_PACKAGES`). The first time, the card says why and sends you to *Install unknown apps* to allow Job Search Hub. Android then asks "Do you want to update this app?"; the app restarts on the new version where Android allows it, or opens on it next time, and Today says "Now on 0.1.<N>". The app doesn't yet skip that confirmation with `USER_ACTION_NOT_REQUIRED`: that waits for a check on the owner's phone.
+- **Notifications.** None per release. One on the Hub channel when the hub no longer serves the app, and one when a ready version has waited a week, each once.
