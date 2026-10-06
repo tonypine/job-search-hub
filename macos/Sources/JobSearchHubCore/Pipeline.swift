@@ -145,9 +145,18 @@ public struct PipelineBoard: Equatable, Sendable {
     }
 
     /// How many cards' follow-ups are due today or overdue: the Pipeline's
-    /// badge in the sidebar, and what *Due only* shows.
+    /// badge in the sidebar, and what its Due scope shows.
     public func getDueCount(now: Date, calendar: Calendar = .current) -> Int {
         cards.count { $0.getFollowUpStatus(now: now, calendar: calendar)?.isDue == true }
+    }
+
+    /// How many cards' follow-ups are past their day: what turns the
+    /// Pipeline's badge red.
+    public func getOverdueCount(now: Date, calendar: Calendar = .current) -> Int {
+        cards.count { card in
+            if case .overdue = card.getFollowUpStatus(now: now, calendar: calendar) { return true }
+            return false
+        }
     }
 
     /// Puts the server's answer in place of the card's application, keeping

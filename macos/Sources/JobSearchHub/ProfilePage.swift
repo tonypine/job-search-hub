@@ -44,36 +44,38 @@ struct ProfilePage: View {
     }
 
     private func content(client: HubClient) -> some View {
-        Group {
-            switch tab {
-            case .profile: profile(client: client)
-            case .knowledgeBase: scrolling { KnowledgeBaseSection(client: client) }
-            case .gaps: scrolling { MarketGapsSection(client: client) }
-            case .linkedIn: linkedInTab(client: client)
-            case .answers: scrolling { ApplicationAnswersSection(client: client) }
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Show", selection: $tab) {
-                    ForEach(ProfileTab.allCases) { tab in Text(tab.title).tag(tab) }
+        VStack(spacing: 0) {
+            header(client: client)
+            Group {
+                switch tab {
+                case .profile: profile(client: client)
+                case .knowledgeBase: scrolling { KnowledgeBaseSection(client: client) }
+                case .gaps: scrolling { MarketGapsSection(client: client) }
+                case .linkedIn: linkedInTab(client: client)
+                case .answers: scrolling { ApplicationAnswersSection(client: client) }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(editor.isEditing)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// The page's controls, in its header rather than in the window's
+    /// toolbar: the tabs as scopes, and the profile's Edit, or Cancel and
+    /// Save while editing.
+    private func header(client: HubClient) -> some View {
+        PageHeader {
+            TabStrip(items: ProfileTab.allCases.map { TabStripItem(id: $0, title: $0.title) }, selection: $tab)
+                .disabled(editor.isEditing)
+        } trailing: {
             if tab == .profile {
-                ToolbarItemGroup {
-                    if editor.isEditing {
-                        Button("Cancel") { editor.cancelEditing() }
-                            .disabled(editor.isSaving)
-                        AsyncButton("Save", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
-                            .keyboardShortcut("s")
-                    } else {
-                        Button("Edit", systemImage: "pencil") { editor.startEditing() }
-                            .disabled(editor.profile == nil)
-                    }
+                if editor.isEditing {
+                    Button("Cancel") { editor.cancelEditing() }
+                        .disabled(editor.isSaving)
+                    AsyncButton("Save", busyTitle: "Saving…", isBusy: editor.isSaving) { await editor.save(with: client) }
+                        .keyboardShortcut("s")
+                } else {
+                    Button("Edit", systemImage: "pencil") { editor.startEditing() }
+                        .disabled(editor.profile == nil)
                 }
             }
         }

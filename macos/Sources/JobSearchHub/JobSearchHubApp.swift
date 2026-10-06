@@ -184,9 +184,10 @@ struct ContentView: View {
                         Section { rows(group) }
                     }
                 }
-                if let client = connection.makeClient() {
-                    SessionSidebarSection(client: client) { subject in openSession(subject) }
-                }
+            }
+            // The hub's state, where the sessions were: they're in its popover.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
@@ -299,9 +300,12 @@ struct ContentView: View {
 
     private func rows(_ group: SidebarGroup) -> some View {
         ForEach(group.pages) { page in
-            Label(page.title, systemImage: page.symbolName)
-                .badge(counts.getCount(for: page, unseen: unseen.count))
-                .tag(page)
+            HStack(spacing: Space.s) {
+                Label(page.title, systemImage: page.symbolName)
+                Spacer(minLength: 0)
+                SidebarBadge(count: counts.getCount(for: page, unseen: unseen.count), isUrgent: counts.isUrgent(page))
+            }
+            .tag(page)
         }
     }
 

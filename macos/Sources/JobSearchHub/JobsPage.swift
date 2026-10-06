@@ -39,6 +39,8 @@ final class JobsModel {
     var actionError: HubFailure?
     var search = ""
     var status: JobStatusFilter = .open
+    /// How many jobs each scope holds for the search; All has no count.
+    private(set) var scopeCounts: [JobStatusFilter: Int] = [:]
     var selectedIDs: Set<UUID> = []
 
     /// The job whose details show: the selection, when it's one job.
@@ -57,6 +59,20 @@ final class JobsModel {
             loadError = nil
         } catch {
             loadError = HubFailure("Couldn't load the jobs", error)
+        }
+        await loadScopeCounts(with: client)
+    }
+
+    /// Reads each scope's count; one that fails keeps its last.
+    private func loadScopeCounts(with client: HubClient) async {
+        let search = search
+        async let open = try? client.getJobCount(search: search, status: .open)
+        async let later = try? client.getJobCount(search: search, status: .later)
+        async let closed = try? client.getJobCount(search: search, status: .closed)
+        async let skipped = try? client.getJobCount(search: search, status: .dismissed)
+        let counts: [(JobStatusFilter, Int?)] = await [(.open, open), (.later, later), (.closed, closed), (.dismissed, skipped)]
+        for case let (status, count?) in counts {
+            scopeCounts[status] = count
         }
     }
 
@@ -119,12 +135,11 @@ struct JobsPage: View {
     @State private var skipping: JobSkipTarget?
     @State private var fix: JobFixTarget?
     @Environment(RemoteTaskRunner.self) private var taskRunner
-    @State private var isShowingFilters = false
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
     /// The column the table sorts by, kept across launches; none keeps best fit first.
     @AppStorage("jobsSortOrder") private var savedSortOrder = Data()
-    /// The filters chosen in the popover, kept across launches.
+    /// The filters chosen in the header, kept across launches.
     @AppStorage("jobsFilter") private var savedFilter = Data()
 
     private let initialJobID: UUID?
@@ -142,7 +157,7 @@ struct JobsPage: View {
         Group {
             if let client = connection.makeClient() {
                 VStack(spacing: 0) {
-                    controls
+                    header
                     table(client: client)
                 }
                 .task(id: "\(model.search)|\(model.status.rawValue)") {
@@ -201,40 +216,37 @@ struct JobsPage: View {
         return "\(jobCount) · " + (passCount == 1 ? "1 passes the screen" : "\(passCount) pass the screen")
     }
 
-    /// The page's controls, on a bar over the table rather than in the
-    /// window's toolbar, which reaches over the details inspector.
-    private var controls: some View {
-        PageBar {
-            Button("Filters", systemImage: filter.wrappedValue.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") {
-                isShowingFilters.toggle()
-            }
-            .labelStyle(.iconOnly)
-            .help("Choose which jobs show")
-            .popover(isPresented: $isShowingFilters, arrowEdge: .bottom) {
-                JobsFilterPopover(
-                    filter: filter, choices: JobsFilterChoices(items: model.items),
-                    newCount: model.items.count { $0.isNew(since: model.previousVisit) }
-                )
-            }
-            Menu {
-                Picker("Status", selection: $model.status) {
-                    ForEach(JobStatusFilter.allCases) { status in Text(status.title).tag(status) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label(model.status.title, systemImage: "tray.full")
-            }
-            .labelStyle(.titleAndIcon)
-            .fixedSize()
-            .help("Show open, closed, all or skipped jobs")
+    /// The page's controls, in its header over the table rather than in the
+    /// window's toolbar, which reaches over the details inspector: the
+    /// status as scopes, the filters that are on as chips.
+    private var header: some View {
+        let choices = JobsFilterChoices(items: model.items)
+        return PageHeader(chips: getFilterChips(choices: choices)) {
+            TabStrip(
+                items: JobStatusFilter.allCases.map { status in
+                    TabStripItem(id: status, title: status.title, count: status == .all ? nil : model.scopeCounts[status])
+                },
+                selection: $model.status
+            )
+        } trailing: {
+            PageSearchField(text: $model.search, prompt: "Search jobs")
+                .help("Search titles, locations and companies")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
                 .labelStyle(.iconOnly)
                 .fixedSize()
-            Button("Add job by URL…", systemImage: "plus") { isAddingByURL = true }
-                .labelStyle(.iconOnly)
+            Button("Add", systemImage: "plus") { isAddingByURL = true }
                 .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
-            SearchField(text: $model.search, prompt: "Title, location or company")
-                .frame(minWidth: 100, maxWidth: 180)
+        } filterMenu: {
+            JobsFilterMenu(filter: filter, choices: choices, newCount: model.items.count { $0.isNew(since: model.previousVisit) })
+        }
+    }
+
+    private func getFilterChips(choices: JobsFilterChoices) -> [PageFilterChip] {
+        let chips = filter.wrappedValue.getChips(choices: choices) { name in JobsColumns.fitChecks.first { $0.name == name }?.title ?? name }
+        return chips.map { chip in
+            PageFilterChip(id: String(describing: chip.kind), title: chip.title) {
+                filter.wrappedValue = filter.wrappedValue.removing(chip.kind)
+            }
         }
     }
 
@@ -327,6 +339,8 @@ struct JobsPage: View {
                 HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
             } else if model.items.isEmpty && !model.isLoading && model.status == .dismissed {
                 ContentUnavailableView("No skipped jobs", systemImage: "tray", description: Text("Jobs skipped from the list show here, where they can be restored."))
+            } else if model.items.isEmpty && !model.isLoading && model.status == .later {
+                ContentUnavailableView("Nothing left for later", systemImage: "clock", description: Text("Jobs you leave for later show here until you decide them."))
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("No jobs", systemImage: "briefcase", description: Text("Jobs from watched companies' boards appear here after the next poll."))
             } else if model.getMatchingItems(filter.wrappedValue).isEmpty && !model.isLoading {

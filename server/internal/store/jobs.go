@@ -439,6 +439,8 @@ func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard,
 const (
 	JobStatusOpen   = "open"
 	JobStatusClosed = "closed"
+	// JobStatusLater is the open jobs the owner left for later.
+	JobStatusLater = "later"
 	// JobStatusAll is every job that isn't dismissed.
 	JobStatusAll       = "all"
 	JobStatusDismissed = "dismissed"
@@ -495,8 +497,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 	if status == "" {
 		status = JobStatusOpen
 	}
-	if status != JobStatusOpen && status != JobStatusClosed && status != JobStatusAll && status != JobStatusDismissed {
-		return nil, 0, errors.New("status must be open, closed, all or dismissed")
+	if status != JobStatusOpen && status != JobStatusClosed && status != JobStatusLater && status != JobStatusAll && status != JobStatusDismissed {
+		return nil, 0, errors.New("status must be open, closed, later, all or dismissed")
 	}
 
 	const matches = `
@@ -505,6 +507,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter) ([]JobListItem, 
 		       OR strpos(lower(COALESCE(companies.name, jobs.company_name)), $1) > 0)
 		  AND ($2::uuid IS NULL OR jobs.company_id = $2)
 		  AND CASE WHEN $3 = 'dismissed' THEN jobs.dismissed_at IS NOT NULL
+		           WHEN $3 = 'later' THEN jobs.dismissed_at IS NULL AND jobs.closed_at IS NULL
+		                AND EXISTS (SELECT 1 FROM job_decisions WHERE job_decisions.job_id = jobs.id AND job_decisions.decision = 'later')
 		           ELSE jobs.dismissed_at IS NULL AND ($3 = 'all' OR ($3 = 'open') = (jobs.closed_at IS NULL)) END
 		  AND ($4 = '' OR strpos(lower(jobs.title), $4) > 0)
 		  AND CASE $5 WHEN '' THEN true

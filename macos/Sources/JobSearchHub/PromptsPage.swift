@@ -75,26 +75,42 @@ struct PromptsPage: View {
     @State private var model = PromptsModel()
     /// A prompt picked while the editor held unsaved changes.
     @State private var pendingKind: String?
+    @State private var search = ""
 
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                content(client: client)
-                    .task {
-                        await model.loadSummaries(with: client)
-                        if model.selectedKind == nil {
-                            await model.select(model.summaries.first?.kind, with: client)
-                        }
+                VStack(spacing: 0) {
+                    PageHeader {
+                        EmptyView()
+                    } trailing: {
+                        PageSearchField(text: $search, prompt: "Search prompts")
+                            .help("Search the prompts' titles and what each is for")
                     }
+                    content(client: client)
+                }
+                .task {
+                    await model.loadSummaries(with: client)
+                    if model.selectedKind == nil {
+                        await model.select(model.summaries.first?.kind, with: client)
+                    }
+                }
             }
         }
         .navigationTitle("Prompts")
     }
 
+    /// The prompts whose title or purpose holds the search.
+    private var shownSummaries: [AgentPromptSummary] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return model.summaries }
+        return model.summaries.filter { $0.title.localizedStandardContains(query) || $0.description.localizedStandardContains(query) }
+    }
+
     private func content(client: HubClient) -> some View {
         HStack(spacing: 0) {
             List(selection: Binding(get: { model.selectedKind }, set: { kind in pick(kind, with: client) })) {
-                ForEach(model.summaries) { summary in
+                ForEach(shownSummaries) { summary in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(summary.title)
                         Text(summary.version.map { "Version \($0)" } ?? "No version yet")

@@ -78,32 +78,47 @@ struct DecidePage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                queue(client)
-                    .task { await model.load(with: client) }
-                    .onChange(of: [events.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                    .onChange(of: model.selectedID, initial: true) {
-                        details.show(model.selectedID.map(InspectorSubject.job), from: .decide)
+                VStack(spacing: 0) {
+                    header
+                    queue(client)
+                }
+                .task { await model.load(with: client) }
+                .onChange(of: [events.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                .onChange(of: model.selectedID, initial: true) {
+                    details.show(model.selectedID.map(InspectorSubject.job), from: .decide)
+                }
+                .onChange(of: details.getEntry(on: .decide)) {
+                    // ⌘K can open another queued job; the list then selects it too.
+                    if details.getEntry(on: .decide) == nil {
+                        model.selectedID = nil
+                    } else if let openItem {
+                        model.selectedID = openItem.id
                     }
-                    .onChange(of: details.getEntry(on: .decide)) {
-                        // ⌘K can open another queued job; the list then selects it too.
-                        if details.getEntry(on: .decide) == nil {
-                            model.selectedID = nil
-                        } else if let openItem {
-                            model.selectedID = openItem.id
-                        }
+                }
+                .onPageRequest(.decide) { request in
+                    if request == .focusList { isQueueFocused = true }
+                }
+                .sheet(item: $skipping) { item in
+                    SkipJobsSheet(jobCount: 1) { reason in
+                        await model.decide(item, .skip, reason: reason, through: decisions, with: client)
                     }
-                    .onPageRequest(.decide) { request in
-                        if request == .focusList { isQueueFocused = true }
-                    }
-                    .sheet(item: $skipping) { item in
-                        SkipJobsSheet(jobCount: 1) { reason in
-                            await model.decide(item, .skip, reason: reason, through: decisions, with: client)
-                        }
-                    }
+                }
             }
         }
         .navigationTitle("Decide")
         .navigationSubtitle(model.items.count == 1 ? "1 job to decide" : "\(model.items.count) jobs to decide")
+    }
+
+    /// The page's header: no scopes or search, so the keys that work the
+    /// queue sit where they would.
+    private var header: some View {
+        PageHeader {
+            Text("↑↓ move · Return opens · P pursue · L later · S skip")
+                .font(.hubSecondary)
+                .foregroundStyle(.secondary)
+        } trailing: {
+            EmptyView()
+        }
     }
 
     /// The queued job the inspector shows, the one P, L and S decide.

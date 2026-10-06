@@ -3,9 +3,11 @@ import SwiftUI
 
 /// The job criteria on the Criteria page: what the feeds search by, what
 /// each job's fit is judged against, and the take-home pay it must reach.
+/// The page holds the editor and loads it, so unsaved edits outlive a switch
+/// to another scope.
 struct JobCriteriaSection: View {
     let client: HubClient
-    @State private var editor = JobCriteriaEditor()
+    let editor: JobCriteriaEditor
 
     var body: some View {
         @Bindable var editor = editor
@@ -54,7 +56,6 @@ struct JobCriteriaSection: View {
             Text("A job's published pay is converted at the day's rate and reduced by the share of each way you could be hired. Pay under the minimum fails a job's screen. The shares are estimates; tune them to your own numbers.")
                 .foregroundStyle(.secondary)
         }
-        .task { await editor.load(with: client) }
     }
 
     private func listField(_ title: String, text: Binding<String>, prompt: String) -> some View {

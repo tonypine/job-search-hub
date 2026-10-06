@@ -93,6 +93,9 @@ struct ServerSection: View {
                         if let client { await modelWork.setPaused(!work.paused, with: client) }
                     }
                 }
+                if modelWork.pauseFailure != nil {
+                    HubErrorView($modelWork.pauseFailure)
+                }
                 if modelWork.failure != nil {
                     HubErrorView($modelWork.failure)
                 }

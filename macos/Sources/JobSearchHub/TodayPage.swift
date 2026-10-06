@@ -112,6 +112,7 @@ struct TodayPage: View {
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
     @Environment(RecruiterReplyDraft.self) private var replyDraft
+    @Environment(PageRequests.self) private var requests
     @State private var model = TodayModel()
     @State private var activity = HubActivityModel()
     @State private var isWide = true
@@ -127,29 +128,53 @@ struct TodayPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                content(client)
-                    .task { await model.load(with: client) }
-                    .task { await activity.watch(with: client) }
-                    .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                    .onChange(of: events.revision) { Task { await activity.load(with: client) } }
-                    .onPageRequest(.today) { request in
-                        guard request == .focusList else { return }
-                        if model.hasLoaded {
-                            isDecideFocused = !model.queue.isEmpty
-                        } else {
-                            focusesDecideOnLoad = true
-                        }
+                VStack(spacing: 0) {
+                    header
+                    content(client)
+                }
+                .task { await model.load(with: client) }
+                .task { await activity.watch(with: client) }
+                .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                .onChange(of: events.revision) { Task { await activity.load(with: client) } }
+                .onPageRequest(.today) { request in
+                    guard request == .focusList else { return }
+                    if model.hasLoaded {
+                        isDecideFocused = !model.queue.isEmpty
+                    } else {
+                        focusesDecideOnLoad = true
                     }
-                    .onChange(of: model.hasLoaded) {
-                        if focusesDecideOnLoad && model.hasLoaded {
-                            focusesDecideOnLoad = false
-                            isDecideFocused = !model.queue.isEmpty
-                        }
+                }
+                .onChange(of: model.hasLoaded) {
+                    if focusesDecideOnLoad && model.hasLoaded {
+                        focusesDecideOnLoad = false
+                        isDecideFocused = !model.queue.isEmpty
                     }
+                }
             }
         }
         .navigationTitle("Today")
         .navigationSubtitle(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+    }
+
+    /// The page's controls, in its header rather than in the window's
+    /// toolbar: Add, which opens the page that adds the thing.
+    private var header: some View {
+        PageHeader {
+            EmptyView()
+        } trailing: {
+            Menu("Add", systemImage: "plus") {
+                Button("Job by URL…") {
+                    openPage(.jobs)
+                    requests.ask(.addJobByURL, on: .jobs)
+                }
+                Button("Company…") {
+                    openPage(.companies)
+                    requests.ask(.addCompany, on: .companies)
+                }
+            }
+            .fixedSize()
+            .help("Add a job by its posting's URL, or a company to watch")
+        }
     }
 
     /// What each card lists, read from the model once per render.

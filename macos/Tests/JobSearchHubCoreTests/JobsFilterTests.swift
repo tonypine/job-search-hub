@@ -94,3 +94,44 @@ private func getTitles(_ filter: JobsFilter, _ items: [JobListItem], previousVis
 
     #expect(try JSONDecoder().decode(JobsFilter.self, from: JSONEncoder().encode(filter)) == filter)
 }
+
+@Test func eachFilterThatIsOnIsAChip() {
+    let items = [makeItem("remote"), makeItem("onsite", workplace: "On-site"), makeItem("alert", source: "indeed")]
+    var filter = JobsFilter()
+    filter.hiddenFitLevels = JobsFilter.passesScreenHiddenLevels
+    filter.hiddenCheckFailures = ["Pay"]
+    filter.hiddenWorkplaces = ["On-site"]
+    filter.hiddenSources = ["indeed"]
+    filter.showsOnlyJobsWithPay = true
+
+    let chips = filter.getChips(choices: JobsFilterChoices(items: items)) { $0 == "Pay" ? "Take-home pay" : $0 }
+
+    #expect(chips.map(\.title) == ["Passes screen", "Doesn't fail Take-home pay", "Himalayas", "Remote", "Lists pay"])
+    #expect(JobsFilter().getChips(choices: JobsFilterChoices(items: items)) { $0 }.isEmpty)
+}
+
+@Test func aValueFilterNamesWhatItHidesWhenSeveralValuesAreLeft() {
+    let items = [makeItem("a", employment: "Full-time"), makeItem("b", employment: "Contract"), makeItem("c", employment: "Part-time")]
+    var filter = JobsFilter()
+    filter.hiddenEmploymentTypes = ["Contract"]
+    #expect(filter.getChips(choices: JobsFilterChoices(items: items)) { $0 }.map(\.title) == ["Not Contract"])
+
+    filter.hiddenEmploymentTypes = ["Contract", "Internship", "Temporary"]
+    #expect(filter.getChips(choices: JobsFilterChoices(items: items)) { $0 }.map(\.title) == ["Not Contract and 2 more"])
+
+    filter.hiddenFitLevels = [.poor]
+    #expect(filter.getChips(choices: JobsFilterChoices(items: items)) { $0 }.first?.title == "Screen: Passes, Unclear")
+}
+
+@Test func removingAChipTurnsOnlyItsFilterOff() {
+    var filter = JobsFilter()
+    filter.hiddenFitLevels = JobsFilter.passesScreenHiddenLevels
+    filter.hiddenCheckFailures = ["Stack", "Level"]
+    filter.showsOnlyNewJobs = true
+
+    var expected = filter
+    expected.hiddenFitLevels = []
+    #expect(filter.removing(.screen) == expected)
+    #expect(filter.removing(.checkFailure("Stack")).hiddenCheckFailures == ["Level"])
+    #expect(!filter.removing(.screen).removing(.checkFailure("Stack")).removing(.checkFailure("Level")).removing(.new).isActive)
+}

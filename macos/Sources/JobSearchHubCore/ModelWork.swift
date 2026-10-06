@@ -21,6 +21,16 @@ public struct ModelWork: Decodable, Equatable, Sendable {
         return .notQueued
     }
 
+    /// What the local models are doing, in a few words for the sidebar's
+    /// foot: "Job facts · 3 waiting", "2 waiting", "Local models idle".
+    public var statusLine: String {
+        if paused { return waiting.isEmpty ? "Local models paused" : "Local models paused · \(waiting.count) waiting" }
+        let waitingText = "\(waiting.count) waiting"
+        guard let running else { return waiting.isEmpty ? "Local models idle" : waitingText }
+        let kind = RunsSummary.getKindTitle(running.kind)
+        return waiting.isEmpty ? kind : "\(kind) · \(waitingText)"
+    }
+
     /// How many calls wait, by the kind's title.
     public var waitingCountsByKind: [(title: String, count: Int)] {
         Dictionary(grouping: waiting, by: \.kind)

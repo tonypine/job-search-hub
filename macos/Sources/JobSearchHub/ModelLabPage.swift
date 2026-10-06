@@ -98,25 +98,33 @@ struct ModelLabPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                content(client)
-                    .task(id: model.hasRunningComparison) { await model.watchList(with: client) }
-                    .task(id: model.selectedID) { await model.watchSelected(with: client) }
-                    .onChange(of: events.revision) { Task { await model.loadList(with: client) } }
-                    .toolbar {
-                        Menu("Add", systemImage: "plus") {
-                            Button("Comparison…") { isAddingComparison = true }
-                        }
-                        .help("Add a comparison (⌘N)")
+                VStack(spacing: 0) {
+                    header
+                    content(client)
+                }
+                .task(id: model.hasRunningComparison) { await model.watchList(with: client) }
+                .task(id: model.selectedID) { await model.watchSelected(with: client) }
+                .onChange(of: events.revision) { Task { await model.loadList(with: client) } }
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Comparison…") { isAddingComparison = true })
+                .sheet(isPresented: $isAddingComparison) {
+                    NewComparisonSheet(client: client) { comparison in
+                        try await model.start(comparison, with: client)
                     }
-                    .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Comparison…") { isAddingComparison = true })
-                    .sheet(isPresented: $isAddingComparison) {
-                        NewComparisonSheet(client: client) { comparison in
-                            try await model.start(comparison, with: client)
-                        }
-                    }
+                }
             }
         }
         .navigationTitle("Model lab")
+        .navigationSubtitle(model.comparisons.count == 1 ? "1 comparison" : "\(model.comparisons.count) comparisons")
+    }
+
+    /// The page's controls, in its header rather than in the window's toolbar.
+    private var header: some View {
+        PageHeader {
+            EmptyView()
+        } trailing: {
+            Button("Add", systemImage: "plus") { isAddingComparison = true }
+                .help("Add a comparison (⌘N)")
+        }
     }
 
     private func content(_ client: HubClient) -> some View {
@@ -177,13 +185,8 @@ private struct ComparisonView: View {
                     Text(describeProgress()).font(.hubSecondary).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Picker("View", selection: $tab) {
-                    ForEach(ComparisonTab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
             }
+            TabStrip(items: ComparisonTab.allCases.map { TabStripItem(id: $0, title: $0.rawValue) }, selection: $tab, showsRule: true)
             switch tab {
             case .summary: ComparisonSummaryGrid(record: record)
             case .postings: ComparisonPostingsView(record: record, model: model, client: client)

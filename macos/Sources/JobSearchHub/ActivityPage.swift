@@ -23,12 +23,17 @@ final class RunsModel {
     }
 }
 
-/// The hub's local model work, read every two seconds while the page shows.
+/// The hub's local model work, read every few seconds while a view that
+/// shows it is on screen.
 @MainActor
 @Observable
 final class ModelWorkModel {
     private(set) var work: ModelWork?
+    /// Why the last read failed; the next read that works clears it.
     var failure: HubFailure?
+    /// Why the last pause or resume failed. Reads leave it, so it stays
+    /// until the owner dismisses it or tries again.
+    var pauseFailure: HubFailure?
 
     func load(with client: HubClient) async {
         do {
@@ -39,18 +44,19 @@ final class ModelWorkModel {
         }
     }
 
-    func watch(with client: HubClient) async {
+    func watch(with client: HubClient, every interval: Duration = .seconds(2)) async {
         while !Task.isCancelled {
             await load(with: client)
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: interval)
         }
     }
 
     func setPaused(_ paused: Bool, with client: HubClient) async {
+        pauseFailure = nil
         do {
             work = try await client.send("POST", paused ? "v1/model-work/pause" : "v1/model-work/resume", body: EmptyBody(), as: ModelWork.self)
         } catch {
-            failure = HubFailure(paused ? "Couldn't pause the local models" : "Couldn't resume the local models", error)
+            pauseFailure = HubFailure(paused ? "Couldn't pause the local models" : "Couldn't resume the local models", error)
         }
     }
 }
@@ -67,13 +73,32 @@ struct ActivityPage: View {
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                content(client)
-                    .task(id: events.revision) { await model.load(with: client) }
-                    .task { await modelWork.watch(with: client) }
+                VStack(spacing: 0) {
+                    header(client)
+                    content(client)
+                }
+                .task(id: events.revision) { await model.load(with: client) }
+                .task { await modelWork.watch(with: client) }
             }
         }
         .navigationTitle("Activity")
         .navigationSubtitle("The latest \(model.taskRuns.count + model.agentRuns.count) runs")
+    }
+
+    /// The page's header: the local models' pause, the one thing to do here.
+    private func header(_ client: HubClient) -> some View {
+        PageHeader {
+            EmptyView()
+        } trailing: {
+            if let work = modelWork.work {
+                AsyncButton(
+                    work.paused ? "Resume local models" : "Pause local models", busyTitle: work.paused ? "Resuming…" : "Pausing…",
+                    systemImage: work.paused ? "play.fill" : "pause.fill"
+                ) {
+                    await modelWork.setPaused(!work.paused, with: client)
+                }
+            }
+        }
     }
 
     private func content(_ client: HubClient) -> some View {
@@ -138,7 +163,7 @@ struct ActivityPage: View {
     }
 
     /// The local runtime and its queue: what runs, on which model, what
-    /// waits, and the pause.
+    /// waits, and whether it's paused. The header has the pause.
     @ViewBuilder
     private func localModels(_ client: HubClient) -> some View {
         HubSection("Local models") {
@@ -148,10 +173,9 @@ struct ActivityPage: View {
                     if work.paused {
                         Text("Only runs you start go ahead.").foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    AsyncButton(work.paused ? "Resume" : "Pause", busyTitle: work.paused ? "Resuming…" : "Pausing…", systemImage: work.paused ? "play.fill" : "pause.fill") {
-                        await modelWork.setPaused(!work.paused, with: client)
-                    }
+                }
+                if modelWork.pauseFailure != nil {
+                    HubErrorView($modelWork.pauseFailure)
                 }
                 if modelWork.failure != nil {
                     HubErrorView($modelWork.failure)

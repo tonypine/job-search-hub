@@ -50,7 +50,7 @@ struct CompanyInspector: View {
     var body: some View {
         Group {
             if let dossier = model.dossier, dossier.company.id == companyID {
-                EntityInspector(tabs: InspectorTab.getTabs(for: .company(companyID)), tab: $tab) {
+                EntityInspector(subject: .company(companyID), tabs: InspectorTab.getTabs(for: .company(companyID)), tab: $tab) {
                     header(dossier)
                     actions(dossier)
                 } content: { tab in
