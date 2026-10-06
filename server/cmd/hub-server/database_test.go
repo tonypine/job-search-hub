@@ -3,18 +3,28 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
+	"github.com/tonypine/job-search-hub/server/internal/postgresprocess"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
+	"github.com/tonypine/job-search-hub/server/migrations"
 )
 
 // ownedDatabaseSettings is a server without HUB_DATABASE_URL whose engines
@@ -196,5 +206,97 @@ func TestTheServersPostgresStoppingByItselfIsSignalled(t *testing.T) {
 	case <-closed:
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close hung after postgres was killed")
+	}
+}
+
+func execute(t *testing.T, databaseURL, statement string) {
+	t.Helper()
+	connection, err := pgx.Connect(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(context.Background())
+	if _, err := connection.Exec(context.Background(), statement); err != nil {
+		t.Fatalf("%s: %v", statement, err)
+	}
+}
+
+func listFolder(t *testing.T, folder string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(folder)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// migrateAllButTheLast migrates the database at databaseURL up to the
+// migration before the newest, as a database an app update finds, and
+// returns that migration's version.
+func migrateAllButTheLast(t *testing.T, databaseURL string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	database := stdlib.OpenDBFromPool(pool)
+	defer database.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := provider.ListSources()
+	version := sources[len(sources)-2].Version
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
+func TestPendingMigrationsAreDumpedFirstAndAStartWithNonePendingTakesNoDump(t *testing.T) {
+	ctx := context.Background()
+
+	// A new database has nothing to keep.
+	fresh, _ := ownedDatabaseSettings(t)
+	fresh.backupsDir = t.TempDir()
+	openOwnedDatabase(t, fresh).Close()
+	if names := listFolder(t, fresh.backupsDir); len(names) != 0 {
+		t.Fatalf("a new database was dumped: %v", names)
+	}
+
+	// One a migration behind, as an app update finds it.
+	settings, engine := ownedDatabaseSettings(t)
+	settings.backupsDir = t.TempDir()
+	cluster, err := postgresprocess.Start(ctx, postgresprocess.Settings{Engine: engine, Dir: settings.postgresDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := migrateAllButTheLast(t, cluster.URL())
+	execute(t, cluster.URL(), "CREATE TABLE kept (note text); INSERT INTO kept VALUES ('before the migration')")
+	cluster.Stop()
+
+	openOwnedDatabase(t, settings).Close()
+	dump := fmt.Sprintf("hub-pre-migration-%d.dump", version)
+	if names := listFolder(t, settings.backupsDir); len(names) != 1 || names[0] != dump {
+		t.Fatalf("backups = %v, want [%s]", names, dump)
+	}
+	output, err := exec.Command(filepath.Join(engine, "bin", "pg_restore"), "--list", filepath.Join(settings.backupsDir, dump)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("pg_restore can't read the dump: %v: %s", err, output)
+	}
+	if !strings.Contains(string(output), "TABLE public kept") {
+		t.Fatalf("the dump doesn't hold the database's tables:\n%s", output)
+	}
+
+	// Migrated now: the next start has nothing to dump.
+	openOwnedDatabase(t, settings).Close()
+	if names := listFolder(t, settings.backupsDir); len(names) != 1 {
+		t.Fatalf("a start with nothing pending dumped: %v", names)
 	}
 }

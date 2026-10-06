@@ -45,6 +45,25 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// GetMigrationState is the newest migration applied to the database, 0 for a
+// new one, and whether any migration is still to apply.
+func GetMigrationState(ctx context.Context, pool *pgxpool.Pool) (version int64, pending bool, err error) {
+	database := stdlib.OpenDBFromPool(pool)
+	defer database.Close()
+
+	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
+	if err != nil {
+		return 0, false, fmt.Errorf("load migrations: %w", err)
+	}
+	if version, err = provider.GetDBVersion(ctx); err != nil {
+		return 0, false, fmt.Errorf("read the database's migration version: %w", err)
+	}
+	if pending, err = provider.HasPending(ctx); err != nil {
+		return 0, false, fmt.Errorf("check for pending migrations: %w", err)
+	}
+	return version, pending, nil
+}
+
 const (
 	foreignKeyViolation = "23503"
 	uniqueViolation     = "23505"

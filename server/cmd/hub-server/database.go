@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tonypine/job-search-hub/server/internal/databasebackup"
 	"github.com/tonypine/job-search-hub/server/internal/postgresprocess"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -54,18 +56,41 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 	database.pool = pool
 	// A Postgres the server started is up already. One it didn't may still
 	// be starting: at login, launchd starts the server before Docker Desktop
-	// has Postgres up.
+	// has Postgres up. Only the one the server runs is dumped before it is
+	// migrated, with the engine's own pg_dump.
 	if database.cluster == nil {
 		if err := waitForDatabase(ctx, pool, startupDatabaseWait); err != nil {
 			database.Close()
 			return nil, err
 		}
+	} else if err := dumpBeforeMigrating(ctx, database, settings.backupsDir); err != nil {
+		database.Close()
+		return nil, err
 	}
 	if err := store.Migrate(ctx, pool); err != nil {
 		database.Close()
 		return nil, err
 	}
 	return database, nil
+}
+
+// dumpBeforeMigrating dumps the database into folder when migrations are
+// pending, so one that goes wrong can be undone. A new database has nothing
+// to keep. Without the dump, the migrations wait.
+func dumpBeforeMigrating(ctx context.Context, database *hubDatabase, folder string) error {
+	version, pending, err := store.GetMigrationState(ctx, database.pool)
+	if err != nil {
+		return err
+	}
+	if !pending || version == 0 {
+		return nil
+	}
+	path, err := databasebackup.DumpBeforeMigration(ctx, database.pgDump, database.url, folder, version)
+	if err != nil {
+		return fmt.Errorf("dump the database before migrating it: %w", err)
+	}
+	slog.Info("database dumped before migrating", "file", path)
+	return nil
 }
 
 // Exited closes when the Postgres the server runs stops by itself, and never

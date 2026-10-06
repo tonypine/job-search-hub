@@ -38,7 +38,15 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in `engines/` (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both.
    - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
 
-   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. Restore one with `pg_restore --clean --dbname=<url> <file>`.
+   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
+
+   To restore a dump into the database the server owns, stop the hub in Settings › Server, then run:
+
+   ```bash
+   ~/Library/Application\ Support/JobSearchHub/bin/hub-server database restore ~/Library/Application\ Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump
+   ```
+
+   It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
 
 2. **Install the CLI.**
 
