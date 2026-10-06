@@ -563,6 +563,64 @@ func TestAnInstallThatKeepsCrashingGivesUp(t *testing.T) {
 	}
 }
 
+func TestARollbackThatStopsBeforeCountingRestoresTheDump(t *testing.T) {
+	for _, stop := range []string{"the new server doesn't stop", "hub-update gives up"} {
+		t.Run(stop, func(t *testing.T) {
+			hub := newFakeHub(t)
+			state := hub.prepare(true, false)
+			dump := filepath.Join(hub.backups, "hub-pre-migration-88.dump")
+			if err := os.WriteFile(dump, []byte("dump"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if stop == "hub-update gives up" {
+				// The new server migrated, then crashed each time.
+				hub.layOut(StepCheckingServer, true, true)
+				state.Step, state.Runs = StepCheckingServer, DefaultMaxRuns
+			} else {
+				hub.layOut(StepStoppingNewServer, true, true)
+				hub.stopFails = true
+				state.Step, state.Runs = StepStoppingNewServer, 1
+			}
+			hub.save(state)
+
+			state = hub.run()
+			if state.Step != StepRollbackFailed {
+				t.Fatalf("ended at %s", state.Step)
+			}
+			restore := quote(CommandPath(hub.previous(), "hub-server")) + " database restore " + quote(dump)
+			if !slices.Contains(state.Commands, restore) || state.Dump != dump {
+				t.Fatalf("commands =\n%s\nwant the restore of %s", strings.Join(state.Commands, "\n"), dump)
+			}
+		})
+	}
+}
+
+func TestARunCutShortWhileCheckingTheServerResumesThere(t *testing.T) {
+	hub := newFakeHub(t)
+	state := hub.prepare(true, true)
+	hub.layOut(StepCheckingServer, true, true)
+	// The new server is still migrating when hub-update is told to stop.
+	hub.answering = ""
+	state.Step, state.Runs = StepCheckingServer, 1
+	hub.save(state)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := hub.machine().Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	saved, err := LoadState(hub.statePath())
+	if err != nil || saved.Step != StepCheckingServer || saved.Failure != "" {
+		t.Fatalf("saved state = %+v, %v", saved, err)
+	}
+	if hub.called("stop server") != 0 {
+		t.Fatalf("the cut-short run rolled back: %v", hub.calls)
+	}
+
+	hub.answering = newVersion
+	hub.requireInstalled(hub.run())
+}
+
 // layOut puts the bundles where the install leaves them just before step,
 // with the server as it would be.
 func (hub *fakeHub) layOut(step Step, swapped, kept bool) {

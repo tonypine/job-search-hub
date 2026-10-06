@@ -176,12 +176,18 @@ func (machine *Machine) take(ctx context.Context, state *State) {
 		machine.swapBack(ctx, state)
 	case StepStartingOldServer:
 		if err := machine.System.StartServer(ctx); err != nil {
+			if cutShort(ctx) {
+				return
+			}
 			machine.failRollback(ctx, state, fmt.Errorf("start %s's server: %w", state.From, err))
 			return
 		}
 		state.Step = StepCheckingOldServer
 	case StepCheckingOldServer:
 		if err := machine.waitForServer(ctx, state, state.From, false); err != nil {
+			if cutShort(ctx) {
+				return
+			}
 			machine.failRollback(ctx, state, fmt.Errorf("%s's server didn't come back: %w", state.From, err))
 			return
 		}
@@ -204,8 +210,11 @@ func (machine *Machine) waitForApp(ctx context.Context, state *State) {
 			state.Step = StepStoppingServer
 			return
 		}
-		if machine.Now().After(deadline) || !machine.sleep(ctx) {
+		if machine.Now().After(deadline) {
 			machine.abandon(ctx, state, "Job Search Hub didn't quit, so nothing was installed.")
+			return
+		}
+		if !machine.sleep(ctx) {
 			return
 		}
 	}
@@ -214,6 +223,9 @@ func (machine *Machine) waitForApp(ctx context.Context, state *State) {
 func (machine *Machine) stopServer(ctx context.Context, state *State) {
 	machine.log("Stopping the server.")
 	if err := machine.System.StopServer(ctx); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.log("The server didn't stop: %v", err)
 		machine.abandon(ctx, state, "The server didn't stop, so nothing was installed.")
 		return
@@ -258,6 +270,9 @@ func (machine *Machine) startServer(ctx context.Context, state *State) {
 	state.ServerLog = machine.System.ServerLogEnd()
 	machine.log("Starting %s's server.", state.To)
 	if err := machine.System.StartServer(ctx); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.rollBack(state, fmt.Sprintf("%s couldn't start, so the hub went back to %s.", state.To, state.From), err)
 		return
 	}
@@ -266,6 +281,9 @@ func (machine *Machine) startServer(ctx context.Context, state *State) {
 
 func (machine *Machine) checkServer(ctx context.Context, state *State) {
 	if err := machine.waitForServer(ctx, state, state.To, true); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.rollBack(state, fmt.Sprintf("%s couldn't start, so the hub went back to %s.", state.To, state.From), err)
 		return
 	}
@@ -329,6 +347,9 @@ func (machine *Machine) waitForServer(ctx context.Context, state *State, version
 func (machine *Machine) openApp(ctx context.Context, state *State) {
 	_ = os.Remove(filepath.Join(machine.Updates, LaunchedMark))
 	if err := machine.System.OpenApp(ctx, state.Installed); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.rollBack(state, fmt.Sprintf("Job Search Hub %s didn't open, so the hub went back to %s.", state.To, state.From), err)
 		return
 	}
@@ -407,11 +428,17 @@ func (machine *Machine) rollBack(state *State, failure string, cause error) {
 func (machine *Machine) stopNewServer(ctx context.Context, state *State) {
 	if running, err := machine.System.IsAppRunning(ctx); err == nil && running && isVersion(state.Installed, state.To) {
 		if err := machine.System.QuitApp(ctx); err != nil {
+			if cutShort(ctx) {
+				return
+			}
 			machine.failRollback(ctx, state, fmt.Errorf("quit %s's app: %w", state.To, err))
 			return
 		}
 	}
 	if err := machine.System.StopServer(ctx); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.failRollback(ctx, state, fmt.Errorf("stop %s's server: %w", state.To, err))
 		return
 	}
@@ -440,6 +467,10 @@ func (machine *Machine) countWrites(ctx context.Context, state *State) {
 			machine.log("Counted what %s wrote: %s", state.To, state.Lost)
 			return
 		}
+		if cutShort(ctx) {
+			state.Step = StepCountingWrites
+			return
+		}
 		machine.log("Couldn't count what %s wrote: %v", state.To, err)
 	}
 	if dump, ok := machine.findFreshDump(*state); ok {
@@ -457,6 +488,9 @@ func (machine *Machine) restoreDatabase(ctx context.Context, state *State) {
 		}
 		machine.log("Restoring %s.", state.Dump)
 		if err := machine.System.RestoreDatabase(ctx, CommandPath(oldApp, "hub-server"), state.Dump); err != nil {
+			if cutShort(ctx) {
+				return
+			}
 			machine.failRollback(ctx, state, fmt.Errorf("restore %s: %w", state.Dump, err))
 			return
 		}
@@ -495,6 +529,9 @@ func (machine *Machine) report(ctx context.Context, state *State) {
 		machine.log("Couldn't mark %s bad: %v", state.To, err)
 	}
 	if err := machine.System.PostUpdate(ctx, state.Failure, state.Lost); err != nil {
+		if cutShort(ctx) {
+			return
+		}
 		machine.log("Couldn't post the rollback to the feed: %v", err)
 	}
 	if state.ReopenApp {
@@ -543,6 +580,13 @@ func (machine *Machine) failRollback(ctx context.Context, state *State, err erro
 	if !state.Step.isRollback() {
 		// Gave up before a rollback started: finish it from its start.
 		state.Step = StepStoppingNewServer
+	}
+	if state.Dump == "" && (state.Step == StepStoppingNewServer || state.Step == StepCountingWrites) {
+		// Counting writes, which finds the dump, is still to come: restore
+		// the one the new server took, if it migrated.
+		if dump, ok := machine.findFreshDump(*state); ok {
+			state.Dump = dump
+		}
 	}
 	machine.log("The rollback stopped at %s: %v", state.Step, err)
 	state.Error = fmt.Sprintf("The rollback stopped at %s: %v", state.Step, err)
@@ -671,6 +715,13 @@ func (machine *Machine) save(state State) error {
 		return fmt.Errorf("%w: %v", errStateLost, err)
 	}
 	return nil
+}
+
+// cutShort reports whether ctx ended, as when hub-update is told to stop.
+// A step cut short leaves its step as it is, for the next run to take
+// again, rather than count a failed call as the install's failure.
+func cutShort(ctx context.Context) bool {
+	return ctx.Err() != nil
 }
 
 // sleep waits one poll, and reports whether ctx is still live.
