@@ -36,6 +36,16 @@ public extension JobMatch {
         case .mismatch: .neutral
         }
     }
+
+    /// The match's symbol beside its word: fuller stars for better matches.
+    var symbolName: String {
+        switch self {
+        case .strong: "star.fill"
+        case .possible: "star.leadinghalf.filled"
+        case .stretch: "star"
+        case .mismatch: "minus.circle"
+        }
+    }
 }
 
 /// The screen: does a rule rule the job out? Good passes, poor fails.

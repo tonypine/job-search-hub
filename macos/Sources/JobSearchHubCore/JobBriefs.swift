@@ -110,6 +110,13 @@ public extension HubClient {
         return try await send("POST", "v1/jobs/\(id.uuidString)/decision", body: request, as: JobDecision.self)
     }
 
+    /// Takes back the decision on the job, which leaves it undecided: a
+    /// skipped job is restored, one left for later goes back among the
+    /// undecided. A pursued job keeps its card on the pipeline.
+    func clearJobDecision(_ id: UUID) async throws {
+        try await delete("v1/jobs/\(id.uuidString)/decision")
+    }
+
     /// Asks Claude for the job's full brief; it's written in the background.
     func writeFullBrief(_ id: UUID) async throws {
         _ = try await send("POST", "v1/jobs/\(id.uuidString)/brief/full", body: EmptyBody(), as: FullBriefResponse.self)

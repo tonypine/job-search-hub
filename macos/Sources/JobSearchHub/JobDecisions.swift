@@ -30,6 +30,14 @@ final class JobDecisions {
         revision += 1
         return jobs
     }
+
+    /// Takes back the decisions on the jobs, as Undo does after Later.
+    func clear(_ jobIDs: Set<UUID>, with client: HubClient) async throws {
+        defer { revision += 1 }
+        for id in jobIDs {
+            try await client.clearJobDecision(id)
+        }
+    }
 }
 
 /// The jobs a Skip sheet is open for.
@@ -72,6 +80,42 @@ struct SkipJobsSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel("Confirm skipping")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .padding()
+    }
+}
+
+/// Asks why jobs already skipped were skipped, from the toast that says so.
+struct SkipReasonSheet: View {
+    let jobCount: Int
+    /// Saves the reason, or says what failed.
+    let onSave: (String) async -> HubFailure?
+    @Environment(\.dismiss) private var closeSheet
+    @State private var reason = ""
+    @State private var failure: HubFailure?
+
+    var body: some View {
+        Form {
+            Text(jobCount == 1 ? "Why skip this job?" : "Why skip these \(jobCount) jobs?").font(.hubSection)
+            Text("The reason shows on the row under Skipped.")
+                .font(.hubSecondary).foregroundStyle(.secondary)
+            TextField("Reason", text: $reason, prompt: Text("e.g. agency, hybrid only"))
+                .accessibilityLabel("Reason for skipping")
+            if let failure {
+                HubErrorView(failure)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { closeSheet() }
+                AsyncButton("Save", busyTitle: "Saving…") {
+                    failure = await onSave(reason)
+                    if failure == nil { closeSheet() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .formStyle(.grouped)

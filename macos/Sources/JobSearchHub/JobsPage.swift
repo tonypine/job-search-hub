@@ -76,37 +76,84 @@ final class JobsModel {
         }
     }
 
-    /// Pursues each job, which puts it on the pipeline's first phase, and
-    /// reports it; a job already on the pipeline stays where it is.
-    func pursue(_ ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async {
-        isPursuing = true
-        defer { isPursuing = false }
-        for id in ids {
+    /// The jobs whose skip the reason sheet is open for, from the toast.
+    var reasonTarget: JobSkipTarget?
+
+    /// Decides the jobs at once and says so. Pursue puts them on the
+    /// pipeline, which Undo can't take back; Later and Skip offer Undo, and
+    /// Skip a reason too, so nothing asks first.
+    func decide(_ ids: Set<UUID>, _ decision: JobDecisionKind, through decisions: JobDecisions, with client: HubClient) async {
+        guard !ids.isEmpty else { return }
+        let name = describe(ids)
+        switch decision {
+        case .pursue:
+            isPursuing = true
+            defer { isPursuing = false }
+            for id in ids {
+                do {
+                    _ = try await decisions.decide(id, .pursue, with: client)
+                } catch {
+                    actionError = HubFailure("Couldn't pursue the jobs", error)
+                    return
+                }
+            }
+            toast = ToastMessage(text: "Pursued \(name)")
+        case .later:
+            for id in ids {
+                do {
+                    _ = try await decisions.decide(id, .later, with: client)
+                } catch {
+                    actionError = HubFailure("Couldn't leave the jobs for later", error)
+                    return
+                }
+            }
+            toast = ToastMessage(text: "Left \(name) for later", tone: .neutral, symbol: "clock") { [weak self] in
+                Task { await self?.undoLater(ids, through: decisions, with: client) }
+            }
+        case .skip:
             do {
-                _ = try await decisions.decide(id, .pursue, with: client)
+                _ = try await decisions.dismiss(ids, reason: "", with: client)
             } catch {
-                actionError = HubFailure("Couldn't pursue the jobs", error)
+                actionError = HubFailure("Couldn't skip the jobs", error)
                 return
             }
-        }
-        toast = ToastMessage(text: ids.count == 1 ? "Pursued 1 job" : "Pursued \(ids.count) jobs")
-    }
-
-    /// Skips the jobs and reports it, with Undo, or returns why it failed.
-    func skip(_ ids: Set<UUID>, reason: String, through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
-        do {
-            let jobs = try await decisions.dismiss(ids, reason: reason, with: client)
             selectedIDs.subtract(ids)
             toast = ToastMessage(
-                text: jobs.count == 1 ? "Skipped 1 job" : "Skipped \(jobs.count) jobs", tone: SetAside.skipped.tone,
-                symbol: SetAside.skipped.symbolName
-            ) { [weak self] in
-                Task { await self?.restore(ids, through: decisions, with: client, reports: false) }
-            }
+                text: "Skipped \(name)", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName,
+                undo: { [weak self] in
+                    Task { await self?.restore(ids, through: decisions, with: client, reports: false) }
+                },
+                action: ToastAction(title: "Add reason") { [weak self] in
+                    self?.reasonTarget = JobSkipTarget(jobIDs: ids)
+                }
+            )
+        }
+    }
+
+    /// Saves why the skipped jobs were skipped, or returns why it failed.
+    func addSkipReason(_ reason: String, to ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
+        do {
+            _ = try await decisions.dismiss(ids, reason: reason, with: client)
             return nil
         } catch {
-            return HubFailure("Couldn't skip the jobs", error)
+            return HubFailure("Couldn't save the reason", error)
         }
+    }
+
+    private func undoLater(_ ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async {
+        do {
+            try await decisions.clear(ids, with: client)
+        } catch {
+            actionError = HubFailure("Couldn't undo Later", error)
+        }
+    }
+
+    /// One job by its title, or several by their count.
+    private func describe(_ ids: Set<UUID>) -> String {
+        if ids.count == 1, let item = items.first(where: { ids.contains($0.id) }) {
+            return item.job.title
+        }
+        return ids.count == 1 ? "1 job" : "\(ids.count) jobs"
     }
 
     /// Restores the jobs, and says so unless it's an Undo.
@@ -132,12 +179,13 @@ struct JobsPage: View {
     @Environment(JobDecisions.self) private var decisions
     @State private var model = JobsModel()
     @State private var isAddingByURL = false
-    @State private var skipping: JobSkipTarget?
     @State private var fix: JobFixTarget?
+    @State private var hover = JobRowHover()
     @Environment(RemoteTaskRunner.self) private var taskRunner
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
-    /// The column the table sorts by, kept across launches; none keeps best fit first.
+    /// The column the table sorts by, kept across launches; Posted, newest
+    /// first, until one is chosen.
     @AppStorage("jobsSortOrder") private var savedSortOrder = Data()
     /// The filters chosen in the header, kept across launches.
     @AppStorage("jobsFilter") private var savedFilter = Data()
@@ -177,9 +225,9 @@ struct JobsPage: View {
                     // Closing the details of one job deselects it; several selected jobs show no details at all.
                     if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
                 }
-                .sheet(item: $skipping) { target in
-                    SkipJobsSheet(jobCount: target.jobIDs.count) { reason in
-                        await model.skip(target.jobIDs, reason: reason, through: decisions, with: client)
+                .sheet(item: $model.reasonTarget) { target in
+                    SkipReasonSheet(jobCount: target.jobIDs.count) { reason in
+                        await model.addSkipReason(reason, to: target.jobIDs, through: decisions, with: client)
                     }
                 }
                 .sheet(item: $fix) { target in
@@ -251,37 +299,46 @@ struct JobsPage: View {
     }
 
     private func table(client: HubClient) -> some View {
-        Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
-            TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in ToneChip(item.fit.level) }
-                .width(70)
-                .customizationID("fit")
-            TableColumn("Title", sortUsing: JobsSortComparator(.title)) { item in
-                HStack(spacing: Space.s) {
-                    UnseenDot(count: item.unseenUpdates)
-                    Text(item.job.title).help(item.job.title).layoutPriority(1)
-                    if let reason = item.job.dismissalReason, !reason.isEmpty {
-                        Text(reason).foregroundStyle(.secondary).help("Skipped: \(reason)")
-                    }
-                    if item.isNew(since: model.previousVisit) {
-                        ToneChip("New", tone: .accent)
-                    }
-                }
+        let sort = sortOrder.wrappedValue
+        let shownItems = model.getShownItems(filteredBy: filter.wrappedValue, sortedBy: sort)
+        // Sorted by Posted, the rows group by when the hub first saw them.
+        let groups = sort.first?.column == .posted
+            ? JobGroups.make(shownItems, newestFirst: sort.first?.order == .reverse, now: .now)
+            : nil
+        return Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
+            TableColumn("Job", sortUsing: JobsSortComparator(.title)) { item in
+                JobCell(
+                    item: item, isSelected: model.selectedIDs.contains(item.id), hover: hover, isSkipped: model.status == .dismissed,
+                    onDecide: { decision in decide(getTargets(of: item.id), decision, with: client) },
+                    onRestore: { Task { await model.restore(getTargets(of: item.id), through: decisions, with: client) } }
+                )
             }
-            .width(min: 160, ideal: 280)
-            .customizationID("title")
+            .width(min: 240, ideal: 380)
+            .customizationID("job")
             .disabledCustomizationBehavior(.visibility)
-            TableColumn("Company", sortUsing: JobsSortComparator(.company)) { item in Text(item.companyName ?? "–") }
-                .width(min: 100, ideal: 140)
-                .customizationID("company")
-            TableColumn("Location", sortUsing: JobsSortComparator(.location)) { item in Text(item.job.location ?? "").help(item.job.location ?? "") }
-                .width(min: 120, ideal: 200)
-                .customizationID("location")
-            TableColumn("First seen", sortUsing: JobsSortComparator(.firstSeen)) { item in
-                Text(item.job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
+            TableColumn("Match", sortUsing: JobsSortComparator(.match)) { item in
+                MatchCell(match: item.match).jobRowCell(item.id, hover: hover)
             }
-                .width(100)
-                .customizationID("firstSeen")
-            TableColumnForEach(JobsColumns.boardFacts) { column in
+            .width(min: 80, ideal: 96)
+            .customizationID("match")
+            TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in
+                ScreenCell(fit: item.fit).jobRowCell(item.id, hover: hover)
+            }
+            .width(min: 84, ideal: 110)
+            .customizationID("screen")
+            TableColumn("Take-home", sortUsing: JobsSortComparator(.takeHome)) { item in
+                TakeHomeCell(check: item.getFitCheck("Pay")).jobRowCell(item.id, hover: hover, alignment: .trailing)
+            }
+            .width(min: 64, ideal: 84)
+            .alignment(.trailing)
+            .customizationID("takeHome")
+            TableColumn("Posted", sortUsing: JobsSortComparator(.posted)) { item in
+                PostedCell(job: item.job).jobRowCell(item.id, hover: hover, alignment: .trailing)
+            }
+            .width(min: 48, ideal: 60)
+            .alignment(.trailing)
+            .customizationID("posted")
+            TableColumnForEach(JobsColumns.jobDetails + JobsColumns.boardFacts) { column in
                 TableColumn(column.title, sortUsing: column.sortComparator) { item in
                     let text = column.getText(item).flatMap { $0.isEmpty ? nil : $0 } ?? "–"
                     Text(text).help(text)
@@ -306,12 +363,25 @@ struct JobsPage: View {
                 .defaultVisibility(.hidden)
             }
         } rows: {
-            ForEach(model.getShownItems(filteredBy: filter.wrappedValue, sortedBy: sortOrder.wrappedValue)) { item in TableRow(item) }
+            if let groups {
+                ForEach(groups) { group in
+                    Section {
+                        ForEach(group.items) { item in TableRow(item) }
+                    } header: {
+                        JobGroupHeader(title: group.kind.title, count: group.items.count)
+                    }
+                }
+            } else {
+                ForEach(shownItems) { item in TableRow(item) }
+            }
         }
+        .alternatingRowBackgrounds(.disabled)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
-            Button("Pursue") { Task { await model.pursue(ids, through: decisions, with: client) } }
+            Button("Pursue") { decide(ids, .pursue, with: client) }
                 .disabled(ids.isEmpty || model.isPursuing)
+            Button("Later") { decide(ids, .later, with: client) }
+                .disabled(ids.isEmpty)
             Button("Fix…") {
                 if let id = ids.first, let item = model.items.first(where: { $0.id == id }) {
                     fix = JobFixTarget(id: id, title: item.job.title)
@@ -323,15 +393,24 @@ struct JobsPage: View {
                 Button("Restore") { Task { await model.restore(ids, through: decisions, with: client) } }
                     .disabled(ids.isEmpty)
             } else {
-                Button("Skip…") { skipping = JobSkipTarget(jobIDs: ids) }
+                Button("Skip") { decide(ids, .skip, with: client) }
                     .disabled(ids.isEmpty)
             }
         } primaryAction: { ids in
             open(ids)
         }
+        .onKeyPress(characters: .letters, phases: .down) { press in
+            // P, L and S decide the selected rows; Skip leaves skipped jobs alone.
+            guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
+                  let decision = press.characters.first.flatMap(KeyboardDecision.getDecision(for:)),
+                  !model.selectedIDs.isEmpty, !(decision == .skip && model.status == .dismissed)
+            else { return .ignored }
+            decide(model.selectedIDs, decision, with: client)
+            return .handled
+        }
         .onDeleteCommand {
-            if model.status != .dismissed && !model.selectedIDs.isEmpty {
-                skipping = JobSkipTarget(jobIDs: model.selectedIDs)
+            if model.status != .dismissed {
+                decide(model.selectedIDs, .skip, with: client)
             }
         }
         .overlay {
@@ -370,7 +449,7 @@ struct JobsPage: View {
 
     private var sortOrder: Binding<[JobsSortComparator]> {
         Binding(
-            get: { (try? JSONDecoder().decode([JobsSortComparator].self, from: savedSortOrder)) ?? [] },
+            get: { (try? JSONDecoder().decode([JobsSortComparator].self, from: savedSortOrder)) ?? [JobsSortComparator(.posted, order: .reverse)] },
             set: { savedSortOrder = (try? JSONEncoder().encode($0)) ?? Data() }
         )
     }
@@ -380,6 +459,16 @@ struct JobsPage: View {
             get: { (try? JSONDecoder().decode(TableColumnCustomization<JobListItem>.self, from: savedColumns)) ?? TableColumnCustomization() },
             set: { savedColumns = (try? JSONEncoder().encode($0)) ?? Data() }
         )
+    }
+
+    /// The jobs a row's action works on: the selection when the row is in
+    /// it, or else that row alone.
+    private func getTargets(of id: UUID) -> Set<UUID> {
+        model.selectedIDs.contains(id) ? model.selectedIDs : [id]
+    }
+
+    private func decide(_ ids: Set<UUID>, _ decision: JobDecisionKind, with client: HubClient) {
+        Task { await model.decide(ids, decision, through: decisions, with: client) }
     }
 
     private func open(_ ids: Set<UUID>) {
