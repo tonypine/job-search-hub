@@ -108,9 +108,8 @@ func makeSearchPath(inherited, home string) string {
 }
 
 // logToFile sends the server's output, and its children's, to the file path
-// names, appending. launchd starts the server from the app's bundle, whose
-// plist can't name a file in the user's home, so it passes the log as
-// HUB_LOG_FILE with a leading ~/. Empty leaves the output where it is.
+// names, appending: HUB_LOG_FILE, where a leading ~/ is the user's home.
+// Empty leaves the output where it is.
 func logToFile(path string) error {
 	if path == "" {
 		return nil
