@@ -229,16 +229,49 @@ jobs:
       - name: go test
         run: go test -count=1 ./...
 
+      # A release's build, with the version code release.yml would pass: the
+      # server's --version, hub's and GET /v1/version all say 0.1.<N>.
+      - name: A stamped server and hub report one version
+        env:
+          HUB_VERSION_CODE: "4242"
+        run: |
+          want=0.1.4242
+          test "$(sh ../scripts/release/version.sh)" = "$want"
+          ldflags=$(sh ../scripts/release/version.sh --go-ldflags)
+          go build -ldflags "$ldflags" -o "$RUNNER_TEMP/hub-server" ./cmd/hub-server
+          go build -ldflags "$ldflags" -o "$RUNNER_TEMP/hub" ./cmd/hub
+          "$RUNNER_TEMP/hub-server" --version | tee "$RUNNER_TEMP/server-version"
+          grep -qx "hub-server $want" "$RUNNER_TEMP/server-version"
+          grep -qx "commit $(git rev-parse HEAD)" "$RUNNER_TEMP/server-version"
+          test "$("$RUNNER_TEMP/hub" --version)" = "hub $want"
+
+          psql "$HUB_TEST_DATABASE_URL" -c 'CREATE DATABASE stamped_version'
+          HUB_ADDR=127.0.0.1:8099 HUB_OWNER_TOKEN="$(openssl rand -hex 32)" \
+            HUB_DATABASE_URL=postgres://hub:hub@localhost:5432/stamped_version HUB_BACKUPS_DIR="$RUNNER_TEMP/backups" \
+            HUB_BOARD_POLL_INTERVAL=0 HUB_FEED_POLL_INTERVAL=0 HUB_BOARD_SEARCH_INTERVAL=0 \
+            HUB_BOARD_DISCOVERY_INTERVAL=0 HUB_JOB_FACTS_INTERVAL=0 \
+            "$RUNNER_TEMP/hub-server" > "$RUNNER_TEMP/server.log" 2>&1 &
+          server=$!
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:8099/v1/version > "$RUNNER_TEMP/version.json" 2>/dev/null && break
+            sleep 1
+          done
+          kill "$server"
+          cat "$RUNNER_TEMP/version.json" || { cat "$RUNNER_TEMP/server.log"; exit 1; }
+          jq -e --arg want "$want" --arg commit "$(git rev-parse HEAD)" \
+            '.version == $want and .commit == $commit and .newest_migration > 0' "$RUNNER_TEMP/version.json"
+
   # Runs only when macos/ changes: the Swift tests run against StubHub, not
-  # the server, and macOS minutes cost 10x Linux ones. It never runs
-  # Scripts/make-app.sh, which signs with a Keychain identity CI doesn't have.
+  # the server, and macOS minutes cost 10x Linux ones. Scripts/make-app.sh
+  # runs signed ad hoc, as CI has no Keychain identity, to check the version
+  # it stamps.
   macos:
     needs: changes
     if: needs.changes.outputs.macos == 'true'
     # Package.swift targets macOS 26. Move both pins together when a newer
     # image goes GA.
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       XCODE_VERSION: "26.6"
     defaults:
@@ -269,6 +302,30 @@ jobs:
 
       - name: swift test
         run: swift test
+
+      # make-app.sh builds the bundled hub command.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # A release's build, with the version code release.yml would pass: the
+      # app's Info.plist, its hub command and hub-cvprint all say 0.1.<N>.
+      # Signed ad hoc, as CI has no signing identity.
+      - name: A stamped app, hub and hub-cvprint report one version
+        env:
+          HUB_VERSION_CODE: "4242"
+          CODESIGN_IDENTITY: "-"
+        run: |
+          want=0.1.4242
+          Scripts/make-app.sh
+          Scripts/build-cvprint.sh build/hub-cvprint
+          plist=build/JobSearchHub.app/Contents/Info.plist
+          test "$(plutil -extract CFBundleShortVersionString raw "$plist")" = "$want"
+          test "$(plutil -extract CFBundleVersion raw "$plist")" = "$want"
+          test "$(build/JobSearchHub.app/Contents/Resources/hub --version)" = "hub $want"
+          test "$(build/hub-cvprint --version)" = "hub-cvprint $want"
+          echo "The app, hub and hub-cvprint are $want"
 
   android:
     needs: changes
