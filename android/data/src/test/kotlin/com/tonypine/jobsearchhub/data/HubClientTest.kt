@@ -172,6 +172,7 @@ class HubClientTest {
             server.start()
             val error = assertFailsWith<HubException> { HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_old"), "0.1.252").getUpdates() }
             assertTrue(error.isRefused)
+            assertFalse(error.isUpgradeRequired)
         }
     }
 
@@ -196,8 +197,10 @@ class HubClientTest {
             val error = assertFailsWith<HubException> { client.getUpdates() }
             assertEquals(message, error.message)
             assertFalse(error.isRefused)
+            assertTrue(error.isUpgradeRequired)
             val withoutBody = assertFailsWith<HubException> { client.getUpdates() }
             assertEquals("The hub no longer serves this version of the app. Install a newer one.", withoutBody.message)
+            assertTrue(withoutBody.isUpgradeRequired)
         }
     }
 

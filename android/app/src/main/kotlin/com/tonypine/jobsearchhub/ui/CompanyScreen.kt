@@ -42,6 +42,7 @@ import com.tonypine.jobsearchhub.CompanyBrief
 import com.tonypine.jobsearchhub.HubViewModel
 import com.tonypine.jobsearchhub.core.QueueTaskRequest
 import com.tonypine.jobsearchhub.core.Screen
+import com.tonypine.jobsearchhub.data.HubFailure
 import com.tonypine.jobsearchhub.ui.design.EntityHeader
 import com.tonypine.jobsearchhub.ui.design.HubAction
 import com.tonypine.jobsearchhub.ui.design.HubCard
@@ -61,14 +62,14 @@ import kotlinx.coroutines.launch
 fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, onOpenJob: (String) -> Unit) {
     val context = LocalContext.current
     var brief by remember { mutableStateOf<CompanyBrief?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<HubFailure?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(id, attempt) {
         error = null
-        viewModel.loadCompanyBrief(id).onSuccess { brief = it }.onFailure { error = it.message ?: it.toString() }
+        viewModel.loadCompanyBrief(id).onSuccess { brief = it }.onFailure { error = HubFailure.of(it) }
     }
     Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
         MediumTopAppBar(
@@ -86,6 +87,7 @@ fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, on
                 }
             },
         )
+        val failed = error
         val shown = brief
         when {
             shown != null -> BriefView(shown, message, onOpenJob, onFindJobs = {
@@ -94,7 +96,7 @@ fun CompanyScreen(id: String, viewModel: HubViewModel, onBack: (() -> Unit)?, on
                         .fold({ "Sent to the Mac. The result comes as an update." }, { it.message })
                 }
             })
-            error != null -> HubErrorView("Couldn't load this company", error, onRetry = { attempt++ })
+            failed != null -> HubErrorView("Couldn't load this company", failed, onRetry = { attempt++ })
             else -> CircularProgressIndicator(Modifier.padding(Spacing.xl).align(Alignment.CenterHorizontally))
         }
     }

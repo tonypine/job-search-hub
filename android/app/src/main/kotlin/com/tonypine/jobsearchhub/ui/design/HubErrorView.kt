@@ -21,6 +21,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.tonypine.jobsearchhub.core.Tone
+import com.tonypine.jobsearchhub.data.HubFailure
+
+/** The advice for a call that failed on the way to the hub. */
+private const val NETWORK_ADVICE = "Check that the Mac is on and the phone can reach it, then try again."
+
+/**
+ * A failed call to the hub under the screen's [title], or, when the hub no longer serves this version of the app,
+ * under an update headline with the hub's words as the advice.
+ */
+@Composable
+fun HubErrorView(title: String, failure: HubFailure, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
+    HubErrorView(failure.title(title), failure.details, modifier, advice = failure.advice ?: NETWORK_ADVICE, onRetry = onRetry)
+}
 
 /**
  * What failed and what to do about it, a retry when there is one, and the raw
@@ -31,7 +44,7 @@ fun HubErrorView(
     title: String,
     error: String?,
     modifier: Modifier = Modifier,
-    advice: String = "Check that the Mac is on and the phone can reach it, then try again.",
+    advice: String = NETWORK_ADVICE,
     onRetry: (() -> Unit)? = null,
 ) {
     var showsDetails by rememberSaveable { mutableStateOf(false) }

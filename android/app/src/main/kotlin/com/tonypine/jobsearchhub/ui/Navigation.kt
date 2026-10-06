@@ -80,7 +80,7 @@ private val topLevels = listOf(
 fun HubNavigation(viewModel: HubViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     if (state.pairing == null) {
-        PairScreen(error = state.error, onPair = viewModel::pair)
+        PairScreen(error = state.error?.message, onPair = viewModel::pair)
         return
     }
     AskToNotify()

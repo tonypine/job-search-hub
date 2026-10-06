@@ -90,6 +90,7 @@ fun SettingsScreen(state: HubState, onBack: () -> Unit, onUnpair: () -> Unit) {
                             SettingsRow(
                                 Icons.Rounded.Sync, "Last read",
                                 when {
+                                    state.error?.isUpgradeRequired == true -> "The hub needs a newer app"
                                     state.error != null -> "Can't reach the hub right now"
                                     state.readAt != null -> formatWhen(state.readAt.toString())
                                     else -> "Not yet"

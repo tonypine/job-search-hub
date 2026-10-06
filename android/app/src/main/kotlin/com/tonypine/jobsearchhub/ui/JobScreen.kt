@@ -61,6 +61,7 @@ import com.tonypine.jobsearchhub.core.SetAside
 import com.tonypine.jobsearchhub.core.Tone
 import com.tonypine.jobsearchhub.core.decisionNotice
 import com.tonypine.jobsearchhub.core.screenRows
+import com.tonypine.jobsearchhub.data.HubFailure
 import com.tonypine.jobsearchhub.ui.design.ActionBar
 import com.tonypine.jobsearchhub.ui.design.EntityHeader
 import com.tonypine.jobsearchhub.ui.design.FactGrid
@@ -105,9 +106,9 @@ fun JobScreen(
 ) {
     val context = LocalContext.current
     var details by remember { mutableStateOf<JobDetails?>(null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    var loadError by remember { mutableStateOf<HubFailure?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<HubFailure?>(null) }
     var isDeciding by remember { mutableStateOf(false) }
     var isAskingForSkip by remember { mutableStateOf(false) }
     var isAskingForFix by remember { mutableStateOf(false) }
@@ -117,7 +118,7 @@ fun JobScreen(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(id, attempt) {
         loadError = null
-        viewModel.loadJob(id).onSuccess { details = it }.onFailure { loadError = it.message ?: it.toString() }
+        viewModel.loadJob(id).onSuccess { details = it }.onFailure { loadError = HubFailure.of(it) }
     }
     val decide: (String, String) -> Unit = { decision, why ->
         isDeciding = true
@@ -125,7 +126,7 @@ fun JobScreen(
         scope.launch {
             viewModel.decideJob(id, decision, why).fold(
                 { next -> onDecided(next, decisionNotice(details?.job?.title ?: "the job", decision)) },
-                { error = it.message ?: it.toString() },
+                { error = HubFailure.of(it) },
             )
             isDeciding = false
         }
@@ -176,6 +177,7 @@ fun JobScreen(
                 }
             },
         )
+        val failed = loadError
         val shown = details
         when {
             shown != null -> {
@@ -189,7 +191,7 @@ fun JobScreen(
                     clearance = snackbarClearance,
                 )
             }
-            loadError != null -> HubErrorView("Couldn't load this job", loadError, onRetry = { attempt++ })
+            failed != null -> HubErrorView("Couldn't load this job", failed, onRetry = { attempt++ })
             else -> CircularProgressIndicator(Modifier.padding(Spacing.xl).align(Alignment.CenterHorizontally))
         }
     }

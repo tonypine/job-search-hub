@@ -28,8 +28,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** Why a call to the hub failed, in words the app can show. */
-class HubException(message: String, val isRefused: Boolean = false) : IOException(message)
+/**
+ * Why a call to the hub failed, in words the app can show. [isUpgradeRequired] says the hub no longer serves this
+ * version of the app, and the message is the hub's own, saying what to install.
+ */
+class HubException(message: String, val isRefused: Boolean = false, val isUpgradeRequired: Boolean = false) : IOException(message)
 
 /**
  * Reads the hub's REST API with the phone's device token, naming the app's [appVersion] on every call, so the hub
@@ -119,7 +122,10 @@ class HubClient(
                     response.code == 401 || response.code == 403 ->
                         throw HubException("The hub refused this phone's token; pair it again from the Mac.", isRefused = true)
                     response.code == UPGRADE_REQUIRED ->
-                        throw HubException(readError(response.body.string()) ?: "The hub no longer serves this version of the app. Install a newer one.")
+                        throw HubException(
+                            readError(response.body.string()) ?: "The hub no longer serves this version of the app. Install a newer one.",
+                            isUpgradeRequired = true,
+                        )
                     !response.isSuccessful -> throw HubException("The hub answered ${response.code}.")
                     else -> response.body.string()
                 }
