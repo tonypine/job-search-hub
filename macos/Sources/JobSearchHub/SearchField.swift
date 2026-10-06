@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A search field to place on a page's own bar (see PageBar). SwiftUI's
+/// A search field to place in a page header (see PageHeader). SwiftUI's
 /// `searchable` field always takes the trailing end of the window's toolbar,
 /// which reaches over the details inspector.
 struct SearchField: NSViewRepresentable {
