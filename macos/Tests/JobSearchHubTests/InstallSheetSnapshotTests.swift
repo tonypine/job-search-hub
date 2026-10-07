@@ -17,7 +17,7 @@ enum InstallSnapshots {
     static let research = DrainStatus.Work(type: "agent_run", kind: "company_triage", subject: "Initech", startedAt: now, ageSeconds: 130)
     static let profile = UnsavedEdit(id: "criteria", title: "Criteria")
 
-    static let names = ["review", "waiting", "nothing-running", "when-i-quit"]
+    nonisolated static let names = ["review", "waiting", "nothing-running", "when-i-quit"]
 
     static func makeWork(_ name: String) -> RunningWork {
         let start = RunningWork.make(sessions: [acme, staff], drain: [research], tasks: [], edits: [profile], now: now)
