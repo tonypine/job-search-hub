@@ -369,7 +369,9 @@ func companyNames(t *testing.T, databaseURL string) string {
 	}
 	defer connection.Close(context.Background())
 	var names string
-	if err := connection.QueryRow(context.Background(), "SELECT string_agg(name, ',' ORDER BY id) FROM companies").Scan(&names); err != nil {
+	// Order by the unique domain, so the same rows always read back in the
+	// same order. Their ids are random UUIDs, which sort in no useful order.
+	if err := connection.QueryRow(context.Background(), "SELECT string_agg(name, ',' ORDER BY domain) FROM companies").Scan(&names); err != nil {
 		t.Fatal(err)
 	}
 	return names
