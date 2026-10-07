@@ -98,6 +98,23 @@ if [ "$QA_BUILD" = "1" ]; then
   echo "==> QA build: the app starts from empty connection settings at every launch"
   QA_BUILD_PLIST="<key>HubQABuild</key>
 	<true/>"
+  # The stub release feed QA serves (README › Releases), since Symphony's
+  # launcher passes the app no environment: HUB_RELEASES_URL at build time
+  # goes in Info.plist, where the app reads it when the variable isn't set at
+  # launch. QA's ports change on every pass, so the build that knows the port
+  # names the URL; without one the build reads GitHub's releases.
+  RELEASES_URL="${HUB_RELEASES_URL:-}"
+  if [ -n "$RELEASES_URL" ]; then
+    case "$RELEASES_URL" in
+      http://*|https://*) ;;
+      *) echo "HUB_RELEASES_URL must be an http(s) URL: $RELEASES_URL" >&2; exit 1 ;;
+    esac
+    echo "==> QA build: the app reads its releases from $RELEASES_URL"
+    RELEASES_URL_XML="$(printf '%s' "$RELEASES_URL" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
+    QA_BUILD_PLIST="$QA_BUILD_PLIST
+	<key>HubReleasesURL</key>
+	<string>$RELEASES_URL_XML</string>"
+  fi
 fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
