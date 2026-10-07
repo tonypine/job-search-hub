@@ -453,6 +453,17 @@ public struct RunningWork: Equatable, Sendable {
         return RunningWork(items: items, idleSessionCount: now.idleSessionCount)
     }
 
+    /// This list, read without the hub's drain list, with the hub's work
+    /// still running in `previous` kept: a read that failed ends nothing.
+    public func keepingServerWork(from previous: RunningWork) -> RunningWork {
+        func isServerWork(_ item: RunningItem) -> Bool { item.kind == .agentRun || item.kind == .serverWork }
+        var items = self.items.filter { !isServerWork($0) }
+        // After the sessions, where `make` lists the hub's work.
+        let index = items.firstIndex { if case .session = $0.kind { false } else { true } } ?? items.count
+        items.insert(contentsOf: previous.running.filter(isServerWork), at: index)
+        return RunningWork(items: items, idleSessionCount: idleSessionCount)
+    }
+
     /// What *Install anyway* costs, a sentence per line still running.
     public var cost: String {
         running.filter { $0.kind != .unsavedEdit }.map(\.cost).joined(separator: " ")

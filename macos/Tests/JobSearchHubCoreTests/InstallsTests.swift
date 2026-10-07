@@ -74,6 +74,19 @@ private let criteria = UnsavedEdit(id: "criteria", title: "Criteria")
     #expect(later.waitingSummary == "Waiting for 2 sessions")
 }
 
+@Test func aDrainListThatCantBeReadKeepsTheHubsWorkRunning() {
+    let start = RunningWork.make(sessions: [acme], drain: [research, brief], tasks: [fix], edits: [], now: now)
+
+    // The drain list failed to load; the session's turn ended meanwhile.
+    let idle = RunningSession(id: acme.id, name: acme.name, activity: .idle)
+    let read = RunningWork.make(sessions: [idle], drain: [], tasks: [fix], edits: [], now: now).keepingServerWork(from: start)
+    #expect(read.items.map(\.title) == ["Researching Initech", "Job briefs", "Fixing Platform Lead"])
+
+    let later = start.update(with: read)
+    #expect(later.items.map(\.hasEnded) == [true, false, false, false])
+    #expect(!later.isClear)
+}
+
 @Test func installAnywaySaysWhatItCostsFirst() {
     let work = RunningWork.make(sessions: [acme], drain: [research, brief], tasks: [fix], edits: [criteria], now: now)
     #expect(work.cost == "The Acme session's turn stops mid-way; its conversation reopens with the new version. "

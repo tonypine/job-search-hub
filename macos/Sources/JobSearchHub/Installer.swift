@@ -10,7 +10,7 @@ import Observation
 @MainActor
 @Observable
 final class Installer {
-    static let shared = Installer()
+    static let shared = Installer(updates: UpdatesFolder.makeDefault(home: FileManager.default.homeDirectoryForCurrentUser))
     /// The launchd job that runs `hub-update`, apart from the server's.
     static let jobLabel = "com.tonypine.jobsearchhub.update"
     /// How often a waiting sheet looks at what's still running.
@@ -55,7 +55,9 @@ final class Installer {
     private(set) var phase: Phase = .idle
     var isShowingSheet = false
     var isConfirmingInstallAnyway = false
-    private(set) var target: Target?
+    /// Set by *Install now…* or *Install when I quit*; tests set it
+    /// directly.
+    var target: Target?
     private(set) var work = RunningWork(items: [], idleSessionCount: 0)
     var failure: HubFailure?
     /// How the last install ended, until dismissed or a day has passed.
@@ -71,7 +73,7 @@ final class Installer {
     /// *Install when I quit*.
     private(set) var reopensApp = true
 
-    @ObservationIgnored let updates = UpdatesFolder.makeDefault(home: FileManager.default.homeDirectoryForCurrentUser)
+    @ObservationIgnored let updates: UpdatesFolder
     @ObservationIgnored weak var taskRunner: RemoteTaskRunner?
     @ObservationIgnored var makeClient: @MainActor () -> HubClient? = { nil }
     @ObservationIgnored private var waitLoop: Task<Void, Never>?
@@ -82,6 +84,14 @@ final class Installer {
     @ObservationIgnored private var launchedMarkDue = false
     @ObservationIgnored private var reopenRecord: ReopenRecord?
     @ObservationIgnored private let inspector = CodesignInspector()
+    /// Whether the hub drains for this install, from `POST /v1/drain` until
+    /// the app takes it back: any way the install stops short of quitting
+    /// lets the hub start work again.
+    @ObservationIgnored private(set) var isDraining = false
+
+    init(updates: UpdatesFolder) {
+        self.updates = updates
+    }
 
     /// Why this copy of the app can't install versions; nil when it can. Only
     /// the installed app, carrying `hub-update`, installs over itself.
@@ -97,8 +107,6 @@ final class Installer {
         }
         return nil
     }
-
-    var isDraining: Bool { phase == .waiting }
 
     // MARK: Choosing
 
@@ -128,6 +136,7 @@ final class Installer {
         if let client = makeClient() {
             do {
                 let status: DrainStatus = try await client.send("POST", "v1/drain", body: EmptyBody())
+                isDraining = true
                 work = work.update(with: makeWork(drain: status.running))
             } catch {
                 failure = HubFailure("Couldn't ask the hub to finish its work", error)
@@ -164,9 +173,7 @@ final class Installer {
     func cancel() async {
         waitLoop?.cancel()
         waitLoop = nil
-        if phase == .waiting, let client = makeClient() {
-            _ = try? await client.delete("v1/drain", as: DrainStatus.self)
-        }
+        await stopDraining()
         taskRunner?.isPaused = false
         if isTerminationPending {
             isTerminationPending = false
@@ -175,6 +182,15 @@ final class Installer {
         phase = .idle
         isShowingSheet = false
         failure = nil
+    }
+
+    /// The hub starts work again.
+    private func stopDraining() async {
+        guard isDraining else { return }
+        isDraining = false
+        if let client = makeClient() {
+            _ = try? await client.delete("v1/drain", as: DrainStatus.self)
+        }
     }
 
     /// An unsaved edit's line: its page shows, and the sheet steps aside
@@ -209,13 +225,18 @@ final class Installer {
     }
 
     /// Reads what runs now: the sessions, the hub's drain list, the app's
-    /// tasks and unsaved edits. A waiting sheet ticks off what ended.
+    /// tasks and unsaved edits. A waiting sheet ticks off what ended. When
+    /// the drain list can't be read, the hub's work listed before still
+    /// runs, so a failed read never starts the install early.
     func refreshWork() async {
-        var drain: [DrainStatus.Work] = []
+        var drain: [DrainStatus.Work]?
         if let client = makeClient(), let status: DrainStatus = try? await client.get("v1/drain") {
             drain = status.running
         }
-        let now = makeWork(drain: drain)
+        var now = makeWork(drain: drain ?? [])
+        if drain == nil {
+            now = now.keepingServerWork(from: work)
+        }
         work = phase == .waiting ? work.update(with: now) : now
     }
 
@@ -262,6 +283,7 @@ final class Installer {
         } catch {
             failure = HubFailure("Couldn't start the install", error)
             phase = .reviewing
+            await stopDraining()
             taskRunner?.isPaused = false
             if isTerminationPending {
                 isTerminationPending = false
