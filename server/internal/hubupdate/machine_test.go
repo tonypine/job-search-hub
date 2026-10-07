@@ -107,6 +107,11 @@ func (hub *fakeHub) jobPlist() string {
 	return filepath.Join(hub.folder, "com.tonypine.jobsearchhub.update.plist")
 }
 
+// serverPlist is the launchd agent that runs the hub's server.
+func (hub *fakeHub) serverPlist() string {
+	return filepath.Join(hub.folder, "Library", "LaunchAgents", "com.tonypine.jobsearchhub.server.plist")
+}
+
 // prepare lays out the folders as the app leaves them when it starts an
 // install, with the old server running, and writes the state at step.
 func (hub *fakeHub) prepare(migrates bool, reopen bool) State {
@@ -140,7 +145,7 @@ func (hub *fakeHub) save(state State) {
 func (hub *fakeHub) machine() *Machine {
 	return &Machine{
 		StatePath: hub.statePath(), Updates: hub.updates, Backups: hub.backups, HubURL: hub.server.URL,
-		Service: "gui/501/com.tonypine.jobsearchhub.server", System: hub, Client: hub.server.Client(), Now: time.Now,
+		Service: "gui/501/com.tonypine.jobsearchhub.server", Plist: hub.serverPlist(), System: hub, Client: hub.server.Client(), Now: time.Now,
 		Poll: 5 * time.Millisecond, AppQuitTimeout: 300 * time.Millisecond, ServerTimeout: 300 * time.Millisecond,
 		AppTimeout: 300 * time.Millisecond, MigrationGrace: 300 * time.Millisecond, MaxRuns: DefaultMaxRuns,
 	}
@@ -533,10 +538,10 @@ func TestARollbackThatFailsStopsAndSaysHowToFinish(t *testing.T) {
 	}
 	dump := filepath.Join(hub.backups, "hub-pre-migration-88.dump")
 	want := []string{
-		"launchctl kill SIGTERM gui/501/com.tonypine.jobsearchhub.server",
+		"launchctl kill SIGTERM gui/501/com.tonypine.jobsearchhub.server || true",
 		quote(CommandPath(hub.previous(), "hub-server")) + " database restore " + quote(dump),
 		"mv " + quote(hub.installed()) + " " + quote(filepath.Join(hub.updates, "failed-0.1.252.app")) + " && mv " + quote(hub.previous()) + " " + quote(hub.installed()),
-		"launchctl kickstart gui/501/com.tonypine.jobsearchhub.server",
+		"launchctl bootstrap gui/501 " + quote(hub.serverPlist()) + " 2>/dev/null; launchctl kickstart gui/501/com.tonypine.jobsearchhub.server",
 	}
 	if !slices.Equal(state.Commands, want) {
 		t.Fatalf("commands =\n%s\nwant\n%s", strings.Join(state.Commands, "\n"), strings.Join(want, "\n"))
@@ -548,6 +553,24 @@ func TestARollbackThatFailsStopsAndSaysHowToFinish(t *testing.T) {
 	// A run after that does nothing more.
 	if again := hub.run(); again.Step != StepRollbackFailed || hub.called("restore") != 1 {
 		t.Fatalf("a second run went on: %v", hub.calls)
+	}
+}
+
+func TestTheFinishingCommandsLoadTheServerAgentBeforeStartingIt(t *testing.T) {
+	hub := newFakeHub(t)
+	machine := hub.machine()
+	// A server that exited with an error was booted out, so the commands
+	// load its agent again before kickstarting it; loading one that's
+	// already loaded fails, which is left quiet.
+	start := machine.startServerCommand()
+	want := "launchctl bootstrap gui/501 " + quote(hub.serverPlist()) + " 2>/dev/null; launchctl kickstart gui/501/com.tonypine.jobsearchhub.server"
+	if start != want {
+		t.Fatalf("start server command = %q, want %q", start, want)
+	}
+	// Without the agent's plist there's nothing to load.
+	machine.Plist = ""
+	if start := machine.startServerCommand(); start != "launchctl kickstart gui/501/com.tonypine.jobsearchhub.server" {
+		t.Fatalf("start server command = %q", start)
 	}
 }
 

@@ -60,10 +60,12 @@ type Machine struct {
 	Updates string
 	// Backups is where the server keeps its dumps.
 	Backups string
-	// HubURL reaches the server, and Service names its launchd agent in
-	// the commands a failed rollback leaves.
+	// HubURL reaches the server; Service names its launchd agent in the
+	// commands a failed rollback leaves, and Plist the agent's own plist,
+	// which those commands load before starting it.
 	HubURL  string
 	Service string
+	Plist   string
 	System  System
 	Client  *http.Client
 	Now     func() time.Time
@@ -629,7 +631,7 @@ func (machine *Machine) commandsToFinish(state State) []string {
 	}
 	var commands []string
 	if remains(StepStoppingNewServer) || remains(StepRestoringDatabase) || remains(StepSwappingBack) {
-		commands = append(commands, "launchctl kill SIGTERM "+machine.Service)
+		commands = append(commands, "launchctl kill SIGTERM "+machine.Service+" || true")
 	}
 	if state.Dump != "" && remains(StepRestoringDatabase) {
 		commands = append(commands, quote(CommandPath(oldApp, "hub-server"))+" database restore "+quote(state.Dump))
@@ -638,8 +640,21 @@ func (machine *Machine) commandsToFinish(state State) []string {
 		failed := filepath.Join(machine.Updates, "failed-"+state.To+".app")
 		commands = append(commands, "mv "+quote(state.Installed)+" "+quote(failed)+" && mv "+quote(oldApp)+" "+quote(state.Installed))
 	}
-	commands = append(commands, "launchctl kickstart "+machine.Service)
+	commands = append(commands, machine.startServerCommand())
 	return commands
+}
+
+// startServerCommand is how to start the old server by hand. Stopping a
+// server that exited with an error boots its launchd agent out, so
+// kickstart alone wouldn't find it: the agent is loaded again first, and
+// loading an already loaded one is left to fail quietly.
+func (machine *Machine) startServerCommand() string {
+	kickstart := "launchctl kickstart " + machine.Service
+	index := strings.LastIndex(machine.Service, "/")
+	if machine.Plist == "" || index < 0 {
+		return kickstart
+	}
+	return "launchctl bootstrap " + machine.Service[:index] + " " + quote(machine.Plist) + " 2>/dev/null; " + kickstart
 }
 
 // finish ends the run: the launchd job that runs hub-update goes.

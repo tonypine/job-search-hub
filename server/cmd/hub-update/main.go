@@ -70,7 +70,7 @@ func install(statePath string, stdout, stderr io.Writer) int {
 	system := newLaunchdSystem(home, settings)
 	machine := &hubupdate.Machine{
 		StatePath: statePath, Updates: filepath.Dir(statePath), Backups: backupsDir(home, settings),
-		HubURL: system.hubURL, Service: system.service, System: system, Client: &http.Client{Timeout: 5 * time.Second},
+		HubURL: system.hubURL, Service: system.service, Plist: system.plist, System: system, Client: &http.Client{Timeout: 5 * time.Second},
 		Now: time.Now, Poll: hubupdate.DefaultPoll, AppQuitTimeout: hubupdate.DefaultAppQuitTimeout,
 		ServerTimeout: hubupdate.DefaultServerTimeout, AppTimeout: hubupdate.DefaultAppTimeout,
 		MigrationGrace: hubupdate.DefaultMigrationGrace, MaxRuns: hubupdate.DefaultMaxRuns,
