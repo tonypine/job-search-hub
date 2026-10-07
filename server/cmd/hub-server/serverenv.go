@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -9,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tonypine/job-search-hub/server/internal/serverenv"
 )
 
 // serverEnvPath is the settings file every version of the server shares,
 // outside the app's bundle: launchd starts the server from the bundle with
 // none of them, so the server reads the file itself.
 func serverEnvPath(home string) string {
-	return filepath.Join(home, ".config", "job-search-hub", "server.env")
+	return serverenv.Path(home)
 }
 
 // prepareEnvironment gives the server its settings from server.env and the
@@ -59,31 +60,9 @@ func loadEnvFile(path string, lookup func(string) (string, bool), set func(strin
 	return nil
 }
 
-// parseEnvFile reads NAME=value lines, as a shell sources them for the
-// values the hub writes: blank lines and # comments are skipped, an export
-// prefix is allowed, and one pair of quotes around a value is dropped. It
-// expands nothing.
+// parseEnvFile reads server.env's NAME=value lines.
 func parseEnvFile(r io.Reader) ([][2]string, error) {
-	var variables [][2]string
-	scanner := bufio.NewScanner(r)
-	for number := 1; scanner.Scan(); number++ {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		name, value, found := strings.Cut(line, "=")
-		name = strings.TrimSpace(name)
-		if !found || name == "" || strings.ContainsAny(name, " \t") {
-			return nil, fmt.Errorf("line %d isn't NAME=value", number)
-		}
-		value = strings.TrimSpace(value)
-		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
-			value = value[1 : len(value)-1]
-		}
-		variables = append(variables, [2]string{name, value})
-	}
-	return variables, scanner.Err()
+	return serverenv.Parse(r)
 }
 
 // makeSearchPath is the PATH the server runs with: Homebrew's tools

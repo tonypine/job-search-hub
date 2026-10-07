@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrTaskNotFound  = errors.New("task not found")
-	ErrTaskNotQueued = errors.New("the task is not waiting to run")
+	ErrTaskNotFound   = errors.New("task not found")
+	ErrTaskNotQueued  = errors.New("the task is not waiting to run")
+	ErrTaskNotRunning = errors.New("the task is not running")
 )
 
 // Kinds of work the phone can ask the Mac to do.
@@ -136,6 +137,19 @@ func (s *Store) ClaimTask(ctx context.Context, id uuid.UUID) (TaskRequest, error
 	if errors.Is(err, ErrTaskNotFound) {
 		if _, lookupErr := scanTask(s.pool.QueryRow(ctx, `SELECT `+taskColumns+` FROM task_requests WHERE id = $1`, id)); lookupErr == nil {
 			return TaskRequest{}, ErrTaskNotQueued
+		}
+	}
+	return task, err
+}
+
+// ReleaseTask puts a running task back in the queue, as when an install
+// restarted the Mac app while it ran: the next runner claims it again.
+func (s *Store) ReleaseTask(ctx context.Context, id uuid.UUID) (TaskRequest, error) {
+	task, err := scanTask(s.pool.QueryRow(ctx, `
+		UPDATE task_requests SET status = 'queued', started_at = NULL WHERE id = $1 AND status = 'running' RETURNING `+taskColumns, id))
+	if errors.Is(err, ErrTaskNotFound) {
+		if _, lookupErr := scanTask(s.pool.QueryRow(ctx, `SELECT `+taskColumns+` FROM task_requests WHERE id = $1`, id)); lookupErr == nil {
+			return TaskRequest{}, ErrTaskNotRunning
 		}
 	}
 	return task, err

@@ -24,6 +24,9 @@ final class NewVersionChecker {
     private(set) var hasInstallLog = false
     /// The running version's release page, when it's a release.
     private(set) var runningReleaseURL: URL?
+    /// What the install that brought the running version changed, for
+    /// *What's new* after it.
+    private(set) var installedChanges: InstalledChanges?
 
     @ObservationIgnored let updates: UpdatesFolder
     @ObservationIgnored private let feed: ReleaseFeed
@@ -113,8 +116,14 @@ final class NewVersionChecker {
         }
         facts.newestRelease = MacReleases.getOffered(releases).first?.version
         runningReleaseURL = MacReleases.parse(releases).first { $0.version == running }?.release.htmlURL
+        if let from = Installer.shared.installedFrom {
+            installedChanges = InstalledChanges(
+                from: from, to: running, whatsNew: WhatsNew.merge(MacReleases.findBetween(in: releases, running: from, through: running))
+            )
+        }
 
-        guard let newest = MacReleases.findNewest(in: releases, above: running) else {
+        // A version that failed to install on this Mac isn't offered again.
+        guard let newest = MacReleases.findNewest(in: releases, above: running, excluding: updates.readBadVersions()) else {
             facts.ready = nil
             facts.failed = nil
             updates.removeDownloads(keeping: nil)

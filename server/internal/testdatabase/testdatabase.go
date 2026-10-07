@@ -29,6 +29,25 @@ var agentPrompts embed.FS
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
+	pool := NewUnmigrated(t)
+	if err := store.Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate the test database: %v", err)
+	}
+	seed, err := fs.Sub(agentPrompts, "agentprompts")
+	if err != nil {
+		t.Fatalf("read the test prompts: %v", err)
+	}
+	if _, err := store.New(pool).SeedAgentPrompts(ctx, seed); err != nil {
+		t.Fatalf("seed the test prompts: %v", err)
+	}
+	return pool
+}
+
+// NewUnmigrated creates an empty database, as New does, without migrating
+// it, for tests of the migrations themselves.
+func NewUnmigrated(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	ctx := context.Background()
 
 	adminURL := os.Getenv("HUB_TEST_DATABASE_URL")
 	if adminURL == "" {
@@ -62,16 +81,5 @@ func New(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("open %s: %v", name, err)
 	}
 	t.Cleanup(pool.Close)
-
-	if err := store.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate %s: %v", name, err)
-	}
-	seed, err := fs.Sub(agentPrompts, "agentprompts")
-	if err != nil {
-		t.Fatalf("read the test prompts: %v", err)
-	}
-	if _, err := store.New(pool).SeedAgentPrompts(ctx, seed); err != nil {
-		t.Fatalf("seed the test prompts in %s: %v", name, err)
-	}
 	return pool
 }
