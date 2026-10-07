@@ -563,6 +563,48 @@ func TestAnInstallThatKeepsCrashingGivesUp(t *testing.T) {
 	}
 }
 
+func TestAnInstallThatKeepsStoppingBeforeTheSwapIsAbandoned(t *testing.T) {
+	for _, step := range []Step{StepWaitingForApp, StepStoppingServer, StepSwapping} {
+		t.Run(string(step), func(t *testing.T) {
+			hub := newFakeHub(t)
+			state := hub.prepare(true, true)
+			hub.layOut(step, false, false)
+			state.Step, state.Runs = step, DefaultMaxRuns
+			hub.save(state)
+
+			state = hub.run()
+			if state.Step != StepAbandoned || state.Error != "" || len(state.Commands) != 0 {
+				t.Fatalf("state = %+v", state)
+			}
+			// Nothing changed: the old version is installed and runs, and
+			// the app reopens.
+			if !isVersion(hub.installed(), oldVersion) || hub.called("start server "+oldVersion) != 1 || hub.called("open app "+oldVersion) != 1 {
+				t.Fatalf("calls %v", hub.calls)
+			}
+			if hub.called("restore") != 0 || hub.called("stop server") != 0 {
+				t.Fatalf("it rolled back: %v", hub.calls)
+			}
+			if _, err := os.Stat(hub.jobPlist()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the job is still there: %v", err)
+			}
+		})
+	}
+}
+
+func TestAnInstallThatKeepsStoppingAfterTheSwapStopsTheRollback(t *testing.T) {
+	hub := newFakeHub(t)
+	state := hub.prepare(false, false)
+	// Swapped, but stopped before the old version moved to previous/.
+	hub.layOut(StepSwapping, true, false)
+	state.Step, state.Runs = StepSwapping, DefaultMaxRuns
+	hub.save(state)
+
+	state = hub.run()
+	if state.Step != StepRollbackFailed || len(state.Commands) == 0 {
+		t.Fatalf("state = %+v", state)
+	}
+}
+
 func TestARollbackThatStopsBeforeCountingRestoresTheDump(t *testing.T) {
 	for _, stop := range []string{"the new server doesn't stop", "hub-update gives up"} {
 		t.Run(stop, func(t *testing.T) {

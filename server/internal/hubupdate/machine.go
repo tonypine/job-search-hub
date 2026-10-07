@@ -126,7 +126,7 @@ func (machine *Machine) Run(ctx context.Context) (State, error) {
 	state.Runs++
 	machine.log("hub-update run %d of the install of %s over %s, at %s", state.Runs, state.To, state.From, state.Step)
 	if state.Runs > machine.MaxRuns {
-		machine.failRollback(ctx, &state, fmt.Errorf("hub-update stopped %d times on this install", state.Runs-1))
+		machine.giveUp(ctx, &state)
 	}
 	if err := machine.save(state); err != nil {
 		return state, err
@@ -573,6 +573,21 @@ func (machine *Machine) abandon(ctx context.Context, state *State, failure strin
 			machine.log("Couldn't reopen the app: %v", err)
 		}
 	}
+}
+
+// giveUp ends an install hub-update kept stopping on. Before the new
+// bundle is in place nothing changed, and the install is abandoned; after,
+// the rollback stops, saying how to finish it.
+func (machine *Machine) giveUp(ctx context.Context, state *State) {
+	stopped := fmt.Errorf("hub-update stopped %d times on this install", state.Runs-1)
+	beforeSwap := state.Step == StepWaitingForApp || state.Step == StepStoppingServer ||
+		(state.Step == StepSwapping && isVersion(state.Installed, state.From))
+	if beforeSwap {
+		machine.log("Giving up: %v", stopped)
+		machine.abandon(ctx, state, fmt.Sprintf("hub-update kept stopping before it put %s in place, so nothing was installed.", state.To))
+		return
+	}
+	machine.failRollback(ctx, state, stopped)
 }
 
 // failRollback stops where the rollback is, and says how to finish it.
