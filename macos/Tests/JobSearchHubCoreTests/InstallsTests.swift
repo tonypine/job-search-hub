@@ -58,7 +58,10 @@ private let criteria = UnsavedEdit(id: "criteria", title: "Criteria")
     let idle = RunningSession(id: acme.id, name: acme.name, activity: .idle)
     let done = later.update(with: RunningWork.make(sessions: [idle], drain: [], tasks: [], edits: [], now: now))
     #expect(done.isClear)
-    #expect(done.items.allSatisfy(\.hasEnded))
+    // A closure, not a key path: #expect's expansion makes allSatisfy's
+    // argument throwing, which a key path can't be.
+    let allEnded = done.items.allSatisfy { $0.hasEnded }
+    #expect(allEnded)
     #expect(done.items.first?.endedDetail == "turn ended")
 
     // Messaged again, it's back to working, and the install waits again.
