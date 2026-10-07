@@ -66,11 +66,12 @@ moved=false
 keep_work=false
 work="$(mktemp -d "${TMPDIR:-/tmp}/install-app.XXXXXX")"
 
-# On SIGTERM the server waits up to 30 seconds for the work still running, 5
-# for open requests, then up to 30 for its Postgres to stop.
+# On SIGTERM the server waits up to 30 seconds for the work still running,
+# then up to 35 for llama-server to stop (the 5 for open requests run
+# meanwhile), then up to 30 for its Postgres to stop.
 stop_agent() {
   launchctl bootout "$domain/$label" 2>/dev/null || true
-  for _ in $(seq 80); do
+  for _ in $(seq 110); do
     launchctl print "$domain/$label" >/dev/null 2>&1 || return 0
     sleep 1
   done
@@ -268,7 +269,7 @@ plutil -insert StandardErrorPath -string "$log_file" "$agent"
 plutil -insert RunAtLoad -bool true "$agent"
 plutil -insert KeepAlive -dictionary "$agent"
 plutil -insert KeepAlive.SuccessfulExit -bool false "$agent"
-plutil -insert ExitTimeOut -integer 70 "$agent"
+plutil -insert ExitTimeOut -integer 100 "$agent"
 plutil -lint "$agent" >/dev/null
 
 # Copied before anything stops, so the server is down only for the swap.

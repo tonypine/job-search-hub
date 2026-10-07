@@ -136,7 +136,7 @@ struct PeoplePage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await reload() } }
+                HubErrorView(loadError, style: .page, retry: { Task { await reload() } })
             } else if model.people.isEmpty && !model.isLoading {
                 ContentUnavailableView(
                     "No people yet", systemImage: Page.people.symbolName,

@@ -187,3 +187,20 @@ private func makeRelease(_ tag: String, draft: Bool = false, prerelease: Bool = 
         try await ReleaseFeed(session: session).fetch()
     }
 }
+
+@Test func theFeedReadsHUB_RELEASES_URLOnlyInQAMode() {
+    let environment = [ReleaseFeed.urlVariable: "http://localhost:8765/releases.json"]
+
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: environment) == URL(string: "http://localhost:8765/releases.json"))
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: environment) == GitHubRepository.releasesAPIURL)
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [:]) == GitHubRepository.releasesAPIURL)
+    // A QA build is in QA mode without the flag.
+    #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: environment, isQABuild: true) == URL(string: "http://localhost:8765/releases.json"))
+}
+
+@Test func aHUB_RELEASES_URLThatIsntAnHTTPURLLeavesTheFeedOnGitHub() {
+    for value in ["", "localhost:8765/releases.json", "file:///tmp/releases.json", "not a url"] {
+        let url = ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [ReleaseFeed.urlVariable: value])
+        #expect(url == GitHubRepository.releasesAPIURL, "\(value)")
+    }
+}
