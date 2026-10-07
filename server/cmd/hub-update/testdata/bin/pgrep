@@ -1,0 +1,4 @@
+#!/bin/bash
+# Stands in for pgrep in hub-update's end-to-end test: the app runs while
+# app-running is in HOME.
+[ -f "$HOME/app-running" ]

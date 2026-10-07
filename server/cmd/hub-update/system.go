@@ -28,6 +28,12 @@ const (
 	appStopTimeout    = 10 * time.Second
 )
 
+// macCommands are the Mac's commands an install runs. The end-to-end test
+// stands its own in, which run the bundles' servers without launchd.
+var macCommands = struct {
+	launchctl, pgrep, pkill, open string
+}{"/bin/launchctl", "/usr/bin/pgrep", "/usr/bin/pkill", "/usr/bin/open"}
+
 // launchdSystem is the Mac: launchd runs the server from the installed
 // bundle, the app is found by its process, and the server's log is in
 // ~/Library/Logs/JobSearchHub.
@@ -62,7 +68,7 @@ func makeHubURL(address string) string {
 }
 
 func (system *launchdSystem) IsAppRunning(ctx context.Context) (bool, error) {
-	err := exec.CommandContext(ctx, "/usr/bin/pgrep", "-x", appProcess).Run()
+	err := exec.CommandContext(ctx, macCommands.pgrep, "-x", appProcess).Run()
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
@@ -75,7 +81,7 @@ func (system *launchdSystem) IsAppRunning(ctx context.Context) (bool, error) {
 }
 
 func (system *launchdSystem) QuitApp(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "/usr/bin/pkill", "-x", appProcess).Run()
+	_ = exec.CommandContext(ctx, macCommands.pkill, "-x", appProcess).Run()
 	deadline := time.Now().Add(appStopTimeout)
 	for time.Now().Before(deadline) {
 		if running, err := system.IsAppRunning(ctx); err == nil && !running {
@@ -83,7 +89,7 @@ func (system *launchdSystem) QuitApp(ctx context.Context) error {
 		}
 		time.Sleep(time.Second)
 	}
-	_ = exec.CommandContext(ctx, "/usr/bin/pkill", "-9", "-x", appProcess).Run()
+	_ = exec.CommandContext(ctx, macCommands.pkill, "-9", "-x", appProcess).Run()
 	if running, err := system.IsAppRunning(ctx); err != nil || running {
 		return errors.New("the app didn't quit")
 	}
@@ -91,7 +97,7 @@ func (system *launchdSystem) QuitApp(ctx context.Context) error {
 }
 
 func (system *launchdSystem) OpenApp(ctx context.Context, app string) error {
-	if output, err := exec.CommandContext(ctx, "/usr/bin/open", app).CombinedOutput(); err != nil {
+	if output, err := exec.CommandContext(ctx, macCommands.open, app).CombinedOutput(); err != nil {
 		return fmt.Errorf("open %s: %w: %s", app, err, bytes.TrimSpace(output))
 	}
 	return nil
@@ -114,7 +120,7 @@ func (system *launchdSystem) ShowSteps(_ context.Context, app, statePath string)
 // readServer is the agent's state in launchd: whether it's loaded, whether
 // its server runs, and how it last exited.
 func (system *launchdSystem) readServer(ctx context.Context) (loaded, running bool, lastExit string) {
-	output, err := exec.CommandContext(ctx, "/bin/launchctl", "print", system.service).Output()
+	output, err := exec.CommandContext(ctx, macCommands.launchctl, "print", system.service).Output()
 	if err != nil {
 		return false, false, ""
 	}
@@ -150,7 +156,7 @@ func (system *launchdSystem) StopServer(ctx context.Context) error {
 		return nil
 	}
 	if running {
-		if output, err := exec.CommandContext(ctx, "/bin/launchctl", "kill", "SIGTERM", system.service).CombinedOutput(); err != nil {
+		if output, err := exec.CommandContext(ctx, macCommands.launchctl, "kill", "SIGTERM", system.service).CombinedOutput(); err != nil {
 			return fmt.Errorf("launchctl kill: %w: %s", err, bytes.TrimSpace(output))
 		}
 	}
@@ -164,7 +170,7 @@ func (system *launchdSystem) StopServer(ctx context.Context) error {
 			if lastExit == "0" {
 				return nil
 			}
-			return exec.CommandContext(ctx, "/bin/launchctl", "bootout", system.service).Run()
+			return exec.CommandContext(ctx, macCommands.launchctl, "bootout", system.service).Run()
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("the server still runs after %v", serverStopTimeout)
@@ -178,9 +184,9 @@ func (system *launchdSystem) StopServer(ctx context.Context) error {
 func (system *launchdSystem) StartServer(ctx context.Context) error {
 	var command *exec.Cmd
 	if loaded, _, _ := system.readServer(ctx); loaded {
-		command = exec.CommandContext(ctx, "/bin/launchctl", "kickstart", system.service)
+		command = exec.CommandContext(ctx, macCommands.launchctl, "kickstart", system.service)
 	} else {
-		command = exec.CommandContext(ctx, "/bin/launchctl", "bootstrap", system.domain, system.plist)
+		command = exec.CommandContext(ctx, macCommands.launchctl, "bootstrap", system.domain, system.plist)
 	}
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w: %s", strings.Join(command.Args, " "), err, bytes.TrimSpace(output))
