@@ -121,6 +121,8 @@ func (machine *Machine) Run(ctx context.Context) (State, error) {
 		return state, err
 	}
 	if state.Step.IsFinished() {
+		// A run stopped between saving the last step and removing the job.
+		machine.finish(state)
 		return state, nil
 	}
 	state.Runs++

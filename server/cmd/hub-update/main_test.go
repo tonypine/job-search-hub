@@ -29,11 +29,23 @@ func TestAnythingElsePrintsTheUsage(t *testing.T) {
 }
 
 func TestAnInstallWithoutItsStateHasNothingToRun(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plist := filepath.Join(home, "Library", "LaunchAgents", jobLabel+".plist")
+	if err := os.MkdirAll(filepath.Dir(plist), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plist, []byte("plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr bytes.Buffer
-	// Exiting 0, launchd doesn't run it again.
+	// Exiting 0, launchd doesn't run it again, and without its plist
+	// neither does the next login.
 	if code := run([]string{"install", filepath.Join(t.TempDir(), "state.json")}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "No install to run") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(plist); !os.IsNotExist(err) {
+		t.Fatalf("the job's plist is still there: %v", err)
 	}
 }
 

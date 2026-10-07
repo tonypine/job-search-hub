@@ -79,9 +79,11 @@ func install(statePath string, stdout, stderr io.Writer) int {
 	defer stop()
 	state, err := machine.Run(ctx)
 	if errors.Is(err, fs.ErrNotExist) {
-		// The app moved the state aside once it read how the install ended:
-		// there's nothing left to run.
+		// The app moved the state aside once it read how the install ended,
+		// or removed it when launchd wouldn't start the job: there's nothing
+		// left to run, and the job goes so the next login doesn't run it.
 		fmt.Fprintln(stdout, "No install to run:", statePath)
+		removeJob(home, stderr)
 		return 0
 	}
 	if errors.Is(err, hubupdate.ErrBadState) {
@@ -100,11 +102,17 @@ func install(statePath string, stdout, stderr io.Writer) int {
 // exits 0, which launchd doesn't run again either.
 func endJob(home string, err error, stderr io.Writer) int {
 	fmt.Fprintln(stderr, "hub-update: stopped the install, which can't go on:", err)
+	removeJob(home, stderr)
+	return 0
+}
+
+// removeJob removes the launchd job's plist, which would run hub-update
+// again at the next login.
+func removeJob(home string, stderr io.Writer) {
 	plist := filepath.Join(home, "Library", "LaunchAgents", jobLabel+".plist")
 	if err := os.Remove(plist); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		fmt.Fprintln(stderr, "hub-update:", err)
 	}
-	return 0
 }
 
 // backupsDir is where the server keeps its dumps, as hub-server reads it.

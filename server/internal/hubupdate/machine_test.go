@@ -551,6 +551,25 @@ func TestARollbackThatFailsStopsAndSaysHowToFinish(t *testing.T) {
 	}
 }
 
+func TestAFinishedInstallLeftWithItsJobRemovesIt(t *testing.T) {
+	hub := newFakeHub(t)
+	state := hub.prepare(false, false)
+	// The last run saved the end but stopped before removing the job.
+	hub.layOut(StepInstalled, true, true)
+	state.Step = StepInstalled
+	hub.save(state)
+
+	if state = hub.run(); state.Step != StepInstalled {
+		t.Fatalf("state = %+v", state)
+	}
+	if len(hub.calls) != 0 {
+		t.Fatalf("it took steps: %v", hub.calls)
+	}
+	if _, err := os.Stat(hub.jobPlist()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the job is still there: %v", err)
+	}
+}
+
 func TestAnInstallThatKeepsCrashingGivesUp(t *testing.T) {
 	hub := newFakeHub(t)
 	state := hub.prepare(false, false)

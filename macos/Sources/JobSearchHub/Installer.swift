@@ -358,6 +358,9 @@ final class Installer {
         _ = Self.runLaunchctl(["bootout", "\(domain)/\(Self.jobLabel)"])
         let (status, output) = Self.runLaunchctl(["bootstrap", domain, plist.path])
         guard status == 0 else {
+            // Left behind, the job would run hub-update at every login.
+            try? fileManager.removeItem(at: plist)
+            try? fileManager.removeItem(at: installer)
             try? fileManager.removeItem(at: updates.stateURL)
             throw InstallError("launchd didn't start hub-update: \(output)")
         }
