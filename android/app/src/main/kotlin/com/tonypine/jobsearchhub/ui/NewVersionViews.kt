@@ -1,6 +1,5 @@
 package com.tonypine.jobsearchhub.ui
 
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
@@ -42,6 +41,7 @@ import com.tonypine.jobsearchhub.core.NewVersions
 import com.tonypine.jobsearchhub.versions.InstallStep
 import com.tonypine.jobsearchhub.versions.VersionState
 import com.tonypine.jobsearchhub.versions.VersionUpdater
+import com.tonypine.jobsearchhub.versions.open
 import com.tonypine.jobsearchhub.ui.design.HubCard
 import com.tonypine.jobsearchhub.ui.design.Spacing
 
@@ -87,11 +87,7 @@ fun InstallPrompts(updater: VersionUpdater, state: VersionState) {
     LaunchedEffect(step) {
         if (step is InstallStep.Confirm) {
             updater.confirmationShown()
-            try {
-                context.startActivity(step.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (_: ActivityNotFoundException) {
-                updater.onInstallStatus(InstallStep.Failed("Android's installer didn't open."))
-            }
+            if (!step.open(context::startActivity)) updater.onInstallStatus(InstallStep.Failed("Android's installer didn't open."))
         }
     }
 }
