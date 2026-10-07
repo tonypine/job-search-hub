@@ -214,8 +214,8 @@ func TestAMoveWhoseRowsDifferLeavesServerEnvAsItWasAndTheServerOnTheSource(t *te
 	}
 	database.Close()
 
-	// Nothing was half-moved: the owned database holds nothing, so the
-	// next move imports without --replace.
+	// Nothing was half-moved: the owned database holds nothing, and the
+	// next move imports.
 	move.check = checkImported
 	if moved, err := move.run(context.Background(), envFile, &out); err != nil || !moved {
 		t.Fatalf("the move after a failed one: %v, %v\n%s", moved, err, out.String())
@@ -293,6 +293,53 @@ func TestASecondMoveAfterASuccessfulOneDoesNothing(t *testing.T) {
 	}
 	if count := countCompanies(t, startFromServerEnv(t, envFile, settings)); count != 2 {
 		t.Errorf("the owned database holds %d companies, want the moved one and the one written after", count)
+	}
+}
+
+func TestAMoveAfterAnInstallRolledOneBackReplacesTheLeftoverCopy(t *testing.T) {
+	source := externalDatabaseURL(t)
+	execute(t, source, "INSERT INTO companies (name, domain) VALUES ('Acme', 'acme.example')")
+	envFile := composeServerEnv(t, source)
+	settingsBefore := readFile(t, envFile)
+	settings, _ := ownedDatabaseSettings(t)
+	move, _ := testMove(t, settings, source)
+	if moved, err := move.run(context.Background(), envFile, io.Discard); err != nil || !moved {
+		t.Fatalf("the first move: %v, %v", moved, err)
+	}
+	// The new server failed its health check: install-app.sh put server.env
+	// back, and the hub went on writing to the source.
+	if err := os.WriteFile(envFile, []byte(settingsBefore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	execute(t, source, "INSERT INTO companies (name, domain) VALUES ('Written after the rollback', 'rollback.example')")
+	before := mustCountRows(t, source)
+
+	var out bytes.Buffer
+	if moved, err := move.run(context.Background(), envFile, &out); err != nil || !moved {
+		t.Fatalf("the move after the rollback: %v, %v\n%s", moved, err, out.String())
+	}
+	if want := "# hub-server's settings\nHUB_ADDR=127.0.0.1:8090\nHUB_OWNER_TOKEN=0123456789abcdef0123456789abcdef\n"; readFile(t, envFile) != want {
+		t.Errorf("server.env:\n%s\nwant:\n%s", readFile(t, envFile), want)
+	}
+	if !strings.Contains(out.String(), "The database it replaced is kept in") {
+		t.Errorf("the output doesn't say where the leftover copy is kept:\n%s", out.String())
+	}
+	replaced := 0
+	clusters, _ := os.ReadDir(settings.postgresDir)
+	for _, cluster := range clusters {
+		if strings.Contains(cluster.Name(), ".replaced-") {
+			replaced++
+		}
+	}
+	if replaced != 1 {
+		t.Errorf("the owned database's folder holds %v, want the leftover copy kept once", clusters)
+	}
+	database := startFromServerEnv(t, envFile, settings)
+	if database.cluster == nil {
+		t.Fatal("the server didn't start its own Postgres")
+	}
+	if owned := mustCountRows(t, database.url); !maps.Equal(owned, before) {
+		t.Errorf("the owned database's rows %v, want the source's %v", owned, before)
 	}
 }
 
