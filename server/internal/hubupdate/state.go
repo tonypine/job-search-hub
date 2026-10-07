@@ -117,6 +117,10 @@ type State struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
+// ErrBadState is a state hub-update can't act on, however often it runs:
+// it can't be decoded, or lacks what an install needs.
+var ErrBadState = errors.New("the install's state can't be used")
+
 // LoadState reads the state at path.
 func LoadState(path string) (State, error) {
 	data, err := os.ReadFile(path)
@@ -125,7 +129,7 @@ func LoadState(path string) (State, error) {
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return State{}, fmt.Errorf("read %s: %w", path, err)
+		return State{}, fmt.Errorf("%w: read %s: %v", ErrBadState, path, err)
 	}
 	return state, nil
 }
@@ -157,10 +161,10 @@ func (state State) validate() error {
 	}
 	slices.Sort(missing)
 	if len(missing) > 0 {
-		return fmt.Errorf("the install's state lacks %v", missing)
+		return fmt.Errorf("%w: it lacks %v", ErrBadState, missing)
 	}
 	if state.StartedAt.IsZero() {
-		return errors.New("the install's state lacks started_at")
+		return fmt.Errorf("%w: it lacks started_at", ErrBadState)
 	}
 	return nil
 }

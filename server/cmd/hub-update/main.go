@@ -29,6 +29,9 @@ import (
 
 const usage = "usage: hub-update install <state.json>, or hub-update --version"
 
+// jobLabel is the launchd job the app starts hub-update as.
+const jobLabel = "com.tonypine.jobsearchhub.update"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -48,7 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // install runs the install state names to its end. It exits 0 once the
 // install has ended, however it ended, so launchd leaves the job be; and
-// non-zero when this run stopped part way, so launchd runs it again.
+// non-zero when this run stopped part way, so launchd runs it again. An
+// install no run can take, as when its state can't be read, ends too.
 func install(statePath string, stdout, stderr io.Writer) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -57,13 +61,11 @@ func install(statePath string, stdout, stderr io.Writer) int {
 	}
 	settings, err := serverenv.Read(serverenv.Path(home))
 	if err != nil {
-		fmt.Fprintln(stderr, "hub-update:", err)
-		return 1
+		return endJob(home, fmt.Errorf("read the server's settings: %w", err), stderr)
 	}
 	statePath, err = filepath.Abs(statePath)
 	if err != nil {
-		fmt.Fprintln(stderr, "hub-update:", err)
-		return 1
+		return endJob(home, err, stderr)
 	}
 	system := newLaunchdSystem(home, settings)
 	machine := &hubupdate.Machine{
@@ -82,11 +84,26 @@ func install(statePath string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "No install to run:", statePath)
 		return 0
 	}
+	if errors.Is(err, hubupdate.ErrBadState) {
+		return endJob(home, err, stderr)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "hub-update:", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "The install of %s ended: %s\n", state.To, state.Step)
+	return 0
+}
+
+// endJob ends an install that running again wouldn't help: it says why,
+// removes the launchd job, which would run it again at the next login, and
+// exits 0, which launchd doesn't run again either.
+func endJob(home string, err error, stderr io.Writer) int {
+	fmt.Fprintln(stderr, "hub-update: stopped the install, which can't go on:", err)
+	plist := filepath.Join(home, "Library", "LaunchAgents", jobLabel+".plist")
+	if err := os.Remove(plist); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintln(stderr, "hub-update:", err)
+	}
 	return 0
 }
 

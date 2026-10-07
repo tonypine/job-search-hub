@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/buildinfo"
+	"github.com/tonypine/job-search-hub/server/internal/serverenv"
 )
 
 func TestVersionPrintsTheHubsVersion(t *testing.T) {
@@ -36,14 +37,47 @@ func TestAnInstallWithoutItsStateHasNothingToRun(t *testing.T) {
 	}
 }
 
-func TestAStateThatCantBeReadStopsForLaunchdToRunAgain(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	state := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(state, []byte("{"), 0o600); err != nil {
+func TestAStateThatCantBeUsedEndsTheJob(t *testing.T) {
+	for name, content := range map[string]string{"undecodable": "{", "incomplete": `{"from":"0.1.247","step":"swapping"}`} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			plist := filepath.Join(home, "Library", "LaunchAgents", jobLabel+".plist")
+			if err := os.MkdirAll(filepath.Dir(plist), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(plist, []byte("plist"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Join(t.TempDir(), "state.json")
+			if err := os.WriteFile(state, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			// No run could take it: exiting 0, launchd doesn't run it
+			// again, and without its plist neither does the next login.
+			if code := run([]string{"install", state}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "can't go on") {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+			if _, err := os.Stat(plist); !os.IsNotExist(err) {
+				t.Fatalf("the job's plist is still there: %v", err)
+			}
+		})
+	}
+}
+
+func TestServerSettingsThatCantBeReadEndTheJob(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	env := serverenv.Path(home)
+	if err := os.MkdirAll(filepath.Dir(env), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env, []byte("not a setting\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"install", state}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "state.json") {
+	if code := run([]string{"install", filepath.Join(t.TempDir(), "state.json")}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "server's settings") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
