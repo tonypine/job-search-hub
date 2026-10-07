@@ -52,7 +52,7 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
 
-   **A hub still on the old Docker database moves itself.** A `server.env` from before the server owned its database points `HUB_DATABASE_URL` at the Postgres the old Compose file ran on `localhost:5434`. The next `install-app.sh` moves it, with nothing for you to do: while the server is stopped for the update, the new server's `hub-server database move-from-compose` imports that database as `hub-server database import` does (below), and only once each table holds as many rows as in the old one removes `HUB_DATABASE_URL` and `HUB_DATABASE_PASSWORD` from `server.env`. The script then checks that `/v1/health` reports the database the server owns (`"postgres":{"major":18}`). If any step fails, `server.env` is put back as it was, the hub keeps running on the old database, and the script says why. The old container and its `hub-db` volume are left as they are. A `HUB_DATABASE_URL` that names any other Postgres is never moved.
+   **A hub still on the old Docker database moves itself.** A `server.env` from before the server owned its database points `HUB_DATABASE_URL` at the Postgres the old Compose file ran on `localhost:5434`. The next `install-app.sh` moves it, with nothing for you to do: while the server is stopped for the update, the new server's `hub-server database move-from-compose` imports that database as `hub-server database import --replace` does (below), and only once each table holds as many rows as in the old one removes `HUB_DATABASE_URL` and `HUB_DATABASE_PASSWORD` from `server.env`. The script then checks that `/v1/health` reports the database the server owns (`"postgres":{"major":18}`). If any step fails, `server.env` is put back as it was, the hub keeps running on the old database, and the script says why. A copy imported before the failure stays in the database the server owns until the next install tries the move again and replaces it, keeping it as `postgres/18.replaced-<date>/`. The old container and its `hub-db` volume are left as they are. A `HUB_DATABASE_URL` that names any other Postgres is never moved.
 
    To import a hub database from another Postgres by hand, stop the hub in Settings › Server, then run:
 
@@ -92,20 +92,22 @@ open ~/Applications/Job\ Search\ Hub.app
 
 `make-app.sh` builds one bundle per version: the app, and in `Contents/Helpers/bin/` the server (`hub-server`), the CV printer (`hub-cvprint`), the `hub` command and the installer (`hub-update`, which only reports its version for now), for Apple silicon, with the server's LaunchAgent in `Contents/Library/LaunchAgents/`. Without Go, as in Symphony's QA VM, it builds the app alone, and Settings › Server says the build has no server. A build in `macos/build/` runs too, for trying a change: it leaves the installed app's server alone, and `Scripts/screenshot-page.sh` captures its pages without touching the installed app.
 
-In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain; when the Keychain refuses it, as a VM's locked login keychain does, the app says so and uses the token until it quits. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a
 open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
+On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then starts from empty connection settings, forgetting the hub URL and token an earlier run saved, takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
 
 ```bash
 open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --qa-mode
 ```
 
-The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
+A build with neither a team nor Go, as `make-app.sh` makes in Symphony's QA VM, is a QA build: it runs in QA mode at every launch, with or without `--qa-mode`, so each QA launch starts from empty connection settings. `HUB_QA_BUILD=1` or `HUB_QA_BUILD=0` before `make-app.sh` decides it instead.
+
+The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token. A build no Apple team signed (ad hoc, self-signed or unsigned) keeps the token in its preferences when the Keychain refuses to save it, as in Symphony's QA VM, and reads it from there first at the next launch; a team-signed build keeps it only until it quits.
 
 The app works from the keyboard. **⌘K** (Go › Jump to…) finds a job, company, person or page, and runs the rare actions kept out of the toolbars: add a company or a job by URL, generate missing CVs, pause or resume the local models. A job, company or person opens in the inspector over the page you're on. In Decide, and in Today's Decide card, ↑↓ move through the jobs, Return opens one, and **P**, **L** and **S** pursue it, leave it for later or skip it, then bring up the next. ⌘N is the page's Add, and ⌘[ and ⌘] go back and forward in the inspector.
 
@@ -141,6 +143,23 @@ To install a phone release the first time, open its page on the phone, download 
 The Mac app looks for its own releases: at launch and every hour it asks GitHub's API for the `mac-v*` releases, without a token and without the server, skipping drafts and pre-releases. It downloads the newest one above its own version into `~/Library/Application Support/JobSearchHub/Updates/<version>/` and checks it, in order: the zip's SHA-256 against its `.sha256`, `codesign --verify --strict --deep`, the running app's team ID and designated requirement, the version in its `Info.plist` and `hub-server --version`, and whether its newest migration is ahead of the running server's. Only a version that passes shows, as *New version 0.1.<N>* at the foot of the sidebar; one that fails is deleted and named in Settings › Version, along with what's new across every release since the running one. *Job Search Hub › Check for New Version…* checks right away. Marking a release as a pre-release on GitHub withdraws it. Installing from the app comes with a later version; until then:
 
 To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
+
+To walk through a new version before a real `mac-v*` release exists, QA points the app at a stub feed: in QA mode (a QA build, or launched with `--qa-mode`), it reads the releases from `HUB_RELEASES_URL` instead of GitHub, when the variable holds an http(s) URL. Outside QA mode the variable is ignored. Serve a JSON list in the API's shape from a folder of its own:
+
+```bash
+mkdir -p /tmp/release-feed && cd /tmp/release-feed
+cat > releases.json <<'JSON'
+[{"tag_name": "mac-v0.1.9999", "draft": false, "prerelease": false,
+  "html_url": "https://github.com/tonypine/job-search-hub/releases",
+  "body": "## New\n\n- Mac: A made-up change (#1)\n\n## Fixed\n\n- Server: Another one (#2)\n",
+  "assets": [
+    {"name": "Job-Search-Hub-0.1.9999.zip", "browser_download_url": "http://localhost:8765/Job-Search-Hub-0.1.9999.zip"},
+    {"name": "Job-Search-Hub-0.1.9999.zip.sha256", "browser_download_url": "http://localhost:8765/Job-Search-Hub-0.1.9999.zip.sha256"}]}]
+JSON
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+Then, in another terminal, `open macos/build/JobSearchHub.app --env HUB_RELEASES_URL=http://localhost:8765/releases.json --args --qa-mode`, adding `--env HUB_OWNER_TOKEN=…` as above. A build signed ad hoc, as in Symphony's QA VM, refuses any download, so Settings › Version names 0.1.9999 as refused, with its *What's new*. To see it as ready instead, with *New version 0.1.9999* at the foot of the sidebar, leave a download that passed its checks before launching: an `Updates/0.1.9999/` folder in `~/Library/Application Support/JobSearchHub/` holding `JobSearchHub.app/Contents/Info.plist` (any file) and a `checked.json` of `{"version": "0.1.9999", "app": "JobSearchHub.app", "changesDatabase": false, "checkedAt": "2026-01-01T00:00:00Z"}`. Marking the stub's release `"prerelease": true` withdraws it on the next check. Delete the `Updates/0.1.9999/` folder afterwards.
 
 The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
 

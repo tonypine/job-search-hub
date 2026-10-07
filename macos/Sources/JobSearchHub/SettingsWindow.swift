@@ -67,7 +67,8 @@ struct ConnectionSettings: View {
                 StatusRow(
                     "Hub", symbol: "network", state: connection.status.title, stateTone: connection.status.tone,
                     detail: connection.status == .connected ? connection.hubURLText : nil,
-                    help: "The app reaches the hub at this address with the owner token, which it keeps in the Keychain. "
+                    help: "The app reaches the hub at this address with the owner token, which it keeps in the Keychain "
+                        + "(a build no Apple team signed keeps it in its preferences when the Keychain refuses it). "
                         + "Settings is for how the app connects; what you search for is on the Criteria page, under You in the sidebar."
                 ) {
                     AsyncButton("Test", busyTitle: "Testing…", isBusy: connection.isChecking) { await connection.check() }
@@ -86,20 +87,30 @@ struct ConnectionSettings: View {
     }
 
     private func save() {
-        do {
-            try connection.save(newToken: tokenField)
-            tokenField = ""
-            saveFailure = nil
-            Task { await connection.check() }
-        } catch {
-            saveFailure = HubFailure("Couldn't save the token", error)
+        let isNewToken = !tokenField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connection.save(newToken: tokenField)
+        tokenField = ""
+        saveFailure = nil
+        if isNewToken, case .unsaved(_, let reason) = connection.token {
+            saveFailure = HubFailure(
+                "Couldn't keep the token in the Keychain",
+                advice: "The app uses it until it quits; save it again after that.",
+                details: reason
+            )
         }
+        Task { await connection.check() }
     }
 
     private var tokenPrompt: String {
         switch connection.token {
         case .reading: "Waiting for Keychain access"
-        case .present: "Saved in the Keychain; enter a new one to replace it"
+        case .present:
+            switch connection.tokenSource {
+            case .keychain: "Saved in the Keychain; enter a new one to replace it"
+            case .preferences: "Saved in this build's preferences; enter a new one to replace it"
+            case .environment: "From HUB_OWNER_TOKEN in QA mode; enter a new one to replace it"
+            }
+        case .unsaved: "In use until the app quits; the Keychain refused it"
         case .missing: "HUB_OWNER_TOKEN from the hub's .env"
         }
     }

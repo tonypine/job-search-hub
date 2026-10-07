@@ -348,7 +348,13 @@ public struct WhatsNew: Equatable, Sendable {
 /// Reads the repository's releases from GitHub's public API, without a
 /// token: the Mac app asks it directly, not through the server, so a hub
 /// whose server won't start can still get the version that fixes it.
+///
+/// Launched with `--qa-mode`, the app reads them from HUB_RELEASES_URL
+/// instead, when it holds an http(s) URL, so QA can serve a stub feed.
+/// Without the flag the variable is ignored.
 public struct ReleaseFeed: Sendable {
+    public static let urlVariable = "HUB_RELEASES_URL"
+
     public enum Failure: LocalizedError, Equatable {
         case status(Int)
         case rateLimited
@@ -365,10 +371,29 @@ public struct ReleaseFeed: Sendable {
     private let url: URL
     private let appVersion: String
 
-    public init(session: URLSession = .shared, url: URL = GitHubRepository.releasesAPIURL, appVersion: String = HubClient.appVersion) {
+    /// Without a URL, the feed reads GitHub's, or QA's from
+    /// HUB_RELEASES_URL in QA mode: a QA build, or `--qa-mode`.
+    public init(
+        session: URLSession = .shared,
+        url: URL? = nil,
+        appVersion: String = HubClient.appVersion,
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true
+    ) {
         self.session = session
-        self.url = url
+        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild)
         self.appVersion = appVersion
+    }
+
+    /// HUB_RELEASES_URL when the app runs in QA mode and the variable holds
+    /// an http(s) URL; GitHub's releases otherwise.
+    public static func makeURL(arguments: [String], environment: [String: String], isQABuild: Bool = false) -> URL {
+        guard isQABuild || arguments.contains(HubConnection.qaModeArgument),
+              let text = environment[urlVariable]?.trimmingCharacters(in: .whitespaces),
+              let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host() != nil
+        else { return GitHubRepository.releasesAPIURL }
+        return url
     }
 
     public func fetch() async throws -> [GitHubRelease] {

@@ -17,8 +17,7 @@ struct JobSearchHubApp: App {
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        Self.importOwnerTokenIfAsked()
-        _connection = State(initialValue: HubConnection())
+        _connection = State(initialValue: HubConnection(importedToken: Self.importOwnerTokenIfAsked()))
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
@@ -126,12 +125,13 @@ struct JobSearchHubApp: App {
     /// into the Keychain, for setting up without typing the token:
     /// `open JobSearchHub.app --env HUB_OWNER_TOKEN=… --args --import-owner-token`.
     /// The app writes the item itself, which is what keeps later reads free of
-    /// Keychain prompts.
-    private static func importOwnerTokenIfAsked() {
+    /// Keychain prompts. When the Keychain refuses it, as in a VM, the app
+    /// still uses the token until it quits. Nil when not asked.
+    private static func importOwnerTokenIfAsked() -> OwnerTokenState? {
         guard ProcessInfo.processInfo.arguments.contains("--import-owner-token"),
               let token = ProcessInfo.processInfo.environment["HUB_OWNER_TOKEN"], !token.isEmpty
-        else { return }
-        try? OwnerTokenKeychain.save(token)
+        else { return nil }
+        return OwnerTokenState.saving(token)
     }
 }
 
@@ -173,6 +173,8 @@ struct ContentView: View {
     @State private var replyDraft = RecruiterReplyDraft()
     @State private var requests = PageRequests()
     @State private var palette = PaletteModel()
+    /// Moves on the palette's Try again, so its read starts over.
+    @State private var paletteReloads = 0
     @State private var isShowingPalette = false
     /// What an action run from the palette did, or why it failed.
     @State private var toast: ToastMessage?
@@ -288,7 +290,8 @@ struct ContentView: View {
                         actions: PaletteAction.getAvailable(
                             isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count, hasReadyVersion: newVersions.facts.ready != nil
                         ),
-                        choose: choose
+                        choose: choose,
+                        retry: { paletteReloads += 1 }
                     ) {
                         isShowingPalette = false
                     }
@@ -296,7 +299,8 @@ struct ContentView: View {
                 }
             }
         }
-        .task(id: isShowingPalette) {
+        // Closing the palette cancels its read; Try again starts a new one.
+        .task(id: isShowingPalette ? paletteReloads : nil) {
             if isShowingPalette, let client = connection.makeClient() {
                 await palette.load(with: client)
             }

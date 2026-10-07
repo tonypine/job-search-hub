@@ -232,7 +232,8 @@ jobs:
       # the database, so the weekly run would test nothing.
       - name: go test
         run: |
-          if go test -count=1 ./... > "$RUNNER_TEMP/go-test.log" 2>&1; then
+          set -o pipefail
+          if go test -count=1 ./... 2>&1 | grep -v ' INFO ' > "$RUNNER_TEMP/go-test.log"; then
             tail -n 30 "$RUNNER_TEMP/go-test.log"
           else
             echo "go test failed; the last 250 lines of its output:"

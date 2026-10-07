@@ -20,10 +20,13 @@ const startTimeSlack = 5 * time.Second
 
 // lockFile is what Postgres writes to postmaster.pid, and to its socket's
 // lock file: the postmaster's PID on the first line, and the time it started,
-// in Unix seconds, on the third.
+// in Unix seconds, on the third. postmaster.pid's seventh line has the key
+// and the ID of its System V interlock segment, once it has one.
 type lockFile struct {
 	pid     int
 	started time.Time
+	// interlock is the segment's ID, or -1 when the file names none.
+	interlock int
 }
 
 // errMalformedLockFile means a lock file was read whole, but Postgres
@@ -54,7 +57,15 @@ func readLockFile(path string) (file lockFile, found bool, err error) {
 	if err != nil {
 		return lockFile{}, true, fmt.Errorf("%w: %s has no start time: %q", errMalformedLockFile, path, lines[2])
 	}
-	return lockFile{pid: pid, started: time.Unix(started, 0)}, true, nil
+	file = lockFile{pid: pid, started: time.Unix(started, 0), interlock: -1}
+	if len(lines) > 6 {
+		if fields := strings.Fields(lines[6]); len(fields) == 2 {
+			if id, err := strconv.Atoi(fields[1]); err == nil && id >= 0 {
+				file.interlock = id
+			}
+		}
+	}
+	return file, true, nil
 }
 
 func isAlive(pid int) bool {

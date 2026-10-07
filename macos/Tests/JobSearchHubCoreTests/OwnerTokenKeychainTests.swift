@@ -26,6 +26,23 @@ import Testing
     #expect(OwnerTokenState.reading.value == nil)
 }
 
+@Test func aSavedTokenIsPresent() {
+    var saved: String?
+    #expect(OwnerTokenState.saving("owner-token") { saved = $0 } == .present("owner-token"))
+    #expect(saved == "owner-token")
+}
+
+@Test func aTokenTheKeychainRefusesIsKeptUnsaved() {
+    let state = OwnerTokenState.saving("owner-token") { _ in throw KeychainError(status: errSecInteractionNotAllowed) }
+    guard case .unsaved(let token, let reason) = state else {
+        Issue.record("expected an unsaved token, got \(state)")
+        return
+    }
+    #expect(token == "owner-token")
+    #expect(reason.hasPrefix("Keychain error \(errSecInteractionNotAllowed):"))
+    #expect(state.value == "owner-token")
+}
+
 @Test func waitingOnTheKeychainIsSaidSo() {
     #expect(ConnectionStatus.waitingForKeychain.message == "Waiting for Keychain access.")
 }

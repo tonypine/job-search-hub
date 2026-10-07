@@ -79,7 +79,7 @@ struct UpdatesPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
             } else if model.days.isEmpty && !model.isLoading {
                 ContentUnavailableView("No updates", systemImage: "bell", description: Text("Replies, confirmations and other news about applications appear here."))
             }
