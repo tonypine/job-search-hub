@@ -123,3 +123,29 @@ private func makeQueue(_ titles: [String]) throws -> [DecisionQueueItem] {
     #expect(HubActivity.describe(work: idle, agentRuns: [runs[1]]).isEmpty)
     #expect(HubActivity.describe(work: nil, agentRuns: []).isEmpty)
 }
+
+@Test func getStartedListsEachFirstStepWithWhereItsButtonLands() throws {
+    let comparisonID = UUID()
+    let json = #"""
+    {"steps":[
+      {"kind":"profile_interview","confirmed_entries":0},
+      {"kind":"model_comparison","comparison_id":"\#(comparisonID.uuidString)","comparison_title":"Key against local","unjudged_fields":1},
+      {"kind":"a_later_step"}
+    ]}
+    """#
+    let steps = try HubJSON.makeDecoder().decode(FirstStepsResponse.self, from: Data(json.utf8)).steps
+
+    let rows = Today.getStartRows(steps)
+
+    #expect(rows.map(\.button) == ["Enhance profile", "Open comparison"])
+    #expect(rows.map(\.destination) == [.profileInterview, .comparison(comparisonID)])
+    #expect(rows[0].detail.hasPrefix("0 of 5 entries confirmed"))
+    #expect(rows[1].title == "Judge “Key against local”")
+    #expect(rows[1].detail.hasPrefix("1 field has no verdict"))
+    #expect(Today.getStartRows([FirstStep(kind: FirstStep.tailoredCVKind)]).map(\.destination) == [.decide])
+}
+
+@Test func getStartedHidesWhenNoStepWaits() {
+    #expect(Today.getStartRows([]).isEmpty)
+    #expect(Today.getStartRows([FirstStep(kind: "a_later_step"), FirstStep(kind: FirstStep.modelComparisonKind)]).isEmpty)
+}

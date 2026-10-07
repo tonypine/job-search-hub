@@ -436,9 +436,13 @@ nothing is running*.
 | C. A store track | Google Play internal testing, or Firebase App Distribution | Updates handled by the store | Turned down in ADR 0001: an account, review and a tester app for one phone |
 
 **B.** The permission is for a sideloaded app on one phone, and Android asks the owner to allow it
-the first time. After the app has installed itself once, Android 12 and later can let it update
-without the confirmation (`USER_ACTION_NOT_REQUIRED`, with `UPDATE_PACKAGES_WITHOUT_USER_ACTION`);
-the ticket checks that on the owner's phone and keeps the confirmation if it doesn't hold.
+the first time. On Android 12 and later the app asks to update without the confirmation
+(`USER_ACTION_NOT_REQUIRED`, with `UPDATE_PACKAGES_WITHOUT_USER_ACTION` in the manifest). Android
+grants it only when the app installed the version it replaces and that version already declares
+the permission, so the first release that carries it still asks once and later ones don't. Where
+Android still asks, the installer answers `STATUS_PENDING_USER_ACTION` and the app opens the
+confirmation as before. Unit tests in `:app` cover the session's flag on each API level, the merged
+manifest's permission and the fallback, in place of a check on the phone (TP-745).
 
 ## On the Mac, screen by screen
 
@@ -668,8 +672,9 @@ app's next launch) finishes or undoes it, never leaving half a switch:
    answers with the new version and `GET /v1/health` with `ok`. Otherwise, roll back.
 6. **Reopen the app**, if it was open, with the version it came from, so it shows the banner and
    reopens its sessions.
-7. **Check the app**, if step 6 reopened it: it writes `launched` to `state.json` once its window
-   is up and connected. If that doesn't happen within 60 seconds, or it exits, roll back. After
+7. **Check the app**, if step 6 reopened it: it writes its version to `Updates/launched` once its
+   window is up and connected (a file of its own, so the app never races `hub-update` over
+   `state.json`). If that doesn't happen within 60 seconds, or it exits, roll back. After
    *Install when I quit* the app stays closed, so there's nothing to wait for: step 5's server
    check is the whole check, and the app's next launch is covered by the first-day crash prompt
    (see [Failures](#failures)).

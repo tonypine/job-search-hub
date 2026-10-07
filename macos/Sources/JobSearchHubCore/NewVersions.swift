@@ -170,9 +170,10 @@ public enum MacReleases {
     }
 
     /// The newest release the app may offer that's newer than the one
-    /// running, or nil when there's none.
-    public static func findNewest(in releases: [GitHubRelease], above running: HubVersion) -> MacRelease? {
-        getOffered(releases).first { $0.version > running }
+    /// running, or nil when there's none. A version that failed to install
+    /// on this Mac, one of `bad`, isn't offered again.
+    public static func findNewest(in releases: [GitHubRelease], above running: HubVersion, excluding bad: Set<HubVersion> = []) -> MacRelease? {
+        getOffered(releases).first { $0.version > running && !bad.contains($0.version) }
     }
 
     /// The releases after the running one, up to and including `newest`,

@@ -162,6 +162,13 @@ func (s *Store) SaveProfileEntry(ctx context.Context, actor Actor, id *uuid.UUID
 	return saved, err
 }
 
+// CountConfirmedProfileEntries returns how many entries the owner confirmed.
+func (s *Store) CountConfirmedProfileEntries(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM profile_entries WHERE confirmed_at IS NOT NULL`).Scan(&count)
+	return count, err
+}
+
 // ConfirmProfileEntries marks entries as the owner's own account.
 func (s *Store) ConfirmProfileEntries(ctx context.Context, actor Actor, ids []uuid.UUID) ([]ProfileEntry, error) {
 	if actor.Kind != ActorOwner {

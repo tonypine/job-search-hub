@@ -1,13 +1,16 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// What the ⌘K palette asks of a page it switches to: open one of its Add
-/// sheets, or take the keyboard so its list can be worked from there.
+/// What the ⌘K palette, or Today, asks of a page it switches to: open one
+/// of its Add sheets, take the keyboard so its list can be worked from
+/// there, or show one of its items.
 enum PageRequest: Equatable {
     case addCompany
     case addCompanyFromSuggestions
     case addJobByURL
     case focusList
+    /// Model lab shows the comparison.
+    case openComparison(UUID)
 }
 
 /// The palette's request waiting for its page. The page takes it when it

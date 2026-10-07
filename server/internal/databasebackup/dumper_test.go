@@ -85,6 +85,10 @@ func TestOnlyTheNewestPreMigrationDumpsAreKept(t *testing.T) {
 		if err := os.Chtimes(path, modified, modified); err != nil {
 			t.Fatal(err)
 		}
+		// Each dump's write mark goes with it.
+		if err := os.WriteFile(MarkPath(path), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	nightly := dumpPrefix + "2026-08-01" + dumpSuffix
 	for _, name := range []string{nightly, "notes.txt"} {
@@ -104,7 +108,11 @@ func TestOnlyTheNewestPreMigrationDumpsAreKept(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	want := []string{"hub-2026-08-01.dump", "hub-pre-migration-70.dump", "hub-pre-migration-79.dump", "hub-pre-migration-80.dump", "hub-pre-migration-81.dump", "hub-pre-migration-82.dump", "notes.txt"}
+	want := []string{
+		"hub-2026-08-01.dump", "hub-pre-migration-70.counts.json", "hub-pre-migration-70.dump", "hub-pre-migration-79.counts.json", "hub-pre-migration-79.dump",
+		"hub-pre-migration-80.counts.json", "hub-pre-migration-80.dump", "hub-pre-migration-81.counts.json", "hub-pre-migration-81.dump",
+		"hub-pre-migration-82.counts.json", "hub-pre-migration-82.dump", "notes.txt",
+	}
 	if !slices.Equal(names, want) {
 		t.Fatalf("kept %v, want %v", names, want)
 	}

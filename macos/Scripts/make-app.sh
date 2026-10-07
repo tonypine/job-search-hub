@@ -8,6 +8,7 @@
 #   Contents/Helpers/bin/hub-cvprint               the CV printer, which the server finds beside itself
 #   Contents/Helpers/bin/hub                       the hub command
 #   Contents/Helpers/bin/hub-update                the installer
+#   Contents/Helpers/bin/hub-install-steps         the window hub-update shows the steps in while the app is closed
 #
 # install-app.sh writes the server's agent to ~/Library/LaunchAgents, naming
 # the installed bundle's hub-server.
@@ -54,6 +55,9 @@ if command -v go >/dev/null; then
   done
   echo "==> Building hub-cvprint"
   Scripts/build-cvprint.sh "$HELPERS/hub-cvprint"
+  echo "==> Building hub-install-steps"
+  swift build -c release --product hub-install-steps >/dev/null
+  cp "$(swift build -c release --product hub-install-steps --show-bin-path)/hub-install-steps" "$HELPERS/hub-install-steps"
 else
   echo "No Go toolchain: building the app without the server and the hub command; features that run them won't work in this build." >&2
 fi
