@@ -53,7 +53,7 @@ struct JobCell: View {
 
     var body: some View {
         HStack(spacing: Space.m) {
-            Monogram(name: item.companyName ?? item.job.title)
+            Monogram(item.companyName ?? item.job.title)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(item.job.title).fontWeight(.semibold).lineLimit(1).help(item.job.title)
