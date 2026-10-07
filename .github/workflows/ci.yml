@@ -414,7 +414,7 @@ jobs:
       # breaks the release build (lintVitalRelease included) fails here rather
       # than in release.yml after the merge.
       - name: Test, lint and build
-        run: ./gradlew :core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
+        run: ./gradlew :core:test :data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
 
   # The release scripts that release.yml runs after a merge.
   release-scripts:
