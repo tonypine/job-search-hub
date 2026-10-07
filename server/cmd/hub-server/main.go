@@ -390,6 +390,7 @@ func run() error {
 	}
 	api.RegisterDecisionRoutes(routes, hub, rates, requireOwner)
 	api.RegisterMarketGapRoutes(routes, hub, requireOwner)
+	api.RegisterFirstStepRoutes(routes, hub, requireOwner)
 	api.RegisterInterviewPackRoutes(routes, hub, requireOwner)
 	if cvDrafter != nil {
 		mcptools.AddCVTools(ownerTools, cvDrafter)

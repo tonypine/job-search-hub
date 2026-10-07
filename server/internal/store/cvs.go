@@ -168,6 +168,13 @@ func (s *Store) ListTailoredCVJobIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 }
 
+// HasTailoredCV says whether any job has a tailored CV drafted.
+func (s *Store) HasTailoredCV(ctx context.Context) (bool, error) {
+	var has bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cvs WHERE kind = 'tailored')`).Scan(&has)
+	return has, err
+}
+
 // ListTailoredCVsWithoutPDF returns up to limit tailored CVs of open jobs
 // that haven't been printed since they last changed.
 func (s *Store) ListTailoredCVsWithoutPDF(ctx context.Context, limit int) ([]CV, error) {
