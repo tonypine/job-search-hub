@@ -3,7 +3,10 @@
 # engine. It creates a cluster in a new temporary folder, starts it on a Unix
 # socket there alone, points HUB_TEST_DATABASE_URL at it, runs go test in
 # server/ with the arguments given, and stops and deletes the cluster on exit:
-# after the tests, a failure, or Ctrl-C.
+# after the tests, a failure, or Ctrl-C. Before the cluster starts and after it
+# stops, it removes the shared-memory segments killed Postgres clusters left
+# behind, as the server does: macOS has room for 32, and every cluster, the
+# hub's own included, needs one to start.
 #
 #   server/scripts/test-with-postgres.sh                     go test ./...
 #   server/scripts/test-with-postgres.sh ./internal/store    any go test arguments, as in server/
@@ -33,15 +36,29 @@ root=$(mktemp -d "${TMPDIR:-/tmp}/hubtest.XXXXXX")
 root=${root%/}
 data=$root/data
 
+sweeper=$root/remove-orphaned-segments
+
+# A stopped Postgres removes its segment itself; this catches the ones the
+# tests' killed clusters left.
+remove_orphaned_segments() {
+	if [ -x "$sweeper" ]; then
+		"$sweeper" || echo "Couldn't remove every orphaned shared-memory segment; ipcs -m -a lists them." >&2
+	fi
+}
+
 cleanup() {
 	if [ -f "$data/postmaster.pid" ]; then
 		"$engine/bin/pg_ctl" -D "$data" -m fast -w -t 30 stop >/dev/null 2>&1 ||
 			"$engine/bin/pg_ctl" -D "$data" -m immediate -w stop >/dev/null 2>&1 || true
 	fi
+	remove_orphaned_segments
 	rm -rf "$root"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+
+(cd "$server" && go build -o "$sweeper" ./scripts/remove-orphaned-segments)
+remove_orphaned_segments
 
 "$engine/bin/initdb" -D "$data" --username=hub --auth-local=trust --encoding=UTF8 \
 	--locale-provider=builtin --builtin-locale=C.UTF-8 >"$root/initdb.log" 2>&1 ||
