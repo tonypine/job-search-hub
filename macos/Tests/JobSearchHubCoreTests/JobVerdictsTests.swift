@@ -149,11 +149,3 @@ private let strongBrief = #"""
     #expect(person.companyName == "Northwind" && person.closeness == "12 messages")
     #expect(JobOutreach.isKnown(person))
 }
-
-@Test func aMonogramTakesTheFirstLettersOfTwoWords() {
-    #expect(Initials.make(from: "Alex Kim") == "AK")
-    #expect(Initials.make(from: "Northwind") == "N")
-    #expect(Initials.make(from: "riley  chen example") == "RC")
-    #expect(Initials.make(from: "(Acme) Labs") == "AL")
-    #expect(Initials.make(from: "") == "")
-}

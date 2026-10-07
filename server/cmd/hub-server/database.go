@@ -64,12 +64,13 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 	// be starting, as when the server and that Postgres start at the same
 	// time. Only the one the server runs is dumped before it is
 	// migrated, with the engine's own pg_dump.
+	dump := ""
 	if database.cluster == nil {
 		if err := waitForDatabase(ctx, pool, startupDatabaseWait); err != nil {
 			database.Close()
 			return nil, err
 		}
-	} else if err := dumpBeforeMigrating(ctx, database, settings.backupsDir); err != nil {
+	} else if dump, err = dumpBeforeMigrating(ctx, database, settings.backupsDir); err != nil {
 		database.Close()
 		return nil, err
 	}
@@ -77,26 +78,39 @@ func openDatabase(ctx context.Context, settings config) (*hubDatabase, error) {
 		database.Close()
 		return nil, err
 	}
+	// Taken before the server serves anything, so a rollback to the dump
+	// can count what this version wrote. Without it, a rollback couldn't
+	// say what it lost, so the server doesn't start.
+	if dump != "" {
+		if err := writeMark(ctx, pool, databasebackup.MarkPath(dump)); err != nil {
+			database.Close()
+			return nil, err
+		}
+		slog.Info("database marked after migrating", "file", databasebackup.MarkPath(dump))
+	}
 	return database, nil
 }
 
 // dumpBeforeMigrating dumps the database into folder when migrations are
 // pending, so one that goes wrong can be undone. A new database has nothing
-// to keep. Without the dump, the migrations wait.
-func dumpBeforeMigrating(ctx context.Context, database *hubDatabase, folder string) error {
+// to keep. Without the dump, the migrations wait. It returns the dump's
+// path, or "" when it took none.
+func dumpBeforeMigrating(ctx context.Context, database *hubDatabase, folder string) (string, error) {
 	version, pending, err := store.GetMigrationState(ctx, database.pool)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !pending || version == 0 {
-		return nil
+		return "", nil
 	}
+	// hub-update reads it as the start of a slower start.
+	slog.Info("migrating the database", "from", version)
 	path, err := databasebackup.DumpBeforeMigration(ctx, database.pgDump, database.url, folder, version)
 	if err != nil {
-		return fmt.Errorf("dump the database before migrating it: %w", err)
+		return "", fmt.Errorf("dump the database before migrating it: %w", err)
 	}
 	slog.Info("database dumped before migrating", "file", path)
-	return nil
+	return path, nil
 }
 
 // postgresHealth is the major of the Postgres the server runs, and the one

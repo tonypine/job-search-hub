@@ -1,0 +1,4 @@
+#!/bin/bash
+# Stands in for open in hub-update's end-to-end test: runs the bundle's
+# app, which says it opened and ends.
+exec "$1/Contents/MacOS/JobSearchHub"

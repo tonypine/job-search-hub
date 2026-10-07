@@ -77,9 +77,28 @@ android {
         baseline = file("lint-baseline.xml")
     }
 
+    testOptions {
+        unitTests {
+            // Android's classes, like Intent, are stubs on the JVM; this makes them return defaults instead of throwing.
+            isReturnDefaultValues = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+}
+
+// Each variant's unit tests read the manifest Gradle merged for its APK (ManifestTest).
+androidComponents {
+    onVariants { variant ->
+        val manifest = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        val testTask = "test${variant.name.replaceFirstChar(Char::uppercase)}UnitTest"
+        tasks.withType<Test>().matching { it.name == testTask }.configureEach {
+            inputs.file(manifest).withPathSensitivity(PathSensitivity.NONE)
+            jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-DmergedManifest=${manifest.get().asFile.absolutePath}") })
+        }
     }
 }
 
@@ -110,4 +129,7 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.kotlinx.coroutines.play.services)
     debugImplementation(libs.compose.ui.tooling)
+
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.junit)
 }

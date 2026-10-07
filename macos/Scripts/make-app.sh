@@ -8,6 +8,7 @@
 #   Contents/Helpers/bin/hub-cvprint               the CV printer, which the server finds beside itself
 #   Contents/Helpers/bin/hub                       the hub command
 #   Contents/Helpers/bin/hub-update                the installer
+#   Contents/Helpers/bin/hub-install-steps         the window hub-update shows the steps in while the app is closed
 #
 # install-app.sh writes the server's agent to ~/Library/LaunchAgents, naming
 # the installed bundle's hub-server.
@@ -54,6 +55,9 @@ if command -v go >/dev/null; then
   done
   echo "==> Building hub-cvprint"
   Scripts/build-cvprint.sh "$HELPERS/hub-cvprint"
+  echo "==> Building hub-install-steps"
+  swift build -c release --product hub-install-steps >/dev/null
+  cp "$(swift build -c release --product hub-install-steps --show-bin-path)/hub-install-steps" "$HELPERS/hub-install-steps"
 else
   echo "No Go toolchain: building the app without the server and the hub command; features that run them won't work in this build." >&2
 fi
@@ -94,6 +98,23 @@ if [ "$QA_BUILD" = "1" ]; then
   echo "==> QA build: the app starts from empty connection settings at every launch"
   QA_BUILD_PLIST="<key>HubQABuild</key>
 	<true/>"
+  # The stub release feed QA serves (README › Releases), since Symphony's
+  # launcher passes the app no environment: HUB_RELEASES_URL at build time
+  # goes in Info.plist, where the app reads it when the variable isn't set at
+  # launch. QA's ports change on every pass, so the build that knows the port
+  # names the URL; without one the build reads GitHub's releases.
+  RELEASES_URL="${HUB_RELEASES_URL:-}"
+  if [ -n "$RELEASES_URL" ]; then
+    case "$RELEASES_URL" in
+      http://*|https://*) ;;
+      *) echo "HUB_RELEASES_URL must be an http(s) URL: $RELEASES_URL" >&2; exit 1 ;;
+    esac
+    echo "==> QA build: the app reads its releases from $RELEASES_URL"
+    RELEASES_URL_XML="$(printf '%s' "$RELEASES_URL" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
+    QA_BUILD_PLIST="$QA_BUILD_PLIST
+	<key>HubReleasesURL</key>
+	<string>$RELEASES_URL_XML</string>"
+  fi
 fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST

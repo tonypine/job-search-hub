@@ -18,7 +18,10 @@ public struct UpdatesFolder: Sendable {
     }
 
     /// Folders and files the downloads never replace.
-    static let kept: Set<String> = ["previous", "install.log", "state.json"]
+    static let kept: Set<String> = [
+        "previous", "install.log", "state.json", "last-install.json", "launched", "bad-versions.json", "reopen.json", "hub-update",
+        "hub-update.log", "installs.json",
+    ]
     static let recordName = "checked.json"
 
     public var logURL: URL { root.appending(path: "install.log") }

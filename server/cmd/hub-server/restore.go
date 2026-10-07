@@ -15,7 +15,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-const databaseUsage = "usage: hub-server database restore <dump>, hub-server database import [--replace] <postgres-url>, or hub-server database move-from-compose <server.env>"
+const databaseUsage = "usage: hub-server database restore <dump>, hub-server database import [--replace] <postgres-url>, hub-server database move-from-compose <server.env>, or hub-server database count-writes <migration>"
 
 // runDatabaseCommand runs hub-server database <command> on the database the
 // server owns. It needs none of the server's settings but where that
@@ -47,12 +47,19 @@ func runDatabaseCommand(arguments []string, lookup func(string) string, out io.W
 			_, err := move.run(ctx, arguments[1], out)
 			return err
 		}
+	case len(arguments) == 2 && arguments[0] == "count-writes":
+		// Run by hub-update while the server is stopped, to say what rolling
+		// back to the dump taken before migrating from <migration> loses. It
+		// prints JSON, and nothing else.
+		command = func(ctx context.Context, engines, dir string) error {
+			return countWritesSinceMigration(ctx, engines, dir, parseBackupsDir(lookup), arguments[1], out)
+		}
 	default:
 		return errors.New(databaseUsage)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if lookup("HUB_DATABASE_URL") != "" && arguments[0] != "move-from-compose" {
+	if lookup("HUB_DATABASE_URL") != "" && arguments[0] != "move-from-compose" && arguments[0] != "count-writes" {
 		fmt.Fprintln(out, "HUB_DATABASE_URL is set here: a server started with it uses that database, not the one the server owns.")
 	}
 	engines, dir := parseDatabasePaths(lookup)

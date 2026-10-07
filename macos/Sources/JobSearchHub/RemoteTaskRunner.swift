@@ -14,19 +14,24 @@ final class RemoteTaskRunner {
     private(set) var fixingJobIDs: Set<UUID> = []
     /// Moves when a fix ends, so a job's details read again.
     private(set) var fixRevision = 0
+    /// The tasks running now, for the install sheet.
+    private(set) var runningTasks: [UUID: RunningTask] = [:]
+    /// While an install waits for running work, no queued task is claimed:
+    /// it waits for the new version.
+    var isPaused = false
 
     init(jobFinder: CompanyJobFinder) {
         self.jobFinder = jobFinder
     }
 
     func check(with client: HubClient) async {
-        guard !isChecking else { return }
+        guard !isChecking, !isPaused else { return }
         isChecking = true
         defer { isChecking = false }
         guard let queued = try? await client.get("v1/tasks", query: [URLQueryItem(name: "status", value: "queued")], as: TasksResponse.self).tasks else {
             return
         }
-        for task in queued {
+        for task in queued where !isPaused {
             await claimAndRun(task, with: client)
         }
     }
@@ -47,8 +52,20 @@ final class RemoteTaskRunner {
     }
 
     private func runAndFinish(_ task: TaskRequest, with client: HubClient) async {
+        runningTasks[task.id] = RunningTask(id: task.id, title: Self.describe(task), startedAt: .now)
+        defer { runningTasks[task.id] = nil }
         let outcome = await run(task, with: client)
         _ = try? await client.send("POST", "v1/tasks/\(task.id)/finish", body: outcome, as: TaskRequest.self)
+    }
+
+    /// What the task does, as the install sheet lists it.
+    private static func describe(_ task: TaskRequest) -> String {
+        switch task.kind {
+        case TaskRequest.findJobs: "Finding jobs for your phone"
+        case TaskRequest.researchCompany: task.input.flatMap { $0.isEmpty ? nil : "Researching \($0) for your phone" } ?? "Researching a company for your phone"
+        case TaskRequest.fixJob: "Fixing a job's details"
+        default: "A task for your phone"
+        }
     }
 
     private func run(_ task: TaskRequest, with client: HubClient) async -> FinishTaskRequest {
