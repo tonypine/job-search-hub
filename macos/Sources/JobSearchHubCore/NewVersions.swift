@@ -351,9 +351,12 @@ public struct WhatsNew: Equatable, Sendable {
 ///
 /// Launched with `--qa-mode`, the app reads them from HUB_RELEASES_URL
 /// instead, when it holds an http(s) URL, so QA can serve a stub feed.
-/// Without the flag the variable is ignored.
+/// Without the flag the variable is ignored. A QA build also carries a URL
+/// in its Info.plist as HubReleasesURL, which make-app.sh writes, for a
+/// launcher that passes no environment; the variable wins over it.
 public struct ReleaseFeed: Sendable {
     public static let urlVariable = "HUB_RELEASES_URL"
+    public static let urlInfoKey = "HubReleasesURL"
 
     public enum Failure: LocalizedError, Equatable {
         case status(Int)
@@ -372,27 +375,37 @@ public struct ReleaseFeed: Sendable {
     private let appVersion: String
 
     /// Without a URL, the feed reads GitHub's, or QA's from
-    /// HUB_RELEASES_URL in QA mode: a QA build, or `--qa-mode`.
+    /// HUB_RELEASES_URL, or the bundle's HubReleasesURL, in QA mode: a QA
+    /// build, or `--qa-mode`.
     public init(
         session: URLSession = .shared,
         url: URL? = nil,
         appVersion: String = HubClient.appVersion,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true
+        isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true,
+        bundledURL: String? = Bundle.main.object(forInfoDictionaryKey: ReleaseFeed.urlInfoKey) as? String
     ) {
         self.session = session
-        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild)
+        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild, bundledURL: bundledURL)
         self.appVersion = appVersion
     }
 
-    /// HUB_RELEASES_URL when the app runs in QA mode and the variable holds
-    /// an http(s) URL; GitHub's releases otherwise.
-    public static func makeURL(arguments: [String], environment: [String: String], isQABuild: Bool = false) -> URL {
+    /// In QA mode, HUB_RELEASES_URL when it holds an http(s) URL, else the
+    /// bundle's HubReleasesURL when it does; GitHub's releases otherwise.
+    public static func makeURL(
+        arguments: [String], environment: [String: String], isQABuild: Bool = false, bundledURL: String? = nil
+    ) -> URL {
         guard isQABuild || arguments.contains(HubConnection.qaModeArgument),
-              let text = environment[urlVariable]?.trimmingCharacters(in: .whitespaces),
-              let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host() != nil
+              let url = feedURL(environment[urlVariable]) ?? feedURL(bundledURL)
         else { return GitHubRepository.releasesAPIURL }
+        return url
+    }
+
+    private static func feedURL(_ text: String?) -> URL? {
+        guard let text = text?.trimmingCharacters(in: .whitespaces),
+              let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host() != nil
+        else { return nil }
         return url
     }
 
