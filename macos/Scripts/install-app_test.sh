@@ -18,6 +18,8 @@
 # The fake server moves a server.env off Docker's Postgres as the real one
 # does, without the import: it drops HUB_DATABASE_URL and
 # HUB_DATABASE_PASSWORD when the URL is compose.yaml's, and logs the import.
+# Its owned database is $FAKE/owned, which an import replaces, keeping the one
+# it held as $FAKE/owned.replaced-<n>.
 # The fake /v1/health reports the database the server owns while the run's
 # server.env has no HUB_DATABASE_URL.
 set -euo pipefail
@@ -129,6 +131,8 @@ if [ "$1 $2" = "database move-from-compose" ]; then
   fi
   grep -q '^HUB_DATABASE_URL=postgres://hub:[^@]*@localhost:5434/hub$' "$3" || exit 0
   echo "$3" >> "$FAKE/imports.log"
+  if [ -f "$FAKE/owned" ]; then mv "$FAKE/owned" "$FAKE/owned.replaced-$(wc -l < "$FAKE/imports.log" | tr -d ' ')"; fi
+  echo "imported from $3" > "$FAKE/owned"
   grep -v -e '^HUB_DATABASE_URL=' -e '^HUB_DATABASE_PASSWORD=' "$3" > "$3.moving"
   mv "$3.moving" "$3"
   exit 0
@@ -390,6 +394,21 @@ expect "moved, but the new server never answers: fails" 1 "$status"
 expect "moved, but the new server never answers: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
 expect "moved, but the new server never answers: the old server runs again" 0.1.0-old "$(loaded_version)"
 contains "moved, but the new server never answers: says the hub is back on Docker's Postgres" "server.env points at Docker's Postgres again" "$err"
+
+setup compose-retried app
+on_compose
+run FAKE_DEAD_VERSION=0.1.0-new
+expect "rolled back after a move: fails" 1 "$status"
+expect "rolled back after a move: server.env is as it was" same "$(same "$case_dir/env.before" "$env_file")"
+expect "rolled back after a move: the imported copy stays" yes "$(exists "$fake/owned")"
+contains "rolled back after a move: says the next install tries the move again" "the next install, which tries the move again and replaces it" "$err"
+run
+expect "the install after the rollback: installs" 0 "$status"
+expect "the install after the rollback: imports again" 2 "$(lines "$fake/imports.log")"
+expect "the install after the rollback: replaces the leftover copy, keeping it" "yes 1" "$(exists "$fake/owned") $(find "$fake" -name 'owned.replaced-*' | wc -l | tr -d ' ')"
+expect "the install after the rollback: server.env loses the database URL and password" "$(printf 'HUB_ADDR=127.0.0.1:18090\nHUB_OWNER_TOKEN=test-token')" "$(cat "$env_file")"
+expect "the install after the rollback: the new server runs" 0.1.0-new "$(loaded_version)"
+contains "the install after the rollback: says the hub runs the database the server owns" "runs on the database the server owns, Postgres 18" "$out"
 
 setup compose-no-postgres app
 on_compose

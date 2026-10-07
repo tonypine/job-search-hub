@@ -231,7 +231,9 @@ jobs:
       # -count=1: setup-go restores GOCACHE, and a cached result never touches
       # the database, so the weekly run would test nothing.
       - name: go test
-        run: go test -count=1 ./...
+        run: |
+          set -o pipefail
+          go test -count=1 ./... 2>&1 | grep -v ' INFO '
 
       # A release's build, with the version code release.yml would pass: the
       # server's --version, hub's, hub-update's and GET /v1/version all say 0.1.<N>.
