@@ -58,7 +58,7 @@ struct CompanyCell: View {
 
     var body: some View {
         HStack(spacing: Space.m) {
-            Monogram(name: row.name)
+            Monogram(row.name)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(row.name).fontWeight(.semibold).lineLimit(1).help(row.name)

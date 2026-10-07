@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -44,4 +45,22 @@ func excludeFromBackups(path string) error {
 		return fmt.Errorf("tmutil addexclusion: %w: %s", err, bytes.TrimSpace(output))
 	}
 	return nil
+}
+
+// sharedMemoryFull is what's wrong when Postgres can't get a System V
+// segment: kern.sysv.shmmni allows 32, and raising it takes root.
+const sharedMemoryFull = "macOS's 32 shared-memory segments are all in use (ipcs -m -a lists them, with the PID that created each, CPID)"
+
+// listSegments lists the System V shared-memory segments' IDs. macOS reads
+// them only through a sysctl that takes a command structure, which ipcs
+// sends.
+func listSegments() ([]int, error) {
+	var stderr strings.Builder
+	command := exec.Command("/usr/bin/ipcs", "-m")
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ipcs -m: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseIpcsIDs(string(output))
 }

@@ -113,7 +113,9 @@ func Start(ctx context.Context, settings Settings) (*Cluster, error) {
 }
 
 // lockDir makes settings' engine and folder absolute, creates the folder, and
-// takes its lock, which the caller closes.
+// takes its lock, which the caller closes. Then, before any cluster is created
+// or started, it removes the shared-memory segments killed clusters left
+// behind, which could otherwise leave none for this one.
 func lockDir(settings Settings) (Settings, *os.File, error) {
 	var err error
 	if settings.Engine, err = filepath.Abs(settings.Engine); err != nil {
@@ -133,6 +135,7 @@ func lockDir(settings Settings) (Settings, *os.File, error) {
 	if err != nil {
 		return Settings{}, nil, err
 	}
+	sweepSegments()
 	return settings, lock, nil
 }
 
@@ -227,6 +230,7 @@ func run(ctx context.Context, engine, dir, dataDir string, lock *os.File) (*Clus
 	}()
 	go func() {
 		waitErr := command.Wait()
+		removeInterlock(dataDir, command.Process.Pid)
 		if !cluster.stopping.Load() {
 			// Give the reader a moment to take the last lines it wrote.
 			select {
@@ -353,7 +357,7 @@ func (cluster *Cluster) connect(ctx context.Context) (*pgx.Conn, error) {
 		}
 		select {
 		case <-cluster.exited:
-			return nil, fmt.Errorf("postgres exited while starting: %w", cluster.exitErr)
+			return nil, explainFullSharedMemory(fmt.Errorf("postgres exited while starting: %w", cluster.exitErr), cluster.log.String())
 		case <-deadline:
 			return nil, fmt.Errorf("postgres didn't accept connections within %s: %v%s", startTimeout, err, cluster.log.String())
 		case <-ctx.Done():
@@ -478,7 +482,7 @@ func createCluster(ctx context.Context, engine, dataDir string) error {
 	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
 	command.WaitDelay = stopTimeout
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("initdb: %w: %s", err, output)
+		return explainFullSharedMemory(fmt.Errorf("initdb: %w: %s", err, output), string(output))
 	}
 	if err := excludeFromBackups(dataDir); err != nil {
 		slog.Warn("the database stays in Time Machine's backups", "data", dataDir, "error", err)
