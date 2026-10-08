@@ -28,6 +28,7 @@ func printDossier(out io.Writer, dossier store.CompanyDossier) {
 		{"", company.WebsiteURL},
 		{"careers: ", company.CareersURL},
 		{"HQ: ", company.HeadquartersCountry},
+		{"industry: ", company.Industry},
 		{"employees: ", company.EmployeeCountRange},
 	} {
 		if fact.value != "" {

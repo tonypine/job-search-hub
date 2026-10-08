@@ -232,3 +232,26 @@ func TestFoundViaIsStoredAndItsChangesRecorded(t *testing.T) {
 		t.Fatalf("changes = %+v", recorded)
 	}
 }
+
+func TestIndustryIsStoredAndItsChangesRecorded(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+
+	company, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	if err != nil || company.Industry != "" {
+		t.Fatalf("create = %+v, err = %v", company, err)
+	}
+	industry := "Developer tools"
+	updated, err := hub.UpdateCompany(ctx, owner, company.ID, store.CompanyUpdate{Industry: &industry})
+	if err != nil || updated.Industry != industry {
+		t.Fatalf("update = %+v, err = %v", updated, err)
+	}
+	if read, err := hub.GetCompany(ctx, company.ID); err != nil || read.Industry != industry {
+		t.Fatalf("get = %+v, err = %v", read, err)
+	}
+	recorded := changesFor(t, pool, company.ID)
+	if len(recorded) != 2 || !strings.Contains(string(recorded[1].after), "Developer tools") {
+		t.Fatalf("changes = %+v", recorded)
+	}
+}

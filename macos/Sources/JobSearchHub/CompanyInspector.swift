@@ -94,13 +94,13 @@ struct CompanyInspector: View {
         .onChange(of: [events.revision, research.revision, jobFinder.revision]) { Task { await model.load(companyID, with: client) } }
     }
 
-    /// The company's name and size, and up to three chips: watched, its open
-    /// jobs, and its most pressing follow-up.
+    /// The company's name, industry and size, and up to three chips: watched,
+    /// its open jobs, and its most pressing follow-up.
     private func header(_ dossier: CompanyDossier) -> some View {
         let company = dossier.company
         return EntityHeader(
             kind: "Company", title: company.name,
-            facts: [company.domain, company.employeeCountRange.map { "\($0) people" }, company.headquartersCountry]
+            facts: [company.domain, company.industry, company.employeeCountRange.map { "\($0) people" }, company.headquartersCountry]
         ) {
             if dossier.watchedSince != nil {
                 ToneChip("Watching", tone: .accent)

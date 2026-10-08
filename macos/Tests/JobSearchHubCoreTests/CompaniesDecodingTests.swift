@@ -23,6 +23,7 @@ private let companiesJSON = ##"""
 
 private let dossierJSON = ##"""
 {"company":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Acme","domain":"acme.com",
+            "industry":"Developer tools","employee_count_range":"51-200",
             "created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
  "job_boards":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
                 "provider":"ashby","board_token":"acme","board_url":"https://jobs.ashbyhq.com/acme",
@@ -57,6 +58,8 @@ private let dossierJSON = ##"""
 @Test func aDossierDecodesWithPeopleAndAnUncountedBoard() throws {
     let dossier = try HubJSON.makeDecoder().decode(CompanyDossier.self, from: Data(dossierJSON.utf8))
 
+    #expect(dossier.company.industry == "Developer tools")
+    #expect(dossier.company.industryAndSize == "Developer tools · 51-200 people")
     #expect(dossier.jobBoards.first?.summaryLine == "ashby/acme · open postings unknown")
     #expect(dossier.people.first?.sourceURL == "https://acme.com/team")
     #expect(dossier.people.first?.roleTitle == "Engineering Manager")
@@ -112,4 +115,12 @@ private let companyPageJSON = ##"""
 
     #expect(dossier.applications == nil && dossier.mail == nil && dossier.foldedMailLine == nil)
     #expect(dossier.applicationsOpenFirst.isEmpty)
+}
+
+@Test func aCompanyWithoutAnIndustryShowsOnlyItsSize() throws {
+    let listed = try HubJSON.makeDecoder().decode(CompaniesResponse.self, from: Data(companiesJSON.utf8)).companies
+
+    #expect(listed[0].company.industry == nil)
+    #expect(listed[0].company.industryAndSize == "51-200 people")
+    #expect(listed[1].company.industryAndSize == nil)
 }

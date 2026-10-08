@@ -364,7 +364,13 @@ func TestExistingApplicationsAreDatedGoneOutFromTheChangeLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	// Inserted with raw SQL, not the store: the schema is rolled back below
+	// migration 83 here, so a store call that reads every current company
+	// column (industry, added later) would fail against the older table.
+	var companyID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO companies (name, domain) VALUES ('Acme', 'acme.com') RETURNING id`).Scan(&companyID); err != nil {
+		t.Fatal(err)
+	}
 	phases, _ := hub.ListPipelinePhases(ctx)
 	saved, applied, interviewing, closed := phases[0], phases[1], phases[3], phases[5]
 	now := time.Now().UTC().Truncate(time.Second)
@@ -372,7 +378,7 @@ func TestExistingApplicationsAreDatedGoneOutFromTheChangeLog(t *testing.T) {
 	addCard := func(phase store.PipelinePhase, enteredAt time.Time) uuid.UUID {
 		var id uuid.UUID
 		if err := pool.QueryRow(ctx, `INSERT INTO applications (company_id, phase_id, phase_entered_at) VALUES ($1, $2, $3) RETURNING id`,
-			company.ID, phase.ID, enteredAt).Scan(&id); err != nil {
+			companyID, phase.ID, enteredAt).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		return id
