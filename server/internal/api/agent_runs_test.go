@@ -45,7 +45,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	drainer := drain.New(time.Hour)
 	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
-	api.RegisterCompanyRoutes(routes, hub, requireOwner)
+	api.RegisterCompanyRoutes(routes, hub, stubRates{}, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
 	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)

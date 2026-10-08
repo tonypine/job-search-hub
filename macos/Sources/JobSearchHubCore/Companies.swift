@@ -78,6 +78,17 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var peopleCount: Int
     /// How many of the owner's connections work here.
     public var connectionCount: Int
+    /// The closest of those connections, by name, at most three; nil from a
+    /// hub that doesn't send them.
+    public var knownPeople: [String]?
+    /// The phase of the owner's open application here updated last.
+    public var applicationPhase: String?
+    /// How many of its open jobs pass the screen.
+    public var fittingJobs: Int?
+    /// The best match the briefs of those jobs found.
+    public var bestMatch: JobMatch?
+    /// When the hub first saw the newest of those jobs.
+    public var newestFittingJobSeenAt: Date?
     /// Updates about the company or its jobs the owner hasn't seen yet.
     public var unseenUpdates: Int
 
