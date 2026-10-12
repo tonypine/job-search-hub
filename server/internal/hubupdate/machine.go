@@ -119,13 +119,15 @@ func (machine *Machine) Run(ctx context.Context) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	if err := state.validate(); err != nil {
-		return state, err
-	}
 	if state.Step.IsFinished() {
 		// A run stopped between saving the last step and removing the job.
 		machine.finish(state)
 		return state, nil
+	}
+	if err := state.validate(); err != nil {
+		// The app still reads such a state as an install under way, and
+		// would refuse the next one: the rollback stops where it is.
+		return machine.stop(ctx, state, err)
 	}
 	state.Runs++
 	machine.log("hub-update run %d of the install of %s over %s, at %s", state.Runs, state.To, state.From, state.Step)
@@ -146,6 +148,43 @@ func (machine *Machine) Run(ctx context.Context) (State, error) {
 		if err := machine.save(state); err != nil {
 			return state, err
 		}
+	}
+	machine.finish(state)
+	return state, nil
+}
+
+// Stop ends the install without taking its steps, as when hub-update can't
+// read what it needs to take them: the rollback stops at the state's step,
+// saying how to finish it.
+func (machine *Machine) Stop(ctx context.Context, cause error) (State, error) {
+	state, err := LoadState(machine.StatePath)
+	if err != nil {
+		return State{}, err
+	}
+	if state.Step.IsFinished() {
+		machine.finish(state)
+		return state, nil
+	}
+	return machine.stop(ctx, state, cause)
+}
+
+// stop ends an install no run can take further, at rollback_failed, with
+// the step it stopped at and the commands that finish it. Marking it
+// abandoned would be wrong once the new bundle is in place.
+func (machine *Machine) stop(ctx context.Context, state State, cause error) (State, error) {
+	if state.Step != "" {
+		cause = fmt.Errorf("hub-update couldn't go on from %s: %w", state.Step, cause)
+	}
+	if state.Failure == "" {
+		if state.To != "" {
+			state.Failure = fmt.Sprintf("The install of %s couldn't go on, and the hub couldn't go back by itself.", state.To)
+		} else {
+			state.Failure = "The install couldn't go on, and the hub couldn't go back by itself."
+		}
+	}
+	machine.failRollback(ctx, &state, cause)
+	if err := machine.save(state); err != nil {
+		return state, err
 	}
 	machine.finish(state)
 	return state, nil
@@ -625,18 +664,20 @@ func (machine *Machine) commandsToFinish(state State) []string {
 		from = 0
 	}
 	remains := func(step Step) bool { return slices.Index(order, step) >= from }
+	// A state without where the app is installed, or what it was, can't
+	// say where the old bundle is: those commands are left out.
 	oldApp, found := machine.findBundle(state, state.From)
-	if !found {
+	if !found && state.Installed != "" {
 		oldApp = filepath.Join(machine.Updates, "previous", filepath.Base(state.Installed))
 	}
 	var commands []string
 	if remains(StepStoppingNewServer) || remains(StepRestoringDatabase) || remains(StepSwappingBack) {
 		commands = append(commands, "launchctl kill SIGTERM "+machine.Service+" || true")
 	}
-	if state.Dump != "" && remains(StepRestoringDatabase) {
+	if state.Dump != "" && oldApp != "" && remains(StepRestoringDatabase) {
 		commands = append(commands, quote(CommandPath(oldApp, "hub-server"))+" database restore "+quote(state.Dump))
 	}
-	if remains(StepSwappingBack) && !isVersion(state.Installed, state.From) {
+	if remains(StepSwappingBack) && state.Installed != "" && state.From != "" && !isVersion(state.Installed, state.From) {
 		failed := filepath.Join(machine.Updates, "failed-"+state.To+".app")
 		commands = append(commands, "mv "+quote(state.Installed)+" "+quote(failed)+" && mv "+quote(oldApp)+" "+quote(state.Installed))
 	}
@@ -679,7 +720,8 @@ func (machine *Machine) findBundle(state State, version string) (string, bool) {
 // findFreshDump is the dump this install's server took before migrating,
 // when there is one.
 func (machine *Machine) findFreshDump(state State) (string, bool) {
-	if machine.Backups == "" || state.ToMigration <= state.FromMigration {
+	// Without the install's start, any older dump would pass for its own.
+	if machine.Backups == "" || state.ToMigration <= state.FromMigration || state.StartedAt.IsZero() {
 		return "", false
 	}
 	dump := filepath.Join(machine.Backups, fmt.Sprintf("hub-pre-migration-%d.dump", state.FromMigration))

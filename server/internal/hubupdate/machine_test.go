@@ -822,10 +822,143 @@ func TestARollbackResumesFromEachStep(t *testing.T) {
 	}
 }
 
-func TestAStateWithoutItsFieldsIsRefused(t *testing.T) {
+func TestAStateWithoutItsFieldsSaysWhatItLacks(t *testing.T) {
 	hub := newFakeHub(t)
 	hub.save(State{From: oldVersion, Step: StepWaitingForApp})
-	if _, err := hub.machine().Run(context.Background()); err == nil || !strings.Contains(err.Error(), "[installed new_app to]") {
-		t.Fatalf("err = %v", err)
+	state := hub.run()
+	if state.Step != StepRollbackFailed || !strings.Contains(state.Error, "[installed new_app to]") {
+		t.Fatalf("state = %+v", state)
+	}
+	if state.Failure != "The install couldn't go on, and the hub couldn't go back by itself." {
+		t.Fatalf("failure = %q", state.Failure)
+	}
+	if want := []string{"launchctl kill SIGTERM gui/501/com.tonypine.jobsearchhub.server || true", hub.machine().startServerCommand()}; !slices.Equal(state.Commands, want) {
+		t.Fatalf("commands = %q", state.Commands)
+	}
+}
+
+// requireStopped checks an install ended at rollback_failed from step,
+// without taking a step, with the commands that finish it, and with its
+// job gone.
+func (hub *fakeHub) requireStopped(state State, step Step, cause string) {
+	hub.t.Helper()
+	if state.Step != StepRollbackFailed || !state.Step.IsFinished() {
+		hub.t.Fatalf("ended at %s", state.Step)
+	}
+	if !strings.Contains(state.Error, "couldn't go on from "+string(step)) || !strings.Contains(state.Error, cause) {
+		hub.t.Fatalf("error = %q", state.Error)
+	}
+	if state.Failure == "" || len(state.Commands) == 0 || state.Commands[len(state.Commands)-1] != hub.machine().startServerCommand() {
+		hub.t.Fatalf("failure %q, commands %q", state.Failure, state.Commands)
+	}
+	if len(hub.calls) != 0 {
+		hub.t.Fatalf("it took steps: %v", hub.calls)
+	}
+	if _, err := os.Stat(hub.jobPlist()); !errors.Is(err, os.ErrNotExist) {
+		hub.t.Fatalf("the job is still there: %v", err)
+	}
+	// The app decodes the state, and reads the install as ended rather
+	// than under way, so it takes the next one.
+	data, err := os.ReadFile(hub.statePath())
+	if err != nil {
+		hub.t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(data, &saved); err != nil {
+		hub.t.Fatal(err)
+	}
+	for _, key := range []string{"from", "to", "installed", "new_app", "reopen_app", "from_migration", "to_migration", "started_at", "step"} {
+		if _, found := saved[key]; !found {
+			hub.t.Fatalf("the saved state lacks %s, which the app needs: %s", key, data)
+		}
+	}
+	if saved["step"] != string(StepRollbackFailed) {
+		hub.t.Fatalf("saved step = %v", saved["step"])
+	}
+	// A run after that does nothing more.
+	if again := hub.run(); again.Step != StepRollbackFailed || len(hub.calls) != 0 || again.Error != state.Error {
+		hub.t.Fatalf("a second run went on: %+v, %v", again, hub.calls)
+	}
+}
+
+func TestAStateThatCantBeUsedStopsTheRollback(t *testing.T) {
+	for _, resume := range []struct {
+		step          Step
+		swapped, kept bool
+	}{
+		{StepWaitingForApp, false, false},
+		{StepStoppingServer, false, false},
+		{StepSwapping, false, false},
+		{StepSwapping, true, false},
+		{StepStartingServer, true, true},
+		{StepCheckingServer, true, true},
+		{StepOpeningApp, true, true},
+		{StepCheckingApp, true, true},
+	} {
+		for _, lack := range []string{"installed", "started_at"} {
+			t.Run(fmt.Sprintf("%s swapped %v without %s", resume.step, resume.swapped, lack), func(t *testing.T) {
+				hub := newFakeHub(t)
+				state := hub.prepare(true, true)
+				// A dump, which a state without its start can't tell from
+				// an earlier install's.
+				dump := filepath.Join(hub.backups, "hub-pre-migration-88.dump")
+				if err := os.WriteFile(dump, []byte("dump"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				hub.layOut(resume.step, resume.swapped, resume.kept)
+				state.Step, state.Runs = resume.step, 1
+				switch lack {
+				case "installed":
+					state.Installed = ""
+				case "started_at":
+					state.StartedAt = time.Time{}
+				}
+				hub.save(state)
+
+				state = hub.run()
+				hub.requireStopped(state, resume.step, "lacks")
+				if state.Runs != 1 {
+					t.Fatalf("runs = %d", state.Runs)
+				}
+				for _, command := range state.Commands {
+					if lack == "started_at" && strings.Contains(command, "database restore") {
+						t.Fatalf("it would restore a dump that isn't this install's: %q", state.Commands)
+					}
+					if strings.Contains(command, "''") {
+						t.Fatalf("a command names a path the state lacks: %q", command)
+					}
+				}
+				swapBack := slices.ContainsFunc(state.Commands, func(command string) bool { return strings.HasPrefix(command, "mv ") })
+				if want := lack != "installed" && resume.swapped; swapBack != want {
+					t.Fatalf("swap back = %v, want %v: %q", swapBack, want, state.Commands)
+				}
+			})
+		}
+	}
+}
+
+func TestAnInstallStoppedFromOutsideStopsTheRollback(t *testing.T) {
+	hub := newFakeHub(t)
+	state := hub.prepare(false, true)
+	hub.layOut(StepCheckingServer, true, true)
+	state.Step, state.Runs = StepCheckingServer, 1
+	hub.save(state)
+
+	state, err := hub.machine().Stop(context.Background(), errors.New("read the server's settings: line 1 isn't NAME=value"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.requireStopped(state, StepCheckingServer, "server's settings")
+	want := "mv " + quote(hub.installed()) + " " + quote(filepath.Join(hub.updates, "failed-0.1.252.app")) + " && mv " + quote(hub.previous()) + " " + quote(hub.installed())
+	if !slices.Contains(state.Commands, want) {
+		t.Fatalf("commands = %q, want the swap back", state.Commands)
+	}
+	if state.Failure != "The install of 0.1.252 couldn't go on, and the hub couldn't go back by itself." {
+		t.Fatalf("failure = %q", state.Failure)
+	}
+
+	// An install that already ended stays as it ended.
+	if again, err := hub.machine().Stop(context.Background(), errors.New("again")); err != nil || again.Error != state.Error {
+		t.Fatalf("again = %+v, %v", again, err)
 	}
 }
