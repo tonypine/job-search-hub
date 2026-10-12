@@ -678,7 +678,13 @@ func (machine *Machine) commandsToFinish(state State) []string {
 		commands = append(commands, quote(CommandPath(oldApp, "hub-server"))+" database restore "+quote(state.Dump))
 	}
 	if remains(StepSwappingBack) && state.Installed != "" && state.From != "" && !isVersion(state.Installed, state.From) {
-		failed := filepath.Join(machine.Updates, "failed-"+state.To+".app")
+		// A state without what was being installed can't name the
+		// archive after it: it goes under a name without the version.
+		archived := "failed-install.app"
+		if state.To != "" {
+			archived = "failed-" + state.To + ".app"
+		}
+		failed := filepath.Join(machine.Updates, archived)
 		commands = append(commands, "mv "+quote(state.Installed)+" "+quote(failed)+" && mv "+quote(oldApp)+" "+quote(state.Installed))
 	}
 	commands = append(commands, machine.startServerCommand())

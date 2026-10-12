@@ -895,7 +895,7 @@ func TestAStateThatCantBeUsedStopsTheRollback(t *testing.T) {
 		{StepOpeningApp, true, true},
 		{StepCheckingApp, true, true},
 	} {
-		for _, lack := range []string{"installed", "started_at"} {
+		for _, lack := range []string{"installed", "started_at", "to"} {
 			t.Run(fmt.Sprintf("%s swapped %v without %s", resume.step, resume.swapped, lack), func(t *testing.T) {
 				hub := newFakeHub(t)
 				state := hub.prepare(true, true)
@@ -912,6 +912,8 @@ func TestAStateThatCantBeUsedStopsTheRollback(t *testing.T) {
 					state.Installed = ""
 				case "started_at":
 					state.StartedAt = time.Time{}
+				case "to":
+					state.To = ""
 				}
 				hub.save(state)
 
@@ -923,6 +925,9 @@ func TestAStateThatCantBeUsedStopsTheRollback(t *testing.T) {
 				for _, command := range state.Commands {
 					if lack == "started_at" && strings.Contains(command, "database restore") {
 						t.Fatalf("it would restore a dump that isn't this install's: %q", state.Commands)
+					}
+					if lack == "to" && strings.Contains(command, "failed-.app") {
+						t.Fatalf("it would archive the new bundle without its version: %q", state.Commands)
 					}
 					if strings.Contains(command, "''") {
 						t.Fatalf("a command names a path the state lacks: %q", command)
