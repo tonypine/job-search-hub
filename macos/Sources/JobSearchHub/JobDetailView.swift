@@ -143,8 +143,8 @@ extension JobDetailModel {
 
 /// One job in the inspector: its header with the verdict strip and its
 /// actions, then Overview (why it fits, the screen, the people), Prep once
-/// pursued (the CV and the interview pack), Posting (the board's facts, the
-/// facts read, the posting) and its Session.
+/// pursued (the CV and the interview pack), Posting (the key facts, then the
+/// posting to read) and its Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
@@ -201,9 +201,8 @@ struct JobDetailView: View {
                         if model.factsError != nil {
                             HubErrorView($model.factsError)
                         }
-                        boardFacts(details.job)
-                        readFacts(details.facts)
-                        posting(details.job).id(Anchor.posting)
+                        JobPostingTab(jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting)
+                            .id(jobID)
                     case .session:
                         InspectorSessionTab(subject: .job(jobID), client: client)
                     default:
@@ -619,92 +618,5 @@ struct JobDetailView: View {
                 Button("Email \(email)") { NSWorkspace.shared.open(mail) }
             }
         }
-    }
-
-    // MARK: Posting
-
-    @ViewBuilder
-    private func posting(_ job: Job) -> some View {
-        if let description = job.description, !description.isEmpty {
-            HubSection("Posting") {
-                MarkdownDocument(description)
-            } trailing: {
-                if let url = URL(string: job.url) {
-                    Link("Open", destination: url)
-                }
-            }
-        }
-    }
-
-    private func boardFacts(_ job: Job) -> some View {
-        HubSection("From the board") {
-            FactGrid {
-                FactRow("Pay") {
-                    if let pay = job.pay {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(pay.ranges.enumerated()), id: \.offset) { _, range in
-                                Text([range.label, range.format()].compactMap { $0 }.joined(separator: ": "))
-                            }
-                            if let summary = pay.summary {
-                                Text(summary).foregroundStyle(.secondary)
-                            }
-                        }
-                    } else {
-                        Text("Not published").foregroundStyle(.secondary)
-                    }
-                }
-                FactRow("Workplace", text: job.workplaceType)
-                FactRow("Employment", text: job.employmentType)
-                FactRow("Department", text: job.department)
-                FactRow("Also hiring in", text: job.otherLocations?.joined(separator: ", "))
-                FactRow("Published", text: job.publishedAt?.formatted(date: .abbreviated, time: .omitted))
-                FactRow("First seen", text: job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
-            }
-        }
-    }
-
-    private func readFacts(_ facts: LabelledJobFacts?) -> some View {
-        HubSection("Read from the posting") {
-            if let facts {
-                FactGrid {
-                    ForEach(facts.entries) { entry in
-                        FactRow(entry.title, help: entry.description) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                switch entry.display {
-                                case let .text(text): Text(text)
-                                case let .list(items): Text(items.joined(separator: ", "))
-                                case .notStated: Text("Not stated").foregroundStyle(.secondary)
-                                }
-                                if let evidence = entry.evidence {
-                                    Evidence(text: evidence)
-                                }
-                            }
-                        }
-                    }
-                }
-                Text("Read by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
-                    .font(.hubCaption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text("Not read yet. The hub reads new postings as they arrive, unless its model work is paused.")
-                    .foregroundStyle(.secondary)
-            }
-            readFactsNowRow
-        }
-    }
-
-    /// The "Read facts now" button, and where its run stands.
-    private var readFactsNowRow: some View {
-        HStack(spacing: Space.s) {
-            AsyncButton("Read facts now", busyTitle: "Reading…", systemImage: "arrow.clockwise", isBusy: model.isReadingFacts) {
-                await model.readFactsNow(jobID, with: client)
-            }
-            switch model.factsReadState {
-            case .queued: Text("Waiting for its turn").foregroundStyle(.secondary)
-            case .running: Text("Reading now").foregroundStyle(.secondary)
-            case .notQueued: EmptyView()
-            }
-        }
-        .padding(.top, Space.xs)
     }
 }
