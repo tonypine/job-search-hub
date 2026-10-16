@@ -289,7 +289,11 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	brokenFix := addAgentRun(store.AgentRunKindJobFix, "not a job")
 	seed := addAgentRun(store.AgentRunKindProfileSeed, "owner profile")
 
+	// The migration links the runs; the rest bring the columns ListRuns reads.
 	if _, err := provider.UpTo(ctx, runSubjectsMigration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
 	page, err := hub.ListRuns(ctx, store.RunFilter{Limit: 100})
@@ -336,9 +340,6 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	}
 	if subject := runs[fix].Subject; subject == nil || subject.Title != "Frontend Engineer" || subject.CompanyName != "Acme" {
 		t.Errorf("the fix's subject = %+v", subject)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatal(err)
 	}
 }
 
