@@ -43,7 +43,8 @@ type Run struct {
 	Record  string      `json:"record"`
 	Kind    string      `json:"kind"`
 	Subject *RunSubject `json:"subject,omitempty"`
-	// Model is empty for an agent run, whose model Claude Code picks.
+	// Model is empty for an agent run started with no model, whose model
+	// Claude Code picks.
 	Model     string    `json:"model"`
 	Provider  string    `json:"provider"`
 	StartedAt time.Time `json:"started_at"`
@@ -52,11 +53,15 @@ type Run struct {
 	Outcome          string `json:"outcome"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
-	// CostUSDEstimate is what Claude reported an agent run cost, as text so
-	// the decimal is never rounded.
+	// CostUSDEstimate is what the provider reported a run cost, as text so
+	// the decimal is never rounded: OpenRouter's charge, or what Claude
+	// reckons the run would cost on its API.
 	CostUSDEstimate *string `json:"cost_usd_estimate,omitempty"`
 	Error           string  `json:"error,omitempty"`
 	StartedByOwner  bool    `json:"started_by_owner"`
+	// FallbackFor names the provider a model call stood in for, when it ran
+	// on its route's fallback.
+	FallbackFor string `json:"fallback_for,omitempty"`
 }
 
 // RunFilter narrows the runs: to a kind, to a subject by id (and type, when
@@ -113,12 +118,12 @@ func decodeRunCursor(cursor string) (time.Time, uuid.UUID, error) {
 const runsQuery = `
 	WITH runs AS (
 		SELECT id, 'model_call' AS record, kind, subject_type, subject_id, model, provider, started_at, duration_ms, outcome,
-			prompt_tokens, completion_tokens, NULL::text AS cost_usd_estimate, error, started_by_owner
+			prompt_tokens, completion_tokens, cost_usd::text AS cost_usd_estimate, error, started_by_owner, fallback_for
 		FROM task_runs
 		UNION ALL
-		SELECT id, 'agent_run', kind, subject_type, subject_id, '', 'Claude', started_at,
+		SELECT id, 'agent_run', kind, subject_type, subject_id, model, 'Claude', started_at,
 			CASE WHEN finished_at IS NOT NULL THEN round(extract(epoch FROM finished_at - started_at) * 1000)::integer END, status,
-			0, 0, cost_usd_estimate::text, error, true
+			0, 0, cost_usd_estimate::text, error, true, ''
 		FROM agent_runs
 	)
 	SELECT runs.id, runs.record, runs.kind, runs.subject_type, runs.subject_id,
@@ -131,7 +136,7 @@ const runsQuery = `
 		END, ''),
 		companies.id, coalesce(companies.name, ''),
 		runs.model, runs.provider, runs.started_at, runs.duration_ms, runs.outcome, runs.prompt_tokens, runs.completion_tokens,
-		runs.cost_usd_estimate, runs.error, runs.started_by_owner
+		runs.cost_usd_estimate, runs.error, runs.started_by_owner, runs.fallback_for
 	FROM runs
 	LEFT JOIN jobs ON runs.subject_type = 'job' AND jobs.id = runs.subject_id
 	LEFT JOIN companies ON companies.id = CASE WHEN runs.subject_type = 'company' THEN runs.subject_id ELSE jobs.company_id END
@@ -154,7 +159,7 @@ func scanRun(row pgx.CollectableRow) (Run, error) {
 	var subjectTitle, companyName string
 	err := row.Scan(&run.ID, &run.Record, &run.Kind, &subjectType, &subjectID, &subjectTitle, &companyID, &companyName,
 		&run.Model, &run.Provider, &run.StartedAt, &run.DurationMS, &run.Outcome, &run.PromptTokens, &run.CompletionTokens,
-		&run.CostUSDEstimate, &run.Error, &run.StartedByOwner)
+		&run.CostUSDEstimate, &run.Error, &run.StartedByOwner, &run.FallbackFor)
 	if err != nil || subjectType == nil {
 		return run, err
 	}

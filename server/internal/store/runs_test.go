@@ -20,7 +20,7 @@ import (
 func startAgentRunAt(t *testing.T, pool *pgxpool.Pool, hub *store.Store, kind, input string, subjectID *uuid.UUID, at time.Time) store.AgentRun {
 	t.Helper()
 	ctx := context.Background()
-	run, err := hub.StartAgentRun(ctx, kind, input, subjectID, 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
+	run, err := hub.StartAgentRun(ctx, kind, input, subjectID, "", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,11 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	brokenFix := addAgentRun(store.AgentRunKindJobFix, "not a job")
 	seed := addAgentRun(store.AgentRunKindProfileSeed, "owner profile")
 
+	// The migration links the runs; the rest bring the columns ListRuns reads.
 	if _, err := provider.UpTo(ctx, runSubjectsMigration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
 	page, err := hub.ListRuns(ctx, store.RunFilter{Limit: 100})
@@ -337,7 +341,41 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	if subject := runs[fix].Subject; subject == nil || subject.Title != "Frontend Engineer" || subject.CompanyName != "Acme" {
 		t.Errorf("the fix's subject = %+v", subject)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatal(err)
+}
+
+func TestARunKeepsItsCostItsFallbackAndAnAgentsModel(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	recorded, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
+		Kind: store.AgentPromptKindRecruiterScreen, Provider: "Local model", Model: "qwen", StartedAt: at, Duration: time.Second,
+		Outcome: store.RunOutcomeSucceeded, CostUSD: "0.0001234", FallbackFor: "OpenRouter",
+	})
+	if err != nil || recorded.CostUSD == nil || *recorded.CostUSD != "0.0001234" || recorded.FallbackFor != "OpenRouter" {
+		t.Fatalf("recorded = %+v, %v", recorded, err)
+	}
+	unpriced, err := hub.RecordTaskRun(ctx, store.NewTaskRun{Kind: store.AgentPromptKindJobFacts, StartedAt: at.Add(time.Minute), Outcome: store.RunOutcomeSucceeded})
+	if err != nil || unpriced.CostUSD != nil || unpriced.FallbackFor != "" {
+		t.Fatalf("a run with no cost = %+v, %v", unpriced, err)
+	}
+	run, err := hub.StartAgentRun(ctx, store.AgentRunKindProfileSeed, "owner profile", nil, "opus", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
+	if err != nil || run.Model != "opus" {
+		t.Fatalf("agent run = %+v, %v", run, err)
+	}
+
+	page, err := hub.ListRuns(ctx, store.RunFilter{})
+	if err != nil || len(page.Runs) != 3 {
+		t.Fatalf("runs = %+v, %v", page, err)
+	}
+	byID := map[uuid.UUID]store.Run{}
+	for _, listed := range page.Runs {
+		byID[listed.ID] = listed
+	}
+	if listed := byID[recorded.ID]; listed.CostUSDEstimate == nil || *listed.CostUSDEstimate != "0.0001234" || listed.FallbackFor != "OpenRouter" {
+		t.Errorf("the model call = %+v", listed)
+	}
+	if listed := byID[run.ID]; listed.Model != "opus" {
+		t.Errorf("the agent run = %+v", listed)
 	}
 }

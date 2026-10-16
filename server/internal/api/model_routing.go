@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/openrouter"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -25,9 +26,24 @@ type taskRoutesResponse struct {
 	Routes []store.TaskRoute `json:"routes"`
 }
 
+// providerModelsResponse names a provider's models, and describes each in
+// Catalog: OpenRouter's with their prices per million tokens, in US dollars.
 type providerModelsResponse struct {
-	Models []string `json:"models"`
+	Models  []string        `json:"models"`
+	Catalog []providerModel `json:"catalog"`
 }
+
+type providerModel struct {
+	ID                  string  `json:"id"`
+	Name                string  `json:"name,omitempty"`
+	InputUSDPerMillion  *string `json:"input_usd_per_million,omitempty"`
+	OutputUSDPerMillion *string `json:"output_usd_per_million,omitempty"`
+	ContextLength       int     `json:"context_length,omitempty"`
+}
+
+// claudeModels are the models a route to the Claude subscription names: the
+// CLI's aliases for the latest of each, which it also takes full ids beside.
+var claudeModels = []providerModel{{ID: "haiku", Name: "Claude Haiku"}, {ID: "opus", Name: "Claude Opus"}, {ID: "sonnet", Name: "Claude Sonnet"}}
 
 // RegisterModelRoutingRoutes adds the owner-only routes for the model servers
 // the hub can call and the model each kind of task runs on. A provider's key
@@ -105,17 +121,16 @@ func RegisterModelRoutingRoutes(routes *http.ServeMux, hub *store.Store, modelsD
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		var models []string
-		if provider.Kind == store.ModelProviderKindHubRuntime {
-			models, err = listModelFiles(modelsDir)
-		} else {
-			models, err = listServedModels(r.Context(), provider)
-		}
+		catalog, err := listProviderModels(r.Context(), provider, modelsDir)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, providerModelsResponse{Models: models})
+		models := make([]string, 0, len(catalog))
+		for _, model := range catalog {
+			models = append(models, model.ID)
+		}
+		writeJSON(w, http.StatusOK, providerModelsResponse{Models: models, Catalog: catalog})
 	})))
 
 	routes.Handle("GET /v1/task-routes", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +157,41 @@ func RegisterModelRoutingRoutes(routes *http.ServeMux, hub *store.Store, modelsD
 			writeJSON(w, http.StatusOK, saved)
 		}
 	})))
+}
+
+// listProviderModels lists the models provider runs: the GGUF files in the
+// models folder for the hub runtime, Claude's for the Claude subscription,
+// OpenRouter's catalogue, or what an OpenAI-compatible server serves.
+func listProviderModels(ctx context.Context, provider store.ModelProvider, modelsDir string) ([]providerModel, error) {
+	var names []string
+	var err error
+	switch provider.Kind {
+	case store.ModelProviderKindClaudeSubscription:
+		return claudeModels, nil
+	case store.ModelProviderKindOpenRouter:
+		offered, err := openrouter.ListModels(ctx, provider.BaseURL, provider.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		catalog := make([]providerModel, 0, len(offered))
+		for _, model := range offered {
+			catalog = append(catalog, providerModel{ID: model.ID, Name: model.Name, InputUSDPerMillion: model.InputUSDPerMillion,
+				OutputUSDPerMillion: model.OutputUSDPerMillion, ContextLength: model.ContextLength})
+		}
+		return catalog, nil
+	case store.ModelProviderKindHubRuntime:
+		names, err = listModelFiles(modelsDir)
+	default:
+		names, err = listServedModels(ctx, provider)
+	}
+	if err != nil {
+		return nil, err
+	}
+	catalog := make([]providerModel, 0, len(names))
+	for _, name := range names {
+		catalog = append(catalog, providerModel{ID: name})
+	}
+	return catalog, nil
 }
 
 // listModelFiles names the GGUF files in the models folder.

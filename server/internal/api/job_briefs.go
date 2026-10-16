@@ -34,7 +34,7 @@ func RegisterJobBriefRoutes(routes *http.ServeMux, hub *store.Store, writer full
 			return
 		}
 		if writer == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "full briefs are off: the hub found no Claude CLI"})
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "full briefs are off: no model is routed for them"})
 			return
 		}
 		if _, err := hub.GetJobToBrief(r.Context(), id); errors.Is(err, store.ErrJobNotFound) {

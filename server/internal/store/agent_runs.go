@@ -40,12 +40,15 @@ const (
 )
 
 type AgentRun struct {
-	ID                 uuid.UUID       `json:"id"`
-	Kind               string          `json:"kind"`
-	Input              string          `json:"input"`
-	SubjectType        *string         `json:"subject_type,omitempty"`
-	SubjectID          *uuid.UUID      `json:"subject_id,omitempty"`
-	Status             string          `json:"status"`
+	ID          uuid.UUID  `json:"id"`
+	Kind        string     `json:"kind"`
+	Input       string     `json:"input"`
+	SubjectType *string    `json:"subject_type,omitempty"`
+	SubjectID   *uuid.UUID `json:"subject_id,omitempty"`
+	Status      string     `json:"status"`
+	// Model is the Claude model the run was started with, from its kind's
+	// route or the runner's choice; empty leaves it to Claude Code.
+	Model              string          `json:"model,omitempty"`
 	AgentPromptVersion *int            `json:"agent_prompt_version,omitempty"`
 	TokenExpiresAt     time.Time       `json:"token_expires_at"`
 	ClaudeSessionID    string          `json:"claude_session_id,omitempty"`
@@ -58,12 +61,12 @@ type AgentRun struct {
 
 // The cost is read as text so the decimal Claude reported is never rounded
 // through a float.
-const agentRunColumns = `id, kind, input, subject_type, subject_id, status, agent_prompt_version, token_expires_at, claude_session_id,
+const agentRunColumns = `id, kind, input, subject_type, subject_id, status, model, agent_prompt_version, token_expires_at, claude_session_id,
 	cost_usd_estimate::text, result, error, started_at, finished_at`
 
 func scanAgentRun(row pgx.Row) (AgentRun, error) {
 	var run AgentRun
-	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.SubjectType, &run.SubjectID, &run.Status, &run.AgentPromptVersion, &run.TokenExpiresAt,
+	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.SubjectType, &run.SubjectID, &run.Status, &run.Model, &run.AgentPromptVersion, &run.TokenExpiresAt,
 		&run.ClaudeSessionID, &run.CostUSDEstimate, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentRun{}, ErrAgentRunNotFound
@@ -72,20 +75,20 @@ func scanAgentRun(row pgx.Row) (AgentRun, error) {
 }
 
 // StartAgentRun records a running agent run given version promptVersion of its
-// prompt. subjectID is the job or company the run is for, nil when it isn't
+// prompt, on model, empty when Claude Code picks it. subjectID is the job or company the run is for, nil when it isn't
 // known yet; its type is the kind's. A profile seed is for the owner's
 // profile, which has no id. Only the token's hash is stored; the token itself
 // exists only in the caller's hands.
-func (s *Store) StartAgentRun(ctx context.Context, kind, input string, subjectID *uuid.UUID, promptVersion int, tokenHash []byte,
+func (s *Store) StartAgentRun(ctx context.Context, kind, input string, subjectID *uuid.UUID, model string, promptVersion int, tokenHash []byte,
 	tokenExpiresAt time.Time) (AgentRun, error) {
 	var subjectType *string
 	if subjectID != nil || kind == AgentRunKindProfileSeed {
 		subjectType = getRunSubjectType(kind)
 	}
 	return scanAgentRun(s.pool.QueryRow(ctx, `
-		INSERT INTO agent_runs (kind, input, subject_type, subject_id, agent_prompt_version, token_hash, token_expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING `+agentRunColumns, kind, input, subjectType, subjectID, promptVersion, tokenHash, tokenExpiresAt))
+		INSERT INTO agent_runs (kind, input, subject_type, subject_id, model, agent_prompt_version, token_hash, token_expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING `+agentRunColumns, kind, input, subjectType, subjectID, model, promptVersion, tokenHash, tokenExpiresAt))
 }
 
 type AgentRunOutcome struct {

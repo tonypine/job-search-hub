@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -267,6 +268,20 @@ func run() error {
 	if err := hub.EnsureDefaultTaskRoutes(ctx, settings.jobFactsModelURL, settings.jobFactsModel, store.RoutedTaskKinds); err != nil {
 		return fmt.Errorf("seed the task routes: %w", err)
 	}
+	// Finding the Claude CLI adds the owner's Claude subscription as a
+	// provider. The Claude model in the settings seeds the routes of full
+	// briefs and tailored CVs, which ran on it before they had routes.
+	var claude *claudeprint.Client
+	if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
+		slog.Warn("Claude runs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
+	} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
+		slog.Warn("Claude runs off: no folder to run Claude in", "error", err)
+	} else {
+		claude = &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Drain: drainer}
+		if _, err := hub.EnsureClaudeTaskRoutes(ctx, settings.fullBriefModel, store.ClaudeTaskKinds); err != nil {
+			return fmt.Errorf("add the Claude provider: %w", err)
+		}
+	}
 	taskRoutes, err := hub.ListTaskRoutes(ctx)
 	if err != nil {
 		return fmt.Errorf("read the task routes: %w", err)
@@ -312,8 +327,9 @@ func run() error {
 		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
 			Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Provider: record.Provider, Model: record.Model,
 			PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
-			PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, StartedAt: record.StartedAt,
+			PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, CostUSD: record.CostUSD, StartedAt: record.StartedAt,
 			Duration: record.Duration, Outcome: record.Outcome, Error: record.Error, StartedByOwner: record.StartedByOwner,
+			FallbackFor: record.FallbackFor,
 		}); err != nil {
 			slog.Warn("record a task run", "kind", record.Kind, "error", err)
 		}
@@ -324,6 +340,7 @@ func run() error {
 		modelClient.Runtime = modelRuntime
 		modelClient.Queue = modelQueue
 		modelClient.RecordRun = recordTaskRun
+		modelClient.Claude = claude
 	}
 	if modelClient != nil {
 		go conversationtriage.NewClassifier(hub, modelClient).Run(workCtx, conversationTriageInterval)
@@ -345,26 +362,33 @@ func run() error {
 		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(workCtx, marketGapsCheckInterval)
 		go interviewpacks.NewPreparer(hub, modelClient).Run(workCtx, interviewPackInterval)
 		go hiringthread.NewReader(hub, modelClient).Run(workCtx, hiringThreadInterval)
-		if claudeBinary, err := exec.LookPath(settings.claudeBinary); err != nil {
-			slog.Warn("full briefs off: the Claude CLI isn't found", "claude", settings.claudeBinary)
-		} else if err := os.MkdirAll(settings.claudeFolder, 0o700); err != nil {
-			slog.Warn("full briefs off: no folder to run Claude in", "error", err)
-		} else {
-			claude := &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: settings.fullBriefModel, RecordRun: recordTaskRun, Drain: drainer}
-			briefWriter.FullClient = claude
+		// Full briefs and tailored CVs run on their kinds' routes, which can
+		// change while the hub runs; a kind with no route at start stays off.
+		if isKindRouted(taskRoutes, store.RunKindJobBriefFull) {
+			briefWriter.FullClient = modelClient
 			fullBriefs = briefWriter
-			cvDrafter = cvdrafts.NewDrafter(hub, claude)
+			go briefWriter.RunNightly(workCtx, fullBriefCheckInterval)
+			slog.Info("full briefs on")
+		} else {
+			slog.Warn("full briefs off: no model is routed for them")
+		}
+		if isKindRouted(taskRoutes, store.AgentPromptKindJobCV) {
+			cvDrafter = cvdrafts.NewDrafter(hub, modelClient)
 			cvDrafter.Rates = rates
 			cvDrafter.IsPaused = modelWork.IsPaused
 			if cvPrinter != nil {
 				cvDrafter.Printer = cvPrinter
 			}
 			go cvDrafter.Run(workCtx, cvDraftInterval)
-			go briefWriter.RunNightly(workCtx, fullBriefCheckInterval)
+		} else {
+			slog.Warn("CV drafts off: no model is routed for tailored CVs")
+		}
+		if claude != nil {
 			newClaudeClient = func(model string) comparisons.ModelClient {
-				return &claudeprint.Client{Binary: claudeBinary, Directory: settings.claudeFolder, Model: model, RecordRun: recordTaskRun, Drain: drainer}
+				client := *claude
+				client.Model, client.RecordRun = model, recordTaskRun
+				return &client
 			}
-			slog.Info("full briefs on", "model", settings.fullBriefModel)
 		}
 	}
 	if fullBriefs != nil {
@@ -487,6 +511,11 @@ func shutDown(server *http.Server, drainer *drain.Drain, stopWork context.Cancel
 		_ = server.Close()
 	}
 	slog.Info("hub-server shut down")
+}
+
+// isKindRouted says whether routes has one for kind.
+func isKindRouted(routes []store.TaskRoute, kind string) bool {
+	return slices.ContainsFunc(routes, func(route store.TaskRoute) bool { return route.Kind == kind })
 }
 
 // waitForModelRuntime waits up to timeout for the model runtime's Run to

@@ -53,7 +53,8 @@ type RunTotals struct {
 	// AverageDurationMS is over the runs that finished, nil when none did.
 	AverageDurationMS *int `json:"average_duration_ms"`
 	// CostUSD is what the runs that report a cost cost, as text so the
-	// decimal is never rounded. Today those are Claude agent runs.
+	// decimal is never rounded: Claude agent runs, and model calls on a
+	// provider that charges for them, such as OpenRouter.
 	CostUSD string `json:"cost_usd"`
 	// ClaudePlanRuns are the model calls on the owner's Claude plan, which
 	// cost nothing more and count as zero in CostUSD.
@@ -137,11 +138,13 @@ func getRunBucketEdges(from, to time.Time, bucket string, location *time.Locatio
 
 // runMetricsRuns merges both records' runs started from $1 until before $2,
 // of kind $3 or of every kind when it's empty. A model call through the
-// Claude CLI is on the owner's Claude plan; an agent run reports its cost.
+// Claude CLI is on the owner's Claude plan, so what Claude reckons it would
+// cost on its API counts as nothing; a model call that a provider charged
+// for, and an agent run, report their cost.
 const runMetricsRuns = `
 	WITH runs AS (
-		SELECT kind, started_at, outcome, prompt_tokens, completion_tokens, duration_ms, NULL::numeric AS cost_usd,
-			base_url = 'claude-cli' AS on_claude_plan
+		SELECT kind, started_at, outcome, prompt_tokens, completion_tokens, duration_ms,
+			CASE WHEN base_url <> 'claude-cli' THEN cost_usd END AS cost_usd, base_url = 'claude-cli' AS on_claude_plan
 		FROM task_runs
 		WHERE started_at >= $1 AND started_at < $2 AND ($3 = '' OR kind = $3)
 		UNION ALL

@@ -76,9 +76,10 @@ type config struct {
 	// when the server runs the database, or pg_dump from the PATH.
 	backupsDir string
 	pgDump     string
-	// claudeBinary is the Claude Code CLI full briefs are written with,
-	// fullBriefModel the model it runs, and claudeFolder the empty folder
-	// it runs in, so no project's instructions reach the model.
+	// claudeBinary is the Claude Code CLI the Claude subscription's routes
+	// run on, fullBriefModel the Claude model that seeds the routes of full
+	// briefs and tailored CVs when they have none, and claudeFolder the
+	// empty folder it runs in, so no project's instructions reach the model.
 	claudeBinary   string
 	fullBriefModel string
 	claudeFolder   string

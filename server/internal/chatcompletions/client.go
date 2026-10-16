@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,15 @@ type Client struct {
 	// RecordRun, when set, hears about every request once it ends, whatever
 	// its outcome, for the hub's record of task runs.
 	RecordRun func(context.Context, RunRecord)
+	// Headers are sent with every request, as the app attribution OpenRouter
+	// reads.
+	Headers map[string]string
+	// AskForCost asks the server to report each request's cost with its
+	// usage, as OpenRouter does.
+	AskForCost bool
+	// ReadError, when set, reads the server's own errors: an answer other
+	// than 200, or a 200 that carries an error instead of choices.
+	ReadError func(status int, payload []byte) error
 }
 
 // The outcomes of a request.
@@ -68,13 +78,19 @@ type RunRecord struct {
 	Output           json.RawMessage
 	PromptTokens     int
 	CompletionTokens int
-	StartedAt        time.Time
-	Duration         time.Duration
-	Outcome          string
-	Error            string
+	// CostUSD is what the provider said the request cost, in US dollars, as
+	// the decimal it reported; empty when it said nothing.
+	CostUSD   string
+	StartedAt time.Time
+	Duration  time.Duration
+	Outcome   string
+	Error     string
 	// StartedByOwner says the owner asked for the request, rather than the
 	// hub starting it by itself.
 	StartedByOwner bool
+	// FallbackFor names the provider the request stood in for, when its
+	// route's provider was unreachable and it ran on the fallback.
+	FallbackFor string
 }
 
 // TaskLabel says what a request is for: the record keeps it; the model never
@@ -156,7 +172,7 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (An
 	if client.RecordRun != nil {
 		record := RunRecord{
 			Kind: request.GetRunKind(), Task: request.Task, BaseURL: client.BaseURL, Provider: client.Provider, Model: request.Model,
-			InputHash: HashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+			InputHash: HashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens, CostUSD: usage.Cost.String(),
 			StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: outcome, StartedByOwner: IsStartedByOwner(ctx),
 		}
 		if err != nil {
@@ -175,6 +191,8 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (An
 type tokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// Cost is what a server such as OpenRouter says the request cost.
+	Cost json.Number `json:"cost"`
 }
 
 // HashInput identifies what the model was asked, so runs on the same input
@@ -200,13 +218,17 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 	if request.SchemaNotEnforced {
 		responseFormat = map[string]any{"type": "json_object"}
 	}
-	body, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"model":           request.Model,
 		"temperature":     0,
 		"max_tokens":      request.MaxTokens,
 		"messages":        buildMessages(system, request),
 		"response_format": responseFormat,
-	})
+	}
+	if client.AskForCost {
+		fields["usage"] = map[string]bool{"include": true}
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return nil, tokenUsage{}, RunFailed, err
 	}
@@ -217,6 +239,9 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 	httpRequest.Header.Set("Content-Type", "application/json")
 	if client.APIKey != "" {
 		httpRequest.Header.Set("Authorization", "Bearer "+client.APIKey)
+	}
+	for name, value := range client.Headers {
+		httpRequest.Header.Set(name, value)
 	}
 
 	response, err := client.HTTPClient.Do(httpRequest)
@@ -229,6 +254,9 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 		return nil, tokenUsage{}, RunFailed, err
 	}
 	if response.StatusCode != http.StatusOK {
+		if client.ReadError != nil {
+			return nil, tokenUsage{}, RunFailed, client.ReadError(response.StatusCode, payload)
+		}
 		return nil, tokenUsage{}, RunFailed, fmt.Errorf("the model server answered %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
@@ -241,11 +269,20 @@ func (client *Client) complete(ctx context.Context, request JSONRequest) (json.R
 			} `json:"message"`
 		} `json:"choices"`
 		Usage tokenUsage `json:"usage"`
+		// Error is an error a server reports in a 200, as OpenRouter does
+		// when the model it routed to fails.
+		Error *struct {
+			Code json.RawMessage `json:"code"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(payload, &completion); err != nil {
 		return nil, tokenUsage{}, RunFailed, fmt.Errorf("read the completion: %w", err)
 	}
 	if len(completion.Choices) == 0 {
+		if completion.Error != nil && client.ReadError != nil {
+			status, _ := strconv.Atoi(strings.Trim(string(completion.Error.Code), `"`))
+			return nil, completion.Usage, RunFailed, client.ReadError(status, payload)
+		}
 		return nil, completion.Usage, RunFailed, errors.New("the completion has no choices")
 	}
 	choice := completion.Choices[0]
