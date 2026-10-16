@@ -257,6 +257,7 @@ struct CompaniesPage: View {
             ForEach(rows) { row in TableRow(row) }
         }
         .alternatingRowBackgrounds(.disabled)
+        .hubTableSelection(revision: [model.selectedID?.uuidString ?? ""] + rows.map(\.id))
         .overlay { emptyState(client: client) }
     }
 
