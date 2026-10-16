@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/jobfacts"
@@ -97,6 +99,20 @@ func (screener *Screener) ScreenOnce(ctx context.Context) (PassSummary, error) {
 		summary.Screened++
 	}
 	return summary, nil
+}
+
+// ScreenJob screens the job's tailored CV now, whether or not it awaits a
+// screen: the owner asked for it.
+func (screener *Screener) ScreenJob(ctx context.Context, jobID uuid.UUID) error {
+	prompt, err := screener.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindRecruiterScreen)
+	if err != nil {
+		return fmt.Errorf("read the recruiter_screen prompt: %w", err)
+	}
+	cv, err := screener.hub.GetJobCV(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	return screener.screenCV(chatcompletions.WithStartedByOwner(ctx), cv, prompt)
 }
 
 func (screener *Screener) screenCV(ctx context.Context, cv store.CV, prompt store.AgentPrompt) error {

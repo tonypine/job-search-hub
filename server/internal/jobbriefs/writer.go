@@ -138,6 +138,20 @@ func (writer *Writer) WriteOnce(ctx context.Context) (PassSummary, error) {
 	return writer.writeBriefs(ctx, writer.client, store.JobBriefTierPre, jobsToBrief, brief, summary, "")
 }
 
+// WriteBrief writes the job's pre-brief now, on the model pre-briefs are
+// routed to, whatever its fit: the owner asked for it.
+func (writer *Writer) WriteBrief(ctx context.Context, jobID uuid.UUID) error {
+	brief, err := writer.readBriefContext(ctx)
+	if err != nil {
+		return err
+	}
+	job, err := writer.hub.GetJobToBrief(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	return writer.writeBrief(chatcompletions.WithStartedByOwner(ctx), writer.client, store.JobBriefTierPre, job, brief)
+}
+
 // WriteFullBrief writes the job's full brief now, on the model full briefs
 // are routed to, whatever its fit: the owner asked for it.
 func (writer *Writer) WriteFullBrief(ctx context.Context, jobID uuid.UUID) error {
