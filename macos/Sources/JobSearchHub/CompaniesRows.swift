@@ -100,7 +100,8 @@ struct OpenJobsCell: View {
     var body: some View {
         HStack(spacing: Space.s) {
             if fittingJobs > 0 {
-                Text("\(fittingJobs) open").monospacedDigit()
+                // The count keeps its width; the chip truncates first.
+                Text("\(fittingJobs) open").monospacedDigit().layoutPriority(1)
                 if let bestMatch {
                     ToneChip("Best: \(bestMatch.title)", tone: bestMatch.tone)
                         .help("The best match the briefs found among them")

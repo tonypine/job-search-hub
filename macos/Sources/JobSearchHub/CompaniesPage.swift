@@ -116,29 +116,29 @@ struct CompaniesPage: View {
     }
 
     /// The page's controls, in its header rather than in the window's
-    /// toolbar: the scopes, a research that failed, the search, the columns
-    /// and Add.
+    /// toolbar: the scopes, then a research that failed, the search, the
+    /// columns and Add.
     private var header: some View {
         PageHeader {
-            HStack(spacing: Space.m) {
-                TabStrip(
-                    items: CompanyScope.allCases.map { scope in
-                        TabStripItem(id: scope, title: scope.title, count: model.getCount(of: scope))
-                    },
-                    selection: $model.scope
-                )
-                if case .failed = research.state {
-                    Button {
-                        isAddingCompany = true
-                    } label: {
-                        Label("Research of \(research.company) failed", systemImage: "exclamationmark.triangle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Tone.negative.color)
-                    .help("Show why, and try again")
-                }
-            }
+            TabStrip(
+                items: CompanyScope.allCases.map { scope in
+                    TabStripItem(id: scope, title: scope.title, count: model.getCount(of: scope))
+                },
+                selection: $model.scope
+            )
         } trailing: {
+            // On the trailing side, which keeps its width, so the scopes
+            // aren't squeezed out of sight when the inspector is open.
+            if case .failed = research.state {
+                Button {
+                    isAddingCompany = true
+                } label: {
+                    Label("Research failed", systemImage: "exclamationmark.triangle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Tone.negative.color)
+                .help("Research of \(research.company) failed. Show why, and try again")
+            }
             PageSearchField(text: $model.search, prompt: "Search companies")
                 .help("Search names and domains")
             CompanyColumnsMenu(customization: columnCustomization)
@@ -188,7 +188,7 @@ struct CompaniesPage: View {
             TableColumn("Company") { row in
                 CompanyCell(row: row, researchStep: getResearchStep(of: row))
             }
-            .width(min: 220, ideal: 320)
+            .width(min: 200, ideal: 260)
             .customizationID("company")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Open jobs") { row in
@@ -198,7 +198,7 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 110, ideal: 190)
+            .width(min: 160, ideal: 180)
             .customizationID("openJobs")
             TableColumn("People you know") { row in
                 switch row {
@@ -207,14 +207,14 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 90, ideal: 130)
+            .width(min: 80, ideal: 110)
             .customizationID("peopleYouKnow")
             TableColumn("You") { row in
                 if let summary = row.summary {
                     StandingCell(standing: summary.getStanding(now: .now))
                 }
             }
-            .width(min: 90, ideal: 130)
+            .width(min: 90, ideal: 120)
             .customizationID("you")
             TableColumn("Board") { row in
                 switch row {
@@ -227,7 +227,7 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 90, ideal: 130)
+            .width(min: 120, ideal: 130)
             .customizationID("board")
             TableColumn("Domain") { row in
                 optionalCell(row.summary?.company.domain)
