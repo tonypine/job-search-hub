@@ -17,8 +17,8 @@ struct PostingReader: View {
 
     private static let lineSpacing: CGFloat = 13 * 0.3
     private static let headingSpace: CGFloat = 13 * 1.25
-    private static let paragraphSpace: CGFloat = 13 * 0.75
-    private static let itemSpace: CGFloat = 13 * 0.35
+    static let paragraphSpace: CGFloat = 13 * 0.75
+    static let itemSpace: CGFloat = 13 * 0.35
     /// How far below the scroll view's top a heading counts as the one in
     /// view.
     private static let readingLine: CGFloat = 96
@@ -58,11 +58,20 @@ struct PostingReader: View {
                 Text("•").foregroundStyle(.tertiary).accessibilityHidden(true)
                 reading(index)
             }
-            .padding(.bottom, Self.itemSpace)
+            .padding(.bottom, Self.getSpaceBelow(index, in: document))
         case .paragraph:
             reading(index)
-                .padding(.bottom, Self.paragraphSpace)
+                .padding(.bottom, Self.getSpaceBelow(index, in: document))
         }
+    }
+
+    /// The space under a paragraph or a list item: list items sit close
+    /// together, and the last one leaves a paragraph's space before what
+    /// follows.
+    static func getSpaceBelow(_ index: Int, in document: PostingDocument) -> CGFloat {
+        let blocks = document.blocks
+        guard blocks[index].kind == .bullet else { return paragraphSpace }
+        return index + 1 < blocks.count && blocks[index + 1].kind == .bullet ? itemSpace : paragraphSpace
     }
 
     private func reading(_ index: Int) -> some View {
