@@ -31,11 +31,18 @@ struct RunKindsColumn: View {
                         }
                         .tag(kind.id)
                         .contextMenu { menu(kind) }
+                        // The hover's pause and the menu, for VoiceOver and
+                        // for whoever drives the app without a pointer.
+                        .accessibilityActions { actions(kind) }
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+        // The page's own background, not a second sidebar's: the state words'
+        // tones and the captions keep their contrast on it.
+        .scrollContentBackground(.hidden)
+        .background(.background)
         .safeAreaInset(edge: .top, spacing: 0) {
             head
         }
@@ -79,11 +86,27 @@ struct RunKindsColumn: View {
     @ViewBuilder
     private func menu(_ kind: RunKind) -> some View {
         if kind.isPausable {
-            Button(kind.paused ? "Resume" : "Pause", systemImage: kind.paused ? "play" : "pause") {
-                Task { await model.setPaused(!kind.paused, kind: kind, with: client) }
-            }
+            pauseButton(kind)
             Divider()
         }
+        showOnlyFailedButton(kind)
+    }
+
+    @ViewBuilder
+    private func actions(_ kind: RunKind) -> some View {
+        if kind.isPausable {
+            pauseButton(kind)
+        }
+        showOnlyFailedButton(kind)
+    }
+
+    private func pauseButton(_ kind: RunKind) -> some View {
+        Button(kind.paused ? "Resume" : "Pause", systemImage: kind.paused ? "play" : "pause") {
+            Task { await model.setPaused(!kind.paused, kind: kind, with: client) }
+        }
+    }
+
+    private func showOnlyFailedButton(_ kind: RunKind) -> some View {
         Button("Show Only Failed Runs", systemImage: "exclamationmark.circle") {
             showOnlyFailed(kind)
         }
@@ -100,13 +123,16 @@ private struct AllKindsRow: View {
             RunKindGlyph(status: all.status)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("All kinds").fontWeight(.semibold)
+                    Text("All kinds").fontWeight(.semibold).lineLimit(1)
                     Spacer(minLength: Space.s)
                     Text(all.stateWord).font(.hubCaption).foregroundStyle(all.status == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(all.status.tone.color))
+                        .lineLimit(1)
                 }
                 Text(all.activityLine).font(.hubCaption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let pausedLine = all.pausedLine {
                     Text(pausedLine).font(.hubCaption).foregroundStyle(Tone.caution.color)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -131,7 +157,10 @@ private struct RunKindRow: View {
             RunKindGlyph(status: status)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    // The name keeps its room; the word gives way first.
                     Text(kind.title).lineLimit(1)
+                        .layoutPriority(1)
+                        .help(kind.title)
                     Spacer(minLength: Space.s)
                     if isHovering && kind.isPausable {
                         AsyncButton(kind.paused ? "Resume" : "Pause", busyTitle: kind.paused ? "Resuming…" : "Pausing…",

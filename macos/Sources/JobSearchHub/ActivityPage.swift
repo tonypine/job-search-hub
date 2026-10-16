@@ -139,6 +139,7 @@ struct ActivityPage: View {
     /// The kind shown, kept when the app reopens; empty for All kinds.
     @AppStorage("activitySelectedKind") private var selectedKindID = ""
     @AppStorage("activityShowsRunKinds") private var showsRunKinds = true
+    @AppStorage("activityRunKindsWidth") private var runKindsWidth = 268.0
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @State private var kinds = RunKindsModel()
@@ -151,7 +152,11 @@ struct ActivityPage: View {
             if let client = connection.makeClient() {
                 VStack(spacing: 0) {
                     header
-                    HSplitView {
+                    // Not a split view: its panes' least widths, added up,
+                    // would widen the window when the inspector opens. The
+                    // column keeps its width, and the kind's page takes what
+                    // is left and gives way to the inspector.
+                    HStack(spacing: 0) {
                         if showsRunKinds {
                             RunKindsColumn(
                                 model: kinds, selection: selection, client: client,
@@ -160,10 +165,13 @@ struct ActivityPage: View {
                                     showsOnlyFailed = true
                                 }
                             )
-                            .frame(minWidth: 220, idealWidth: 268, maxWidth: 400)
+                            .frame(width: min(max(runKindsWidth, Self.runKindsWidths.lowerBound), Self.runKindsWidths.upperBound))
+                            ColumnResizeHandle(width: $runKindsWidth, range: Self.runKindsWidths)
+                                .zIndex(1)
                         }
                         kindPage(client)
-                            .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                            .clipped()
                     }
                 }
                 .task(id: events.revision) {
@@ -177,6 +185,8 @@ struct ActivityPage: View {
         .navigationTitle("Activity")
         .navigationSubtitle(selectedKind?.title ?? "All kinds")
     }
+
+    static let runKindsWidths = 220.0...400.0
 
     /// The selected kind; nil on All kinds, and while the kinds load.
     private var selectedKind: RunKind? {
@@ -238,7 +248,8 @@ private struct RunKindHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                Text(kind?.title ?? "All kinds").font(.hubEntity)
+                Text(kind?.title ?? "All kinds").font(.hubEntity).lineLimit(1)
+                    .layoutPriority(1)
                 let status = kind.map { $0.getStatus(failedCount: model.getFailedCount($0)) } ?? model.all.status
                 ToneChip(status.title, tone: status.tone, symbol: status.symbolName)
                 if let kind, let kindModel = model.getModel(for: kind) {
@@ -300,5 +311,43 @@ private struct RunKindHeader: View {
             FactRow("Held by a pause", text: strip.held, help: "The calls of paused kinds that wait for a resume")
         }
         .font(.hubSecondary)
+    }
+}
+
+/// The line between the run kinds column and the kind's page: dragged, it
+/// sets the column's width within range.
+private struct ColumnResizeHandle: View {
+    @Binding var width: Double
+    let range: ClosedRange<Double>
+    /// The width when the drag began.
+    @State private var startWidth: Double?
+
+    var body: some View {
+        Divider()
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .pointerStyle(.columnResize)
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { drag in
+                                let start = startWidth ?? width
+                                startWidth = start
+                                width = min(max(start + drag.translation.width, range.lowerBound), range.upperBound)
+                            }
+                            .onEnded { _ in startWidth = nil }
+                    )
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Run kinds column width")
+            .accessibilityValue("\(Int(width)) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: width = min(width + 20, range.upperBound)
+                case .decrement: width = max(width - 20, range.lowerBound)
+                @unknown default: break
+                }
+            }
     }
 }

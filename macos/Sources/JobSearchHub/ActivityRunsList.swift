@@ -76,7 +76,7 @@ final class ActivityRunsModel {
 
 /// A kind's runs, or every kind's on All kinds, read again on each hub
 /// event. A run's job and company open in the inspector; a failed run,
-/// selected, shows its error and what to open.
+/// selected, shows its error and what to open under the table.
 struct ActivityRunsList: View {
     let model: ActivityRunsModel
     /// Nil for All kinds, whose rows name each run's kind.
@@ -124,29 +124,75 @@ struct ActivityRunsList: View {
         }
     }
 
+    /// The runs as a table, whose columns give way to the inspector rather
+    /// than widen the window, with the selected failed run under it.
     private var list: some View {
-        List(selection: $selectedRunID) {
-            ForEach(model.runs) { run in
-                ActivityRunRow(
-                    run: run, showsKind: kind == nil, isSelected: selectedRunID == run.id,
-                    open: { subject in details.show(subject, from: .activity) },
+        VStack(spacing: 0) {
+            Table(model.runs, selection: $selectedRunID) {
+                TableColumn("") { run in
+                    Image(systemName: run.outcomeSymbol)
+                        .foregroundStyle(Tone.ofRunOutcome(run.outcome).color)
+                        .help(run.outcome)
+                        .accessibilityLabel(run.outcome)
+                }
+                .width(18)
+                if kind == nil {
+                    TableColumn("Kind") { run in
+                        Text(RunsSummary.getKindTitle(run.kind)).lineLimit(1)
+                    }
+                    .width(min: 80, ideal: 130)
+                }
+                TableColumn("Ran for") { run in
+                    RunSubjectCell(run: run) { subject in details.show(subject, from: .activity) }
+                }
+                .width(min: 120, ideal: 320)
+                TableColumn("Model") { run in
+                    Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
+                        .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
+                }
+                .width(min: 60, ideal: 130)
+                TableColumn("Took") { run in
+                    Text(run.durationText).monospacedDigit().foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .width(min: 44, ideal: 60)
+                TableColumn("Tokens or cost") { run in
+                    Text(run.usageText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .help(run.usageText ?? "")
+                }
+                .width(min: 60, ideal: 130)
+                TableColumn("Started") { run in
+                    Text(run.startedAt.formatted(Self.startFormat)).foregroundStyle(.secondary).lineLimit(1)
+                        .help(run.startedAt.formatted(date: .complete, time: .standard))
+                }
+                .width(min: 80, ideal: 120)
+            }
+            if let run = selectedFailedRun {
+                Divider()
+                FailedRunDetail(
+                    run: run, open: { subject in details.show(subject, from: .activity) },
                     showPrompt: { promptRun = run }
                 )
-                .tag(run.id)
             }
             if model.hasMore {
-                HStack {
-                    Spacer()
-                    AsyncButton("Show More Runs", busyTitle: "Loading…", isBusy: model.isLoadingMore) {
-                        await model.loadMore(with: client)
-                    }
-                    Spacer()
+                Divider()
+                AsyncButton("Show More Runs", busyTitle: "Loading…", isBusy: model.isLoadingMore) {
+                    await model.loadMore(with: client)
                 }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
                 .padding(.vertical, Space.s)
-                .selectionDisabled()
             }
         }
-        .listStyle(.inset)
+    }
+
+    /// A run's start: the day and the time, short enough for its column.
+    private static let startFormat = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
+
+    private var selectedFailedRun: ActivityRun? {
+        guard let selectedRunID, let run = model.runs.first(where: { $0.id == selectedRunID }), run.isFailed else { return nil }
+        return run
     }
 
     /// Keys the read: again for another kind or filter, and on each update
@@ -157,14 +203,54 @@ struct ActivityRunsList: View {
     }
 }
 
-/// A run: its outcome, its kind on All kinds, what it ran for as links that
-/// open it, a chip when you started it, its model, how long it took, its
-/// tokens or cost, and when it started. Selected and failed, it shows its
-/// error and what to open.
-private struct ActivityRunRow: View {
+/// What a run was for: each part that opens something is a link, and a
+/// chip when you started the run.
+private struct RunSubjectCell: View {
     let run: ActivityRun
-    let showsKind: Bool
-    let isSelected: Bool
+    let open: (InspectorSubject) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+            let parts = run.subjectParts
+            if parts.isEmpty {
+                Text("—").foregroundStyle(.secondary)
+            }
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                if index > 0 {
+                    Text("·").foregroundStyle(.secondary)
+                }
+                if let opens = part.opens {
+                    Button(part.text) { open(opens) }
+                        .buttonStyle(.link)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(Self.describeOpening(opens, part.text))
+                        // The job gives way before the company.
+                        .layoutPriority(index == 0 ? 0 : 1)
+                } else {
+                    Text(part.text).lineLimit(1)
+                }
+            }
+            if run.startedByOwner {
+                ToneChip("You", tone: .accent)
+                    .help("You started this run")
+                    .layoutPriority(2)
+            }
+        }
+    }
+
+    static func describeOpening(_ subject: InspectorSubject, _ text: String) -> String {
+        switch subject {
+        case .job: "Open the job \(text)"
+        case .company: "Open the company \(text)"
+        default: "Open \(text)"
+        }
+    }
+}
+
+/// A failed run, selected: what it was for, its error, and what to open.
+private struct FailedRunDetail: View {
+    let run: ActivityRun
     let open: (InspectorSubject) -> Void
     let showPrompt: () -> Void
 
@@ -173,66 +259,20 @@ private struct ActivityRunRow: View {
             HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                 Image(systemName: run.outcomeSymbol)
                     .foregroundStyle(Tone.ofRunOutcome(run.outcome).color)
-                    .frame(width: 14)
-                    .accessibilityLabel(run.outcome)
-                if showsKind {
-                    Text(RunsSummary.getKindTitle(run.kind)).fontWeight(.medium).lineLimit(1)
-                        .frame(width: 160, alignment: .leading)
-                }
-                subject
-                if run.startedByOwner {
-                    ToneChip("You", tone: .accent)
-                        .help("You started this run")
-                }
-                Spacer(minLength: Space.s)
-                Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
-                    .help(run.provider.isEmpty ? "" : "From \(run.provider)")
-                Text(run.durationText).monospacedDigit().foregroundStyle(.secondary)
-                    .frame(width: 80, alignment: .trailing)
-                Text(run.usageText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                    .frame(width: 150, alignment: .trailing)
-                Text(run.startedAt.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(.secondary).lineLimit(1)
-                    .frame(width: 130, alignment: .trailing)
-            }
-            if isSelected && run.isFailed {
-                failedDetail
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// What the run was for: each part that opens something is a link.
-    @ViewBuilder
-    private var subject: some View {
-        let parts = run.subjectParts
-        if parts.isEmpty {
-            Text("—").foregroundStyle(.secondary)
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                    if index > 0 {
-                        Text("·").foregroundStyle(.secondary)
-                    }
-                    if let opens = part.opens {
-                        Button(part.text) { open(opens) }
-                            .buttonStyle(.link)
-                            .lineLimit(1)
-                            .help(Self.describeOpening(opens))
-                    } else {
-                        Text(part.text).lineLimit(1)
-                    }
+                Text("\(RunsSummary.getKindTitle(run.kind)) failed").font(.hubSecondary.weight(.semibold))
+                if let subject = run.subjectText {
+                    Text(subject).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-        }
-    }
-
-    private var failedDetail: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            Text(describeError())
-                .font(.hubSecondary)
-                .foregroundStyle(Tone.negative.color)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Text(describeError())
+                    .font(.hubSecondary)
+                    .foregroundStyle(Tone.negative.color)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 120)
+            .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: Space.s) {
                 if let jobID = run.jobID {
                     Button("Open Job", systemImage: "briefcase") { open(.job(jobID)) }
@@ -247,20 +287,13 @@ private struct ActivityRunRow: View {
             }
             .controlSize(.small)
         }
-        .padding(.leading, 22)
+        .padding(Space.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func describeError() -> String {
         if let error = run.error, !error.isEmpty { return error }
         return run.outcome == "invalid" ? "The model answered, but not in the shape asked for." : "The hub recorded no error."
-    }
-
-    private static func describeOpening(_ subject: InspectorSubject) -> String {
-        switch subject {
-        case .job: "Open this job"
-        case .company: "Open this company"
-        default: "Open"
-        }
     }
 }
 
