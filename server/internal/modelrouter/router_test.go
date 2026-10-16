@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
@@ -248,6 +250,47 @@ func TestARequestOnAGivenModelSkipsTheRoute(t *testing.T) {
 	}
 	if len(routed.received) != 0 || other.received[0]["model"] != "chosen-model" {
 		t.Fatalf("routed got %d requests; other got %v", len(routed.received), other.received)
+	}
+}
+
+func TestAModelChosenForOneRunIsUsedForItsKindAndRecordedUnderTheStartsID(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	routed := startModelServer(t, `{"stack":"Routed"}`)
+	route(t, hub, routed.url, true, "", nil)
+	other := startModelServer(t, `{"stack":"Go"}`)
+	provider, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{Name: "Other", BaseURL: other.url, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []chatcompletions.RunRecord
+	router := modelrouter.New(hub)
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+	runID := uuid.New()
+	ctx := chatcompletions.WithRunID(modelrouter.WithModel(context.Background(), store.AgentPromptKindJobFacts, provider.ID, "chosen-model"),
+		store.AgentPromptKindJobFacts, runID)
+
+	if answer, err := router.CompleteJSON(ctx, request); err != nil || string(answer.Object) != `{"stack":"Go"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(routed.received) != 0 || other.received[0]["model"] != "chosen-model" {
+		t.Fatalf("routed got %d requests; other got %v", len(routed.received), other.received)
+	}
+	if len(records) != 1 || records[0].ID == nil || *records[0].ID != runID || records[0].Model != "chosen-model" {
+		t.Fatalf("records = %+v", records)
+	}
+	if saved, _ := hub.GetTaskRoute(context.Background(), store.AgentPromptKindJobFacts); saved.Model != "routed-model" {
+		t.Fatalf("the route changed: %+v", saved)
+	}
+
+	// Another kind's request, and the next of this kind, keep to the route
+	// or get an id of their own.
+	if _, err := router.CompleteJSON(ctx, request); err != nil || records[1].ID != nil {
+		t.Fatalf("the second request: %v, record %+v", err, records[1])
+	}
+	screen := request
+	screen.SchemaName = store.AgentPromptKindRecruiterScreen
+	if _, err := router.CompleteJSON(ctx, screen); err == nil {
+		t.Fatal("a recruiter screen with no route of its own ran on the model chosen for job facts")
 	}
 }
 
