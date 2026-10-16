@@ -15,7 +15,7 @@ import (
 
 func startRun(t *testing.T, hub *store.Store, tokenHash string, expiresAt time.Time) store.AgentRun {
 	t.Helper()
-	run, err := hub.StartAgentRun(context.Background(), store.AgentRunKindCompanyTriage, "stripe.com", nil, 1, []byte(tokenHash), expiresAt)
+	run, err := hub.StartAgentRun(context.Background(), nil, store.AgentRunKindCompanyTriage, "stripe.com", nil, "", 1, []byte(tokenHash), expiresAt)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

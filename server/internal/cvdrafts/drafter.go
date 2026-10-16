@@ -34,7 +34,7 @@ const (
 )
 
 // ErrNoCVDrafts says the hub has no way to draft CVs.
-var ErrNoCVDrafts = errors.New("CV drafts are off: no Claude CLI is set up")
+var ErrNoCVDrafts = errors.New("CV drafts are off: no model is routed for tailored CVs")
 
 type modelClient interface {
 	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
@@ -53,9 +53,9 @@ type cvPrinter interface {
 	PrintCV(ctx context.Context, actor store.Actor, cvID uuid.UUID) (store.CV, error)
 }
 
-// Drafter drafts tailored CVs through client, Claude, and prints them with
-// Printer when there is one. Rates judge foreign pay in the fit that picks
-// which jobs get a CV on their own.
+// Drafter drafts tailored CVs through client, on the job_cv route, and
+// prints them with Printer when there is one. Rates judge foreign pay in the
+// fit that picks which jobs get a CV on their own.
 type Drafter struct {
 	hub     *store.Store
 	client  modelClient

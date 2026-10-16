@@ -31,7 +31,7 @@ const (
 	// a local model's context.
 	maximumDescriptionLength = 12_000
 	maximumAnswerTokens      = 1500
-	// maximumNightlyFullBriefs is how many full briefs Claude writes a night.
+	// maximumNightlyFullBriefs is how many full briefs are written a night.
 	maximumNightlyFullBriefs = 10
 	// nightStartHour and nightEndHour are the local hours the night's full
 	// briefs may start between.
@@ -43,8 +43,8 @@ type modelClient interface {
 	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
-// Writer writes pre-briefs through client, the local model's route, and
-// full briefs through FullClient, Claude, when it's set.
+// Writer writes pre-briefs through client, on the job_brief route, and full
+// briefs through FullClient, on the job_brief_full route, when it's set.
 type Writer struct {
 	hub        *store.Store
 	client     modelClient
@@ -61,7 +61,7 @@ func NewWriter(hub *store.Store, client modelClient, rates jobfit.RateSource) *W
 }
 
 // ErrNoFullBriefs says the hub has no way to write full briefs.
-var ErrNoFullBriefs = errors.New("full briefs are off: no Claude CLI is set up")
+var ErrNoFullBriefs = errors.New("full briefs are off: no model is routed for them")
 
 // PassSummary counts one pass over the jobs to brief.
 type PassSummary struct {
@@ -138,8 +138,22 @@ func (writer *Writer) WriteOnce(ctx context.Context) (PassSummary, error) {
 	return writer.writeBriefs(ctx, writer.client, store.JobBriefTierPre, jobsToBrief, brief, summary, "")
 }
 
-// WriteFullBrief writes the job's full brief with Claude, now, whatever its
-// fit: the owner asked for it.
+// WriteBrief writes the job's pre-brief now, on the model pre-briefs are
+// routed to, whatever its fit: the owner asked for it.
+func (writer *Writer) WriteBrief(ctx context.Context, jobID uuid.UUID) error {
+	brief, err := writer.readBriefContext(ctx)
+	if err != nil {
+		return err
+	}
+	job, err := writer.hub.GetJobToBrief(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	return writer.writeBrief(chatcompletions.WithStartedByOwner(ctx), writer.client, store.JobBriefTierPre, job, brief)
+}
+
+// WriteFullBrief writes the job's full brief now, on the model full briefs
+// are routed to, whatever its fit: the owner asked for it.
 func (writer *Writer) WriteFullBrief(ctx context.Context, jobID uuid.UUID) error {
 	if writer.FullClient == nil {
 		return ErrNoFullBriefs

@@ -2,8 +2,8 @@ import JobSearchHubCore
 import SwiftUI
 
 /// Markdown drawn as a document: headings in bold at a larger size, bullets
-/// and paragraphs, with bold and links inside them. The Profile page and a
-/// job's posting use it.
+/// and paragraphs, with bold and links inside them. The Profile page uses
+/// it; a job's posting has `PostingReader`.
 struct MarkdownDocument: View {
     let blocks: [MarkdownBlock]
 

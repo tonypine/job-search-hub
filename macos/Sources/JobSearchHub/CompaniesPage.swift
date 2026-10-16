@@ -121,16 +121,26 @@ struct CompaniesPage: View {
             TableColumn("Company") { summary in
                 HStack(spacing: Space.s) {
                     UnseenDot(count: summary.unseenUpdates)
-                    Text(summary.company.name)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(summary.company.name)
+                        Text(summary.company.contextLine)
+                            .font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
+                            .help(summary.company.contextLine)
+                    }
                 }
             }
+            // Wide enough for the name and "Payments · 51-200 people" at the window's opening size.
+            .width(min: 200, ideal: 260)
             TableColumn("Domain", value: \.company.domain)
+                .width(min: 80, ideal: 120)
             TableColumn("Watched since") { summary in
                 Text(summary.watchedSince.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "–")
             }
+            .width(min: 80, ideal: 100)
             TableColumn("Job board") { summary in
                 Text(summary.jobBoards.first?.summaryLine ?? "–")
             }
+            .width(min: 80, ideal: 120)
             TableColumn("People") { summary in
                 Text("\(summary.peopleCount)")
             }
@@ -144,6 +154,7 @@ struct CompaniesPage: View {
                 Text(summary.company.foundVia ?? "")
                     .help(summary.company.foundVia ?? "")
             }
+            .width(min: 60, ideal: 120)
         }
         .overlay {
             if let loadError = model.loadError {

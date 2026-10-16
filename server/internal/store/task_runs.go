@@ -23,16 +23,24 @@ type TaskRun struct {
 	Output           json.RawMessage `json:"output,omitempty"`
 	PromptTokens     int             `json:"prompt_tokens"`
 	CompletionTokens int             `json:"completion_tokens"`
-	StartedAt        time.Time       `json:"started_at"`
-	DurationMS       int             `json:"duration_ms"`
-	Outcome          string          `json:"outcome"`
-	Error            string          `json:"error,omitempty"`
-	StartedByOwner   bool            `json:"started_by_owner"`
+	// CostUSD is what the provider said the run cost, as text so the
+	// decimal is never rounded; nil when it said nothing.
+	CostUSD        *string   `json:"cost_usd,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
+	DurationMS     int       `json:"duration_ms"`
+	Outcome        string    `json:"outcome"`
+	Error          string    `json:"error,omitempty"`
+	StartedByOwner bool      `json:"started_by_owner"`
+	// FallbackFor names the provider the run stood in for, when it ran on
+	// its route's fallback.
+	FallbackFor string `json:"fallback_for,omitempty"`
 }
 
 // NewTaskRun is a finished request to record. Its subject's type is its
-// kind's, from the catalog of run kinds.
+// kind's, from the catalog of run kinds. ID is the id a run the owner
+// started was given, nil for a new one.
 type NewTaskRun struct {
+	ID               *uuid.UUID
 	Kind             string
 	SubjectID        *uuid.UUID
 	BaseURL          string
@@ -44,11 +52,14 @@ type NewTaskRun struct {
 	Output           json.RawMessage
 	PromptTokens     int
 	CompletionTokens int
-	StartedAt        time.Time
-	Duration         time.Duration
-	Outcome          string
-	Error            string
-	StartedByOwner   bool
+	// CostUSD is a decimal, or empty when the provider said nothing.
+	CostUSD        string
+	StartedAt      time.Time
+	Duration       time.Duration
+	Outcome        string
+	Error          string
+	StartedByOwner bool
+	FallbackFor    string
 }
 
 // TaskRunFilter narrows the list: one kind, one outcome, and how many.
@@ -64,13 +75,13 @@ const (
 )
 
 const taskRunColumns = `id, kind, subject_id, subject_type, base_url, provider, model, prompt_version, input_hash, output, prompt_tokens,
-	completion_tokens, started_at, duration_ms, outcome, error, started_by_owner`
+	completion_tokens, cost_usd::text, started_at, duration_ms, outcome, error, started_by_owner, fallback_for`
 
 func scanTaskRun(row pgx.Row) (TaskRun, error) {
 	var run TaskRun
 	err := row.Scan(&run.ID, &run.Kind, &run.SubjectID, &run.SubjectType, &run.BaseURL, &run.Provider, &run.Model, &run.PromptVersion,
-		&run.InputHash, &run.Output, &run.PromptTokens, &run.CompletionTokens, &run.StartedAt, &run.DurationMS, &run.Outcome, &run.Error,
-		&run.StartedByOwner)
+		&run.InputHash, &run.Output, &run.PromptTokens, &run.CompletionTokens, &run.CostUSD, &run.StartedAt, &run.DurationMS, &run.Outcome,
+		&run.Error, &run.StartedByOwner, &run.FallbackFor)
 	return run, err
 }
 
@@ -90,13 +101,14 @@ func (s *Store) RecordTaskRun(ctx context.Context, input NewTaskRun) (TaskRun, e
 		subjectType = getRunSubjectType(input.Kind)
 	}
 	return scanTaskRun(s.pool.QueryRow(ctx, `
-		INSERT INTO task_runs (kind, subject_id, subject_type, base_url, provider, model, prompt_id, prompt_version, input_hash, output,
-			prompt_tokens, completion_tokens, started_at, duration_ms, outcome, error, started_by_owner)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		INSERT INTO task_runs (id, kind, subject_id, subject_type, base_url, provider, model, prompt_id, prompt_version, input_hash, output,
+			prompt_tokens, completion_tokens, cost_usd, started_at, duration_ms, outcome, error, started_by_owner, fallback_for)
+		VALUES (coalesce($1, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, '')::numeric, $15, $16, $17,
+			$18, $19, $20)
 		RETURNING `+taskRunColumns,
-		input.Kind, input.SubjectID, subjectType, input.BaseURL, input.Provider, input.Model, input.PromptID, promptVersion, input.InputHash,
-		output, input.PromptTokens, input.CompletionTokens, input.StartedAt, int(input.Duration.Milliseconds()), input.Outcome, input.Error,
-		input.StartedByOwner))
+		input.ID, input.Kind, input.SubjectID, subjectType, input.BaseURL, input.Provider, input.Model, input.PromptID, promptVersion, input.InputHash,
+		output, input.PromptTokens, input.CompletionTokens, input.CostUSD, input.StartedAt, int(input.Duration.Milliseconds()), input.Outcome,
+		input.Error, input.StartedByOwner, input.FallbackFor))
 }
 
 // ListTaskRuns returns the runs the filter keeps, the latest first.
