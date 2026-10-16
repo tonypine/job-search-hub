@@ -26,6 +26,7 @@ func printDossier(out io.Writer, dossier store.CompanyDossier) {
 	var facts []string
 	for _, fact := range []struct{ label, value string }{
 		{"", company.WebsiteURL},
+		{"", company.Industry},
 		{"careers: ", company.CareersURL},
 		{"HQ: ", company.HeadquartersCountry},
 		{"employees: ", company.EmployeeCountRange},
