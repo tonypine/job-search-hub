@@ -310,10 +310,10 @@ func run() error {
 
 	recordTaskRun := func(ctx context.Context, record chatcompletions.RunRecord) {
 		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
-			Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Model: record.Model,
+			Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Provider: record.Provider, Model: record.Model,
 			PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
 			PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, StartedAt: record.StartedAt,
-			Duration: record.Duration, Outcome: record.Outcome, Error: record.Error,
+			Duration: record.Duration, Outcome: record.Outcome, Error: record.Error, StartedByOwner: record.StartedByOwner,
 		}); err != nil {
 			slog.Warn("record a task run", "kind", record.Kind, "error", err)
 		}

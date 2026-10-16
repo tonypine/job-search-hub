@@ -101,7 +101,7 @@ func (runner *Runner) run(ctx context.Context, comparisonID uuid.UUID) error {
 	for _, answer := range record.Answers {
 		answered[answerKey{answer.StackID, answer.JobID}] = true
 	}
-	ctx = modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched)
+	ctx = chatcompletions.WithStartedByOwner(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched))
 	requests := map[uuid.UUID]chatcompletions.JSONRequest{}
 	for _, jobID := range record.JobIDs {
 		job, err := runner.hub.GetJobForFacts(ctx, jobID)

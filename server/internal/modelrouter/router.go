@@ -89,7 +89,7 @@ func (router *Router) waitInQueue(ctx context.Context, model string, request cha
 		return func() {}, nil
 	}
 	return router.Queue.Wait(ctx, modelqueue.Ticket{
-		Kind: request.SchemaName, SubjectID: request.Task.SubjectID, Model: model,
+		Kind: request.GetRunKind(), SubjectID: request.Task.SubjectID, Model: model,
 		Priority: modelqueue.GetPriority(ctx, getKindPriority(request.SchemaName)),
 	})
 }
@@ -119,8 +119,9 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 			err = fmt.Errorf("%w: %v", chatcompletions.ErrUnreachable, err)
 			if router.RecordRun != nil {
 				router.RecordRun(context.WithoutCancel(ctx), chatcompletions.RunRecord{
-					Kind: request.SchemaName, Task: request.Task, BaseURL: HubRuntimeAddress, Model: model,
+					Kind: request.GetRunKind(), Task: request.Task, BaseURL: HubRuntimeAddress, Provider: provider.Name, Model: model,
 					StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: chatcompletions.RunFailed, Error: err.Error(),
+					StartedByOwner: chatcompletions.IsStartedByOwner(ctx),
 				})
 			}
 			return chatcompletions.Answer{}, err
@@ -130,6 +131,7 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 	}
 	client := chatcompletions.NewClient(baseURL)
 	client.APIKey = provider.APIKey
+	client.Provider = provider.Name
 	client.RecordRun = router.RecordRun
 	request.Model = model
 	request.SchemaNotEnforced = !provider.EnforcesSchema

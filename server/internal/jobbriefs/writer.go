@@ -274,10 +274,14 @@ type pointAnswer struct {
 }
 
 func (writer *Writer) writeBrief(ctx context.Context, client modelClient, tier string, job store.JobToBrief, brief briefContext) error {
+	task := chatcompletions.TaskLabel{SubjectID: &job.Job.ID, PromptID: &brief.prompt.ID, PromptVersion: brief.prompt.Version}
+	if tier == store.JobBriefTierFull {
+		task.Kind = store.RunKindJobBriefFull
+	}
 	answer, err := client.CompleteJSON(ctx, chatcompletions.JSONRequest{
 		System: brief.rendered.Body, User: formatBriefInput(job),
 		SchemaName: store.AgentPromptKindJobBrief, Schema: brief.prompt.ResultSchema, Examples: brief.prompt.Examples, MaxTokens: maximumAnswerTokens,
-		Task: chatcompletions.TaskLabel{SubjectID: &job.Job.ID, PromptID: &brief.prompt.ID, PromptVersion: brief.prompt.Version},
+		Task: task,
 	})
 	if err != nil {
 		return err

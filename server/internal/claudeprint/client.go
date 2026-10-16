@@ -20,6 +20,9 @@ import (
 // BaseURL is what the run record names as the server of a Claude CLI run.
 const BaseURL = "claude-cli"
 
+// Provider is what the run record names as the provider of a Claude CLI run.
+const Provider = "Claude"
+
 // Client runs the CLI at Binary in Directory, an empty folder of its own so
 // no project's instructions reach the model, with Model ("sonnet", or a full
 // model id). RecordRun, when set, is told about every run. Drain, when set,
@@ -56,14 +59,14 @@ func (client *Client) CompleteJSON(ctx context.Context, request chatcompletions.
 	if request.Task.SubjectID != nil {
 		subject = request.Task.SubjectID.String()
 	}
-	end, err := client.Drain.Begin(drain.TypeClaudeRun, request.SchemaName, subject)
+	end, err := client.Drain.Begin(drain.TypeClaudeRun, request.GetRunKind(), subject)
 	if err != nil {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: %w", chatcompletions.ErrUnreachable, err)
 	}
 	defer end()
 	record := chatcompletions.RunRecord{
-		Kind: request.SchemaName, Task: request.Task, BaseURL: BaseURL, Model: client.Model,
-		InputHash: chatcompletions.HashInput(request), StartedAt: time.Now(),
+		Kind: request.GetRunKind(), Task: request.Task, BaseURL: BaseURL, Provider: Provider, Model: client.Model,
+		InputHash: chatcompletions.HashInput(request), StartedAt: time.Now(), StartedByOwner: chatcompletions.IsStartedByOwner(ctx),
 	}
 	answer, err := client.run(ctx, request, &record)
 	record.Duration = time.Since(record.StartedAt)

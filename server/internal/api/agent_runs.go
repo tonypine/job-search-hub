@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -98,6 +99,7 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 		}
 
 		var rendered prompts.Rendered
+		var subjectID *uuid.UUID
 		var err error
 		switch {
 		case isProfileSeed:
@@ -114,15 +116,19 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such job"})
 				return
 			}
+			subjectID = &jobID
 		default:
 			rendered, err = prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
+			if err == nil {
+				subjectID, err = findCompanyID(r.Context(), hub, request.Input)
+			}
 		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the prompt: " + err.Error()})
 			return
 		}
 		token, tokenHash := tokens.NewAgentRunToken()
-		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, rendered.Version, tokenHash, time.Now().Add(agentRunTokenLifetime))
+		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, subjectID, rendered.Version, tokenHash, time.Now().Add(agentRunTokenLifetime))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
@@ -194,4 +200,14 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 			writeJSON(w, http.StatusOK, agentRunResponse{AgentRun: run})
 		}
 	})))
+}
+
+// findCompanyID is the id of the company a company run's input names, nil
+// when the hub doesn't know it yet, as before its first research.
+func findCompanyID(ctx context.Context, hub *store.Store, input string) (*uuid.UUID, error) {
+	company, found, err := prompts.FindStoredCompany(ctx, hub, input)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &company.ID, nil
 }
