@@ -11,7 +11,8 @@ import (
 )
 
 // RegisterModelWorkRoutes adds the owner-only routes that show the hub's
-// model work, pause and resume it, and read one job's facts now.
+// model work, pause and resume every kind of it, and read one job's facts
+// now.
 func RegisterModelWorkRoutes(routes *http.ServeMux, controls *modelwork.Controls, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	writeStatus := func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +26,7 @@ func RegisterModelWorkRoutes(routes *http.ServeMux, controls *modelwork.Controls
 	routes.Handle("GET /v1/model-work", requireOwner(http.HandlerFunc(writeStatus)))
 	for path, paused := range map[string]bool{"/v1/model-work/pause": true, "/v1/model-work/resume": false} {
 		routes.Handle("POST "+path, requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if err := controls.SetPaused(r.Context(), owner, paused); err != nil {
+			if err := controls.SetAllPaused(r.Context(), owner, paused); err != nil {
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 				return
 			}

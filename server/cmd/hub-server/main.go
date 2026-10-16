@@ -211,7 +211,6 @@ func run() error {
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
 	api.RegisterTaskRunRoutes(routes, hub, requireOwner)
-	api.RegisterRunKindRoutes(routes, requireOwner)
 	api.RegisterRunRoutes(routes, hub, requireOwner)
 	api.RegisterModelRoutingRoutes(routes, hub, settings.modelsDir, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
@@ -310,17 +309,17 @@ func run() error {
 		stopWork()
 		waitForModelRuntime(modelRuntimeStopped, modelRuntimeStopTimeout)
 	}()
-	// Model calls take turns through one queue, which starts paused if the
-	// owner left it paused.
-	paused, err := hub.GetModelWorkPaused(ctx)
+	// Model calls take turns through one queue, which holds each kind's
+	// pause as the owner left it; the Claude passes ask it too.
+	pauses, err := hub.GetRunKindPauses(ctx)
 	if err != nil {
-		return fmt.Errorf("read whether model work is paused: %w", err)
+		return fmt.Errorf("read which kinds of run are paused: %w", err)
 	}
-	modelQueue := modelqueue.New(paused, modelqueue.Settings{
+	modelQueue := modelqueue.New(pauses, modelqueue.Settings{
 		GetLoadedModel: func() string { return modelRuntime.Status().Model },
 		UnloadModel:    modelRuntime.Unload,
 	})
-	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime}
+	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime, Drain: drainer}
 	drainer.OnChange(modelQueue.SetDraining)
 	drainer.AddLister(func() []drain.Work { return listRunningModelCall(modelQueue) })
 
@@ -357,6 +356,7 @@ func run() error {
 	var newClaudeClient func(model string) comparisons.ModelClient
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
+		briefWriter.IsPaused = modelWork.IsPaused
 		go briefWriter.Run(workCtx, jobBriefInterval)
 		go cvscreens.NewScreener(hub, modelClient).Run(workCtx, cvScreenInterval)
 		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(workCtx, marketGapsCheckInterval)
@@ -375,6 +375,7 @@ func run() error {
 		if isKindRouted(taskRoutes, store.AgentPromptKindJobCV) {
 			cvDrafter = cvdrafts.NewDrafter(hub, modelClient)
 			cvDrafter.Rates = rates
+			cvDrafter.IsPaused = modelWork.IsPaused
 			if cvPrinter != nil {
 				cvDrafter.Printer = cvPrinter
 			}
@@ -401,10 +402,11 @@ func run() error {
 		modelWork.Facts = extractor
 		if settings.jobFactsInterval > 0 {
 			go extractor.Run(workCtx, settings.jobFactsInterval)
-			slog.Info("job facts reading on", "every", settings.jobFactsInterval.String(), "paused", paused)
+			slog.Info("job facts reading on", "every", settings.jobFactsInterval.String(), "paused", pauses[store.AgentPromptKindJobFacts])
 		}
 	}
 	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
+	api.RegisterRunKindRoutes(routes, modelWork, requireOwner)
 	if modelClient != nil {
 		comparisonRunner := comparisons.NewRunner(hub, modelClient)
 		comparisonRunner.NewClaudeClient = newClaudeClient

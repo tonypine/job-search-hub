@@ -18,6 +18,8 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/drain"
 	"github.com/tonypine/job-search-hub/server/internal/hubevents"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -67,7 +69,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterApplicationAnswerRoutes(routes, hub, requireOwner)
 	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
 	api.RegisterTaskRunRoutes(routes, hub, requireOwner)
-	api.RegisterRunKindRoutes(routes, requireOwner)
+	api.RegisterRunKindRoutes(routes, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(nil, modelqueue.Settings{}), Drain: drainer}, requireOwner)
 	api.RegisterRunRoutes(routes, hub, requireOwner)
 	api.RegisterModelRoutingRoutes(routes, hub, makeModelsDir(t), requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)

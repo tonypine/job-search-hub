@@ -46,20 +46,6 @@ func TestDefaultRoutesAreSeededOnceAndNeverOverwriteAChoice(t *testing.T) {
 	}
 }
 
-func TestModelWorkStartsPausedAndRemembersItsPause(t *testing.T) {
-	hub := store.New(testdatabase.New(t))
-	ctx := context.Background()
-	if paused, err := hub.GetModelWorkPaused(ctx); err != nil || !paused {
-		t.Fatalf("a new hub: paused = %v, %v", paused, err)
-	}
-	if err := hub.SetModelWorkPaused(ctx, owner, false); err != nil {
-		t.Fatal(err)
-	}
-	if paused, _ := hub.GetModelWorkPaused(ctx); paused {
-		t.Fatal("the resume didn't stick")
-	}
-}
-
 func TestTheClaudeModelSettingBecomesTheRoutesOfFullBriefsAndCVs(t *testing.T) {
 	pool := testdatabase.New(t)
 	hub := store.New(pool)

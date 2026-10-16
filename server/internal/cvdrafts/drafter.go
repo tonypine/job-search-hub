@@ -61,6 +61,10 @@ type Drafter struct {
 	client  modelClient
 	Printer cvPrinter
 	Rates   jobfit.RateSource
+	// IsPaused, when set, says whether a kind's background runs wait for a
+	// resume. A pass asks it before each draft; drafts the owner asks for
+	// don't.
+	IsPaused func(kind string) bool
 	// drafting serializes drafts, so a pass and a run for older postings
 	// never draft the same job twice.
 	drafting     sync.Mutex
@@ -78,13 +82,7 @@ func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 	defer ticker.Stop()
 	for {
 		if !drain.IsDraining(ctx) {
-			jobIDs, err := drafter.ListJobsNeedingCV(ctx)
-			if err != nil {
-				slog.Error("list jobs needing a CV", "error", err)
-			}
-			for _, jobID := range jobIDs[:min(len(jobIDs), maximumGeneratedPerPass)] {
-				drafter.generateAndLog(ctx, jobID)
-			}
+			drafter.generateNeededCVs(ctx)
 			drafter.printEditedCVs(ctx)
 		}
 		select {
@@ -93,6 +91,29 @@ func (drafter *Drafter) Run(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// generateNeededCVs drafts the CVs of up to maximumGeneratedPerPass jobs
+// that need one. While tailored CVs are paused it starts none, and a pause
+// during the pass lets the draft running finish.
+func (drafter *Drafter) generateNeededCVs(ctx context.Context) {
+	if drafter.isPaused() {
+		return
+	}
+	jobIDs, err := drafter.ListJobsNeedingCV(ctx)
+	if err != nil {
+		slog.Error("list jobs needing a CV", "error", err)
+	}
+	for _, jobID := range jobIDs[:min(len(jobIDs), maximumGeneratedPerPass)] {
+		if drafter.isPaused() {
+			return
+		}
+		drafter.generateAndLog(ctx, jobID)
+	}
+}
+
+func (drafter *Drafter) isPaused() bool {
+	return drafter.IsPaused != nil && drafter.IsPaused(store.AgentPromptKindJobCV)
 }
 
 // ListJobsNeedingCV returns the open jobs with no tailored CV that should

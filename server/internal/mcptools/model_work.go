@@ -25,16 +25,16 @@ type noInput struct{}
 func AddModelWorkTools(server *mcp.Server, controls *modelwork.Controls) {
 	addTool(server, &mcp.Tool{
 		Name:        "get_model_work",
-		Description: "Show the hub's model work: whether background work is paused, the call running, the calls waiting, the local model runtime's state and model, and how many jobs wait for facts.",
+		Description: "Show the hub's model work: whether every background kind is paused and which kinds are, the call running, the calls waiting, the local model runtime's state and model, and how many jobs wait for facts.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, modelwork.Status, error) {
 		status, err := controls.GetStatus(ctx)
 		return nil, status, err
 	})
 	for name, paused := range map[string]bool{"pause_model_work": true, "resume_model_work": false} {
-		description := "Pause the hub's background model work (job facts and sorting); the running call finishes and the model unloads. Runs the owner dispatches still run. Owner only."
+		description := "Pause every kind of background work the hub starts by itself, model calls and Claude runs alike; the running runs finish and the model unloads. Runs the owner dispatches still run. Owner only."
 		if !paused {
-			description = "Resume the hub's background model work. Owner only."
+			description = "Resume every kind of background work the hub starts by itself. Owner only."
 		}
 		addTool(server, &mcp.Tool{Name: name, Description: description},
 			func(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, modelwork.Status, error) {
@@ -42,7 +42,7 @@ func AddModelWorkTools(server *mcp.Server, controls *modelwork.Controls) {
 				if err != nil {
 					return nil, modelwork.Status{}, err
 				}
-				if err := controls.SetPaused(ctx, actor, paused); err != nil {
+				if err := controls.SetAllPaused(ctx, actor, paused); err != nil {
 					return nil, modelwork.Status{}, err
 				}
 				status, err := controls.GetStatus(ctx)
