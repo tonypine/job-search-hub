@@ -49,6 +49,8 @@ struct CommandPalette: View {
     let model: PaletteModel
     let actions: [PaletteAction]
     let choose: (PaletteItem) -> Void
+    /// Reads the lists again, after a load error.
+    let retry: () -> Void
     let close: () -> Void
     @State private var query = ""
     /// The rows for the query, ranked again only when it or the items
@@ -64,7 +66,7 @@ struct CommandPalette: View {
             field(rows: rows, selected: selected)
             Divider()
             if let loadError = model.loadError {
-                HubErrorView(loadError).padding(Space.m)
+                HubErrorView(loadError, retry: retry).padding(Space.m)
             }
             if rows.isEmpty {
                 Text(model.isLoading ? "Reading the jobs, companies and people…" : "Nothing matches “\(query)”")

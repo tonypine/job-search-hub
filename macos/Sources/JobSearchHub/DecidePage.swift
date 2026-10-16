@@ -189,7 +189,7 @@ struct DecidePage: View {
         .toast($model.toast)
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await reload() } }
+                HubErrorView(loadError, style: .page, retry: { Task { await reload() } })
             } else if model.items.isEmpty && !model.isLoading {
                 ContentUnavailableView("Nothing to decide", systemImage: "checkmark.circle",
                                        description: Text("Briefed jobs wait here until you pursue, skip or leave them for later."))

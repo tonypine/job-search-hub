@@ -58,47 +58,66 @@ final class GoogleSectionModel {
     }
 }
 
-/// Settings' Google connection: read-only Gmail and Calendar access, and Pub/Sub
-/// access to hear new mail, that the hub asks for again when Google expires it.
+/// Settings' Google connection as a status row: read-only Gmail and
+/// Calendar access, and Pub/Sub access to hear new mail, that the hub asks
+/// for again when Google expires it.
 struct GoogleSection: View {
     let client: HubClient
     @State private var model = GoogleSectionModel()
 
     var body: some View {
         Section {
-            if let status = model.status {
-                Label(status.summary, systemImage: status.needsSignIn ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle((status.needsSignIn ? Tone.caution : Tone.positive).color)
-                if let check = model.check {
-                    Text("Reads \(check.labelCount) Gmail labels and \(check.calendarCount) calendars as \(check.email).")
-                        .foregroundStyle(.secondary)
-                }
-                if model.failure != nil {
+            StatusRow(
+                "Google", symbol: "envelope.fill", state: model.status?.stateTitle ?? "Checking…", stateTone: model.status?.stateTone ?? .neutral,
+                detail: detail,
+                help: "Read-only access to Gmail and Calendar, for follow-ups and replies, and Pub/Sub access to hear new mail as it arrives. "
+                    + "Google expires it every 7 days while the app is in testing, and the hub asks you to connect again."
+            ) {
+                action
+            }
+            if model.failure != nil {
+                if model.status == nil {
+                    HubErrorView($model.failure) { Task { await model.load(with: client) } }
+                } else {
                     HubErrorView($model.failure)
                 }
-                HStack {
-                    Spacer()
-                    if status.connection != nil && !status.needsSignIn {
-                        AsyncButton("Check", busyTitle: "Checking…") { await model.runCheck(with: client) }
-                    }
-                    if status.configured {
-                        AsyncButton(status.connection == nil ? "Connect Google" : "Connect again", busyTitle: "Waiting for Google…") {
-                            await model.connect(with: client)
-                        }
-                    }
-                }
-                .disabled(model.isWorking)
-            } else if model.failure != nil {
-                HubErrorView($model.failure) { Task { await model.load(with: client) } }
-            } else {
-                ProgressView().controlSize(.small)
             }
-        } header: {
-            Text("Google")
-        } footer: {
-            Text("Read-only access to Gmail and Calendar, for follow-ups and replies, and Pub/Sub access to hear new mail as it arrives. Google expires it every 7 days while the app is in testing, and the hub asks you to connect again.")
-                .foregroundStyle(.secondary)
         }
         .task { await model.load(with: client) }
+    }
+
+    private var detail: String? {
+        guard let status = model.status else { return nil }
+        guard status.configured else { return "The hub has no Google OAuth client file" }
+        guard let connection = status.connection else { return "Reads Gmail and Calendar once connected" }
+        if status.needsSignIn { return "Connect again to read Gmail and Calendar" }
+        if let check = model.check {
+            return "\(check.labelCount) labels and \(check.calendarCount) calendars as \(check.email)"
+        }
+        return "Reads Gmail and Calendar as \(connection.email)"
+    }
+
+    /// Check while connected, with Connect again in its menu; Connect while
+    /// Google needs a sign-in.
+    @ViewBuilder
+    private var action: some View {
+        if let status = model.status, status.configured {
+            if model.isWorking {
+                ProgressView().controlSize(.small)
+            } else if status.needsSignIn {
+                Button(status.connection == nil ? "Connect…" : "Connect again…") {
+                    Task { await model.connect(with: client) }
+                }
+            } else {
+                Menu("Check") {
+                    Button("Connect again…") { Task { await model.connect(with: client) } }
+                } primaryAction: {
+                    Task { await model.runCheck(with: client) }
+                }
+                .menuStyle(.button)
+                .fixedSize()
+                .help("Check that the hub reads Gmail and Calendar")
+            }
+        }
     }
 }

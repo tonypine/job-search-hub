@@ -14,14 +14,20 @@ struct JobSearchHubApp: App {
     @State private var taskRunner: RemoteTaskRunner
     @State private var profileSeed = ProfileSeed()
     @State private var jobDecisions = JobDecisions()
+    @State private var newVersions = NewVersionChecker.shared
 
     init() {
-        Self.importOwnerTokenIfAsked()
-        _connection = State(initialValue: HubConnection())
+        let connection = HubConnection(importedToken: Self.importOwnerTokenIfAsked())
+        _connection = State(initialValue: connection)
         let jobFinder = CompanyJobFinder()
         _jobFinder = State(initialValue: jobFinder)
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
-        _taskRunner = State(initialValue: RemoteTaskRunner(jobFinder: jobFinder))
+        let taskRunner = RemoteTaskRunner(jobFinder: jobFinder)
+        _taskRunner = State(initialValue: taskRunner)
+        // The installer pauses the tasks while an install waits, lists them,
+        // and asks the hub through the app's connection.
+        Installer.shared.taskRunner = taskRunner
+        Installer.shared.makeClient = { connection.makeClient() }
     }
 
     var body: some Scene {
@@ -41,6 +47,7 @@ struct JobSearchHubApp: App {
                 .environment(profileSeed)
                 .environment(jobDecisions)
                 .environment(taskRunner)
+                .environment(newVersions)
                 .frame(minWidth: 900, minHeight: 600)
                 // Hub Indigo marks you and your actions: selection, links, the primary button.
                 .tint(.hubAccent)
@@ -82,7 +89,7 @@ struct JobSearchHubApp: App {
         // every page lays out.
         .windowResizability(.contentMinSize)
         .commands {
-            HubCommands(events: events)
+            HubCommands(events: events, newVersions: newVersions)
         }
 
         // A session opened in a window of its own, out of the inspector's width.
@@ -97,6 +104,7 @@ struct JobSearchHubApp: App {
         Settings {
             SettingsWindow()
                 .environment(connection)
+                .environment(newVersions)
                 .tint(.hubAccent)
         }
     }
@@ -123,12 +131,13 @@ struct JobSearchHubApp: App {
     /// into the Keychain, for setting up without typing the token:
     /// `open JobSearchHub.app --env HUB_OWNER_TOKEN=… --args --import-owner-token`.
     /// The app writes the item itself, which is what keeps later reads free of
-    /// Keychain prompts.
-    private static func importOwnerTokenIfAsked() {
+    /// Keychain prompts. When the Keychain refuses it, as in a VM, the app
+    /// still uses the token until it quits. Nil when not asked.
+    private static func importOwnerTokenIfAsked() -> OwnerTokenState? {
         guard ProcessInfo.processInfo.arguments.contains("--import-owner-token"),
               let token = ProcessInfo.processInfo.environment["HUB_OWNER_TOKEN"], !token.isEmpty
-        else { return }
-        try? OwnerTokenKeychain.save(token)
+        else { return nil }
+        return OwnerTokenState.saving(token)
     }
 }
 
@@ -147,12 +156,23 @@ struct ConnectionCheckKey: Equatable {
     let isStreamConnected: Bool
 }
 
+/// Where the owner was going when the Criteria page asked to save its
+/// changes first.
+struct PendingLeave {
+    let go: @MainActor () -> Void
+}
+
 struct ContentView: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(SidebarCounts.self) private var counts
     @Environment(JobDecisions.self) private var decisions
+    @Environment(NewVersionChecker.self) private var newVersions
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    private let installer = Installer.shared
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
     @State private var selectedPage: Page?
     /// The sidebar groups folded away, by raw value: the Hub's at first.
     @AppStorage("sidebarCollapsedGroups") private var collapsedGroups = SidebarGroup.allCases
@@ -161,10 +181,17 @@ struct ContentView: View {
     @State private var replyDraft = RecruiterReplyDraft()
     @State private var requests = PageRequests()
     @State private var palette = PaletteModel()
+    /// Moves on the palette's Try again, so its read starts over.
+    @State private var paletteReloads = 0
     @State private var isShowingPalette = false
     /// What an action run from the palette did, or why it failed.
     @State private var toast: ToastMessage?
     @State private var actionError: HubFailure?
+    /// The Criteria page's form, here so leaving the page with changes asks
+    /// to save or discard them first.
+    @State private var criteria = JobCriteriaEditor()
+    /// Where the owner was going when the page asked; nil when it isn't asking.
+    @State private var pendingLeave: PendingLeave?
     let initialJobID: UUID?
     let opensSession: Bool
 
@@ -176,7 +203,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedPage) {
+            List(selection: Binding(get: { selectedPage }, set: { page in if page != selectedPage { leave { selectedPage = page } } })) {
                 ForEach(SidebarGroup.allCases) { group in
                     if let title = group.title {
                         Section(title, isExpanded: isExpanded(group)) { rows(group) }
@@ -186,8 +213,13 @@ struct ContentView: View {
                 }
             }
             // The hub's state, where the sessions were: they're in its popover.
+            // Under it, once one is downloaded and checked, the new version.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
+                VStack(spacing: 0) {
+                    HubStatusFooter(problem: connectionProblem) { subject in openSession(subject) }
+                    versionLabel
+                        .padding(.bottom, Space.s)
+                }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
@@ -204,8 +236,17 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
+                // How the last install ended gives way to the connection
+                // banner while the hub is unreachable.
                 if let connectionProblem {
                     ConnectionBanner(problem: connectionProblem)
+                } else if let state = installer.installUnderWay {
+                    InstallUnderWayBanner(state: state)
+                } else if let notice = installer.notice {
+                    InstallNoticeBanner(
+                        notice: notice, showWhatsNew: openVersionSettings,
+                        showLog: { NSWorkspace.shared.open(newVersions.updates.logURL) }, dismiss: installer.dismissNotice
+                    )
                 }
             }
             .overlay(alignment: .bottom) {
@@ -216,6 +257,21 @@ struct ContentView: View {
                 }
             }
             .toast($toast)
+            .confirmationDialog(
+                "Save the changes to your criteria?",
+                isPresented: Binding(get: { pendingLeave != nil }, set: { if !$0 { pendingLeave = nil } }),
+                presenting: pendingLeave
+            ) { leaving in
+                Button("Save") { Task { await saveCriteria(thenRun: leaving) } }
+                    .keyboardShortcut(.defaultAction)
+                Button("Discard", role: .destructive) {
+                    criteria.revert()
+                    leaving.go()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("You have \(SaveBar.describe(criteria.changeCount)) on Criteria. Discarded, they're gone.")
+            }
         }
         .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
@@ -245,8 +301,12 @@ struct ContentView: View {
                         .ignoresSafeArea()
                         .onTapGesture { isShowingPalette = false }
                     CommandPalette(
-                        model: palette, actions: PaletteAction.getAvailable(isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count),
-                        choose: choose
+                        model: palette,
+                        actions: PaletteAction.getAvailable(
+                            isModelWorkPaused: palette.isModelWorkPaused, unseenUpdates: unseen.count, hasReadyVersion: newVersions.facts.ready != nil
+                        ),
+                        choose: choose,
+                        retry: { paletteReloads += 1 }
                     ) {
                         isShowingPalette = false
                     }
@@ -254,12 +314,41 @@ struct ContentView: View {
                 }
             }
         }
-        .task(id: isShowingPalette) {
+        // Closing the palette cancels its read; Try again starts a new one.
+        .task(id: isShowingPalette ? paletteReloads : nil) {
             if isShowingPalette, let client = connection.makeClient() {
                 await palette.load(with: client)
             }
         }
         .focusedSceneValue(\.isShowingPalette, $isShowingPalette)
+        .sheet(isPresented: Binding(get: { installer.isShowingSheet }, set: { installer.isShowingSheet = $0 })) {
+            InstallSheet()
+        }
+        // An unsaved edit's line in the install sheet shows its page.
+        .onChange(of: installer.requestedPage) {
+            if let page = installer.requestedPage {
+                installer.requestedPage = nil
+                leave { selectedPage = page }
+            }
+        }
+        // The Criteria page's form lives here; an install waits for it.
+        .onChange(of: criteria.hasChanges, initial: true) {
+            UnsavedEdits.shared.set("criteria", title: "Criteria", page: .criteria, isUnsaved: criteria.hasChanges)
+        }
+        // Up and connected: hub-update, waiting to hear this version
+        // opened, can end its check.
+        .onChange(of: events.isConnected, initial: true) {
+            if events.isConnected { installer.markLaunchedIfDue() }
+        }
+        // What the app had open when it quit for an install, reopened.
+        .task(id: connection.hasToken) {
+            if let client = connection.makeClient() {
+                await installer.reopen(
+                    with: client, openWindow: { subject in openWindow(value: subject) }, showSession: openSession,
+                    showPage: { page in selectedPage = page }
+                )
+            }
+        }
         .environment(details)
         .environment(replyDraft)
         .environment(requests)
@@ -276,25 +365,44 @@ struct ContentView: View {
         // A page opened in a folded group, from `--page` or a link, unfolds it.
         .onChange(of: selectedPage, initial: true) {
             if let group = selectedPage?.group { isExpanded(group).wrappedValue = true }
+            installer.shownPage = selectedPage
         }
     }
 
     @ViewBuilder
     private var page: some View {
         switch selectedPage {
-        case .today: TodayPage { selectedPage = $0 }
+        case .today: TodayPage { page in leave { selectedPage = page } }
         case .decide: DecidePage()
         case .updates: UpdatesPage()
         case .companies: CompaniesPage()
         case .people: PeoplePage()
         case .profile: ProfilePage()
-        case .criteria: CriteriaPage()
+        case .criteria: CriteriaPage(editor: criteria)
         case .activity: ActivityPage()
         case .prompts: PromptsPage()
         case .modelLab: ModelLabPage()
         case .jobs: JobsPage(initialJobID: initialJobID, opensSession: opensSession)
         case .pipeline: PipelinePage(initialJobID: initialJobID)
         case nil: EmptyView()
+        }
+    }
+
+    /// The foot of the sidebar: a ready version, one that installs at ⌘Q,
+    /// or an install waiting for work, whose sheet it brings back.
+    @ViewBuilder
+    private var versionLabel: some View {
+        if let target = installer.target, installer.phase == .waiting || installer.phase == .reviewing || installer.phase == .starting {
+            NewVersionLabel(
+                title: "Installing \(target.version.description)…", detail: installer.phase == .reviewing ? "Waiting for you" : installer.work.waitingSummary,
+                symbol: "arrow.triangle.2.circlepath.circle.fill", tone: .caution, help: "Show what the install waits for"
+            ) { installer.isShowingSheet = true }
+        } else if let target = installer.target, installer.phase == .whenQuit {
+            NewVersionLabel(
+                title: "Installs when you quit", detail: "New version \(target.version.description)", help: "Show what's new in Settings › Version"
+            ) { openVersionSettings() }
+        } else if let ready = newVersions.facts.ready {
+            NewVersionLabel(version: ready.version) { openVersionSettings() }
         }
     }
 
@@ -343,24 +451,55 @@ struct ContentView: View {
             details.show(subject, from: selectedPage ?? .today)
             if selectedPage == nil { selectedPage = .today }
         case let .page(page):
-            selectedPage = page
-            requests.ask(.focusList, on: page)
+            leave {
+                selectedPage = page
+                requests.ask(.focusList, on: page)
+            }
         case let .action(action):
             run(action)
+        }
+    }
+
+    /// Runs what leaves the page shown, once the Criteria page's unsaved
+    /// changes are saved or discarded; at once when there are none.
+    private func leave(_ go: @escaping @MainActor () -> Void) {
+        if selectedPage == .criteria, criteria.hasChanges {
+            pendingLeave = PendingLeave(go: go)
+        } else {
+            go()
+        }
+    }
+
+    /// Saves the criteria, then leaves; a refused save stays on the page,
+    /// which says why, and so does a hub this app can't reach yet.
+    private func saveCriteria(thenRun leaving: PendingLeave) async {
+        guard let client = connection.makeClient() else {
+            actionError = HubFailure("Couldn't save the criteria", advice: "The hub's address or token isn't set. Set them in Settings, then save again.")
+            return
+        }
+        if await criteria.save(with: client) {
+            toast = ToastMessage(text: "Saved your criteria")
+            leaving.go()
         }
     }
 
     private func run(_ action: PaletteAction) {
         switch action {
         case .addCompany:
-            selectedPage = .companies
-            requests.ask(.addCompany, on: .companies)
+            leave {
+                selectedPage = .companies
+                requests.ask(.addCompany, on: .companies)
+            }
         case .addCompanyFromSuggestions:
-            selectedPage = .companies
-            requests.ask(.addCompanyFromSuggestions, on: .companies)
+            leave {
+                selectedPage = .companies
+                requests.ask(.addCompanyFromSuggestions, on: .companies)
+            }
         case .addJobByURL:
-            selectedPage = .jobs
-            requests.ask(.addJobByURL, on: .jobs)
+            leave {
+                selectedPage = .jobs
+                requests.ask(.addJobByURL, on: .jobs)
+            }
         case .generateMissingCVs:
             guard let client = connection.makeClient() else { return }
             Task {
@@ -392,15 +531,29 @@ struct ContentView: View {
                 await unseen.markSeen(UpdateSelection(all: true), with: client)
                 if unseen.count == 0 { toast = ToastMessage(text: "Marked all updates seen") }
             }
+        case .installNewVersion, .showWhatsNew:
+            openVersionSettings()
+        case .checkForNewVersion:
+            newVersions.checkNow()
+            openVersionSettings()
         }
+    }
+
+    /// Opens Settings on its Version tab, where the ready version and
+    /// what's in it are.
+    private func openVersionSettings() {
+        settingsTab = .version
+        openSettings()
     }
 
     /// Opens a session's job or company on its Session tab over the page
     /// shown, or the profile interview beside the Profile page.
     private func openSession(_ subject: ClaudeSessionSubject) {
         if subject == .profile {
-            selectedPage = .profile
-            details.show(.profileInterview, from: .profile)
+            leave {
+                selectedPage = .profile
+                details.show(.profileInterview, from: .profile)
+            }
         } else if let selectedPage {
             details.openSession(InspectorSubject(subject), from: selectedPage)
         }

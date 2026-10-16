@@ -25,6 +25,20 @@ public enum ConnectionStatus: Equatable, Sendable {
         }
     }
 
+    /// The status in a word or two, for its status row; `message` says why.
+    public var title: String {
+        switch self {
+        case .unchecked: "Not checked"
+        case .waitingForKeychain: "Waiting for Keychain"
+        case .missingToken: "No token"
+        case .serverUnreachable: "Not reachable"
+        case .tokenRefused: "Token refused"
+        case .upgradeRequired: "Update the app"
+        case .connected: "Connected"
+        case .failed: "Check failed"
+        }
+    }
+
     /// Checks the server's health first, so a stopped server is not reported
     /// as a bad token, then makes one authenticated call.
     public static func check(baseURL: URL, token: String?, session: URLSession = .shared) async -> ConnectionStatus {

@@ -66,3 +66,16 @@ func getBootTime() (time.Time, error) {
 func excludeFromBackups(string) error {
 	return nil
 }
+
+// sharedMemoryFull is what's wrong when Postgres can't get a System V
+// segment.
+const sharedMemoryFull = "the system's shared-memory segments are all in use (ipcs -m lists them)"
+
+// listSegments lists the System V shared-memory segments' IDs.
+func listSegments() ([]int, error) {
+	table, err := os.ReadFile("/proc/sysvipc/shm")
+	if err != nil {
+		return nil, err
+	}
+	return parseProcSysvipcIDs(string(table))
+}

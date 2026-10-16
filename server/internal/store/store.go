@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -57,8 +58,14 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool, release string) error {
-	database := stdlib.OpenDBFromPool(pool)
+	// One connection of its own, whose write counts are flushed before it
+	// closes: Postgres flushes a backend's counts only now and then, and
+	// the mark a new version takes after migrating must hold the
+	// migrations' own writes, or a rollback would count them as lost.
+	database := stdlib.OpenDB(*pool.Config().ConnConfig)
+	database.SetMaxOpenConns(1)
 	defer database.Close()
+	defer flushWriteCounts(ctx, database)
 
 	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
 	if err != nil {
@@ -87,10 +94,20 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, release string) error {
 	if release == "" {
 		return nil
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO migration_releases (migration, release) VALUES ($1, $2) ON CONFLICT (migration) DO NOTHING`, migrations.Newest(), release); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO migration_releases (migration, release) VALUES ($1, $2) ON CONFLICT (migration) DO NOTHING`, migrations.Newest(), release); err != nil {
 		return fmt.Errorf("record the release that migrated the database: %w", err)
 	}
 	return nil
+}
+
+// flushWriteCounts has the connection's backend flush the write counts it
+// holds: pg_stat_force_next_flush() makes its next report, which it makes
+// before it answers, a forced one. Postgres before 15 has no such
+// function, and flushes when the backend exits.
+func flushWriteCounts(ctx context.Context, database *sql.DB) {
+	if _, err := database.ExecContext(ctx, `SELECT pg_stat_force_next_flush()`); err != nil {
+		slog.Warn("flush the migrations' write counts", "error", err)
+	}
 }
 
 // GetMigrationState is the newest migration applied to the database, 0 for a

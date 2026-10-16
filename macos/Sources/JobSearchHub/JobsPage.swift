@@ -79,9 +79,9 @@ final class JobsModel {
     /// The jobs whose skip the reason sheet is open for, from the toast.
     var reasonTarget: JobSkipTarget?
 
-    /// Decides the jobs at once and says so. Pursue puts them on the
-    /// pipeline, which Undo can't take back; Later and Skip offer Undo, and
-    /// Skip a reason too, so nothing asks first.
+    /// Decides the jobs at once and says so, with Undo, so nothing asks
+    /// first: Undo takes Pursue's cards back off the pipeline, and Skip
+    /// offers a reason too.
     func decide(_ ids: Set<UUID>, _ decision: JobDecisionKind, through decisions: JobDecisions, with client: HubClient) async {
         guard !ids.isEmpty else { return }
         let name = describe(ids)
@@ -97,7 +97,9 @@ final class JobsModel {
                     return
                 }
             }
-            toast = ToastMessage(text: "Pursued \(name)")
+            toast = ToastMessage(text: "Pursued \(name)") { [weak self] in
+                Task { await self?.undoPursue(ids, through: decisions, with: client) }
+            }
         case .later:
             for id in ids {
                 do {
@@ -145,6 +147,21 @@ final class JobsModel {
             try await decisions.clear(ids, with: client)
         } catch {
             actionError = HubFailure("Couldn't undo Later", error)
+        }
+    }
+
+    /// Takes the pursues back, which takes their cards off the pipeline;
+    /// says which cards stay because they changed since.
+    private func undoPursue(_ ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async {
+        do {
+            let cleared = try await decisions.clear(ids, with: client)
+            let keptIDs = Set(cleared.filter { $0.value.keptApplicationID != nil }.keys)
+            if !keptIDs.isEmpty {
+                let stays = keptIDs.count == 1 ? "stays on the pipeline: its card changed" : "stay on the pipeline: their cards changed"
+                toast = ToastMessage(text: "\(describe(keptIDs)) \(stays) since the pursue", tone: .neutral, symbol: "info.circle")
+            }
+        } catch {
+            actionError = HubFailure("Couldn't undo Pursue", error)
         }
     }
 
@@ -376,6 +393,7 @@ struct JobsPage: View {
             }
         }
         .alternatingRowBackgrounds(.disabled)
+        .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
             Button("Pursue") { decide(ids, .pursue, with: client) }
@@ -415,7 +433,7 @@ struct JobsPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
             } else if model.items.isEmpty && !model.isLoading && model.status == .dismissed {
                 ContentUnavailableView("No skipped jobs", systemImage: "tray", description: Text("Jobs skipped from the list show here, where they can be restored."))
             } else if model.items.isEmpty && !model.isLoading && model.status == .later {

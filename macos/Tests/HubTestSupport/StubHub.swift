@@ -4,16 +4,21 @@ import Foundation
 /// path. Each session gets its own recording, found through a header the
 /// session adds to every request, so tests running in parallel never see each
 /// other's requests.
-final class StubHub: URLProtocol {
-    struct Answer {
-        let status: Int
-        let body: String
+public final class StubHub: URLProtocol {
+    public struct Answer: Sendable {
+        public let status: Int
+        public let body: String
+
+        public init(status: Int, body: String) {
+            self.status = status
+            self.body = body
+        }
     }
 
-    final class Recording: @unchecked Sendable {
-        let answers: [String: Answer]
-        let isDown: Bool
+    public final class Recording: @unchecked Sendable {
+        public let isDown: Bool
         private let lock = NSLock()
+        private var answers: [String: Answer]
         private var requests: [(request: URLRequest, body: Data)] = []
 
         init(answers: [String: Answer], isDown: Bool) {
@@ -25,15 +30,25 @@ final class StubHub: URLProtocol {
             lock.withLock { requests.append((request, body)) }
         }
 
-        var lastRequest: URLRequest? { lock.withLock { requests.last?.request } }
-        var lastBody: Data? { lock.withLock { requests.last?.body } }
+        func getAnswer(for key: String) -> Answer? {
+            lock.withLock { answers[key] }
+        }
+
+        /// Answers the path differently from the next request on.
+        public func setAnswer(_ answer: Answer, for path: String) {
+            lock.withLock { answers[path] = answer }
+        }
+
+        public var lastRequest: URLRequest? { lock.withLock { requests.last?.request } }
+        public var lastBody: Data? { lock.withLock { requests.last?.body } }
+        public var requestCount: Int { lock.withLock { requests.count } }
     }
 
     private static let recordingHeader = "X-Stub-Recording"
     private static let lock = NSLock()
     nonisolated(unsafe) private static var recordings: [String: Recording] = [:]
 
-    static func makeSession(answers: [String: Answer], isDown: Bool = false) -> (URLSession, Recording) {
+    public static func makeSession(answers: [String: Answer], isDown: Bool = false) -> (URLSession, Recording) {
         let recording = Recording(answers: answers, isDown: isDown)
         let recordingID = UUID().uuidString
         lock.withLock { recordings[recordingID] = recording }
@@ -44,10 +59,10 @@ final class StubHub: URLProtocol {
         return (URLSession(configuration: configuration), recording)
     }
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override public class func canInit(with request: URLRequest) -> Bool { true }
+    override public class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
-    override func startLoading() {
+    override public func startLoading() {
         let recordingID = request.value(forHTTPHeaderField: Self.recordingHeader) ?? ""
         guard let recording = Self.lock.withLock({ Self.recordings[recordingID] }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.unknown))
@@ -61,14 +76,14 @@ final class StubHub: URLProtocol {
         // An answer keyed by path and query wins over one keyed by the path alone.
         let path = request.url?.path() ?? ""
         let pathAndQuery = request.url?.query().map { path + "?" + $0 }
-        let answer = pathAndQuery.flatMap { recording.answers[$0] } ?? recording.answers[path] ?? Answer(status: 404, body: #"{"error":"not found"}"#)
+        let answer = pathAndQuery.flatMap(recording.getAnswer(for:)) ?? recording.getAnswer(for: path) ?? Answer(status: 404, body: #"{"error":"not found"}"#)
         let response = HTTPURLResponse(url: request.url!, statusCode: answer.status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(answer.body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override public func stopLoading() {}
 
     /// URLSession hands a protocol the body as a stream, not as httpBody.
     private static func readBody(of request: URLRequest) -> Data {

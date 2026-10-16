@@ -42,6 +42,9 @@ public enum PaletteAction: String, CaseIterable, Sendable {
     case pauseLocalModels
     case resumeLocalModels
     case markAllUpdatesSeen
+    case installNewVersion
+    case showWhatsNew
+    case checkForNewVersion
 
     public var title: String {
         switch self {
@@ -52,6 +55,9 @@ public enum PaletteAction: String, CaseIterable, Sendable {
         case .pauseLocalModels: "Pause local models"
         case .resumeLocalModels: "Resume local models"
         case .markAllUpdatesSeen: "Mark all updates seen"
+        case .installNewVersion: "Install new version"
+        case .showWhatsNew: "What's new"
+        case .checkForNewVersion: "Check for new version"
         }
     }
 
@@ -63,6 +69,9 @@ public enum PaletteAction: String, CaseIterable, Sendable {
         case .pauseLocalModels: "pause.circle"
         case .resumeLocalModels: "play.circle"
         case .markAllUpdatesSeen: "checkmark.circle"
+        case .installNewVersion: "arrow.down.circle"
+        case .showWhatsNew: "list.bullet.rectangle"
+        case .checkForNewVersion: "arrow.clockwise"
         }
     }
 
@@ -76,18 +85,23 @@ public enum PaletteAction: String, CaseIterable, Sendable {
         case .pauseLocalModels: ["stop", "background", "work"]
         case .resumeLocalModels: ["start", "background", "work"]
         case .markAllUpdatesSeen: ["read", "clear", "unseen"]
+        case .installNewVersion: ["update", "upgrade", "release"]
+        case .showWhatsNew: ["version", "changes", "changelog", "release", "notes"]
+        case .checkForNewVersion: ["update", "upgrade", "release"]
         }
     }
 
     /// The actions the palette offers now: Pause or Resume as the local
-    /// models stand (neither while that's unknown), and Mark all seen only
-    /// with something unseen.
-    public static func getAvailable(isModelWorkPaused: Bool?, unseenUpdates: Int) -> [PaletteAction] {
+    /// models stand (neither while that's unknown), Mark all seen only with
+    /// something unseen, and Install new version and What's new only once a
+    /// new version is ready.
+    public static func getAvailable(isModelWorkPaused: Bool?, unseenUpdates: Int, hasReadyVersion: Bool = false) -> [PaletteAction] {
         allCases.filter { action in
             switch action {
             case .pauseLocalModels: isModelWorkPaused == false
             case .resumeLocalModels: isModelWorkPaused == true
             case .markAllUpdatesSeen: unseenUpdates > 0
+            case .installNewVersion, .showWhatsNew: hasReadyVersion
             default: true
             }
         }

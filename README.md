@@ -2,7 +2,7 @@
 
 A local hub for running a job search. Target companies go on a watch list, and agents fill in each company's dossier: its job board, and the people worth contacting. The hub tracks whether anyone at the company writes back, since contact is the first barrier to an offer.
 
-It runs on one Mac: a Go server and Postgres in Docker Compose, agent sessions through Claude Code, and native clients to follow.
+It runs on one Mac: a Go server that runs its own Postgres, agent sessions through Claude Code, and native clients for the Mac and Android.
 
 ## What works today
 
@@ -40,9 +40,9 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
    The server listens on 127.0.0.1:8090 only. Which database it uses depends on `HUB_DATABASE_URL` in `server.env`:
 
    - **Unset (a fresh install): the server owns its database.** At start it runs Postgres from the newest engine in the bundle's `Contents/Helpers/engines/` once the bundle carries one, and in `~/Library/Application Support/JobSearchHub/engines/` until then (`HUB_POSTGRES_ENGINES` overrides the folder), on a cluster in `~/Library/Application Support/JobSearchHub/postgres/18/` (`HUB_POSTGRES_DIR` overrides it), creating it on the first start, then migrates it. Postgres listens on no port, only on a Unix socket in that folder, which only your user can reach, and it starts and stops with the server: Settings › Server's Stop in the Mac app stops both. The cluster is left out of Time Machine; the nightly dumps are the backup. If Postgres stops by itself, the server exits, and launchd restarts both. When an update brings a new Postgres major, the server moves the database to it at start (see [Moving to a new Postgres major](#moving-to-a-new-postgres-major)).
-   - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. A `server.env` from before the server owned its database points at Docker's (`docker compose up -d db`, with `HUB_DATABASE_PASSWORD` in `.env`, on `127.0.0.1:5434`), and keeps it until you remove the line. On a host other than a Mac, run the server and its Postgres in Docker instead: `docker compose --profile docker-server up -d --build`.
+   - **Set: the server uses that Postgres**, and waits up to three minutes for it at start. This is for a server on a host other than a Mac, which runs against any Postgres 18, a managed one included.
 
-   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise (`brew install libpq`), or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
+   Each night from 03:00 the server dumps the database with `pg_dump` to `~/Library/Application Support/JobSearchHub/backups/hub-YYYY-MM-DD.dump` and keeps the newest 14: the engine's own `pg_dump` when the server owns the database, `pg_dump` from the `PATH` otherwise, or the one `HUB_PG_DUMP` names. When the server owns the database, it also dumps it before applying new migrations, to `backups/hub-pre-migration-<version>.dump`, where `<version>` is the migration the dump holds, and keeps the newest 5. A start with no migration to apply takes no dump.
 
    To restore a dump into the database the server owns, stop the hub in Settings › Server, then run:
 
@@ -52,24 +52,17 @@ You need Go 1.26 and Claude Code, logged in with a Claude plan (agent runs use y
 
    It refuses while the hub runs. It restores the dump into a new cluster beside the current one (`postgres/18.partial`), migrates it, and only then swaps it in. The old cluster is kept as `postgres/18.replaced-<date>/`, and the command prints where; delete that folder once the hub runs well on the restored data. A restore that fails leaves the current database as it was. If a restore is killed between moving the old cluster aside and moving the new one in, the server refuses to start and names the `18.replaced-<date>` folder to rename back to `18`. For a database the server doesn't own, restore with `pg_restore --clean --dbname=<url> <file>`.
 
-   **Moving your data out of Docker.** A `server.env` that still sets `HUB_DATABASE_URL` keeps the hub on Docker's Postgres. To move it into the database the server owns:
+   **A hub still on the old Docker database moves itself.** A `server.env` from before the server owned its database points `HUB_DATABASE_URL` at the Postgres the old Compose file ran on `localhost:5434`. The next `install-app.sh` moves it, with nothing for you to do: while the server is stopped for the update, the new server's `hub-server database move-from-compose` imports that database as `hub-server database import --replace` does (below), and only once each table holds as many rows as in the old one removes `HUB_DATABASE_URL` and `HUB_DATABASE_PASSWORD` from `server.env`. The script then checks that `/v1/health` reports the database the server owns (`"postgres":{"major":18}`). If any step fails, `server.env` is put back as it was, the hub keeps running on the old database, and the script says why. A copy imported before the failure stays in the database the server owns until the next install tries the move again and replaces it, keeping it as `postgres/18.replaced-<date>/`. The old container and its `hub-db` volume are left as they are. A `HUB_DATABASE_URL` that names any other Postgres is never moved.
 
-   1. Stop the hub in Settings › Server, so nothing is written between the dump and the switch.
-   2. Import Docker's database, with the password from `.env`'s `HUB_DATABASE_PASSWORD`:
+   To import a hub database from another Postgres by hand, stop the hub in Settings › Server, then run:
 
-      ```bash
-      ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database import "postgres://hub:<password>@localhost:5434/hub"
-      ```
+   ```bash
+   ~/Applications/Job\ Search\ Hub.app/Contents/Helpers/bin/hub-server database import "postgres://<user>:<password>@<host>:<port>/<database>"
+   ```
 
-      It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in Docker's database and in the new one. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`.
-   3. Remove the `HUB_DATABASE_URL` line from `~/.config/job-search-hub/server.env`, then start the hub in Settings › Server.
-   4. Check Today, the Pipeline and a company's dossier in the Mac app, and that the phone gets updates. The companies list keeps its order: names sort ignoring case, as they did on Docker.
-   5. `docker compose stop db`, keeping its volume. The hub keeps working.
-   6. After two weeks of nightly dumps from the owned database, `docker compose down` and `docker volume rm job-search-hub_hub-db`.
+   It dumps it with the engine's `pg_dump` to `backups/hub-import-YYYY-MM-DD.dump`, which it keeps, restores the dump into a new cluster as a restore does, and prints each table's row count in both databases. It fails, leaving the database the server owns as it was, if any count differs. It refuses when the server owns a database that already holds data, from an earlier import or a start without `HUB_DATABASE_URL`; `--replace` replaces it, keeping it as `postgres/18.replaced-<date>/`. Then remove `HUB_DATABASE_URL` from `server.env`, if it's there, and start the hub.
 
-   To go back before step 6: stop the hub, put `HUB_DATABASE_URL` back in `server.env`, `docker compose start db`, and start the hub. Writes made since step 3 stay only in the database the server owns. To keep them, dump it before stopping the hub, with the engine's `pg_dump` (`engines/postgres-18/bin/pg_dump --format=custom --file=<file> "postgres:///hub?host=$HOME/Library/Application%20Support/JobSearchHub/postgres&user=hub"`), and once Docker's runs, restore the file into it with `pg_restore --clean --no-owner --dbname=<Docker's URL> <file>`.
-
-2. **Install the CLI.** In the Mac app's Settings › Server, click *Install the hub command*. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
+2. **Install the CLI.** In the Mac app's Settings › Server, click *Install* on the *hub command* row. It links `~/.local/bin/hub` to the copy in the installed app's bundle, so `hub` in a terminal is always the installed version (`hub --version` prints it); `~/.local/bin` needs to be on your `PATH`. Without the app, `cd server && go install ./cmd/hub` puts one in `$(go env GOPATH)/bin`. The CLI reads `HUB_OWNER_TOKEN` (and optionally `HUB_URL`) from the environment, or from `~/.config/job-search-hub/config.json`:
 
    ```json
    { "url": "http://localhost:8090", "owner_token": "…" }
@@ -97,16 +90,24 @@ cd macos && ./Scripts/make-app.sh      # builds and signs build/JobSearchHub.app
 open ~/Applications/Job\ Search\ Hub.app
 ```
 
-`make-app.sh` builds one bundle per version: the app, and in `Contents/Helpers/bin/` the server (`hub-server`), the CV printer (`hub-cvprint`), the `hub` command and the installer (`hub-update`, which only reports its version for now), for Apple silicon, with the server's LaunchAgent in `Contents/Library/LaunchAgents/`. Without Go, as in Symphony's QA VM, it builds the app alone, and Settings › Server says the build has no server. A build in `macos/build/` runs too, for trying a change: it leaves the installed app's server alone, and `Scripts/screenshot-page.sh` captures its pages without touching the installed app.
+`make-app.sh` builds one bundle per version: the app, and in `Contents/Helpers/bin/` the server (`hub-server`), the CV printer (`hub-cvprint`), the `hub` command the installer (`hub-update`) and the window it shows an install's steps in (`hub-install-steps`), for Apple silicon, with the server's LaunchAgent in `Contents/Library/LaunchAgents/`. Without Go, as in Symphony's QA VM, it builds the app alone, and Settings › Server says the build has no server. A build in `macos/build/` runs too, for trying a change: it leaves the installed app's server alone, and `Scripts/screenshot-page.sh` captures its pages without touching the installed app.
 
-In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain. To set it without typing:
+In Settings (⌘,) › Connection, enter the hub URL and the owner token. The token is kept in the Keychain; when the Keychain refuses it, as a VM's locked login keychain does, the app says so and uses the token until it quits. To set it without typing:
 
 ```bash
 set -a && . ./.env && set +a
 open ~/Applications/Job\ Search\ Hub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --import-owner-token
 ```
 
-The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token.
+On a QA machine whose Keychain won't keep the token, launch the build in QA mode instead. It then starts from empty connection settings, forgetting the hub URL and token an earlier run saved, takes the token from `HUB_OWNER_TOKEN` and leaves the Keychain alone; without `--qa-mode` the app ignores the variable:
+
+```bash
+open macos/build/JobSearchHub.app --env HUB_OWNER_TOKEN="$HUB_OWNER_TOKEN" --args --qa-mode
+```
+
+A build with neither a team nor Go, as `make-app.sh` makes in Symphony's QA VM, is a QA build: it runs in QA mode at every launch, with or without `--qa-mode`, so each QA launch starts from empty connection settings. `HUB_QA_BUILD=1` or `HUB_QA_BUILD=0` before `make-app.sh` decides it instead.
+
+The build signs the bundle and every command in it with the Apple Development identity of a pinned team: `CODESIGN_TEAM_ID`, or the team ID in `~/.config/job-search-hub/codesign-team-id` (the certificate's Organizational Unit in Keychain Access). With nothing pinned and one Apple Development identity in the keychain, the build signs with it and writes its team to that file, so a work certificate added later is never picked. With two or more and nothing pinned, it lists them with their teams and stops, rather than guess. It refuses any other team's identity; `CODESIGN_IDENTITY` only narrows the choice among the team's. The Keychain then keeps trusting the app across rebuilds. With no Apple Development identity at all, or with `CODESIGN_IDENTITY=-`, it signs ad hoc, as CI does, and `install-app.sh` refuses to install that build. An ad-hoc or self-signed build gets the Keychain's access prompt at launch: the window opens and says it's waiting for Keychain access until you answer, and denying leaves the app without a token. A build no Apple team signed (ad hoc, self-signed or unsigned) keeps the token in its preferences when the Keychain refuses to save it, as in Symphony's QA VM, and reads it from there first at the next launch; a team-signed build keeps it only until it quits.
 
 The app works from the keyboard. **⌘K** (Go › Jump to…) finds a job, company, person or page, and runs the rare actions kept out of the toolbars: add a company or a job by URL, generate missing CVs, pause or resume the local models. A job, company or person opens in the inspector over the page you're on. In Decide, and in Today's Decide card, ↑↓ move through the jobs, Return opens one, and **P**, **L** and **S** pursue it, leave it for later or skip it, then bring up the next. ⌘N is the page's Add, and ⌘[ and ⌘] go back and forward in the inspector.
 
@@ -127,19 +128,42 @@ Once `ci` passes on a merge to `main`, `.github/workflows/release.yml` releases 
 | The merge changed | Release |
 | --- | --- |
 | `server/` or `macos/` | `mac-v0.1.<N>`, "Job Search Hub 0.1.<N> for Mac": the signed app, server inside, as `Job-Search-Hub-0.1.<N>.zip`, and its `Job-Search-Hub-0.1.<N>.zip.sha256` |
-| `android/` | `android-v0.1.<N>`: the signed `job-search-hub-0.1.<N>.apk` |
+| `android/` | `android-v0.1.<N>`: the signed `job-search-hub-0.1.<N>.apk`, and its `job-search-hub-0.1.<N>.apk.sha256` |
 | both | both, with the same `N` |
 | only docs, CI or scripts | nothing |
 
 A release tags the commit it built, and GitHub lets the workflow's token tag a commit only while its `.github/workflows/` matches `main`'s tip: anything else counts as creating workflows, which takes a permission `GITHUB_TOKEN` can't have, and the release fails with `HTTP 403: Resource not accessible by integration`. So when a later merge changed `.github/workflows/` before a commit's release ran, that commit isn't released, the run says why, and the next release from `main` carries its changes. To release `main`'s tip by hand, use Actions › release › Run workflow with the tags left empty; an app that has never been released gets its first release that way.
 
-Each release's notes list the commits since that app's previous release that touch its paths, under New, Fixed and Other changes, each line tagged with the parts of the hub its commit touched (`Mac`, `Server`, `Phone`) and ending with its pull request. The apps will read that format, so `scripts/release/changelog_test.sh` pins it. `docs/design/updates.md` › Releases from CI and `docs/decisions/0001-android-release-distribution.md` say why it works this way.
+Each release's notes list the commits since that app's previous release that touch its paths, under New, Fixed and Other changes, each line tagged with the parts of the hub its commit touched (`Mac`, `Server`, `Phone`) and ending with its pull request. The Mac app reads that format for *What's new*, so `scripts/release/changelog_test.sh` pins it. `docs/design/updates.md` › Releases from CI and `docs/decisions/0001-android-release-distribution.md` say why it works this way.
 
 Before it publishes the Mac app, `scripts/release/verify-app.sh` refuses a bundle that fails `codesign --verify --strict --deep`, holds an executable signed ad hoc, by another team than `MAC_SIGNING_TEAM_ID` or without the hardened runtime, carries another version in its `Info.plist` or `hub-server --version`, or links a library outside the system and the bundle. The copy unzipped from the zip is checked again. The release isn't notarized: Apple doesn't notarize with a development certificate, so the first install from a browser asks to allow it once in System Settings › Privacy & Security.
 
-To install a phone release, open its page on the phone, download the APK and open it; the first time, Android asks to allow installs from the browser. Each release installs over the previous one and keeps the pairing.
+To install a phone release the first time, open its page on the phone, download the APK and open it; Android asks to allow installs from the browser. From then on the app finds its own new versions and installs them (see `android/README.md` › New versions). Each release installs over the previous one and keeps the pairing.
 
-To install a Mac release, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
+The Mac app looks for its own releases: at launch and every hour it asks GitHub's API for the `mac-v*` releases, without a token and without the server, skipping drafts and pre-releases. It downloads the newest one above its own version into `~/Library/Application Support/JobSearchHub/Updates/<version>/` and checks it, in order: the zip's SHA-256 against its `.sha256`, `codesign --verify --strict --deep`, the running app's team ID and designated requirement, the version in its `Info.plist` and `hub-server --version`, and whether its newest migration is ahead of the running server's. Only a version that passes shows, as *New version 0.1.<N>* at the foot of the sidebar; one that fails is deleted and named in Settings › Version, along with what's new across every release since the running one. *Job Search Hub › Check for New Version…* checks right away. Marking a release as a pre-release on GitHub withdraws it, and a version that failed to install on this Mac (`Updates/bad-versions.json`) isn't offered again.
+
+Settings › Version's *Install now…* opens a sheet of what's running: Claude sessions working or waiting for you, agent runs and the server's Claude and model work (from `GET /v1/drain`), tasks the Mac runs for the phone, and unsaved edits, then the idle sessions, which reopen. *Install when these finish* drains the hub (`POST /v1/drain`), stops claiming tasks, and ticks each line off as it ends; a session messaged again keeps the install waiting. *Install anyway…* says first what it cuts off. Unsaved edits block both until they're saved or discarded. *Install when I quit* does the same at ⌘Q, showing the sheet only when something runs, and leaves the app closed. Either way the app records its open sessions, windows and page in `Updates/reopen.json`, writes `Updates/state.json`, copies `hub-update` out of the new bundle and loads it as the launchd job `com.tonypine.jobsearchhub.update`, and quits.
+
+`hub-update install <state.json>` then takes each step, recording it first: it stops the server with `SIGTERM`, swaps the new bundle into `~/Applications` with one atomic rename (the old one goes to `Updates/previous/`), starts the server and waits up to a minute (longer while its log shows migrations) for `/v1/version` to name the new version and `/v1/health` to answer, reopens the app if it was open and waits for it to write its version to `Updates/launched` once it's connected, and records the install in `Updates/installs.json`. `hub-install-steps`, from the bundle, shows the steps in a small window meanwhile. The reopened app resumes its sessions, puts the tasks it cut off back in the queue, and shows *Now on 0.1.<N> · What's new* for a day. If the new server or app fails its check, `hub-update` rolls back: it counts what the new version wrote (`hub-server database count-writes`, from Postgres's per-table write counters against the mark the server writes beside its pre-migration dump, `hub-pre-migration-<migration>.counts.json`), restores that dump with the old version's `hub-server database restore` if a migration ran, swaps the old bundle back, starts and checks its server, marks the version bad and posts an update to the feed, which the phone hears. The app then says "0.1.<N> couldn't start, so the hub went back to 0.1.<M>", and "Nothing was lost" or what was. After a crash the job runs again, and after a power loss it runs at the next login, finishing or undoing the install. After five runs on one install it gives up: before the swap nothing changed, so it starts the old server again; after it, the rollback stops. One whose rollback fails stops where it is, and the app shows the commands that finish it. A state it can't read ends the job. `server/cmd/hub-update`'s end-to-end test runs an install against two built bundles, with stand-ins for `launchctl`, `pgrep`, `pkill` and `open`. Everything goes to `Updates/install.log` (*Show install log*).
+
+To install a Mac release by hand instead, download its zip and `.sha256` into one folder, check them with `shasum -a 256 -c Job-Search-Hub-0.1.<N>.zip.sha256`, unzip with `ditto -x -k Job-Search-Hub-0.1.<N>.zip .`, and run `macos/Scripts/install-app.sh JobSearchHub.app`, which checks the bundle's team, quits the app, stops the server, puts the bundle in `~/Applications` and starts the server from it.
+
+To walk through a new version before a real `mac-v*` release exists, QA points the app at a stub feed: in QA mode (a QA build, or launched with `--qa-mode`), it reads the releases from `HUB_RELEASES_URL` instead of GitHub, when the variable holds an http(s) URL. Outside QA mode the variable is ignored. Serve a JSON list in the API's shape from a folder of its own:
+
+```bash
+mkdir -p /tmp/release-feed && cd /tmp/release-feed
+cat > releases.json <<'JSON'
+[{"tag_name": "mac-v0.1.9999", "draft": false, "prerelease": false,
+  "html_url": "https://github.com/tonypine/job-search-hub/releases",
+  "body": "## New\n\n- Mac: A made-up change (#1)\n\n## Fixed\n\n- Server: Another one (#2)\n",
+  "assets": [
+    {"name": "Job-Search-Hub-0.1.9999.zip", "browser_download_url": "http://localhost:8765/Job-Search-Hub-0.1.9999.zip"},
+    {"name": "Job-Search-Hub-0.1.9999.zip.sha256", "browser_download_url": "http://localhost:8765/Job-Search-Hub-0.1.9999.zip.sha256"}]}]
+JSON
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+Then, in another terminal, `open macos/build/JobSearchHub.app --env HUB_RELEASES_URL=http://localhost:8765/releases.json --args --qa-mode`, adding `--env HUB_OWNER_TOKEN=…` as above. For a launcher that passes no environment, as Symphony's QA pass does, build with the URL instead: `HUB_RELEASES_URL=http://localhost:8765/releases.json macos/Scripts/make-app.sh` writes it to a QA build's `Info.plist`, and the app reads it there when the variable isn't set at launch. A QA build made without it reads GitHub's releases. A build signed ad hoc, as in Symphony's QA VM, refuses any download, so Settings › Version names 0.1.9999 as refused, with its *What's new*. To see it as ready instead, with *New version 0.1.9999* at the foot of the sidebar, leave a download that passed its checks before launching: an `Updates/0.1.9999/` folder in `~/Library/Application Support/JobSearchHub/` holding `JobSearchHub.app/Contents/Info.plist` (any file) and a `checked.json` of `{"version": "0.1.9999", "app": "JobSearchHub.app", "changesDatabase": false, "checkedAt": "2026-01-01T00:00:00Z"}`. Marking the stub's release `"prerelease": true` withdraws it on the next check. Delete the `Updates/0.1.9999/` folder afterwards.
 
 The repository is public, so anyone can download the APK. It holds no tokens, since a phone pairs at runtime. It does carry the Firebase client config from `google-services.json`. That's how Firebase client config works: it names the Firebase project but doesn't let anyone send pushes, which takes the service account key that stays on the Mac.
 
@@ -231,9 +255,9 @@ If any step fails, the server removes `19.partial`, logs why, and runs on the 18
 
 The hub stays on the Mac rather than moving to an always-on PC (decided October 2026). The reasons:
 
-- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and Postgres restarts with Docker Desktop, so a locked screen doesn't take the hub down.
+- **It already runs all day.** With system sleep off, the server keeps running under launchd (`KeepAlive`) and owns its database, a Postgres it starts and stops itself, so a locked screen doesn't take the hub down.
 - **Downtime loses nothing.** Gmail catches up from the stored history ID, Pub/Sub holds notifications for 7 days, alert emails of the last 30 days are read on the next pass, and board and feed polls pick up where they stopped. Moving would only add gathering while the Mac is shut or away.
-- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. The nightly `pg_dump` (see Setup) runs only with the native server, because the Docker image has no `pg_dump`. All of that would have to be set up again on a Windows Docker host.
+- **Moving costs more than that.** The server runs natively so it can use the Mac's GPU for local models. The phones reach it over HTTPS through `tailscale serve`. The Google sign-in and the Pub/Sub listener live here too. All of that would have to be set up again on the PC, where the server would run against a Postgres of its own through `HUB_DATABASE_URL`.
 
 Revisit this if the PC turns out to run the local models well. If it does, move the model worker there first and leave the hub where it is.
 
@@ -253,7 +277,6 @@ The ruleset and these settings need a repository admin, once:
 ## Layout
 
 ```
-compose.yaml              Postgres and hub-server
 server/cmd/hub-server     the server
 server/cmd/hub            the CLI
 server/internal/…         store, MCP tools, REST API, prompts, stream parsing

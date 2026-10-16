@@ -15,7 +15,7 @@ func lookupFrom(values map[string]string) func(string) string {
 
 var validEnvironment = map[string]string{
 	"HUB_ADDR":         ":8090",
-	"HUB_DATABASE_URL": "postgres://hub:secret@localhost:5434/hub",
+	"HUB_DATABASE_URL": "postgres://hub:secret@db.example:5432/hub",
 	"HUB_OWNER_TOKEN":  strings.Repeat("a", 64),
 }
 
@@ -147,7 +147,7 @@ func TestJobFactsReadingIsOffWithoutAModelURLAndDefaultsOtherwise(t *testing.T) 
 		t.Fatalf("defaults = %+v, %v", parsed, err)
 	}
 
-	environment := map[string]string{"HUB_JOB_FACTS_MODEL_URL": "http://host.docker.internal:1234/v1", "HUB_JOB_FACTS_MODEL": "other", "HUB_JOB_FACTS_INTERVAL": "2m"}
+	environment := map[string]string{"HUB_JOB_FACTS_MODEL_URL": "http://192.168.1.20:1234/v1", "HUB_JOB_FACTS_MODEL": "other", "HUB_JOB_FACTS_INTERVAL": "2m"}
 	for name, value := range validEnvironment {
 		environment[name] = value
 	}

@@ -207,7 +207,7 @@ struct LinkedInProfileSection: View {
                     .hubWell()
                 AsyncButton("Audit again", busyTitle: "Auditing…") { await audit.audit(with: client) }
             case let .failed(reason):
-                HubErrorView(HubFailure("Couldn't audit the profile", advice: reason)) { Task { await audit.audit(with: client) } }
+                HubErrorView(HubFailure("Couldn't audit the profile", advice: reason), retry: { Task { await audit.audit(with: client) } })
             }
         }
     }

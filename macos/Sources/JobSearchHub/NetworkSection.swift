@@ -96,9 +96,9 @@ final class NetworkSectionModel {
     }
 }
 
-/// Settings › Accounts' LinkedIn import: the owner's connections, conversations
-/// and more from their own data export, which the hub matches to its
-/// companies as warm paths.
+/// Settings › Accounts' LinkedIn import, as a status row: the owner's
+/// connections, conversations and more from their own data export, which
+/// the hub matches to its companies as warm paths.
 struct NetworkSection: View {
     let client: HubClient
     @State private var model = NetworkSectionModel()
@@ -106,36 +106,22 @@ struct NetworkSection: View {
 
     var body: some View {
         Section {
-            if let summary = model.summary {
-                if let lastImportedAt = summary.lastImportedAt {
-                    Label(
-                        "\(summary.count) connections, \(summary.matched) at companies in the hub. Last imported \(lastImportedAt.formatted(date: .abbreviated, time: .shortened)).",
-                        systemImage: "person.2.fill"
-                    )
-                } else {
-                    Label("No connections imported yet.", systemImage: "person.2")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if let summary = model.summary, summary.conversations > 0 || summary.invitations > 0 {
-                Text("\(summary.conversations) conversations and \(summary.invitations) invitations from LinkedIn.")
-                    .foregroundStyle(.secondary)
+            StatusRow(
+                "LinkedIn import", symbol: "person.2.fill", state: state, stateTone: model.summary?.lastImportedAt == nil ? .neutral : .positive,
+                detail: detail,
+                help: "Import your LinkedIn data export, its folder or zip, or just its Connections.csv: LinkedIn › Settings › Data privacy › "
+                    + "Get a copy of your data. The hub reads your connections, conversations and invitations, keeps them in its own database, "
+                    + "and importing again updates them."
+            ) {
+                AsyncButton("Import…", busyTitle: "Importing…", isBusy: model.isImporting) { isPickingFile = true }
+                    .help("Import a LinkedIn data export")
             }
             ForEach(model.importLines, id: \.self) { line in
-                Text(line).foregroundStyle(.secondary)
+                Text(line).font(.hubCaption).foregroundStyle(.secondary)
             }
             if model.failure != nil {
                 HubErrorView($model.failure)
             }
-            HStack {
-                Spacer()
-                AsyncButton("Import from LinkedIn…", busyTitle: "Importing…", isBusy: model.isImporting) { isPickingFile = true }
-            }
-        } header: {
-            Text("LinkedIn import")
-        } footer: {
-            Text("Import your LinkedIn data export, its folder or zip, or just its Connections.csv: LinkedIn › Settings › Data privacy › Get a copy of your data. The hub reads your connections, conversations and invitations, keeps them in its own database, and importing again updates them.")
-                .foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $isPickingFile, allowedContentTypes: [.commaSeparatedText, .plainText, .zip, .folder]) { result in
             switch result {
@@ -144,5 +130,18 @@ struct NetworkSection: View {
             }
         }
         .task { await model.load(with: client) }
+    }
+
+    private var state: String {
+        guard let summary = model.summary else { return "Checking…" }
+        return summary.lastImportedAt == nil ? "Not imported" : "Imported"
+    }
+
+    private var detail: String? {
+        guard let summary = model.summary, let lastImportedAt = summary.lastImportedAt else { return nil }
+        var parts = ["\(summary.count.formatted()) connections, \(summary.matched.formatted()) at companies here"]
+        if summary.conversations > 0 { parts.append("\(summary.conversations.formatted()) conversations") }
+        parts.append(lastImportedAt.formatted(date: .abbreviated, time: .omitted))
+        return parts.joined(separator: " · ")
     }
 }

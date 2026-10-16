@@ -105,7 +105,7 @@ struct ActivityPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
                 if let failure = model.failure {
-                    HubErrorView(failure) { Task { await model.load(with: client) } }
+                    HubErrorView(failure, retry: { Task { await model.load(with: client) } })
                 }
                 localModels(client)
                 let running = model.agentRuns.filter(\.isRunning)
@@ -199,7 +199,7 @@ struct ActivityPage: View {
                     FactRow("Job facts", text: work.jobsAwaitingFacts == 1 ? "1 job waits to be read" : "\(work.jobsAwaitingFacts) jobs wait to be read")
                 }
             } else if let failure = modelWork.failure {
-                HubErrorView(failure) { Task { await modelWork.load(with: client) } }
+                HubErrorView(failure, retry: { Task { await modelWork.load(with: client) } })
             } else {
                 ProgressView().controlSize(.small)
             }

@@ -147,7 +147,7 @@ struct CompaniesPage: View {
         }
         .overlay {
             if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await reload() } }
+                HubErrorView(loadError, style: .page, retry: { Task { await reload() } })
             } else if model.shownSummaries.isEmpty && !model.summaries.isEmpty {
                 ContentUnavailableView.search(text: model.search)
             }

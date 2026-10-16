@@ -12,6 +12,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.tonypine.jobsearchhub.MainActivity
 import com.tonypine.jobsearchhub.R
+import com.tonypine.jobsearchhub.core.Notice
 import com.tonypine.jobsearchhub.core.NoticeAction
 import com.tonypine.jobsearchhub.core.NoticeChannel
 import com.tonypine.jobsearchhub.core.NoticeImportance
@@ -69,6 +70,19 @@ object UpdateNotifications {
         val notice = action.failure(update, reason)
         val id = "failed:${update.updateId}".hashCode()
         post(context, NoticeChannel.HUB, id, notice.title, notice.text, openIntent(context, update, NoticeChannel.HUB, id))
+    }
+
+    /**
+     * Tells, on Hub, of the app's own versions: one ready for a week, or a hub that no longer serves this one.
+     * Tapping it opens the app, whose Today or full screen offers Update. [key] keeps one notification per subject.
+     */
+    fun showAppNotice(context: Context, notice: Notice, key: String) {
+        val id = "app:$key".hashCode()
+        val open = Intent(context, MainActivity::class.java)
+            .fromNotification(NoticeChannel.HUB, id)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pending = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        post(context, NoticeChannel.HUB, id, notice.title, notice.text, pending)
     }
 
     /** Takes an update's notification away once its button did what it says. */

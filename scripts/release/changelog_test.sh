@@ -78,4 +78,17 @@ expect "says so when nothing under the paths changed" "No changes under android/
 expect "refuses a call without paths" "usage: $here/changelog.sh <previous-tag> <head> <path>..." \
 	"$("$here/changelog.sh" android-v0.1.20 HEAD 2>&1 || true)"
 
+# The Mac's awk, under a UTF-8 locale, stopped on a feature whose first
+# letter is more than one byte: "illegal byte sequence".
+git tag mac-v0.1.20
+commit macos/c.swift "feat: ⌘K opens the command palette (#15)"
+commit server/main.go "fix: show 2×2 → 3×3 grids in the façade (#16)"
+expect "keeps non-ASCII subjects as written, under a UTF-8 locale" "## New
+
+- Mac: ⌘K opens the command palette (#15)
+
+## Fixed
+
+- Server: Show 2×2 → 3×3 grids in the façade (#16)" "$(LC_ALL=C.UTF-8 "$here/changelog.sh" mac-v0.1.20 HEAD server/ macos/ 2>&1)"
+
 finish

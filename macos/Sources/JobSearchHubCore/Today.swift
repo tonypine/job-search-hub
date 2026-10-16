@@ -1,9 +1,9 @@
 import Foundation
 
 /// What Today, the page that answers "what should I do now?", takes from the
-/// hub's lists: the decision queue, the pipeline, the unseen updates and the
-/// people, for the recruiters among them. Android's `Today` reads them the
-/// same way.
+/// hub's lists: the decision queue, the pipeline, the unseen updates, the
+/// people, for the recruiters among them, and the features waiting on the
+/// owner's first use. Android's `Today` reads the first four the same way.
 public enum Today {
     /// How many jobs to decide Today shows, the best first.
     public static let decisionCount = 3
@@ -44,6 +44,39 @@ public enum Today {
             .sorted { ($0.lastContactAt ?? .distantPast) > ($1.lastContactAt ?? .distantPast) }
     }
 
+    /// The Get started card's rows, one for each feature waiting on the
+    /// owner's first use, in the hub's order. A kind this app doesn't know
+    /// is left out, and with no rows the card is left out.
+    public static func getStartRows(_ steps: [FirstStep]) -> [StartRow] {
+        steps.compactMap { step in
+            switch step.kind {
+            case FirstStep.profileInterviewKind:
+                let confirmed = step.confirmedEntries ?? 0
+                return StartRow(
+                    id: step.kind, title: "Enhance your profile",
+                    detail: "\(confirmed) of \(FirstStep.confirmedEntriesToTailor) entries confirmed. An interview turns what you remember into entries.",
+                    button: "Enhance profile", symbol: "bubble.left.and.text.bubble.right", destination: .profileInterview
+                )
+            case FirstStep.tailoredCVKind:
+                return StartRow(
+                    id: step.kind, title: "Draft a tailored CV",
+                    detail: "Pursue a job you like and the hub drafts a CV for it from your confirmed entries.",
+                    button: "Open Decide", symbol: "doc.text", destination: .decide
+                )
+            case FirstStep.modelComparisonKind:
+                guard let comparisonID = step.comparisonID else { return nil }
+                let fields = step.unjudgedFields ?? 0
+                return StartRow(
+                    id: step.kind, title: "Judge “\(step.comparisonTitle ?? "the comparison")”",
+                    detail: "\(fields == 1 ? "1 field has" : "\(fields) fields have") no verdict yet. Mark the models' answers right or wrong.",
+                    button: "Open comparison", symbol: "square.split.2x1", destination: .comparison(comparisonID)
+                )
+            default:
+                return nil
+            }
+        }
+    }
+
     /// The chips that sum Today up: "7 to decide · 1 overdue · 1 due today ·
     /// 2 replies". A count of nothing leaves its chip out.
     public static func getChips(toDecide: Int, followUps: [DueFollowUp], updates: [HubUpdate]) -> [TodayChip] {
@@ -71,6 +104,58 @@ public struct DueFollowUp: Equatable, Identifiable, Sendable {
     public var status: FollowUpStatus
 
     public var id: UUID { card.id }
+}
+
+/// A feature that gives nothing until the owner first uses it, as the hub
+/// reads it from its data: it leaves once the owner has done the step.
+public struct FirstStep: Decodable, Equatable, Sendable {
+    public static let profileInterviewKind = "profile_interview"
+    public static let tailoredCVKind = "tailored_cv"
+    public static let modelComparisonKind = "model_comparison"
+    /// The confirmed entries the interview's step asks for.
+    public static let confirmedEntriesToTailor = 5
+
+    public var kind: String
+    public var confirmedEntries: Int?
+    public var comparisonID: UUID?
+    public var comparisonTitle: String?
+    public var unjudgedFields: Int?
+
+    public init(kind: String, confirmedEntries: Int? = nil, comparisonID: UUID? = nil, comparisonTitle: String? = nil, unjudgedFields: Int? = nil) {
+        self.kind = kind
+        self.confirmedEntries = confirmedEntries
+        self.comparisonID = comparisonID
+        self.comparisonTitle = comparisonTitle
+        self.unjudgedFields = unjudgedFields
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, confirmedEntries, comparisonTitle, unjudgedFields
+        case comparisonID = "comparisonId"
+    }
+}
+
+public struct FirstStepsResponse: Decodable, Sendable {
+    public var steps: [FirstStep]
+}
+
+/// Where a Get started row's button lands.
+public enum StartDestination: Equatable, Sendable {
+    /// The Profile page, with the interview beside it.
+    case profileInterview
+    case decide
+    /// Model lab, on the comparison.
+    case comparison(UUID)
+}
+
+/// One row of Today's Get started card.
+public struct StartRow: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var title: String
+    public var detail: String
+    public var button: String
+    public var symbol: String
+    public var destination: StartDestination
 }
 
 /// One count at the top of Today, in its tone.

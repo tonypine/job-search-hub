@@ -56,7 +56,7 @@ func dismissJobsInTransaction(ctx context.Context, tx pgx.Tx, actor Actor, jobID
 		return nil, err
 	}
 	for _, job := range jobs {
-		if err := recordJobDecision(ctx, tx, job.ID, JobDecisionSkip, reason); err != nil {
+		if err := recordJobDecision(ctx, tx, job.ID, JobDecisionSkip, reason, nil); err != nil {
 			return nil, err
 		}
 	}

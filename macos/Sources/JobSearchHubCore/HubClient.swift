@@ -97,6 +97,11 @@ public struct HubClient: Sendable {
         _ = try await exchange(makeRequest(method: "DELETE", path: path, body: nil))
     }
 
+    /// Sends a DELETE whose answer says what it did, and decodes it.
+    public func delete<Response: Decodable>(_ path: String, as responseType: Response.Type = Response.self) async throws -> Response {
+        try await perform(makeRequest(method: "DELETE", path: path, body: nil))
+    }
+
     func makeRequest(method: String, path: String, query: [URLQueryItem] = [], body: Data?) -> URLRequest {
         var url = baseURL.appending(path: path)
         if !query.isEmpty {

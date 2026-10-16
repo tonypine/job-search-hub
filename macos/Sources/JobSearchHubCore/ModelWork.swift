@@ -31,6 +31,31 @@ public struct ModelWork: Decodable, Equatable, Sendable {
         return waiting.isEmpty ? kind : "\(kind) · \(waitingText)"
     }
 
+    /// The local models' state in a word, for Settings' status row:
+    /// Paused, Working or Idle.
+    public var stateTitle: String {
+        if paused { return "Paused" }
+        return running == nil ? "Idle" : "Working"
+    }
+
+    public var stateTone: Tone {
+        if paused { return .caution }
+        return running == nil ? .neutral : .positive
+    }
+
+    /// What follows the state: the call running and on which model, and how
+    /// many wait.
+    public var stateDetail: String? {
+        var parts: [String] = []
+        if !paused, let running {
+            parts.append("\(RunsSummary.getKindTitle(running.kind)) on \(running.model)")
+        }
+        if !waiting.isEmpty {
+            parts.append("\(waiting.count) waiting")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// How many calls wait, by the kind's title.
     public var waitingCountsByKind: [(title: String, count: Int)] {
         Dictionary(grouping: waiting, by: \.kind)

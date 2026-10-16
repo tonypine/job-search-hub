@@ -82,7 +82,7 @@ struct CompanyInspector: View {
                     }
                 }
             } else if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(companyID, with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(companyID, with: client) } })
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }

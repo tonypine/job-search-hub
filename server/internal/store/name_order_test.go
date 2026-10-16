@@ -13,8 +13,8 @@ import (
 )
 
 // The database the server owns sorts text by code point, uppercase before
-// lowercase. The lists the owner reads by name sort it ignoring case, as
-// Docker's en_US Postgres did.
+// lowercase. The lists the owner reads by name sort it ignoring case, as an
+// en_US Postgres does.
 var mixedCaseNames = []string{"beta", "Zeta", "acme", "Gamma"}
 
 const wantedNameOrder = "acme,beta,Gamma,Zeta"

@@ -42,11 +42,25 @@ data class JobDecision(val decision: String, val reason: String? = null, val dec
 @Serializable
 data class JobDecisionRequest(val decision: String, val reason: String)
 
-/** What the snackbar says after a decision Undo can take back: Later or Skip; null for Pursue. */
-fun decisionNotice(title: String, decision: String): String? = when (decision) {
-    "later" -> "Left $title for later"
-    "skip" -> "Skipped $title"
-    else -> null
+/**
+ * What taking back a decision did. A pursue's card left the pipeline with it ([removedApplicationId]), or stays because
+ * it changed since: it moved phase, or got a follow-up or notes ([keptApplicationId]). Both are null when the card was
+ * on the pipeline before the pursue.
+ */
+@Serializable
+data class ClearedJobDecision(val decision: String? = null, val removedApplicationId: String? = null, val keptApplicationId: String? = null)
+
+/** What the snackbar says after a decision, which its Undo can take back. */
+data class DecisionNotice(val title: String, val decision: String) {
+    val text: String get() = when (decision) {
+        "later" -> "Left $title for later"
+        "skip" -> "Skipped $title"
+        else -> "Pursued $title"
+    }
+
+    /** What the snackbar says after Undo: only that the job stays on the pipeline, when the hub kept its changed card. */
+    fun afterUndo(cleared: ClearedJobDecision): String? =
+        cleared.keptApplicationId?.let { "$title stays on the pipeline: its card changed since the pursue" }
 }
 
 /** A briefed job waiting for the owner's decision. */

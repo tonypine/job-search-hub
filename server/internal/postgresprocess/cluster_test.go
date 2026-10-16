@@ -24,9 +24,16 @@ import (
 // the cluster in that folder: it starts it, prints the postmaster's PID, and
 // waits to be killed, so a test can leave an orphan the way a crashed server
 // does. It exits by itself once the test binary that started it is gone.
+// When CREATE_SEGMENT_OF_BYTES is set, it creates a shared-memory segment and
+// exits when the test closes its input, to leave a segment whose creator is
+// gone.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv("OWN_POSTGRES_IN"); dir != "" {
 		ownUntilKilled(dir)
+		return
+	}
+	if size := os.Getenv("CREATE_SEGMENT_OF_BYTES"); size != "" {
+		createSegmentUntilStdinCloses(size)
 		return
 	}
 	os.Exit(m.Run())
@@ -339,6 +346,7 @@ func TestAPidFileNamingAnotherLiveProcessIsLeftAloneAndTheClusterStarts(t *testi
 
 func TestAChildThatCrashesIsReportedToTheCaller(t *testing.T) {
 	cluster := start(t, newDir(t))
+	interlock := interlockSegment(t, cluster)
 	if err := syscall.Kill(cluster.PID(), syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
@@ -349,6 +357,9 @@ func TestAChildThatCrashesIsReportedToTheCaller(t *testing.T) {
 	}
 	if err := cluster.ExitError(); err == nil || !strings.Contains(err.Error(), "killed") {
 		t.Fatalf("the crash is reported as %v", err)
+	}
+	if segmentExists(interlock) {
+		t.Fatal("the killed postgres's shared-memory segment is left behind")
 	}
 }
 
@@ -628,6 +639,7 @@ func TestStopKillsAPostgresThatIgnoresItsSignals(t *testing.T) {
 	postgresprocess.ShortenStopTimeouts(t, time.Second, time.Second)
 	cluster := start(t, newDir(t))
 	pid := cluster.PID()
+	interlock := interlockSegment(t, cluster)
 	// A suspended postmaster keeps SIGINT and SIGQUIT pending.
 	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
 		t.Fatal(err)
@@ -647,5 +659,8 @@ func TestStopKillsAPostgresThatIgnoresItsSignals(t *testing.T) {
 	waitUntilGone(t, pid)
 	if err := cluster.ExitError(); err != nil {
 		t.Fatalf("a stop by the owner is reported as %v", err)
+	}
+	if segmentExists(interlock) {
+		t.Fatal("the killed postgres's shared-memory segment is left behind")
 	}
 }

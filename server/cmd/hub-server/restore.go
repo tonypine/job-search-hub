@@ -15,7 +15,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
-const databaseUsage = "usage: hub-server database restore <dump>, or hub-server database import [--replace] <postgres-url>"
+const databaseUsage = "usage: hub-server database restore <dump>, hub-server database import [--replace] <postgres-url>, hub-server database move-from-compose <server.env>, or hub-server database count-writes <migration>"
 
 // runDatabaseCommand runs hub-server database <command> on the database the
 // server owns. It needs none of the server's settings but where that
@@ -33,14 +33,33 @@ func runDatabaseCommand(arguments []string, lookup func(string) string, out io.W
 			return errors.New(databaseUsage)
 		}
 		command = func(ctx context.Context, engines, dir string) error {
-			return importDatabase(ctx, engines, dir, parseBackupsDir(lookup), source, replace, out)
+			if err := importDatabase(ctx, engines, dir, parseBackupsDir(lookup), source, replace, checkImported, out); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "Remove HUB_DATABASE_URL from ~/.config/job-search-hub/server.env, then start the hub in Settings › Server.")
+			return nil
+		}
+	case len(arguments) == 2 && arguments[0] == "move-from-compose":
+		// Run by install-app.sh while the server is stopped, with server.env
+		// loaded: its HUB_DATABASE_URL is the database to move.
+		command = func(ctx context.Context, engines, dir string) error {
+			move := databaseMove{engines: engines, dir: dir, backups: parseBackupsDir(lookup), isOld: isComposeDatabase, check: checkImported}
+			_, err := move.run(ctx, arguments[1], out)
+			return err
+		}
+	case len(arguments) == 2 && arguments[0] == "count-writes":
+		// Run by hub-update while the server is stopped, to say what rolling
+		// back to the dump taken before migrating from <migration> loses. It
+		// prints JSON, and nothing else.
+		command = func(ctx context.Context, engines, dir string) error {
+			return countWritesSinceMigration(ctx, engines, dir, parseBackupsDir(lookup), arguments[1], out)
 		}
 	default:
 		return errors.New(databaseUsage)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if lookup("HUB_DATABASE_URL") != "" {
+	if lookup("HUB_DATABASE_URL") != "" && arguments[0] != "move-from-compose" && arguments[0] != "count-writes" {
 		fmt.Fprintln(out, "HUB_DATABASE_URL is set here: a server started with it uses that database, not the one the server owns.")
 	}
 	engines, dir := parseDatabasePaths(lookup)

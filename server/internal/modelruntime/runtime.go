@@ -26,6 +26,10 @@ var DefaultServerArgs = []string{"-ngl", "99", "-c", "16384", "--parallel", "1",
 // ErrModelNotFound means the requested model file isn't in the models folder.
 var ErrModelNotFound = errors.New("no such model file in the models folder")
 
+// StopTimeout is how long llama-server gets to stop after SIGTERM before
+// it is killed.
+const StopTimeout = 30 * time.Second
+
 type Settings struct {
 	// LlamaServer is the llama-server binary.
 	LlamaServer string
@@ -264,7 +268,7 @@ func (runtime *Runtime) stopServer() {
 	_ = process.command.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-process.exited:
-	case <-time.After(30 * time.Second):
+	case <-time.After(StopTimeout):
 		_ = process.command.Process.Kill()
 		<-process.exited
 	}

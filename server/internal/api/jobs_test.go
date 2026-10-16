@@ -412,11 +412,24 @@ func TestADecisionCanBeTakenBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if status, body := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, ""); status != http.StatusNoContent {
+	status, body := send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, "")
+	var cleared store.ClearedJobDecision
+	if err := json.Unmarshal(body, &cleared); status != http.StatusOK || err != nil || cleared.Decision != store.JobDecisionSkip {
 		t.Fatalf("clear: %d %s", status, body)
 	}
 	if _, details := readJobDetails(t, service, job.ID.String()); details.Decision != nil || details.Job.DismissedAt != nil {
 		t.Errorf("after clearing, decision = %+v, dismissed at %v; want undecided and restored", details.Decision, details.Job.DismissedAt)
+	}
+	if _, err := service.hub.DecideJob(ctx, owner, job.ID, store.JobDecisionPursue, ""); err != nil {
+		t.Fatal(err)
+	}
+	status, body = send(t, http.MethodDelete, service.url+"/v1/jobs/"+job.ID.String()+"/decision", ownerToken, "")
+	cleared = store.ClearedJobDecision{}
+	if err := json.Unmarshal(body, &cleared); status != http.StatusOK || err != nil || cleared.RemovedApplicationID == nil {
+		t.Fatalf("clear a pursue: %d %s, want its card removed", status, body)
+	}
+	if _, details := readJobDetails(t, service, job.ID.String()); details.Application != nil {
+		t.Errorf("after taking back the pursue, the job is still on the pipeline: %+v", details.Application)
 	}
 	if status, _ := send(t, http.MethodDelete, service.url+"/v1/jobs/"+uuid.NewString()+"/decision", ownerToken, ""); status != http.StatusNotFound {
 		t.Errorf("an unknown job: %d, want 404", status)

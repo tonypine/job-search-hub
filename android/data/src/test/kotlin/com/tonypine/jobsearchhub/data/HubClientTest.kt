@@ -1,5 +1,6 @@
 package com.tonypine.jobsearchhub.data
 
+import com.tonypine.jobsearchhub.core.ClearedJobDecision
 import com.tonypine.jobsearchhub.core.Pairing
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
@@ -8,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class HubClientTest {
@@ -93,13 +95,37 @@ class HubClientTest {
     @Test
     fun undoingADecisionDeletesIt() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse.Builder().code(204).build())
+            server.enqueue(MockResponse.Builder().body("""{"decision":"pursue","removed_application_id":"a1"}""").build())
             server.start()
-            HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").clearJobDecision("7")
+            val cleared = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").clearJobDecision("7")
 
             val request = server.takeRequest()
             assertEquals("DELETE", request.method)
             assertEquals("/v1/jobs/7/decision", request.target)
+            assertEquals(ClearedJobDecision(decision = "pursue", removedApplicationId = "a1"), cleared)
+        }
+    }
+
+    @Test
+    fun undoingAPursueReadsTheCardTheHubKept() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().body("""{"decision":"pursue","kept_application_id":"a1"}""").build())
+            server.start()
+            val cleared = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").clearJobDecision("7")
+
+            assertEquals("a1", cleared.keptApplicationId)
+            assertNull(cleared.removedApplicationId)
+        }
+    }
+
+    @Test
+    fun undoingADecisionOnAHubThatAnswersWithNoBodySaysNothingAboutTheCard() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(204).build())
+            server.start()
+            val cleared = HubClient(Pairing(server.url("/").toString().trimEnd('/'), "hubdev_test"), "0.1.252").clearJobDecision("7")
+
+            assertEquals(ClearedJobDecision(), cleared)
         }
     }
 

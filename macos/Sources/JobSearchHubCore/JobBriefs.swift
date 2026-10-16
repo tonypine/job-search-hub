@@ -98,6 +98,31 @@ public struct JobDecisionRequest: Encodable, Equatable, Sendable {
     }
 }
 
+/// What taking back a decision did. A pursue's card leaves the pipeline
+/// with it unless it changed since, by moving phase or getting a follow-up
+/// or notes; a card the job had before the pursue is neither.
+public struct ClearedJobDecision: Decodable, Equatable, Sendable {
+    /// The decision taken back; nil when the job was undecided.
+    public var decision: JobDecisionKind?
+    /// The card the pursue put on the pipeline, taken off with it.
+    public var removedApplicationID: UUID?
+    /// The card the pursue put on the pipeline, which stays because it
+    /// changed since.
+    public var keptApplicationID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case decision
+        case removedApplicationID = "removedApplicationId"
+        case keptApplicationID = "keptApplicationId"
+    }
+
+    public init(decision: JobDecisionKind? = nil, removedApplicationID: UUID? = nil, keptApplicationID: UUID? = nil) {
+        self.decision = decision
+        self.removedApplicationID = removedApplicationID
+        self.keptApplicationID = keptApplicationID
+    }
+}
+
 struct FullBriefResponse: Decodable {
     var queued: Bool
 }
@@ -112,9 +137,11 @@ public extension HubClient {
 
     /// Takes back the decision on the job, which leaves it undecided: a
     /// skipped job is restored, one left for later goes back among the
-    /// undecided. A pursued job keeps its card on the pipeline.
-    func clearJobDecision(_ id: UUID) async throws {
-        try await delete("v1/jobs/\(id.uuidString)/decision")
+    /// undecided, and a pursued one leaves the pipeline unless its card
+    /// was there before or changed since.
+    @discardableResult
+    func clearJobDecision(_ id: UUID) async throws -> ClearedJobDecision {
+        try await delete("v1/jobs/\(id.uuidString)/decision", as: ClearedJobDecision.self)
     }
 
     /// Asks Claude for the job's full brief; it's written in the background.

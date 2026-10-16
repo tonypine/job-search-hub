@@ -11,7 +11,7 @@ enum class NoticeChannel(val id: String, val title: String, val description: Str
     FOLLOW_UPS("follow_ups", "Follow-ups", "A card on the pipeline is due a follow-up.", NoticeImportance.HIGH),
     REPLIES("replies", "Replies", "A company or a recruiter wrote: a reply, an interview invite, or an application's end.", NoticeImportance.HIGH),
     MATCHES("matches", "Matches", "A fresh job is a strong match.", NoticeImportance.DEFAULT),
-    HUB("hub", "Hub", "The Mac finished a request, or something the phone asked of the hub failed.", NoticeImportance.DEFAULT),
+    HUB("hub", "Hub", "The Mac finished a request, something the phone asked of the hub failed, or the app needs updating.", NoticeImportance.DEFAULT),
     ;
 
     /** Two or more of the channel's notifications, as the summary that groups them says it. */

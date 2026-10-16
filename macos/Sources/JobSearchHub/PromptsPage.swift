@@ -95,6 +95,14 @@ struct PromptsPage: View {
                         await model.select(model.summaries.first?.kind, with: client)
                     }
                 }
+                // An install waits for a prompt being edited; the draft goes
+                // with the page.
+                .onChange(of: model.hasChanges, initial: true) {
+                    UnsavedEdits.shared.set(
+                        "prompt", title: "The \(model.selectedSummary?.title ?? "selected") prompt", page: .prompts, isUnsaved: model.hasChanges
+                    )
+                }
+                .onDisappear { UnsavedEdits.shared.set("prompt", title: "", page: .prompts, isUnsaved: false) }
             }
         }
         .navigationTitle("Prompts")
@@ -188,7 +196,7 @@ struct PromptsPage: View {
             .padding(Space.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if let failure = model.failure {
-            HubErrorView(failure, style: .page) { Task { await model.loadSummaries(with: client) } }
+            HubErrorView(failure, style: .page, retry: { Task { await model.loadSummaries(with: client) } })
         } else {
             ContentUnavailableView("Pick a prompt", systemImage: "text.bubble")
         }

@@ -83,12 +83,30 @@ private func makeItem(_ title: String, firstSeen: Date = Date(timeIntervalSince1
     #expect(oldestFirst.map(\.kind) == [.earlier, .newSinceYesterday])
 }
 
-@Test func aMonogramIsTheFirstLetterOnAHueThatStays() {
-    #expect(Monograms.getLetter(for: "northwind") == "N")
-    #expect(Monograms.getLetter(for: "  (acme)") == "A")
-    #expect(Monograms.getLetter(for: "37signals") == "S")
-    #expect(Monograms.getLetter(for: "") == "?")
-    #expect(Monograms.getHueIndex(for: "Northwind", count: 6) == Monograms.getHueIndex(for: "northwind", count: 6))
-    #expect((0..<6).contains(Monograms.getHueIndex(for: "Globex", count: 6)))
+@Test func aMonogramTakesTheFirstLettersOfTwoWords() {
+    #expect(Monograms.getLetters(for: "Alex Kim") == "AK")
+    #expect(Monograms.getLetters(for: "northwind") == "N")
+    #expect(Monograms.getLetters(for: "riley  chen example") == "RC")
+    #expect(Monograms.getLetters(for: "(Acme) Labs") == "AL")
+    #expect(Monograms.getLetters(for: "37signals") == "3")
+    #expect(Monograms.getLetters(for: "  -- ") == "?")
+    #expect(Monograms.getLetters(for: "") == "?")
+    #expect((0..<Monograms.hueCount).contains(Monograms.getHueIndex(for: "Globex", count: Monograms.hueCount)))
     #expect(Monograms.getHueIndex(for: "Globex", count: 0) == 0)
+}
+
+@Test func aCompanyHasTheSameMonogramInARowACardAndTheInspector() throws {
+    let row = makeItem("Engineer")
+    let now = Date(timeIntervalSince1970: 0)
+    let application = Application(id: UUID(), phaseID: UUID(), phaseEnteredAt: now, createdAt: now, updatedAt: now)
+    let card = PipelineCard(application: application, jobTitle: "Engineer", companyName: "Acme", unseenUpdates: 0)
+    let inspector = try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(#"""
+    {"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Engineer","url":"https://acme.com/1",
+            "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
+     "company_name":"acme ","fit":{"level":"good","checks":[]},"unseen_updates":0}
+    """#.utf8))
+
+    let names = [row.companyName, card.companyName, inspector.companyName]
+    let looks = names.map { Monograms.getLook(for: $0 ?? "") }
+    #expect(looks == Array(repeating: Monograms.Look(letters: "A", hueIndex: Monograms.getHueIndex(for: "Acme", count: Monograms.hueCount)), count: 3))
 }

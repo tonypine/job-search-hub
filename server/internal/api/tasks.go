@@ -127,6 +127,27 @@ func RegisterTaskRoutes(routes *http.ServeMux, hub *store.Store, updates updateR
 		}
 	})))
 
+	// A task a runner claimed and then couldn't finish, as the Mac app
+	// restarting for an install, goes back to the queue.
+	routes.Handle("POST /v1/tasks/{id}/release", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		}
+		task, err := hub.ReleaseTask(r.Context(), id)
+		switch {
+		case errors.Is(err, store.ErrTaskNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+		case errors.Is(err, store.ErrTaskNotRunning):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		case err != nil:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		default:
+			writeJSON(w, http.StatusOK, task)
+		}
+	})))
+
 	routes.Handle("POST /v1/tasks/{id}/finish", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {

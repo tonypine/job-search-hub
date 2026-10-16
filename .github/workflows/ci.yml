@@ -64,7 +64,7 @@ jobs:
               case "$file" in
                 # The Mac's bundle builds the server's commands too.
                 server/cmd/*|server/go.mod|server/go.sum) server=true macos=true ;;
-                server/*|compose.yaml) server=true ;;
+                server/*) server=true ;;
                 macos/*) macos=true ;;
                 android/*) android=true ;;
                 # The Mac's Postgres engine has a workflow of its own,
@@ -231,7 +231,9 @@ jobs:
       # -count=1: setup-go restores GOCACHE, and a cached result never touches
       # the database, so the weekly run would test nothing.
       - name: go test
-        run: go test -count=1 ./...
+        run: |
+          set -o pipefail
+          go test -count=1 ./... 2>&1 | grep -v ' INFO '
 
       # A release's build, with the version code release.yml would pass: the
       # server's --version, hub's, hub-update's and GET /v1/version all say 0.1.<N>.
@@ -316,8 +318,21 @@ jobs:
       - name: swift build
         run: swift build
 
+      # The view tests write their offscreen snapshots here, such as each
+      # state of Settings › Version, for the run's artifacts.
       - name: swift test
+        env:
+          HUB_SNAPSHOT_DIR: ${{ runner.temp }}/snapshots
         run: swift test
+
+      - name: Upload the view snapshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-snapshots
+          path: ${{ runner.temp }}/snapshots
+          if-no-files-found: ignore
+          retention-days: 14
 
       # make-app.sh builds the server and the hub commands into the bundle.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -401,13 +416,19 @@ jobs:
       # breaks the release build (lintVitalRelease included) fails here rather
       # than in release.yml after the merge.
       - name: Test, lint and build
-        run: ./gradlew :core:test :data:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
+        run: ./gradlew :core:test :data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --stacktrace
 
   # The release scripts that release.yml runs after a merge.
   release-scripts:
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
-    runs-on: ubuntu-latest
+    # The release workflow runs these scripts on both: the Mac job on macOS's
+    # BSD tools, the Android job on Linux's GNU ones.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -415,6 +436,7 @@ jobs:
           persist-credentials: false
 
       - name: shellcheck
+        if: runner.os == 'Linux'
         run: shellcheck scripts/release/*.sh
 
       - name: Test

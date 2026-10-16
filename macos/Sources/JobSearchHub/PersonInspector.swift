@@ -59,7 +59,7 @@ struct PersonInspector: View {
                     }
                 }
             } else if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(reference, with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(reference, with: client) } })
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -231,9 +231,9 @@ struct PersonInspector: View {
                 }
                 .buttonBorderShape(.capsule)
             case let .failed(reason):
-                HubErrorView(HubFailure("Couldn't draft the reply", advice: reason)) {
+                HubErrorView(HubFailure("Couldn't draft the reply", advice: reason), retry: {
                     Task { await replyDraft.draft(conversationID: conversationID, client: client) }
-                }
+                })
             }
         }
     }

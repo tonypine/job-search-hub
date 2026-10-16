@@ -35,6 +35,9 @@ const (
 	// A dump taken before migrations is named by the migration version it
 	// holds. The nightly dumps' listing leaves it out: its name holds no day.
 	preMigrationPrefix = "hub-pre-migration-"
+	// A pre-migration dump's write mark, which counts what a rollback to it
+	// loses, sits beside it and goes with it.
+	markSuffix = ".counts.json"
 	// A dump taken before moving the database to a new Postgres major is
 	// kept until it is removed by hand.
 	preUpgradePrefix = "hub-pre-upgrade-"
@@ -116,10 +119,20 @@ func (dumper *Dumper) Dump(ctx context.Context, now time.Time) (string, error) {
 // but the newest keptPreMigrationDumps of them.
 func DumpBeforeMigration(ctx context.Context, pgDump, databaseURL, folder string, version int64) (string, error) {
 	path := filepath.Join(folder, preMigrationPrefix+strconv.FormatInt(version, 10)+dumpSuffix)
+	// The write mark of an earlier dump of the same version isn't this one's.
+	if err := os.Remove(MarkPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	if err := writeDump(ctx, pgDump, databaseURL, path); err != nil {
 		return "", err
 	}
 	return path, removeOldPreMigrationDumps(folder)
+}
+
+// MarkPath is where the write mark taken after migrating sits beside the
+// dump taken before: hub-pre-migration-<version>.counts.json.
+func MarkPath(dump string) string {
+	return strings.TrimSuffix(dump, dumpSuffix) + markSuffix
 }
 
 // DumpBeforeUpgrade writes the database at databaseURL, a cluster of Postgres
@@ -282,6 +295,9 @@ func removeOldPreMigrationDumps(folder string) error {
 	slices.SortFunc(dumps, func(a, b dump) int { return a.modified.Compare(b.modified) })
 	for _, old := range dumps[:len(dumps)-keptPreMigrationDumps] {
 		if err := os.Remove(filepath.Join(folder, old.name)); err != nil {
+			return err
+		}
+		if err := os.Remove(MarkPath(filepath.Join(folder, old.name))); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

@@ -150,17 +150,3 @@ public enum JobGroups {
         }
     }
 }
-
-/// A company's monogram: its first letter, on one of a few hues picked by
-/// its name, so a company keeps its look across rows and launches.
-public enum Monograms {
-    public static func getLetter(for name: String) -> String {
-        name.first(where: \.isLetter).map { String($0).uppercased() } ?? name.first(where: \.isNumber).map(String.init) ?? "?"
-    }
-
-    /// The same name gets the same hue every launch, unlike `hashValue`.
-    public static func getHueIndex(for name: String, count: Int) -> Int {
-        guard count > 0 else { return 0 }
-        return name.lowercased().unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % count
-    }
-}

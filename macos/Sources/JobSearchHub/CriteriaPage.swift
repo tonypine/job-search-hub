@@ -2,9 +2,11 @@ import JobSearchHubCore
 import SwiftUI
 
 /// The Criteria page's scopes: what the hub searches for and screens jobs
-/// against, and the phases applications move through.
+/// against, the pay a job must reach, and the phases applications move
+/// through.
 enum CriteriaScope: String, CaseIterable, Identifiable {
     case search
+    case pay
     case phases
 
     var id: String { rawValue }
@@ -12,17 +14,22 @@ enum CriteriaScope: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .search: "Search"
+        case .pay: "Pay"
         case .phases: "Pipeline phases"
         }
     }
 }
 
-/// What the hub searches for and screens every job against, and the phases
-/// applications move through: the settings that change what every page shows.
+/// What the hub searches for and screens every job against, the pay it
+/// must reach, and the phases applications move through: the settings that
+/// change what every page shows. A save bar rises once a criterion changed,
+/// on every scope, until it's saved or reverted.
 struct CriteriaPage: View {
     @Environment(HubConnection.self) private var connection
+    /// ContentView's, so it can ask before the page is left with changes.
+    let editor: JobCriteriaEditor
     @State private var scope = CriteriaScope.search
-    @State private var editor = JobCriteriaEditor()
+    @State private var toast: ToastMessage?
 
     var body: some View {
         Group {
@@ -33,15 +40,34 @@ struct CriteriaPage: View {
                     } trailing: {
                         EmptyView()
                     }
-                    Form {
-                        switch scope {
-                        case .search: JobCriteriaSection(client: client, editor: editor)
-                        case .phases: PipelinePhasesSection(client: client)
-                        }
+                    // Above the scopes, so a refused save says why on every
+                    // one, Pipeline phases included, and after the leave
+                    // dialog's Save.
+                    if let error = editor.error {
+                        HubErrorView(title: "Couldn't load or save the criteria", report: error)
+                            .frame(maxWidth: 820, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding([.horizontal, .top], Space.xl)
                     }
-                    .formStyle(.grouped)
+                    switch scope {
+                    case .search, .pay:
+                        JobCriteriaForm(scope: scope, editor: editor)
+                    case .phases:
+                        Form { PipelinePhasesSection(client: client) }
+                            .formStyle(.grouped)
+                    }
                 }
-                .task { await editor.load(with: client) }
+                .saveBar(changeCount: editor.changeCount, isSaving: editor.isSaving, revert: { editor.revert() }) {
+                    if await editor.save(with: client) {
+                        toast = ToastMessage(text: "Saved your criteria")
+                    }
+                }
+                .toast($toast)
+                // Unsaved edits are kept: the page is only left with them
+                // saved or discarded.
+                .task {
+                    if !editor.hasChanges { await editor.load(with: client) }
+                }
             }
         }
         .navigationTitle("Criteria")

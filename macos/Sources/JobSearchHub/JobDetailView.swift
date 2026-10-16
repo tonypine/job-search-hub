@@ -212,7 +212,7 @@ struct JobDetailView: View {
                     }
                 }
             } else if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page) { Task { await model.load(jobID, with: client) } }
+                HubErrorView(loadError, style: .page, retry: { Task { await model.load(jobID, with: client) } })
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -278,7 +278,7 @@ struct JobDetailView: View {
     private func header(_ details: JobDetails) -> some View {
         VStack(alignment: .leading, spacing: Space.m) {
             HStack(alignment: .top, spacing: Space.m) {
-                Monogram(name: details.companyName ?? details.job.title, size: 40)
+                Monogram(details.companyName ?? details.job.title, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     companyLine(details)
                     Text(details.job.title).font(.hubEntity).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -584,7 +584,7 @@ struct JobDetailView: View {
     /// are, opening them on a click, and the message that fits.
     private func personRow(_ person: RelatedPerson, about details: JobDetails) -> some View {
         HStack(alignment: .center, spacing: Space.s) {
-            InitialsMonogram(person.name, size: 28)
+            Monogram(person.name, size: 28)
             Button { inspector.open(.person(person.reference)) } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {

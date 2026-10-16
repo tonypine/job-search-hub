@@ -35,7 +35,7 @@ struct CompanySuggestionsSheet: View {
             .frame(height: 380)
             .overlay {
                 if let loadError {
-                    HubErrorView(loadError, style: .page)
+                    HubErrorView(loadError, style: .page, retry: { Task { await load() } })
                 } else if suggestions.isEmpty && !isLoading {
                     ContentUnavailableView(
                         "No suggestions", systemImage: "sparkles",
@@ -52,13 +52,17 @@ struct CompanySuggestionsSheet: View {
         }
         .padding(Space.xl)
         .frame(width: 560)
-        .task {
-            defer { isLoading = false }
-            do {
-                suggestions = try await client.get("v1/company-suggestions", as: CompanySuggestionsResponse.self).suggestions
-            } catch {
-                loadError = HubFailure("Couldn't load the suggestions", error)
-            }
+        .task { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            suggestions = try await client.get("v1/company-suggestions", as: CompanySuggestionsResponse.self).suggestions
+            loadError = nil
+        } catch {
+            loadError = HubFailure("Couldn't load the suggestions", error)
         }
     }
 }
