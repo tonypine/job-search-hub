@@ -110,6 +110,12 @@ private final class SelectionHighlightView: NSView {
         refresh()
     }
 
+    /// Matches the table, which is flipped, so a row's rect lands on the row
+    /// rather than mirrored from the bottom of the table.
+    override var isFlipped: Bool {
+        true
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
@@ -123,7 +129,7 @@ private final class SelectionHighlightView: NSView {
         guard let tableView else { return }
         let accent = NSColor(Color.hubAccent)
         for row in tableView.selectedRowIndexes where row < tableView.numberOfRows {
-            let rect = tableView.rect(ofRow: row).insetBy(dx: Space.xs, dy: 1)
+            let rect = convert(tableView.rect(ofRow: row), from: tableView).insetBy(dx: Space.xs, dy: 1)
             guard rect.intersects(dirtyRect) else { continue }
             let path = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: Radius.control, yRadius: Radius.control)
             accent.withAlphaComponent(0.13).setFill()
