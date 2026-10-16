@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tonypine/job-search-hub/server/internal/openrouter"
 )
 
 var (
@@ -17,28 +19,64 @@ var (
 	ErrTaskRouteNotFound     = errors.New("no route for that task")
 	// ErrModelProviderInUse refuses deleting a provider a route runs on.
 	ErrModelProviderInUse = errors.New("a task runs on that provider; route it elsewhere first")
+	// ErrAgentRunsOnClaude refuses routing an agent kind anywhere but the
+	// Claude subscription: an agent is a Claude Code session.
+	ErrAgentRunsOnClaude = errors.New("agents run on Claude")
 )
 
-// RoutedTaskKinds are the kinds of background task that run on a routed
-// model.
+// RoutedTaskKinds are the kinds of background task the model server in the
+// hub's settings seeds the routes of.
 var RoutedTaskKinds = []string{AgentPromptKindJobFacts, AgentPromptKindJobBrief, AgentPromptKindRecruiterScreen, AgentPromptKindMarketGaps, AgentPromptKindInterviewPrep, AgentPromptKindMailTriage, AgentPromptKindLinkedInConversation, AgentPromptKindHiringThread}
+
+// ClaudeTaskKinds are the kinds that ran on Claude before routes reached
+// them: the Claude provider seeds their routes.
+var ClaudeTaskKinds = []string{RunKindJobBriefFull, AgentPromptKindJobCV}
 
 // DefaultModelProviderName names the provider the hub creates from its
 // settings, the local model server it used before routes existed.
 const DefaultModelProviderName = "Local model"
 
+// ClaudeProviderName names the provider the hub adds when it finds the
+// Claude CLI.
+const ClaudeProviderName = "Claude"
+
 // The kinds of model provider: an OpenAI-compatible server at an address,
-// local or hosted, or the hub's own runtime, whose routes name a GGUF file.
+// local or hosted; the hub's own runtime, whose routes name a GGUF file;
+// OpenRouter, an OpenAI-compatible service that prices each request; or the
+// owner's Claude subscription, through the Claude CLI, whose routes name a
+// Claude model such as "sonnet".
 const (
-	ModelProviderKindOpenAICompatible = "openai_compatible"
-	ModelProviderKindHubRuntime       = "hub_runtime"
+	ModelProviderKindOpenAICompatible   = "openai_compatible"
+	ModelProviderKindHubRuntime         = "hub_runtime"
+	ModelProviderKindOpenRouter         = "openrouter"
+	ModelProviderKindClaudeSubscription = "claude_subscription"
 )
+
+// The types of model provider, by how the hub asks them: the
+// OpenAI-compatible API, or the Claude CLI.
+const (
+	ModelProviderTypeOpenAICompatible   = "openai_compatible"
+	ModelProviderTypeClaudeSubscription = "claude_subscription"
+)
+
+var modelProviderKinds = []string{ModelProviderKindOpenAICompatible, ModelProviderKindHubRuntime, ModelProviderKindOpenRouter,
+	ModelProviderKindClaudeSubscription}
+
+// getModelProviderType is the type of a provider of kind.
+func getModelProviderType(kind string) string {
+	if kind == ModelProviderKindClaudeSubscription {
+		return ModelProviderTypeClaudeSubscription
+	}
+	return ModelProviderTypeOpenAICompatible
+}
 
 // ModelProvider is a model server the hub can call. Its key is never served
 // back; HasKey says whether one is set.
 type ModelProvider struct {
-	ID             uuid.UUID `json:"id"`
-	Kind           string    `json:"kind"`
+	ID   uuid.UUID `json:"id"`
+	Kind string    `json:"kind"`
+	// Type is how the hub asks the provider, from its kind.
+	Type           string    `json:"type"`
 	Name           string    `json:"name"`
 	BaseURL        string    `json:"base_url"`
 	APIKey         string    `json:"-"`
@@ -51,8 +89,10 @@ type ModelProvider struct {
 // key already saved; an empty one removes it.
 type ModelProviderInput struct {
 	// Kind defaults to ModelProviderKindOpenAICompatible.
-	Kind           string  `json:"kind"`
-	Name           string  `json:"name"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	// BaseURL defaults to OpenRouter's for an OpenRouter provider, and is
+	// none for the hub runtime and Claude.
 	BaseURL        string  `json:"base_url"`
 	APIKey         *string `json:"api_key,omitempty"`
 	EnforcesSchema bool    `json:"enforces_schema"`
@@ -86,6 +126,7 @@ func scanModelProvider(row pgx.Row) (ModelProvider, error) {
 		return ModelProvider{}, ErrModelProviderNotFound
 	}
 	provider.HasKey = provider.APIKey != ""
+	provider.Type = getModelProviderType(provider.Kind)
 	return provider, err
 }
 
@@ -118,13 +159,16 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 	if input.Kind == "" {
 		input.Kind = ModelProviderKindOpenAICompatible
 	}
+	if input.Kind == ModelProviderKindOpenRouter && input.BaseURL == "" {
+		input.BaseURL = openrouter.BaseURL
+	}
 	switch {
 	case input.Name == "":
 		return ModelProvider{}, errors.New("a provider needs a name")
-	case input.Kind == ModelProviderKindHubRuntime:
+	case !slices.Contains(modelProviderKinds, input.Kind):
+		return ModelProvider{}, fmt.Errorf("a provider is one of %s", strings.Join(modelProviderKinds, ", "))
+	case input.Kind == ModelProviderKindHubRuntime || input.Kind == ModelProviderKindClaudeSubscription:
 		input.BaseURL = ""
-	case input.Kind != ModelProviderKindOpenAICompatible:
-		return ModelProvider{}, fmt.Errorf("a provider is %s or %s", ModelProviderKindOpenAICompatible, ModelProviderKindHubRuntime)
 	case !(strings.HasPrefix(input.BaseURL, "http://") || strings.HasPrefix(input.BaseURL, "https://")):
 		return ModelProvider{}, errors.New("a provider needs an http(s) address, such as http://localhost:1234/v1")
 	}
@@ -154,6 +198,9 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 		}
 		if err != nil {
 			return err
+		}
+		if saved.Kind == ModelProviderKindOpenRouter && !saved.HasKey {
+			return errors.New("OpenRouter needs a key")
 		}
 		return insertChange(ctx, tx, actor, change{
 			entityType: "model_provider", entityID: saved.ID, operation: "save",
@@ -190,11 +237,14 @@ func (s *Store) GetTaskRoute(ctx context.Context, kind string) (TaskRoute, error
 	return scanTaskRoute(s.pool.QueryRow(ctx, `SELECT `+taskRouteColumns+` FROM task_routes WHERE kind = $1`, kind))
 }
 
-// SaveTaskRoute points a kind of task at a provider and model.
+// SaveTaskRoute points a kind of run at a provider and model, from the next
+// run on. Any kind in the catalog has a route; an agent's is to the Claude
+// subscription, with no fallback.
 func (s *Store) SaveTaskRoute(ctx context.Context, actor Actor, kind string, input TaskRouteInput) (TaskRoute, error) {
 	input.Model, input.FallbackModel = strings.TrimSpace(input.Model), strings.TrimSpace(input.FallbackModel)
-	if !slices.Contains(RoutedTaskKinds, kind) {
-		return TaskRoute{}, fmt.Errorf("%q isn't a task that runs on a routed model; those are %s", kind, strings.Join(RoutedTaskKinds, ", "))
+	runKind, found := GetRunKind(kind)
+	if !found {
+		return TaskRoute{}, fmt.Errorf("%q isn't a kind of run", kind)
 	}
 	if input.Model == "" {
 		return TaskRoute{}, errors.New("a route needs a model")
@@ -202,9 +252,23 @@ func (s *Store) SaveTaskRoute(ctx context.Context, actor Actor, kind string, inp
 	if (input.FallbackProviderID == nil) != (input.FallbackModel == "") {
 		return TaskRoute{}, errors.New("a fallback needs both a provider and a model")
 	}
+	isAgent := runKind.Engine == RunEngineClaudeAgent
+	if isAgent && input.FallbackProviderID != nil {
+		return TaskRoute{}, fmt.Errorf("%w: %s is a Claude Code agent, which has no fallback", ErrAgentRunsOnClaude, runKind.Title)
+	}
 	var saved TaskRoute
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var err error
+		var providerKind string
+		err := tx.QueryRow(ctx, `SELECT kind FROM model_providers WHERE id = $1`, input.ProviderID).Scan(&providerKind)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrModelProviderNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if isAgent && providerKind != ModelProviderKindClaudeSubscription {
+			return fmt.Errorf("%w: %s is a Claude Code agent; route it to the Claude subscription", ErrAgentRunsOnClaude, runKind.Title)
+		}
 		saved, err = scanTaskRoute(tx.QueryRow(ctx, `
 			INSERT INTO task_routes (kind, provider_id, model, fallback_provider_id, fallback_model) VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (kind) DO UPDATE SET provider_id = EXCLUDED.provider_id, model = EXCLUDED.model,
@@ -229,7 +293,6 @@ func (s *Store) EnsureDefaultTaskRoutes(ctx context.Context, baseURL, model stri
 	if baseURL == "" || model == "" {
 		return nil
 	}
-	system := Actor{Kind: ActorSystem}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		provider, err := scanModelProvider(tx.QueryRow(ctx, `SELECT `+modelProviderColumns+` FROM model_providers WHERE base_url = $1 ORDER BY created_at LIMIT 1`, baseURL))
 		if errors.Is(err, ErrModelProviderNotFound) {
@@ -241,18 +304,51 @@ func (s *Store) EnsureDefaultTaskRoutes(ctx context.Context, baseURL, model stri
 		if err != nil {
 			return err
 		}
-		for _, kind := range kinds {
-			tag, err := tx.Exec(ctx, `INSERT INTO task_routes (kind, provider_id, model) VALUES ($1, $2, $3) ON CONFLICT (kind) DO NOTHING`, kind, provider.ID, model)
-			if err != nil {
+		return insertMissingTaskRoutes(ctx, tx, provider, model, kinds, map[string]string{"model": model, "base_url": baseURL})
+	})
+}
+
+// EnsureClaudeTaskRoutes adds the Claude subscription as the "Claude"
+// provider when the hub has none, and gives each kind that has no route one
+// to it, on model: the Claude model in the hub's settings, which full briefs
+// and CVs ran on before they had routes. It changes no route that exists.
+func (s *Store) EnsureClaudeTaskRoutes(ctx context.Context, model string, kinds []string) (ModelProvider, error) {
+	model = strings.TrimSpace(model)
+	var provider ModelProvider
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		provider, err = scanModelProvider(tx.QueryRow(ctx, `SELECT `+modelProviderColumns+` FROM model_providers WHERE kind = $1 ORDER BY created_at LIMIT 1`,
+			ModelProviderKindClaudeSubscription))
+		if errors.Is(err, ErrModelProviderNotFound) {
+			// Another provider may have the name already, such as a proxy to
+			// Claude's API.
+			provider, err = scanModelProvider(tx.QueryRow(ctx, `
+				INSERT INTO model_providers (kind, name, base_url)
+				SELECT $1, CASE WHEN EXISTS (SELECT 1 FROM model_providers WHERE name = $2) THEN $2 || ' subscription' ELSE $2 END, ''
+				RETURNING `+modelProviderColumns, ModelProviderKindClaudeSubscription, ClaudeProviderName))
+		}
+		if err != nil || model == "" {
+			return err
+		}
+		return insertMissingTaskRoutes(ctx, tx, provider, model, kinds, map[string]string{"model": model, "provider": provider.Name})
+	})
+	return provider, err
+}
+
+// insertMissingTaskRoutes routes each kind that has no route to provider and
+// model, recording each as the hub's own change.
+func insertMissingTaskRoutes(ctx context.Context, tx pgx.Tx, provider ModelProvider, model string, kinds []string, after any) error {
+	system := Actor{Kind: ActorSystem}
+	for _, kind := range kinds {
+		tag, err := tx.Exec(ctx, `INSERT INTO task_routes (kind, provider_id, model) VALUES ($1, $2, $3) ON CONFLICT (kind) DO NOTHING`, kind, provider.ID, model)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			if err := insertChange(ctx, tx, system, change{entityType: "task_route", entityID: provider.ID, operation: "route " + kind, after: after}); err != nil {
 				return err
 			}
-			if tag.RowsAffected() == 1 {
-				if err := insertChange(ctx, tx, system, change{entityType: "task_route", entityID: provider.ID, operation: "route " + kind,
-					after: map[string]string{"model": model, "base_url": baseURL}}); err != nil {
-					return err
-				}
-			}
 		}
-		return nil
-	})
+	}
+	return nil
 }

@@ -16,7 +16,7 @@ import (
 // changes nothing fails with the agent's reason.
 func fixJob(ctx context.Context, config cliConfig, jobID, note string, options triageOptions, out io.Writer) error {
 	var started startedRun
-	request := map[string]string{"kind": store.AgentRunKindJobFix, "input": jobID, "note": note}
+	request := map[string]string{"kind": store.AgentRunKindJobFix, "input": jobID, "note": note, "model": options.model}
 	if err := postJSON(ctx, config, "/v1/agent-runs", request, &started); err != nil {
 		return err
 	}

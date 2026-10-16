@@ -17,7 +17,7 @@ import (
 // records the roles off its careers page.
 func findCompanyJobs(ctx context.Context, config cliConfig, company string, options triageOptions, out io.Writer) error {
 	var started startedRun
-	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindJobFinder, "input": company}, &started); err != nil {
+	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindJobFinder, "input": company, "model": options.model}, &started); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Finding jobs at %s (agent run %s, prompt version %d)\n", company, started.AgentRun.ID, *started.AgentRun.AgentPromptVersion)

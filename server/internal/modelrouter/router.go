@@ -1,6 +1,7 @@
 // Package modelrouter sends each model request to the provider and model its
-// kind of task is routed to, with the route's fallback when that provider is
-// unreachable.
+// kind of run is routed to, with the route's fallback when that provider is
+// unreachable: an OpenAI-compatible server, OpenRouter, the hub's own runtime
+// or the owner's Claude subscription, through the Claude CLI.
 package modelrouter
 
 import (
@@ -11,7 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/openrouter"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -34,11 +37,16 @@ type queue interface {
 type Router struct {
 	hub *store.Store
 	// Queue, when set, gives each request its turn: by the priority in its
-	// context, else its kind's.
+	// context, else its kind's. Claude's runs don't queue: they take no turn
+	// on this Mac's models, as before they were routed.
 	Queue queue
 	// Runtime serves routes to a hub runtime provider; nil leaves them
 	// unreachable.
 	Runtime runtime
+	// Claude is the CLI routes to the Claude subscription run on, each with
+	// its route's model and the router's RecordRun; nil, as when the hub
+	// found no CLI, leaves them unreachable.
+	Claude *claudeprint.Client
 	// RecordRun, when set, hears about every attempt, fallbacks and retries
 	// included.
 	RecordRun func(context.Context, chatcompletions.RunRecord)
@@ -48,38 +56,42 @@ func New(hub *store.Store) *Router {
 	return &Router{hub: hub}
 }
 
-// CompleteJSON answers request on the model its kind (request.SchemaName) is
-// routed to. A provider that can't enforce a schema gets one retry for an
-// invalid answer.
+// CompleteJSON answers request on the model its run kind is routed to: its
+// schema name, or the kind its task names, as a full brief's. A provider that
+// can't enforce a schema gets one retry for an invalid answer. When the
+// route's provider is unreachable, the fallback answers, and its run names
+// the provider it stood in for.
 func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
-	route, err := router.hub.GetTaskRoute(ctx, request.SchemaName)
+	kind := request.GetRunKind()
+	route, err := router.hub.GetTaskRoute(ctx, kind)
 	if errors.Is(err, store.ErrTaskRouteNotFound) {
-		return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s", request.SchemaName)
+		return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s: %w", kind, err)
 	}
 	if err != nil {
 		return chatcompletions.Answer{}, err
 	}
-	release, err := router.waitInQueue(ctx, route.Model, request)
-	if err != nil {
-		return chatcompletions.Answer{}, err
+	answer, err := router.completeOnProvider(ctx, route.ProviderID, route.Model, request, router.RecordRun)
+	if !errors.Is(err, chatcompletions.ErrUnreachable) || route.FallbackProviderID == nil {
+		return answer, err
 	}
-	defer release()
-	answer, err := router.completeOnProvider(ctx, route.ProviderID, route.Model, request)
-	if errors.Is(err, chatcompletions.ErrUnreachable) && route.FallbackProviderID != nil {
-		return router.completeOnProvider(ctx, *route.FallbackProviderID, route.FallbackModel, request)
+	provider, readErr := router.hub.GetModelProvider(ctx, route.ProviderID)
+	if readErr != nil {
+		return chatcompletions.Answer{}, readErr
 	}
-	return answer, err
+	recordRun := router.RecordRun
+	if recordRun != nil {
+		recordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
+			record.FallbackFor = provider.Name
+			router.RecordRun(ctx, record)
+		}
+	}
+	return router.completeOnProvider(ctx, *route.FallbackProviderID, route.FallbackModel, request, recordRun)
 }
 
 // CompleteJSONOn asks a given provider and model, past the task's route, as a
 // comparison does. It still waits its turn in the model queue.
 func (router *Router) CompleteJSONOn(ctx context.Context, providerID uuid.UUID, model string, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
-	release, err := router.waitInQueue(ctx, model, request)
-	if err != nil {
-		return chatcompletions.Answer{}, err
-	}
-	defer release()
-	return router.completeOnProvider(ctx, providerID, model, request)
+	return router.completeOnProvider(ctx, providerID, model, request, router.RecordRun)
 }
 
 // waitInQueue waits for the request's turn at the model; without a queue it
@@ -88,9 +100,10 @@ func (router *Router) waitInQueue(ctx context.Context, model string, request cha
 	if router.Queue == nil {
 		return func() {}, nil
 	}
+	kind := request.GetRunKind()
 	return router.Queue.Wait(ctx, modelqueue.Ticket{
-		Kind: request.GetRunKind(), SubjectID: request.Task.SubjectID, Model: model,
-		Priority: modelqueue.GetPriority(ctx, getKindPriority(request.SchemaName)),
+		Kind: kind, SubjectID: request.Task.SubjectID, Model: model,
+		Priority: modelqueue.GetPriority(ctx, getKindPriority(kind)),
 	})
 }
 
@@ -103,11 +116,22 @@ func getKindPriority(kind string) modelqueue.Priority {
 	return modelqueue.PriorityBackground
 }
 
-func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UUID, model string, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+// completeOnProvider asks one provider, once its turn in the queue comes,
+// telling recordRun about each attempt.
+func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UUID, model string, request chatcompletions.JSONRequest,
+	recordRun func(context.Context, chatcompletions.RunRecord)) (chatcompletions.Answer, error) {
 	provider, err := router.hub.GetModelProvider(ctx, providerID)
 	if err != nil {
 		return chatcompletions.Answer{}, fmt.Errorf("read the model provider: %w", err)
 	}
+	if provider.Kind == store.ModelProviderKindClaudeSubscription {
+		return router.completeOnClaude(ctx, provider, model, request, recordRun)
+	}
+	release, err := router.waitInQueue(ctx, model, request)
+	if err != nil {
+		return chatcompletions.Answer{}, err
+	}
+	defer release()
 	baseURL := provider.BaseURL
 	if provider.Kind == store.ModelProviderKindHubRuntime {
 		if router.Runtime == nil {
@@ -117,8 +141,8 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 		runtimeURL, release, err := router.Runtime.Acquire(ctx, model)
 		if err != nil {
 			err = fmt.Errorf("%w: %v", chatcompletions.ErrUnreachable, err)
-			if router.RecordRun != nil {
-				router.RecordRun(context.WithoutCancel(ctx), chatcompletions.RunRecord{
+			if recordRun != nil {
+				recordRun(context.WithoutCancel(ctx), chatcompletions.RunRecord{
 					Kind: request.GetRunKind(), Task: request.Task, BaseURL: HubRuntimeAddress, Provider: provider.Name, Model: model,
 					StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: chatcompletions.RunFailed, Error: err.Error(),
 					StartedByOwner: chatcompletions.IsStartedByOwner(ctx),
@@ -132,7 +156,10 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 	client := chatcompletions.NewClient(baseURL)
 	client.APIKey = provider.APIKey
 	client.Provider = provider.Name
-	client.RecordRun = router.RecordRun
+	client.RecordRun = recordRun
+	if provider.Kind == store.ModelProviderKindOpenRouter {
+		openrouter.Configure(client)
+	}
 	request.Model = model
 	request.SchemaNotEnforced = !provider.EnforcesSchema
 	answer, err := client.CompleteJSON(ctx, request)
@@ -140,4 +167,18 @@ func (router *Router) completeOnProvider(ctx context.Context, providerID uuid.UU
 		return client.CompleteJSON(ctx, request)
 	}
 	return answer, err
+}
+
+// completeOnClaude asks Claude through the CLI, on the owner's plan. The CLI
+// enforces the schema itself.
+func (router *Router) completeOnClaude(ctx context.Context, provider store.ModelProvider, model string, request chatcompletions.JSONRequest,
+	recordRun func(context.Context, chatcompletions.RunRecord)) (chatcompletions.Answer, error) {
+	if router.Claude == nil {
+		return chatcompletions.Answer{}, fmt.Errorf("%w: the hub found no Claude CLI", chatcompletions.ErrUnreachable)
+	}
+	client := *router.Claude
+	client.Model = model
+	client.Provider = provider.Name
+	client.RecordRun = recordRun
+	return client.CompleteJSON(ctx, request)
 }

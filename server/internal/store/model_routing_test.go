@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -55,5 +57,88 @@ func TestModelWorkStartsPausedAndRemembersItsPause(t *testing.T) {
 	}
 	if paused, _ := hub.GetModelWorkPaused(ctx); paused {
 		t.Fatal("the resume didn't stick")
+	}
+}
+
+func TestTheClaudeModelSettingBecomesTheRoutesOfFullBriefsAndCVs(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	// A provider already named Claude, such as a proxy, keeps its name.
+	if _, err := hub.SaveModelProvider(ctx, owner, nil, store.ModelProviderInput{Name: "Claude", BaseURL: "https://proxy.example.com/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	claude, err := hub.EnsureClaudeTaskRoutes(ctx, "sonnet", store.ClaudeTaskKinds)
+	if err != nil || claude.Kind != store.ModelProviderKindClaudeSubscription || claude.Type != store.ModelProviderTypeClaudeSubscription ||
+		claude.Name != "Claude subscription" || claude.BaseURL != "" {
+		t.Fatalf("the Claude provider: %+v, %v", claude, err)
+	}
+	for _, kind := range store.ClaudeTaskKinds {
+		if route, err := hub.GetTaskRoute(ctx, kind); err != nil || route.ProviderID != claude.ID || route.Model != "sonnet" {
+			t.Fatalf("%s: %+v, %v", kind, route, err)
+		}
+	}
+
+	// The owner routes full briefs to this Mac; a restart with another
+	// setting changes neither that route nor the provider.
+	local, err := hub.SaveModelProvider(ctx, owner, nil, store.ModelProviderInput{Name: "Local", BaseURL: "http://localhost:1234/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveTaskRoute(ctx, owner, store.RunKindJobBriefFull, store.TaskRouteInput{ProviderID: local.ID, Model: "qwen",
+		FallbackProviderID: &claude.ID, FallbackModel: "sonnet"}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := hub.EnsureClaudeTaskRoutes(ctx, "opus", store.ClaudeTaskKinds)
+	if err != nil || again.ID != claude.ID {
+		t.Fatalf("a restart: %+v, %v", again, err)
+	}
+	if route, _ := hub.GetTaskRoute(ctx, store.RunKindJobBriefFull); route.ProviderID != local.ID || route.Model != "qwen" {
+		t.Fatalf("a restart overwrote the chosen route: %+v", route)
+	}
+	if route, _ := hub.GetTaskRoute(ctx, store.AgentPromptKindJobCV); route.Model != "sonnet" {
+		t.Fatalf("a restart changed a seeded route: %+v", route)
+	}
+
+	// Each route change is recorded with who made it.
+	rows, err := pool.Query(ctx, `SELECT actor_kind, operation FROM changes WHERE entity_type = 'task_route' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changes []string
+	for rows.Next() {
+		var actor, operation string
+		if err := rows.Scan(&actor, &operation); err != nil {
+			t.Fatal(err)
+		}
+		changes = append(changes, actor+" "+operation)
+	}
+	want := []string{"system route job_brief_full", "system route job_cv", "owner route job_brief_full"}
+	if strings.Join(changes, ", ") != strings.Join(want, ", ") {
+		t.Fatalf("changes = %v, want %v", changes, want)
+	}
+}
+
+func TestAnAgentKindRunsOnlyOnTheClaudeSubscription(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	local, err := hub.SaveModelProvider(ctx, owner, nil, store.ModelProviderInput{Name: "Local", BaseURL: "http://localhost:1234/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, err := hub.EnsureClaudeTaskRoutes(ctx, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{store.AgentRunKindCompanyTriage, store.AgentRunKindJobFinder, store.AgentRunKindJobFix, store.AgentRunKindProfileSeed} {
+		if _, err := hub.SaveTaskRoute(ctx, owner, kind, store.TaskRouteInput{ProviderID: local.ID, Model: "qwen"}); !errors.Is(err, store.ErrAgentRunsOnClaude) {
+			t.Errorf("%s on a local model: %v", kind, err)
+		}
+		if _, err := hub.SaveTaskRoute(ctx, owner, kind, store.TaskRouteInput{ProviderID: claude.ID, Model: "opus"}); err != nil {
+			t.Errorf("%s on Claude: %v", kind, err)
+		}
+	}
+	if _, err := hub.SaveTaskRoute(ctx, owner, "no_such_kind", store.TaskRouteInput{ProviderID: claude.ID, Model: "opus"}); err == nil {
+		t.Error("a kind the catalog lacks got a route")
 	}
 }

@@ -90,7 +90,7 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			return
 		}
 		if drafter == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: the hub found no Claude CLI"})
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: no model is routed for tailored CVs"})
 			return
 		}
 		if _, err := hub.GetJobToBrief(r.Context(), id); errors.Is(err, store.ErrJobNotFound) {
@@ -112,7 +112,7 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			return
 		}
 		if drafter == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: the hub found no Claude CLI"})
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: no model is routed for tailored CVs"})
 			return
 		}
 		var edit cvdrafts.Draft

@@ -28,7 +28,7 @@ type startedRun struct {
 // records how the run ended, and puts the company on the watch list.
 func addCompany(ctx context.Context, config cliConfig, company string, options triageOptions, out io.Writer) error {
 	var started startedRun
-	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindCompanyTriage, "input": company}, &started); err != nil {
+	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindCompanyTriage, "input": company, "model": options.model}, &started); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Researching %s (agent run %s, prompt version %d)\n", company, started.AgentRun.ID, *started.AgentRun.AgentPromptVersion)
