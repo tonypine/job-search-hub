@@ -121,7 +121,12 @@ struct CompaniesPage: View {
             TableColumn("Company") { summary in
                 HStack(spacing: Space.s) {
                     UnseenDot(count: summary.unseenUpdates)
-                    Text(summary.company.name)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(summary.company.name)
+                        Text(summary.company.contextLine)
+                            .font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
+                            .help(summary.company.contextLine)
+                    }
                 }
             }
             TableColumn("Domain", value: \.company.domain)
