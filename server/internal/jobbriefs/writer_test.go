@@ -194,6 +194,12 @@ func TestFullBriefsGoToTheBestUndecidedJobsAndOnDemand(t *testing.T) {
 	}
 	claude := &matchModel{match: "possible", model: "claude-sonnet"}
 	writer.FullClient = claude
+	fullBriefsPaused := true
+	writer.IsPaused = func(kind string) bool { return fullBriefsPaused && kind == store.RunKindJobBriefFull }
+	if summary, err := writer.WriteNightlyFullBriefs(ctx); err != nil || summary.Written != 0 || len(claude.kinds) != 0 {
+		t.Fatalf("with full briefs paused, the night = %+v, %v, runs %v; want none", summary, err, claude.kinds)
+	}
+	fullBriefsPaused = false
 	summary, err := writer.WriteNightlyFullBriefs(ctx)
 	if err != nil || summary.Written != 1 {
 		t.Fatalf("nightly = %+v, %v; want only the strong job off the pipeline", summary, err)
@@ -205,6 +211,8 @@ func TestFullBriefsGoToTheBestUndecidedJobsAndOnDemand(t *testing.T) {
 		t.Errorf("a second night wrote %d, want 0", summary.Written)
 	}
 
+	// The owner's ask goes ahead whatever the pause.
+	fullBriefsPaused = true
 	if err := writer.WriteFullBrief(ctx, ids["Stretch one"]); err != nil {
 		t.Fatal(err)
 	}

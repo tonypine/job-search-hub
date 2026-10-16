@@ -1,10 +1,12 @@
 // Package modelqueue decides which model call runs next: one at a time, the
 // owner's own runs first, then sorting, then background work, preferring the
-// model already loaded so the runtime swaps as little as it can.
+// model already loaded so the runtime swaps as little as it can. It also
+// holds each kind's pause, which keeps that kind's calls waiting.
 package modelqueue
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -17,7 +19,7 @@ type Priority int
 
 const (
 	// PriorityDispatched is a run the owner started, such as "Read facts
-	// now". It runs next, even while background work is paused.
+	// now". It runs next, even while its kind is paused.
 	PriorityDispatched Priority = iota
 	// PrioritySorting is mail and conversation sorting, which the owner
 	// notices when it lags.
@@ -65,9 +67,10 @@ type TicketStatus struct {
 
 // Status is what the queue is doing.
 type Status struct {
-	Paused  bool           `json:"paused"`
 	Running *TicketStatus  `json:"running,omitempty"`
 	Waiting []TicketStatus `json:"waiting"`
+	// WaitingByKind counts the waiting calls of each kind that has any.
+	WaitingByKind map[string]int `json:"waiting_by_kind"`
 }
 
 type queuedTicket struct {
@@ -82,7 +85,7 @@ type Settings struct {
 	Patience map[Priority]time.Duration
 	// GetLoadedModel names the model in memory, "" when none is.
 	GetLoadedModel func() string
-	// UnloadModel frees the model's memory; it runs once the queue is
+	// UnloadModel frees the model's memory; it runs once every kind is
 	// paused and nothing runs.
 	UnloadModel func()
 	// Now stands in for time.Now in tests.
@@ -92,8 +95,10 @@ type Settings struct {
 type Queue struct {
 	settings Settings
 
-	mutex  sync.Mutex
-	paused bool
+	mutex sync.Mutex
+	// paused has every kind that can be paused, and whether it is. A kind
+	// that isn't in it never waits for a resume.
+	paused map[string]bool
 	// draining holds every call, dispatched ones too, while the hub drains
 	// before a restart.
 	draining bool
@@ -104,14 +109,16 @@ type Queue struct {
 	lastModel string
 }
 
-func New(paused bool, settings Settings) *Queue {
+// New returns a queue with the kinds that can be paused, and whether each
+// is.
+func New(paused map[string]bool, settings Settings) *Queue {
 	if settings.Patience == nil {
 		settings.Patience = DefaultPatience
 	}
 	if settings.Now == nil {
 		settings.Now = time.Now
 	}
-	return &Queue{settings: settings, paused: paused}
+	return &Queue{settings: settings, paused: maps.Clone(paused)}
 }
 
 // Wait blocks until the ticket's turn and returns the function that ends it.
@@ -148,14 +155,35 @@ func (queue *Queue) finish(ticket *queuedTicket) {
 	}
 }
 
-// SetPaused pauses or resumes the queue. While paused, background and
-// sorting calls don't start (the running call finishes); dispatched calls
+// SetPaused pauses or resumes kind. While it is paused, its background and
+// sorting calls don't start (a running one finishes); its dispatched calls
 // still run. The caller keeps the pause across restarts.
-func (queue *Queue) SetPaused(paused bool) {
+func (queue *Queue) SetPaused(kind string, paused bool) {
 	queue.mutex.Lock()
 	defer queue.mutex.Unlock()
-	queue.paused = paused
+	if queue.paused == nil {
+		queue.paused = map[string]bool{}
+	}
+	queue.paused[kind] = paused
 	queue.grantNext()
+}
+
+// IsPaused says whether kind is paused.
+func (queue *Queue) IsPaused(kind string) bool {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+	return queue.paused[kind]
+}
+
+// isEveryKindPaused says whether every kind that can be paused is. It runs
+// with the mutex held.
+func (queue *Queue) isEveryKindPaused() bool {
+	for _, paused := range queue.paused {
+		if !paused {
+			return false
+		}
+	}
+	return len(queue.paused) > 0
 }
 
 // SetDraining holds every waiting call while the hub drains, dispatched
@@ -167,18 +195,19 @@ func (queue *Queue) SetDraining(draining bool) {
 	queue.grantNext()
 }
 
-// Status reports the pause, the running call and the waiting ones, in the
-// order they would run.
+// Status reports the running call and the waiting ones, in the order they
+// would run.
 func (queue *Queue) Status() Status {
 	queue.mutex.Lock()
 	defer queue.mutex.Unlock()
-	status := Status{Paused: queue.paused, Waiting: []TicketStatus{}}
+	status := Status{Waiting: []TicketStatus{}, WaitingByKind: map[string]int{}}
 	if queue.running != nil {
 		running := convertTicketToStatus(queue.running)
 		status.Running = &running
 	}
 	for _, ticket := range queue.getWaitingInOrder() {
 		status.Waiting = append(status.Waiting, convertTicketToStatus(ticket))
+		status.WaitingByKind[ticket.Kind]++
 	}
 	return status
 }
@@ -206,7 +235,7 @@ func (queue *Queue) grantNext() {
 	}
 	next := queue.chooseNext()
 	if next == nil {
-		if queue.paused && queue.settings.UnloadModel != nil {
+		if queue.isEveryKindPaused() && queue.settings.UnloadModel != nil {
 			go queue.settings.UnloadModel()
 		}
 		return
@@ -218,13 +247,14 @@ func (queue *Queue) grantNext() {
 	close(next.granted)
 }
 
-// chooseNext picks the first call by priority, then age. A call for a model
+// chooseNext picks the first call by priority, then age, leaving out the
+// calls of a paused kind that the owner didn't start. A call for a model
 // other than the loaded one yields to a call for the loaded model until it
 // has waited past its patience, so swaps come in batches.
 func (queue *Queue) chooseNext() *queuedTicket {
 	var eligible []*queuedTicket
 	for _, ticket := range queue.getWaitingInOrder() {
-		if !queue.paused || ticket.Priority == PriorityDispatched {
+		if !queue.paused[ticket.Kind] || ticket.Priority == PriorityDispatched {
 			eligible = append(eligible, ticket)
 		}
 	}

@@ -2,7 +2,9 @@ package mcptools_test
 
 import (
 	"context"
+	"maps"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -35,7 +37,11 @@ func TestTheOwnerSeesPausesAndDispatchesModelWork(t *testing.T) {
 	hub := store.New(pool)
 	read := make(chan uuid.UUID, 1)
 	owner := mcptools.NewServer(hub, stubJobBoards{}, recordingSyncer{synced: make(chan store.JobBoard, 1)}, noRates{})
-	mcptools.AddModelWorkTools(owner, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(true, modelqueue.Settings{}), Runtime: idleRuntime{}, Facts: factsReader{read: read}})
+	pauses, err := hub.GetRunKindPauses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcptools.AddModelWorkTools(owner, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(pauses, modelqueue.Settings{}), Runtime: idleRuntime{}, Facts: factsReader{read: read}})
 	server := httptest.NewServer(mcptools.NewHandler(owner, mcptools.NewAgentServer(hub, stubJobBoards{}, recordingSyncer{}, noRates{}), tokens.NewVerifier(ownerToken, hub)))
 	t.Cleanup(server.Close)
 	session := connect(t, hubUnderTest{pool: pool, store: hub, url: server.URL}, ownerToken)
@@ -46,8 +52,8 @@ func TestTheOwnerSeesPausesAndDispatchesModelWork(t *testing.T) {
 	if status := callTool[modelwork.Status](t, session, "resume_model_work", map[string]any{}); status.Paused {
 		t.Fatalf("after resuming: %+v", status)
 	}
-	if paused, _ := hub.GetModelWorkPaused(context.Background()); paused {
-		t.Fatal("the resume wasn't saved")
+	if pauses, _ := hub.GetRunKindPauses(context.Background()); slices.Contains(slices.Collect(maps.Values(pauses)), true) {
+		t.Fatalf("the resume wasn't saved for every kind: %v", pauses)
 	}
 
 	company, _, _ := hub.CreateCompany(context.Background(), store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.example"})
