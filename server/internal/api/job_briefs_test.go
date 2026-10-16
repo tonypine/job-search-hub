@@ -11,6 +11,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -29,10 +31,12 @@ func TestAFullBriefIsQueuedForAKnownJob(t *testing.T) {
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	})
 	writer := recordingBriefWriter{written: make(chan uuid.UUID, 1)}
+	queue := modelqueue.New(nil, modelqueue.Settings{})
 	routes := http.NewServeMux()
-	api.RegisterJobBriefRoutes(routes, hub, writer, requireOwner)
+	api.RegisterRunStartRoutes(routes, &modelwork.Controls{Hub: hub, Queue: queue, FullBriefs: writer}, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
+	routeJobKinds(t, hub, "sonnet")
 	job, _, _ := hub.AddManualJob(context.Background(), store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/1"})
 
 	if status, body := send(t, http.MethodPost, server.URL+"/v1/jobs/"+job.ID.String()+"/brief/full", ownerToken, ""); status != http.StatusAccepted {
@@ -51,10 +55,10 @@ func TestAFullBriefIsQueuedForAKnownJob(t *testing.T) {
 	}
 
 	off := http.NewServeMux()
-	api.RegisterJobBriefRoutes(off, hub, nil, requireOwner)
+	api.RegisterRunStartRoutes(off, &modelwork.Controls{Hub: hub, Queue: queue}, requireOwner)
 	offServer := httptest.NewServer(off)
 	t.Cleanup(offServer.Close)
 	if status, _ := send(t, http.MethodPost, offServer.URL+"/v1/jobs/"+job.ID.String()+"/brief/full", ownerToken, ""); status != http.StatusServiceUnavailable {
-		t.Errorf("without Claude: %d, want 503", status)
+		t.Errorf("without full briefs: %d, want 503", status)
 	}
 }

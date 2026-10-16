@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -22,7 +20,6 @@ type cvPrinter interface {
 }
 
 type cvDrafter interface {
-	DraftCV(ctx context.Context, jobID uuid.UUID) (store.CV, error)
 	SaveEdit(ctx context.Context, actor store.Actor, jobID uuid.UUID, edit cvdrafts.Draft) (store.CV, error)
 	GenerateMissingCVs(ctx context.Context) (int, error)
 }
@@ -33,13 +30,11 @@ type generateMissingCVsResponse struct {
 	Queued int `json:"queued"`
 }
 
-// cvDraftTimeout bounds one tailored CV drafted in the background.
-const cvDraftTimeout = 5 * time.Minute
-
 // RegisterCVRoutes adds the owner-only routes for the base CV, a job's
-// tailored CV, any CV rendered as HTML in the owner's design, and printing
-// one to its PDF file. A nil drafter or printer answers that drafting or
-// printing is off.
+// tailored CV and the owner's edit of it, any CV rendered as HTML in the
+// owner's design, and printing one to its PDF file. A nil drafter or printer
+// answers that drafting or printing is off. A job's CV is drafted by
+// starting its run (see RegisterRunStartRoutes).
 func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter, printer cvPrinter, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	routes.Handle("GET /v1/cvs/base", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,28 +78,6 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 		}
 		cv, err := hub.GetJobCV(r.Context(), id)
 		writeCVOrError(w, cv, err)
-	})))
-	routes.Handle("POST /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := parsePathIDOrWriteNotFound(w, r)
-		if !ok {
-			return
-		}
-		if drafter == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "CV drafts are off: no model is routed for tailored CVs"})
-			return
-		}
-		if _, err := hub.GetJobToBrief(r.Context(), id); errors.Is(err, store.ErrJobNotFound) {
-			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
-			return
-		}
-		go func() {
-			ctx, cancel := context.WithTimeout(chatcompletions.WithStartedByOwner(context.WithoutCancel(r.Context())), cvDraftTimeout)
-			defer cancel()
-			if _, err := drafter.DraftCV(ctx, id); err != nil {
-				slog.Warn("CV draft failed", "job", id, "error", err)
-			}
-		}()
-		writeJSON(w, http.StatusAccepted, fullBriefResponse{Queued: true})
 	})))
 	routes.Handle("PUT /v1/jobs/{id}/cv", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := parsePathIDOrWriteNotFound(w, r)

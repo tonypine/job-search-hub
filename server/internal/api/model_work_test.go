@@ -47,9 +47,11 @@ func startModelWorkAPI(t *testing.T, withFacts bool) (string, *store.Store, chan
 	controls := &modelwork.Controls{Hub: hub, Queue: modelqueue.New(pauses, modelqueue.Settings{}), Runtime: stubRuntime{}}
 	if withFacts {
 		controls.Facts = recordingFactsReader{read: read}
+		routeJobKinds(t, hub, "qwen3.8-27b")
 	}
 	routes := http.NewServeMux()
 	api.RegisterModelWorkRoutes(routes, controls, requireOwner)
+	api.RegisterRunStartRoutes(routes, controls, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return server.URL, hub, read
