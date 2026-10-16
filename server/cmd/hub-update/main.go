@@ -52,20 +52,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 // install runs the install state names to its end. It exits 0 once the
 // install has ended, however it ended, so launchd leaves the job be; and
 // non-zero when this run stopped part way, so launchd runs it again. An
-// install no run can take, as when its state can't be read, ends too.
+// install no run can take, as when the server's settings can't be read or
+// its state lacks what an install needs, stops its rollback where it is;
+// one whose state can't be decoded ends too.
 func install(statePath string, stdout, stderr io.Writer) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(stderr, "hub-update:", err)
 		return 1
 	}
-	settings, err := serverenv.Read(serverenv.Path(home))
-	if err != nil {
-		return endJob(home, fmt.Errorf("read the server's settings: %w", err), stderr)
-	}
 	statePath, err = filepath.Abs(statePath)
 	if err != nil {
 		return endJob(home, err, stderr)
+	}
+	// Without its settings the system takes the defaults, which serve
+	// only to say how to finish by hand.
+	settings, settingsErr := serverenv.Read(serverenv.Path(home))
+	if settingsErr != nil {
+		settingsErr = fmt.Errorf("read the server's settings: %w", settingsErr)
+		fmt.Fprintln(stderr, "hub-update:", settingsErr)
 	}
 	system := newLaunchdSystem(home, settings)
 	machine := &hubupdate.Machine{
@@ -77,7 +82,12 @@ func install(statePath string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	state, err := machine.Run(ctx)
+	var state hubupdate.State
+	if settingsErr != nil {
+		state, err = machine.Stop(ctx, settingsErr)
+	} else {
+		state, err = machine.Run(ctx)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		// The app moved the state aside once it read how the install ended,
 		// or removed it when launchd wouldn't start the job: there's nothing
@@ -93,6 +103,8 @@ func install(statePath string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "hub-update:", err)
 		return 1
 	}
+	// The state removed the job it names; one that names none leaves it.
+	removeJob(home, stderr)
 	fmt.Fprintf(stdout, "The install of %s ended: %s\n", state.To, state.Step)
 	return 0
 }
