@@ -102,6 +102,14 @@ func CountWrites(ctx context.Context, pool *pgxpool.Pool, mark WriteMark) (Write
 	return CompareWriteMarks(mark, now), nil
 }
 
+// CountWritesSince counts what was written to the hub's database since
+// mark, while the server runs: what restoring the dump the mark sits beside
+// would lose. Writes the server's connections haven't flushed yet, from
+// about the last second, don't show.
+func (s *Store) CountWritesSince(ctx context.Context, mark WriteMark) (WriteCount, error) {
+	return CountWrites(ctx, s.pool, mark)
+}
+
 // CompareWriteMarks counts the writes between two readings of the
 // counters. It doesn't guess: when the statistics were reset or dropped in
 // between, or any counter went down, the count says it couldn't be made.
