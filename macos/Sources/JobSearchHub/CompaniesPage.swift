@@ -129,17 +129,20 @@ struct CompaniesPage: View {
                 selection: $model.scope
             )
         } trailing: {
-            // On the trailing side, which keeps its width, so the scopes
-            // aren't squeezed out of sight when the inspector is open.
+            // On the trailing side, which keeps its width, and only its
+            // symbol, so the scopes still fit beside the inspector at 1400
+            // wide.
             if case .failed = research.state {
                 Button {
                     isAddingCompany = true
                 } label: {
                     Label("Research failed", systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(Tone.negative.color)
                 .help("Research of \(research.company) failed. Show why, and try again")
+                .accessibilityLabel("Research of \(research.company) failed")
             }
             PageSearchField(text: $model.search, prompt: "Search companies")
                 .help("Search names and domains")
