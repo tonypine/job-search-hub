@@ -37,6 +37,8 @@ type Client struct {
 	HTTPClient *http.Client
 	// APIKey, when set, is sent as a bearer token, as hosted providers need.
 	APIKey string
+	// Provider names the server for the record of runs, such as "Local model".
+	Provider string
 	// RecordRun, when set, hears about every request once it ends, whatever
 	// its outcome, for the hub's record of task runs.
 	RecordRun func(context.Context, RunRecord)
@@ -55,10 +57,12 @@ const (
 
 // RunRecord is one request as the record of task runs keeps it.
 type RunRecord struct {
-	// Kind is the request's schema name, which is its prompt's kind.
+	// Kind is the request's run kind: its schema name, which is its
+	// prompt's kind, unless its task names another.
 	Kind             string
 	Task             TaskLabel
 	BaseURL          string
+	Provider         string
 	Model            string
 	InputHash        string
 	Output           json.RawMessage
@@ -68,15 +72,44 @@ type RunRecord struct {
 	Duration         time.Duration
 	Outcome          string
 	Error            string
+	// StartedByOwner says the owner asked for the request, rather than the
+	// hub starting it by itself.
+	StartedByOwner bool
 }
 
 // TaskLabel says what a request is for: the record keeps it; the model never
 // sees it.
 type TaskLabel struct {
+	// Kind is the run kind the record files the request under, when it
+	// isn't the schema name, as for a full brief written with the job_brief
+	// prompt.
+	Kind string
 	// SubjectID is the job, mail or conversation the request is about.
 	SubjectID     *uuid.UUID
 	PromptID      *uuid.UUID
 	PromptVersion int
+}
+
+// GetRunKind is the kind of run the request is recorded as.
+func (request JSONRequest) GetRunKind() string {
+	if request.Task.Kind != "" {
+		return request.Task.Kind
+	}
+	return request.SchemaName
+}
+
+type startedByOwnerKey struct{}
+
+// WithStartedByOwner marks the requests made with ctx as ones the owner
+// asked for, such as "Read facts now", so their runs are recorded as such.
+func WithStartedByOwner(ctx context.Context) context.Context {
+	return context.WithValue(ctx, startedByOwnerKey{}, true)
+}
+
+// IsStartedByOwner says whether ctx's requests are ones the owner asked for.
+func IsStartedByOwner(ctx context.Context) bool {
+	started, _ := ctx.Value(startedByOwnerKey{}).(bool)
+	return started
 }
 
 func NewClient(baseURL string) *Client {
@@ -122,9 +155,9 @@ func (client *Client) CompleteJSON(ctx context.Context, request JSONRequest) (An
 	answer, usage, outcome, err := client.complete(ctx, request)
 	if client.RecordRun != nil {
 		record := RunRecord{
-			Kind: request.SchemaName, Task: request.Task, BaseURL: client.BaseURL, Model: request.Model,
+			Kind: request.GetRunKind(), Task: request.Task, BaseURL: client.BaseURL, Provider: client.Provider, Model: request.Model,
 			InputHash: HashInput(request), PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
-			StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: outcome,
+			StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: outcome, StartedByOwner: IsStartedByOwner(ctx),
 		}
 		if err != nil {
 			record.Error = err.Error()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -152,10 +153,16 @@ type matchModel struct {
 	match    string
 	model    string
 	requests int
+	// kinds and byOwner are each request's run kind and whether the owner
+	// asked for it.
+	kinds   []string
+	byOwner []bool
 }
 
-func (model *matchModel) CompleteJSON(_ context.Context, _ chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
+func (model *matchModel) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	model.requests++
+	model.kinds = append(model.kinds, request.GetRunKind())
+	model.byOwner = append(model.byOwner, chatcompletions.IsStartedByOwner(ctx))
 	return chatcompletions.Answer{Model: model.model, Object: json.RawMessage(`{"match":"` + model.match + `","reason":"R","strengths":[],"weaknesses":[]}`)}, nil
 }
 
@@ -206,5 +213,10 @@ func TestFullBriefsGoToTheBestUndecidedJobsAndOnDemand(t *testing.T) {
 	}
 	if err := writer.WriteFullBrief(ctx, uuid.New()); !errors.Is(err, store.ErrJobNotFound) {
 		t.Errorf("an unknown job: %v", err)
+	}
+	// Full briefs are runs of their own kind; the one asked for is the
+	// owner's.
+	if !slices.Equal(claude.kinds, []string{store.RunKindJobBriefFull, store.RunKindJobBriefFull}) || !slices.Equal(claude.byOwner, []bool{false, true}) {
+		t.Errorf("full brief runs = %v, by the owner %v", claude.kinds, claude.byOwner)
 	}
 }

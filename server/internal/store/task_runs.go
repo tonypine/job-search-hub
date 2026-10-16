@@ -14,7 +14,9 @@ type TaskRun struct {
 	ID               uuid.UUID       `json:"id"`
 	Kind             string          `json:"kind"`
 	SubjectID        *uuid.UUID      `json:"subject_id,omitempty"`
+	SubjectType      *string         `json:"subject_type,omitempty"`
 	BaseURL          string          `json:"base_url"`
+	Provider         string          `json:"provider"`
 	Model            string          `json:"model"`
 	PromptVersion    *int            `json:"prompt_version,omitempty"`
 	InputHash        string          `json:"input_hash"`
@@ -25,13 +27,16 @@ type TaskRun struct {
 	DurationMS       int             `json:"duration_ms"`
 	Outcome          string          `json:"outcome"`
 	Error            string          `json:"error,omitempty"`
+	StartedByOwner   bool            `json:"started_by_owner"`
 }
 
-// NewTaskRun is a finished request to record.
+// NewTaskRun is a finished request to record. Its subject's type is its
+// kind's, from the catalog of run kinds.
 type NewTaskRun struct {
 	Kind             string
 	SubjectID        *uuid.UUID
 	BaseURL          string
+	Provider         string
 	Model            string
 	PromptID         *uuid.UUID
 	PromptVersion    int
@@ -43,6 +48,7 @@ type NewTaskRun struct {
 	Duration         time.Duration
 	Outcome          string
 	Error            string
+	StartedByOwner   bool
 }
 
 // TaskRunFilter narrows the list: one kind, one outcome, and how many.
@@ -57,13 +63,14 @@ const (
 	maximumTaskRunPageSize = 1000
 )
 
-const taskRunColumns = `id, kind, subject_id, base_url, model, prompt_version, input_hash, output, prompt_tokens, completion_tokens,
-	started_at, duration_ms, outcome, error`
+const taskRunColumns = `id, kind, subject_id, subject_type, base_url, provider, model, prompt_version, input_hash, output, prompt_tokens,
+	completion_tokens, started_at, duration_ms, outcome, error, started_by_owner`
 
 func scanTaskRun(row pgx.Row) (TaskRun, error) {
 	var run TaskRun
-	err := row.Scan(&run.ID, &run.Kind, &run.SubjectID, &run.BaseURL, &run.Model, &run.PromptVersion, &run.InputHash, &run.Output,
-		&run.PromptTokens, &run.CompletionTokens, &run.StartedAt, &run.DurationMS, &run.Outcome, &run.Error)
+	err := row.Scan(&run.ID, &run.Kind, &run.SubjectID, &run.SubjectType, &run.BaseURL, &run.Provider, &run.Model, &run.PromptVersion,
+		&run.InputHash, &run.Output, &run.PromptTokens, &run.CompletionTokens, &run.StartedAt, &run.DurationMS, &run.Outcome, &run.Error,
+		&run.StartedByOwner)
 	return run, err
 }
 
@@ -78,13 +85,18 @@ func (s *Store) RecordTaskRun(ctx context.Context, input NewTaskRun) (TaskRun, e
 	if len(input.Output) > 0 {
 		output = input.Output
 	}
+	var subjectType *string
+	if input.SubjectID != nil {
+		subjectType = getRunSubjectType(input.Kind)
+	}
 	return scanTaskRun(s.pool.QueryRow(ctx, `
-		INSERT INTO task_runs (kind, subject_id, base_url, model, prompt_id, prompt_version, input_hash, output, prompt_tokens,
-			completion_tokens, started_at, duration_ms, outcome, error)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO task_runs (kind, subject_id, subject_type, base_url, provider, model, prompt_id, prompt_version, input_hash, output,
+			prompt_tokens, completion_tokens, started_at, duration_ms, outcome, error, started_by_owner)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING `+taskRunColumns,
-		input.Kind, input.SubjectID, input.BaseURL, input.Model, input.PromptID, promptVersion, input.InputHash, output,
-		input.PromptTokens, input.CompletionTokens, input.StartedAt, int(input.Duration.Milliseconds()), input.Outcome, input.Error))
+		input.Kind, input.SubjectID, subjectType, input.BaseURL, input.Provider, input.Model, input.PromptID, promptVersion, input.InputHash,
+		output, input.PromptTokens, input.CompletionTokens, input.StartedAt, int(input.Duration.Milliseconds()), input.Outcome, input.Error,
+		input.StartedByOwner))
 }
 
 // ListTaskRuns returns the runs the filter keeps, the latest first.

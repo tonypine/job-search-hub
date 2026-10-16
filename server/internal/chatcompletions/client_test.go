@@ -128,6 +128,25 @@ func TestEveryRequestIsRecordedWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestARunIsRecordedUnderItsTasksKindAndProviderAndWhoAskedForIt(t *testing.T) {
+	var records []chatcompletions.RunRecord
+	client, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}`)
+	client.Provider = "LM Studio"
+	client.RecordRun = func(_ context.Context, run chatcompletions.RunRecord) { records = append(records, run) }
+	full := request
+	full.Task.Kind = "job_brief_full"
+	if _, err := client.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), full); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CompleteJSON(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Kind != "job_brief_full" || !records[0].StartedByOwner || records[0].Provider != "LM Studio" ||
+		records[1].Kind != request.SchemaName || records[1].StartedByOwner {
+		t.Errorf("records = %+v", records)
+	}
+}
+
 func TestAKeyIsSentAsABearerToken(t *testing.T) {
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

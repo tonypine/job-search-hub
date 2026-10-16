@@ -105,7 +105,8 @@ func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) err
 	if err != nil {
 		return err
 	}
-	return extractor.readJobFacts(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched), job, prompt)
+	ctx = chatcompletions.WithStartedByOwner(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched))
+	return extractor.readJobFacts(ctx, job, prompt)
 }
 
 // readJobFacts asks the model for the job's facts and saves them.

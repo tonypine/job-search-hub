@@ -98,7 +98,7 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			return
 		}
 		go func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), cvDraftTimeout)
+			ctx, cancel := context.WithTimeout(chatcompletions.WithStartedByOwner(context.WithoutCancel(r.Context())), cvDraftTimeout)
 			defer cancel()
 			if _, err := drafter.DraftCV(ctx, id); err != nil {
 				slog.Warn("CV draft failed", "job", id, "error", err)
@@ -132,7 +132,7 @@ func RegisterCVRoutes(routes *http.ServeMux, hub *store.Store, drafter cvDrafter
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: cvdrafts.ErrNoCVDrafts.Error()})
 			return
 		}
-		queued, err := drafter.GenerateMissingCVs(r.Context())
+		queued, err := drafter.GenerateMissingCVs(chatcompletions.WithStartedByOwner(r.Context()))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return

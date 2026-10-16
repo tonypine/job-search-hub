@@ -30,6 +30,9 @@ const AgentRunKindProfileSeed = "profile_seed"
 // also its prompt's kind.
 const AgentRunKindJobFix = "job_fix"
 
+// companyAgentRunKinds are the agent runs for a company.
+var companyAgentRunKinds = []string{AgentRunKindCompanyTriage, AgentRunKindJobFinder}
+
 const (
 	AgentRunRunning   = "running"
 	AgentRunSucceeded = "succeeded"
@@ -40,6 +43,8 @@ type AgentRun struct {
 	ID                 uuid.UUID       `json:"id"`
 	Kind               string          `json:"kind"`
 	Input              string          `json:"input"`
+	SubjectType        *string         `json:"subject_type,omitempty"`
+	SubjectID          *uuid.UUID      `json:"subject_id,omitempty"`
 	Status             string          `json:"status"`
 	AgentPromptVersion *int            `json:"agent_prompt_version,omitempty"`
 	TokenExpiresAt     time.Time       `json:"token_expires_at"`
@@ -53,12 +58,13 @@ type AgentRun struct {
 
 // The cost is read as text so the decimal Claude reported is never rounded
 // through a float.
-const agentRunColumns = `id, kind, input, status, agent_prompt_version, token_expires_at, claude_session_id, cost_usd_estimate::text, result, error, started_at, finished_at`
+const agentRunColumns = `id, kind, input, subject_type, subject_id, status, agent_prompt_version, token_expires_at, claude_session_id,
+	cost_usd_estimate::text, result, error, started_at, finished_at`
 
 func scanAgentRun(row pgx.Row) (AgentRun, error) {
 	var run AgentRun
-	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.Status, &run.AgentPromptVersion, &run.TokenExpiresAt, &run.ClaudeSessionID,
-		&run.CostUSDEstimate, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
+	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.SubjectType, &run.SubjectID, &run.Status, &run.AgentPromptVersion, &run.TokenExpiresAt,
+		&run.ClaudeSessionID, &run.CostUSDEstimate, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentRun{}, ErrAgentRunNotFound
 	}
@@ -66,12 +72,20 @@ func scanAgentRun(row pgx.Row) (AgentRun, error) {
 }
 
 // StartAgentRun records a running agent run given version promptVersion of its
-// prompt. Only the token's hash is stored; the token itself exists only in the
-// caller's hands.
-func (s *Store) StartAgentRun(ctx context.Context, kind, input string, promptVersion int, tokenHash []byte, tokenExpiresAt time.Time) (AgentRun, error) {
+// prompt. subjectID is the job or company the run is for, nil when it isn't
+// known yet; its type is the kind's. A profile seed is for the owner's
+// profile, which has no id. Only the token's hash is stored; the token itself
+// exists only in the caller's hands.
+func (s *Store) StartAgentRun(ctx context.Context, kind, input string, subjectID *uuid.UUID, promptVersion int, tokenHash []byte,
+	tokenExpiresAt time.Time) (AgentRun, error) {
+	var subjectType *string
+	if subjectID != nil || kind == AgentRunKindProfileSeed {
+		subjectType = getRunSubjectType(kind)
+	}
 	return scanAgentRun(s.pool.QueryRow(ctx, `
-		INSERT INTO agent_runs (kind, input, agent_prompt_version, token_hash, token_expires_at) VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+agentRunColumns, kind, input, promptVersion, tokenHash, tokenExpiresAt))
+		INSERT INTO agent_runs (kind, input, subject_type, subject_id, agent_prompt_version, token_hash, token_expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING `+agentRunColumns, kind, input, subjectType, subjectID, promptVersion, tokenHash, tokenExpiresAt))
 }
 
 type AgentRunOutcome struct {
@@ -83,7 +97,9 @@ type AgentRunOutcome struct {
 }
 
 // FinishAgentRun records how a running run ended. A finished run's token no
-// longer verifies, since verification only accepts running runs.
+// longer verifies, since verification only accepts running runs. A company
+// run started for a company the hub didn't know is linked to the first
+// company it changed.
 func (s *Store) FinishAgentRun(ctx context.Context, id uuid.UUID, outcome AgentRunOutcome) (AgentRun, error) {
 	if outcome.Status != AgentRunSucceeded && outcome.Status != AgentRunFailed {
 		return AgentRun{}, fmt.Errorf("a run finishes as %q or %q, not %q", AgentRunSucceeded, AgentRunFailed, outcome.Status)
@@ -98,11 +114,18 @@ func (s *Store) FinishAgentRun(ctx context.Context, id uuid.UUID, outcome AgentR
 	}
 
 	run, err := scanAgentRun(s.pool.QueryRow(ctx, `
+		WITH changed AS (
+			SELECT entity_id FROM changes WHERE agent_run_id = $1 AND entity_type = 'company' ORDER BY id LIMIT 1
+		)
 		UPDATE agent_runs SET
-			status = $2, claude_session_id = $3, cost_usd_estimate = $4::numeric, result = $5, error = $6, finished_at = now()
+			status = $2, claude_session_id = $3, cost_usd_estimate = $4::numeric, result = $5, error = $6, finished_at = now(),
+			subject_id = coalesce(agent_runs.subject_id, CASE WHEN kind = ANY($7) THEN (SELECT entity_id FROM changed) END),
+			subject_type = CASE
+				WHEN agent_runs.subject_id IS NULL AND kind = ANY($7) AND EXISTS (SELECT FROM changed) THEN $8
+				ELSE agent_runs.subject_type END
 		WHERE id = $1 AND status = 'running'
 		RETURNING `+agentRunColumns,
-		id, outcome.Status, outcome.ClaudeSessionID, cost, result, outcome.Error))
+		id, outcome.Status, outcome.ClaudeSessionID, cost, result, outcome.Error, companyAgentRunKinds, RunSubjectCompany))
 	if errors.Is(err, ErrAgentRunNotFound) {
 		if _, getErr := s.GetAgentRun(ctx, id); getErr != nil {
 			return AgentRun{}, getErr

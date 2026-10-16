@@ -176,11 +176,19 @@ func TestAHubRuntimeRouteRunsOnTheHubsOwnRuntime(t *testing.T) {
 	var records []chatcompletions.RunRecord
 	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
 	runtime.failWith = errors.New("llama-server exited while loading")
-	if _, err := router.CompleteJSON(context.Background(), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
+	if _, err := router.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
 		t.Fatalf("a runtime that can't load: %v", err)
 	}
-	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed {
+	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed ||
+		records[0].Provider != "Hub runtime" || !records[0].StartedByOwner {
 		t.Fatalf("records = %+v; want the failed start recorded", records)
+	}
+	runtime.failWith = nil
+	if _, err := router.CompleteJSON(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[1].Provider != "Hub runtime" || records[1].Outcome != chatcompletions.RunSucceeded || records[1].StartedByOwner {
+		t.Errorf("records = %+v; want the run on the runtime recorded under its provider", records)
 	}
 }
 

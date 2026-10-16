@@ -51,8 +51,18 @@ func TestAnAnswerComesFromTheStructuredOutputAndTheRunIsRecorded(t *testing.T) {
 		}
 	}
 	if len(records) != 1 || records[0].Outcome != chatcompletions.RunSucceeded || records[0].Kind != "job_brief" || records[0].BaseURL != claudeprint.BaseURL ||
-		records[0].PromptTokens != 910 || records[0].CompletionTokens != 120 || records[0].Model != "claude-sonnet-5-5" {
+		records[0].PromptTokens != 910 || records[0].CompletionTokens != 120 || records[0].Model != "claude-sonnet-5-5" ||
+		records[0].Provider != claudeprint.Provider || records[0].StartedByOwner {
 		t.Errorf("records = %+v", records)
+	}
+
+	if _, err := client.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), chatcompletions.JSONRequest{
+		SchemaName: "job_brief", Schema: json.RawMessage(`{"type":"object"}`), Task: chatcompletions.TaskLabel{Kind: "job_brief_full"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[1].Kind != "job_brief_full" || !records[1].StartedByOwner {
+		t.Errorf("a full brief the owner asked for = %+v", records[1:])
 	}
 }
 
