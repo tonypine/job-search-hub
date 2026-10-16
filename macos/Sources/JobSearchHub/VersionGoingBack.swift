@@ -314,7 +314,7 @@ final class GoingBack {
         content.body = withdrawnOffer.map { "\($0.cost.summarize(target: $0.target)) Open Settings › Version to go back." }
             ?? "It was pulled after its release. The next release replaces it."
         content.sound = .default
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "withdrawn-\(running)", content: content, trigger: nil))
+        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "withdrawn-\(running)", content: content, trigger: nil))
     }
 
     func dismissWithdrawnBanner() {
