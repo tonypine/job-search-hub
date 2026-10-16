@@ -37,8 +37,10 @@ type TaskRun struct {
 }
 
 // NewTaskRun is a finished request to record. Its subject's type is its
-// kind's, from the catalog of run kinds.
+// kind's, from the catalog of run kinds. ID is the id a run the owner
+// started was given, nil for a new one.
 type NewTaskRun struct {
+	ID               *uuid.UUID
 	Kind             string
 	SubjectID        *uuid.UUID
 	BaseURL          string
@@ -99,11 +101,12 @@ func (s *Store) RecordTaskRun(ctx context.Context, input NewTaskRun) (TaskRun, e
 		subjectType = getRunSubjectType(input.Kind)
 	}
 	return scanTaskRun(s.pool.QueryRow(ctx, `
-		INSERT INTO task_runs (kind, subject_id, subject_type, base_url, provider, model, prompt_id, prompt_version, input_hash, output,
+		INSERT INTO task_runs (id, kind, subject_id, subject_type, base_url, provider, model, prompt_id, prompt_version, input_hash, output,
 			prompt_tokens, completion_tokens, cost_usd, started_at, duration_ms, outcome, error, started_by_owner, fallback_for)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, '')::numeric, $14, $15, $16, $17, $18, $19)
+		VALUES (coalesce($1, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, '')::numeric, $15, $16, $17,
+			$18, $19, $20)
 		RETURNING `+taskRunColumns,
-		input.Kind, input.SubjectID, subjectType, input.BaseURL, input.Provider, input.Model, input.PromptID, promptVersion, input.InputHash,
+		input.ID, input.Kind, input.SubjectID, subjectType, input.BaseURL, input.Provider, input.Model, input.PromptID, promptVersion, input.InputHash,
 		output, input.PromptTokens, input.CompletionTokens, input.CostUSD, input.StartedAt, int(input.Duration.Milliseconds()), input.Outcome,
 		input.Error, input.StartedByOwner, input.FallbackFor))
 }

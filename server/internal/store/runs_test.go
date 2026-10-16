@@ -20,7 +20,7 @@ import (
 func startAgentRunAt(t *testing.T, pool *pgxpool.Pool, hub *store.Store, kind, input string, subjectID *uuid.UUID, at time.Time) store.AgentRun {
 	t.Helper()
 	ctx := context.Background()
-	run, err := hub.StartAgentRun(ctx, kind, input, subjectID, "", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
+	run, err := hub.StartAgentRun(ctx, nil, kind, input, subjectID, "", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestARunKeepsItsCostItsFallbackAndAnAgentsModel(t *testing.T) {
 	if err != nil || unpriced.CostUSD != nil || unpriced.FallbackFor != "" {
 		t.Fatalf("a run with no cost = %+v, %v", unpriced, err)
 	}
-	run, err := hub.StartAgentRun(ctx, store.AgentRunKindProfileSeed, "owner profile", nil, "opus", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
+	run, err := hub.StartAgentRun(ctx, nil, store.AgentRunKindProfileSeed, "owner profile", nil, "opus", 1, []byte(uuid.NewString()), time.Now().Add(time.Hour))
 	if err != nil || run.Model != "opus" {
 		t.Fatalf("agent run = %+v, %v", run, err)
 	}

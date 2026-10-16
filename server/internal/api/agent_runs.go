@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,13 +132,27 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the prompt: " + err.Error()})
 			return
 		}
+		// A run the owner started from the hub is recorded under the id its
+		// start answered with, on the model chosen for it.
+		var runID *uuid.UUID
+		if subjectID != nil {
+			started, found, err := hub.FindStartedAgentRun(r.Context(), request.Kind, *subjectID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "read the started run: " + err.Error()})
+				return
+			}
+			if found {
+				runID = &started.ID
+				request.Model = cmp.Or(strings.TrimSpace(request.Model), started.Model)
+			}
+		}
 		model, err := getAgentRunModel(r.Context(), hub, request.Kind, request.Model)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "read the route: " + err.Error()})
 			return
 		}
 		token, tokenHash := tokens.NewAgentRunToken()
-		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, subjectID, model, rendered.Version, tokenHash,
+		run, err := hub.StartAgentRun(r.Context(), runID, request.Kind, request.Input, subjectID, model, rendered.Version, tokenHash,
 			time.Now().Add(agentRunTokenLifetime))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
