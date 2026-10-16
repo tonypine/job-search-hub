@@ -250,3 +250,18 @@ func findTableWrites(count store.WriteCount, table string) store.TableWrites {
 	}
 	return store.TableWrites{Table: table}
 }
+
+func TestLostCountsKeepTheRowsApartFromTheWords(t *testing.T) {
+	mark := store.WriteMark{Tables: map[string]store.TableCounters{}}
+	now := store.WriteMark{Tables: map[string]store.TableCounters{
+		"jobs": {Inserted: 3}, "applications": {Updated: 1}, "people": {Inserted: 2}, "updates": {Inserted: 4}, "changes": {Inserted: 9},
+	}}
+	got := store.CompareWriteMarks(mark, now).LostCounts()
+	want := []store.LostCount{{Rows: 4, Words: "updates"}, {Rows: 3, Words: "jobs found"}, {Rows: 2, Words: "people added"}, {Rows: 1, Words: "card moved"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("LostCounts = %+v, want %+v", got, want)
+	}
+	if lost := store.CompareWriteMarks(mark, now).Lost(); !slices.Equal(lost, []string{"4 updates", "3 jobs found", "2 people added", "1 card moved"}) {
+		t.Fatalf("Lost = %q", lost)
+	}
+}

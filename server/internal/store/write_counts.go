@@ -140,10 +140,22 @@ func sameTime(left, right *time.Time) bool {
 	return left.Equal(*right)
 }
 
-// Lost is what the owner would lose with the writes counted, in their
-// words, the most first: "3 jobs found", "1 card moved". Bookkeeping isn't
-// in it, and a table without words counts as "other changes".
-func (count WriteCount) Lost() []string {
+// LostCount is one kind of write the owner would lose, counted: 3 rows of
+// "jobs found".
+type LostCount struct {
+	Rows  int64  `json:"rows"`
+	Words string `json:"words"`
+}
+
+// String is "3 jobs found", or "1 card moved".
+func (lost LostCount) String() string {
+	return fmt.Sprintf("%d %s", lost.Rows, lost.Words)
+}
+
+// LostCounts is what the owner would lose with the writes counted, in
+// their words, the most first. Bookkeeping isn't in it, and a table without
+// words counts as "other changes".
+func (count WriteCount) LostCounts() []LostCount {
 	totals := map[Phrase]int64{}
 	add := func(phrase Phrase, rows int64) {
 		if rows > 0 && phrase.One != "" {
@@ -167,9 +179,24 @@ func (count WriteCount) Lost() []string {
 		}
 		return strings.Compare(left.Many, right.Many)
 	})
-	lost := make([]string, 0, len(phrases))
+	lost := make([]LostCount, 0, len(phrases))
 	for _, phrase := range phrases {
-		lost = append(lost, phrase.Count(totals[phrase]))
+		rows := totals[phrase]
+		words := phrase.Many
+		if rows == 1 {
+			words = phrase.One
+		}
+		lost = append(lost, LostCount{Rows: rows, Words: words})
+	}
+	return lost
+}
+
+// Lost is LostCounts in a phrase each: "3 jobs found", "1 card moved".
+func (count WriteCount) Lost() []string {
+	counts := count.LostCounts()
+	lost := make([]string, 0, len(counts))
+	for _, counted := range counts {
+		lost = append(lost, counted.String())
 	}
 	return lost
 }
@@ -202,14 +229,6 @@ func (count WriteCount) Describe(location *time.Location) string {
 // Phrase names rows the way the owner says them, for one and for many.
 type Phrase struct {
 	One, Many string
-}
-
-// Count puts the number before the phrase: "1 card moved", "3 cards moved".
-func (phrase Phrase) Count(rows int64) string {
-	if rows == 1 {
-		return "1 " + phrase.One
-	}
-	return fmt.Sprintf("%d %s", rows, phrase.Many)
 }
 
 // TableWords name a table's writes: its rows added, and its rows changed
