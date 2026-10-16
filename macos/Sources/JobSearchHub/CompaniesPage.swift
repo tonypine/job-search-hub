@@ -130,7 +130,8 @@ struct CompaniesPage: View {
             )
         } trailing: {
             // On the trailing side, which keeps its width, and only its
-            // symbol, so the scopes still fit beside the inspector at 1400
+            // symbol. With the narrower search field, the three scopes and
+            // their counts still fit beside it and the inspector at 1400
             // wide.
             if case .failed = research.state {
                 Button {
@@ -144,7 +145,7 @@ struct CompaniesPage: View {
                 .help("Research of \(research.company) failed. Show why, and try again")
                 .accessibilityLabel("Research of \(research.company) failed")
             }
-            PageSearchField(text: $model.search, prompt: "Search companies")
+            PageSearchField(text: $model.search, prompt: "Search companies", width: PageHeaderMetrics.compactSearchWidth)
                 .help("Search names and domains")
             CompanyColumnsMenu(customization: columnCustomization)
                 .labelStyle(.iconOnly)
