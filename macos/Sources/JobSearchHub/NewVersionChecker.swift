@@ -29,6 +29,9 @@ final class NewVersionChecker {
     private(set) var installedChanges: InstalledChanges?
 
     @ObservationIgnored let updates: UpdatesFolder
+    /// Each check that finds the running version withdrawn calls it: the
+    /// app weighs going back for the banner.
+    @ObservationIgnored var onWithdrawn: @MainActor () -> Void = {}
     @ObservationIgnored private let feed: ReleaseFeed
     @ObservationIgnored private let inspector: any BundleInspecting
     @ObservationIgnored private var runningSigning: BundleSigning?
@@ -113,6 +116,9 @@ final class NewVersionChecker {
         facts.isRunningWithdrawn = MacReleases.isWithdrawn(running, in: releases)
         if facts.isRunningWithdrawn && !wasWithdrawn {
             updates.log("\(running), the running version, was withdrawn.", at: .now)
+        }
+        if facts.isRunningWithdrawn {
+            onWithdrawn()
         }
         facts.newestRelease = MacReleases.getOffered(releases).first?.version
         runningReleaseURL = MacReleases.parse(releases).first { $0.version == running }?.release.htmlURL

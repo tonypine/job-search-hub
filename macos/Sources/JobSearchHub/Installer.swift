@@ -301,6 +301,24 @@ final class Installer {
         }
     }
 
+    /// Goes back to an earlier version, as the going-back sheet confirmed:
+    /// records what's open, hands the state to `hub-update`, copied from
+    /// this bundle, whose version knows how to go back, and quits.
+    func goBack(_ state: InstallState) throws {
+        if let reason = cannotInstallReason {
+            throw InstallError(reason)
+        }
+        guard phase == .idle || phase == .whenQuit else { throw InstallError("An install is under way.") }
+        guard FileManager.default.fileExists(atPath: URL(filePath: state.newApp).appending(path: "Contents/Info.plist").path) else {
+            throw InstallError("\(state.from) isn't on this Mac any more.")
+        }
+        try saveReopenRecord()
+        try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: Bundle.main.bundleURL))
+        updates.log("Going back from \(state.to) to \(state.from); the app quits for hub-update.", at: .now)
+        isQuittingForInstall = true
+        NSApp.terminate(nil)
+    }
+
     private func saveReopenRecord() throws {
         let host = ClaudeSessionHost.shared
         let sessions = host.runningSessionIDs.sorted { $0.uuidString < $1.uuidString }.compactMap { id in
@@ -314,27 +332,39 @@ final class Installer {
         try updates.writeReopenRecord(record)
     }
 
-    /// Writes the install's state, copies `hub-update` out of the new
-    /// bundle, which the install moves, and loads it as a one-shot launchd
-    /// job that runs again if it crashes, or at login after a power loss.
+    /// The launchd job's plist, which the state names so `hub-update`
+    /// removes it once the install ends.
+    static var jobPlistURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/LaunchAgents/\(jobLabel).plist")
+    }
+
+    /// Writes the install's state, and has `hub-update`, copied out of the
+    /// new bundle, carry it out.
     private func startHubUpdate(_ target: Target) throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let running = HubVersion(HubClient.appVersion) else { throw InstallError("This app's version, \(HubClient.appVersion), can't be read.") }
+        let state = InstallState(
+            from: running, to: target.version, installed: ServerLaunchAgent.makeInstalledAppURL(home: home), newApp: target.app,
+            reopenApp: reopensApp, fromMigration: target.fromMigration, toMigration: target.toMigration, startedAt: .now, jobPlist: Self.jobPlistURL
+        )
+        try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: target.app))
+    }
+
+    /// Writes the state, copies `hub-update` out of its bundle, which the
+    /// install moves, and loads it as a one-shot launchd job that runs again
+    /// if it crashes, or at login after a power loss.
+    private func launchHubUpdate(_ state: InstallState, from hubUpdate: URL) throws {
         if let state = updates.readState(), !state.step.isFinished {
             throw InstallError("The install of \(state.to) is still under way.")
         }
         let fileManager = FileManager.default
-        let home = fileManager.homeDirectoryForCurrentUser
-        guard let running = HubVersion(HubClient.appVersion) else { throw InstallError("This app's version, \(HubClient.appVersion), can't be read.") }
         try fileManager.createDirectory(at: updates.root, withIntermediateDirectories: true)
 
         let installer = updates.installerURL
         try? fileManager.removeItem(at: installer)
-        try fileManager.copyItem(at: ServerLaunchAgent.makeCommandURL("hub-update", bundle: target.app), to: installer)
+        try fileManager.copyItem(at: hubUpdate, to: installer)
 
-        let plist = home.appending(path: "Library/LaunchAgents/\(Self.jobLabel).plist")
-        let state = InstallState(
-            from: running, to: target.version, installed: ServerLaunchAgent.makeInstalledAppURL(home: home), newApp: target.app,
-            reopenApp: reopensApp, fromMigration: target.fromMigration, toMigration: target.toMigration, startedAt: .now, jobPlist: plist
-        )
+        let plist = Self.jobPlistURL
         try updates.writeState(state)
         try? fileManager.removeItem(at: updates.launchedURL)
 
