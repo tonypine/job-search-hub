@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 )
 
 // sessionPromptKinds are the prompts that start a Claude session or draft a
@@ -21,7 +24,8 @@ var sessionPromptKinds = []string{
 func listRunKinds(t *testing.T) (groups []store.RunGroup, kinds []store.RunKind) {
 	t.Helper()
 	routes := http.NewServeMux()
-	api.RegisterRunKindRoutes(routes, func(next http.Handler) http.Handler { return next })
+	hub := store.New(testdatabase.New(t))
+	api.RegisterRunKindRoutes(routes, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(nil, modelqueue.Settings{})}, func(next http.Handler) http.Handler { return next })
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	response, err := http.Get(server.URL + "/v1/run-kinds")
