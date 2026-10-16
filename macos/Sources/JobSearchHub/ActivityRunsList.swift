@@ -82,6 +82,9 @@ struct ActivityRunsList: View {
     /// Nil for All kinds, whose rows name each run's kind.
     let kind: RunKind?
     let showsOnlyFailed: Bool
+    /// Beside the inspector: the runs drop their model, time and usage, so
+    /// the table's least width leaves the inspector room in the window.
+    let isCompact: Bool
     let client: HubClient
     @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
@@ -124,8 +127,10 @@ struct ActivityRunsList: View {
         }
     }
 
-    /// The runs as a table, whose columns give way to the inspector rather
-    /// than widen the window, with the selected failed run under it.
+    /// The runs as a table, with the selected failed run under it. A table
+    /// asks the window for its columns' least widths and the spacing between
+    /// them, so those stay small: the columns give way to the inspector
+    /// rather than widen the window.
     private var list: some View {
         VStack(spacing: 0) {
             Table(model.runs, selection: $selectedRunID) {
@@ -140,33 +145,35 @@ struct ActivityRunsList: View {
                     TableColumn("Kind") { run in
                         Text(RunsSummary.getKindTitle(run.kind)).lineLimit(1)
                     }
-                    .width(min: 80, ideal: 130)
+                    .width(min: 60, ideal: 130)
                 }
                 TableColumn("Ran for") { run in
                     RunSubjectCell(run: run) { subject in details.show(subject, from: .activity) }
                 }
-                .width(min: 120, ideal: 320)
-                TableColumn("Model") { run in
-                    Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
-                        .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
+                .width(min: 100, ideal: 320)
+                if !isCompact {
+                    TableColumn("Model") { run in
+                        Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
+                            .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
+                    }
+                    .width(min: 50, ideal: 130)
+                    TableColumn("Took") { run in
+                        Text(run.durationText).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .width(min: 40, ideal: 60)
+                    TableColumn("Tokens or cost") { run in
+                        Text(run.usageText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .help(run.usageText ?? "")
+                    }
+                    .width(min: 50, ideal: 130)
                 }
-                .width(min: 60, ideal: 130)
-                TableColumn("Took") { run in
-                    Text(run.durationText).monospacedDigit().foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-                .width(min: 44, ideal: 60)
-                TableColumn("Tokens or cost") { run in
-                    Text(run.usageText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .help(run.usageText ?? "")
-                }
-                .width(min: 60, ideal: 130)
                 TableColumn("Started") { run in
                     Text(run.startedAt.formatted(Self.startFormat)).foregroundStyle(.secondary).lineLimit(1)
                         .help(run.startedAt.formatted(date: .complete, time: .standard))
                 }
-                .width(min: 80, ideal: 120)
+                .width(min: 64, ideal: 120)
             }
             if let run = selectedFailedRun {
                 Divider()
@@ -220,19 +227,22 @@ private struct RunSubjectCell: View {
                     Text("·").foregroundStyle(.secondary)
                 }
                 if let opens = part.opens {
-                    Button(part.text) { open(opens) }
-                        .buttonStyle(.link)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(Self.describeOpening(opens, part.text))
-                        // The job gives way before the company.
-                        .layoutPriority(index == 0 ? 0 : 1)
+                    // The label's own line limit: a link button's title
+                    // otherwise wraps a narrow column letter by letter.
+                    Button { open(opens) } label: {
+                        Text(part.text).lineLimit(1).truncationMode(.tail)
+                    }
+                    .buttonStyle(.link)
+                    .help(Self.describeOpening(opens, part.text))
+                    // The job gives way before the company.
+                    .layoutPriority(index == 0 ? 0 : 1)
                 } else {
-                    Text(part.text).lineLimit(1)
+                    Text(part.text).lineLimit(1).truncationMode(.tail)
                 }
             }
             if run.startedByOwner {
                 ToneChip("You", tone: .accent)
+                    .fixedSize()
                     .help("You started this run")
                     .layoutPriority(2)
             }

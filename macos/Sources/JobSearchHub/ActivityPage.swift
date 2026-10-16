@@ -142,10 +142,15 @@ struct ActivityPage: View {
     @AppStorage("activityRunKindsWidth") private var runKindsWidth = 268.0
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
+    @Environment(DetailsInspector.self) private var details
     @State private var kinds = RunKindsModel()
     @State private var modelWork = ModelWorkModel()
     @State private var runs = ActivityRunsModel()
     @State private var showsOnlyFailed = false
+    /// The column steps aside while the inspector shows a run's job or
+    /// company, and comes back when it closes; Show run kinds brings it back
+    /// sooner.
+    @State private var hidesRunKindsForInspector = false
 
     var body: some View {
         Group {
@@ -155,9 +160,12 @@ struct ActivityPage: View {
                     // Not a split view: its panes' least widths, added up,
                     // would widen the window when the inspector opens. The
                     // column keeps its width, and the kind's page takes what
-                    // is left and gives way to the inspector.
+                    // is left and gives way to the inspector. A table asks
+                    // the window for its columns' least widths, so beside the
+                    // inspector the column steps aside and the runs drop
+                    // their model, time and usage.
                     HStack(spacing: 0) {
-                        if showsRunKinds {
+                        if isShowingRunKinds {
                             RunKindsColumn(
                                 model: kinds, selection: selection, client: client,
                                 showOnlyFailed: { kind in
@@ -180,6 +188,9 @@ struct ActivityPage: View {
                 }
                 .task { await kinds.watch(with: client) }
                 .task { await modelWork.watch(with: client, every: .seconds(3)) }
+                .onChange(of: isInspectorShown, initial: true) { _, shown in
+                    hidesRunKindsForInspector = shown
+                }
             }
         }
         .navigationTitle("Activity")
@@ -187,6 +198,14 @@ struct ActivityPage: View {
     }
 
     static let runKindsWidths = 220.0...400.0
+
+    private var isInspectorShown: Bool {
+        details.getEntry(on: .activity) != nil
+    }
+
+    private var isShowingRunKinds: Bool {
+        showsRunKinds && !hidesRunKindsForInspector
+    }
 
     /// The selected kind; nil on All kinds, and while the kinds load.
     private var selectedKind: RunKind? {
@@ -199,12 +218,15 @@ struct ActivityPage: View {
 
     private var header: some View {
         PageHeader {
-            Button(showsRunKinds ? "Hide run kinds" : "Show run kinds", systemImage: "sidebar.left") {
-                withAnimation { showsRunKinds.toggle() }
+            Button(isShowingRunKinds ? "Hide run kinds" : "Show run kinds", systemImage: "sidebar.left") {
+                withAnimation {
+                    showsRunKinds = !isShowingRunKinds
+                    hidesRunKindsForInspector = false
+                }
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
-            .help(showsRunKinds ? "Hide the column of run kinds" : "Show the column of run kinds")
+            .help(isShowingRunKinds ? "Hide the column of run kinds" : "Show the column of run kinds")
         } trailing: {
             Toggle("Only failed runs", isOn: $showsOnlyFailed)
                 .toggleStyle(.checkbox)
@@ -220,7 +242,9 @@ struct ActivityPage: View {
             VStack(alignment: .leading, spacing: 0) {
                 RunKindHeader(model: kinds, kind: selectedKind, work: modelWork.work, client: client)
                 Divider()
-                ActivityRunsList(model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, client: client)
+                ActivityRunsList(
+                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, isCompact: isInspectorShown, client: client
+                )
             }
             .onAppear {
                 if selectedKind == nil { selectedKindID = "" }
