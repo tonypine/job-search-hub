@@ -211,6 +211,7 @@ func run() error {
 	api.RegisterProfileEntryRoutes(routes, hub, requireOwner)
 	api.RegisterTaskRunRoutes(routes, hub, requireOwner)
 	api.RegisterRunKindRoutes(routes, requireOwner)
+	api.RegisterRunRoutes(routes, hub, requireOwner)
 	api.RegisterModelRoutingRoutes(routes, hub, settings.modelsDir, requireOwner)
 	api.RegisterWarmPathRoutes(routes, hub, requireOwner)
 	api.RegisterDeviceRoutes(routes, hub, requireOwner)
