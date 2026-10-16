@@ -19,9 +19,9 @@ final class RecentSessionsModel {
 
 /// The sidebar's foot: the hub's state in three lines, whether it's
 /// connected, what its local models are doing, and the session that waits
-/// for you, with Pause for the models. Clicking it lists the running and
-/// recent sessions; each job's and company's Session tab, and ⌘K, have them
-/// too.
+/// for you, with Pause all for the kinds of run the hub starts by itself.
+/// Clicking it lists the running and recent sessions; each job's and
+/// company's Session tab, and ⌘K, have them too.
 struct HubStatusFooter: View {
     /// The column each line's dot or symbol sits in, so the words line up.
     private static let symbolWidth: CGFloat = 12
@@ -138,14 +138,14 @@ struct HubStatusFooter: View {
     @ViewBuilder
     private var pauseButton: some View {
         let paused = modelWork.work?.paused == true
-        Button(paused ? "Resume local models" : "Pause local models", systemImage: paused ? "play.circle" : "pause.circle") {
+        Button(paused ? "Resume all" : "Pause all", systemImage: paused ? "play.circle" : "pause.circle") {
             guard let client = connection.makeClient() else { return }
             Task { await modelWork.setPaused(!paused, with: client) }
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
         .disabled(modelWork.work == nil || modelWork.failure != nil || problem != nil)
-        .help(paused ? "Resume the local models' background work" : "Pause the local models' background work; runs you start still go ahead")
+        .help(paused ? "Resume every kind of run the hub starts by itself" : "Pause every kind of run the hub starts by itself; runs you start still go ahead")
     }
 
     private func reloadSessions() {

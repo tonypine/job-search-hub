@@ -1,25 +1,95 @@
 import JobSearchHubCore
 import SwiftUI
 
+/// The hub's kinds of run and what each is doing: its pause, its runs
+/// running and waiting, its failures over the last day, and its model.
 @MainActor
 @Observable
-final class RunsModel {
-    static let pageSize = 500
+final class RunKindsModel {
+    private(set) var groups: [RunGroup] = []
+    private(set) var kinds: [RunKind] = []
+    /// Each kind's failed runs over the last day.
+    private(set) var failedCounts: [String: Int] = [:]
+    private(set) var routes: [TaskRoute] = []
+    private(set) var providers: [ModelProvider] = []
+    private(set) var hasLoaded = false
+    /// Why the last read failed; the next read that works clears it.
+    var failure: HubFailure?
+    /// Why the last pause or resume failed. Reads leave it, so it stays
+    /// until the owner dismisses it or tries again.
+    var pauseFailure: HubFailure?
 
-    private(set) var taskRuns: [TaskRun] = []
-    private(set) var agentRuns: [AgentRun] = []
-    private(set) var failure: HubFailure?
+    var sections: [RunKindSection] { RunKinds.group(kinds, in: groups) }
+    var all: AllRunKinds { AllRunKinds(kinds, failedCounts: failedCounts) }
 
+    func getKind(_ id: String) -> RunKind? {
+        kinds.first { $0.id == id }
+    }
+
+    func getModel(for kind: RunKind) -> RunKindModel? {
+        RunKinds.getModel(for: kind, routes: routes, providers: providers)
+    }
+
+    func getFailedCount(_ kind: RunKind) -> Int {
+        failedCounts[kind.id, default: 0]
+    }
+
+    /// Reads the kinds and their failures. The failures are an extra: the
+    /// column shows without them.
     func load(with client: HubClient) async {
         do {
-            let limit = [URLQueryItem(name: "limit", value: String(Self.pageSize))]
-            async let tasks = client.get("v1/task-runs", query: limit, as: TaskRunsResponse.self)
-            async let agents = client.get("v1/agent-runs", query: limit, as: AgentRunsResponse.self)
-            (taskRuns, agentRuns) = try await (tasks.runs, agents.runs)
+            apply(try await client.get("v1/run-kinds", as: RunKindsResponse.self))
             failure = nil
         } catch {
-            failure = HubFailure("Couldn't load the runs", error)
+            failure = HubFailure("Couldn't read the kinds of run", error)
         }
+        let now = Date.now
+        let window = [
+            URLQueryItem(name: "from", value: now.addingTimeInterval(-24 * 60 * 60).formatted(.iso8601)),
+            URLQueryItem(name: "to", value: now.formatted(.iso8601)), URLQueryItem(name: "bucket", value: "day"),
+        ]
+        if let metrics = try? await client.get("v1/runs/metrics", query: window, as: RunMetrics.self) {
+            failedCounts = RunKinds.countFailures(metrics)
+        }
+    }
+
+    /// Reads the routes and providers that name each kind's model. Without
+    /// them the rows show no model.
+    func loadModels(with client: HubClient) async {
+        async let loadedRoutes = client.get("v1/task-routes", as: TaskRoutesResponse.self)
+        async let loadedProviders = client.get("v1/model-providers", as: ModelProvidersResponse.self)
+        if let routes = try? await loadedRoutes.routes, let providers = try? await loadedProviders.providers {
+            (self.routes, self.providers) = (routes, providers)
+        }
+    }
+
+    /// Reads the kinds every few seconds while the page shows: the hub's
+    /// events don't carry its queue, so what runs and waits is read again.
+    func watch(with client: HubClient, every interval: Duration = .seconds(3)) async {
+        while !Task.isCancelled {
+            await load(with: client)
+            try? await Task.sleep(for: interval)
+        }
+    }
+
+    /// Pauses or resumes one kind, or, without one, every kind the hub
+    /// starts by itself. The hub answers with the kinds as they now are.
+    func setPaused(_ paused: Bool, kind: RunKind?, with client: HubClient) async {
+        pauseFailure = nil
+        let action = paused ? "pause" : "resume"
+        let path = kind.map { "v1/run-kinds/\($0.id)/\(action)" } ?? "v1/run-kinds/\(action)-all"
+        do {
+            apply(try await client.send("POST", path, body: EmptyBody(), as: RunKindsResponse.self))
+        } catch {
+            let subject = kind?.title ?? "every kind"
+            pauseFailure = HubFailure(paused ? "Couldn't pause \(subject)" : "Couldn't resume \(subject)", error)
+        }
+    }
+
+    private func apply(_ response: RunKindsResponse) {
+        groups = response.groups
+        kinds = response.kinds
+        hasLoaded = true
     }
 }
 
@@ -51,209 +121,184 @@ final class ModelWorkModel {
         }
     }
 
+    /// Pauses or resumes every kind the hub starts by itself.
     func setPaused(_ paused: Bool, with client: HubClient) async {
         pauseFailure = nil
         do {
             work = try await client.send("POST", paused ? "v1/model-work/pause" : "v1/model-work/resume", body: EmptyBody(), as: ModelWork.self)
         } catch {
-            pauseFailure = HubFailure(paused ? "Couldn't pause the local models" : "Couldn't resume the local models", error)
+            pauseFailure = HubFailure(paused ? "Couldn't pause every kind" : "Couldn't resume every kind", error)
         }
     }
 }
 
-/// What the hub's models and agents are doing: the agent runs going on now,
-/// every kind of run with its failures and each model's average time, and
-/// the latest runs.
+/// What the hub's models and agents are doing: a column of the kinds of run,
+/// each with its state, model and pause, beside the chosen kind's page, its
+/// header and its runs. All kinds, first, has them all.
 struct ActivityPage: View {
+    /// The kind shown, kept when the app reopens; empty for All kinds.
+    @AppStorage("activitySelectedKind") private var selectedKindID = ""
+    @AppStorage("activityShowsRunKinds") private var showsRunKinds = true
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
-    @State private var model = RunsModel()
+    @State private var kinds = RunKindsModel()
     @State private var modelWork = ModelWorkModel()
+    @State private var runs = ActivityRunsModel()
+    @State private var showsOnlyFailed = false
 
     var body: some View {
         Group {
             if let client = connection.makeClient() {
                 VStack(spacing: 0) {
-                    header(client)
-                    content(client)
+                    header
+                    HSplitView {
+                        if showsRunKinds {
+                            RunKindsColumn(
+                                model: kinds, selection: selection, client: client,
+                                showOnlyFailed: { kind in
+                                    selectedKindID = kind.id
+                                    showsOnlyFailed = true
+                                }
+                            )
+                            .frame(minWidth: 220, idealWidth: 268, maxWidth: 400)
+                        }
+                        kindPage(client)
+                            .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
-                .task(id: events.revision) { await model.load(with: client) }
-                .task { await modelWork.watch(with: client) }
+                .task(id: events.revision) {
+                    await kinds.load(with: client)
+                    await kinds.loadModels(with: client)
+                }
+                .task { await kinds.watch(with: client) }
+                .task { await modelWork.watch(with: client, every: .seconds(3)) }
             }
         }
         .navigationTitle("Activity")
-        .navigationSubtitle("The latest \(model.taskRuns.count + model.agentRuns.count) runs")
+        .navigationSubtitle(selectedKind?.title ?? "All kinds")
     }
 
-    /// The page's header: the local models' pause, the one thing to do here.
-    private func header(_ client: HubClient) -> some View {
+    /// The selected kind; nil on All kinds, and while the kinds load.
+    private var selectedKind: RunKind? {
+        selectedKindID.isEmpty ? nil : kinds.getKind(selectedKindID)
+    }
+
+    private var selection: Binding<String?> {
+        Binding(get: { selectedKindID }, set: { selectedKindID = $0 ?? "" })
+    }
+
+    private var header: some View {
         PageHeader {
-            EmptyView()
+            Button(showsRunKinds ? "Hide run kinds" : "Show run kinds", systemImage: "sidebar.left") {
+                withAnimation { showsRunKinds.toggle() }
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help(showsRunKinds ? "Hide the column of run kinds" : "Show the column of run kinds")
         } trailing: {
-            if let work = modelWork.work {
-                AsyncButton(
-                    work.paused ? "Resume local models" : "Pause local models", busyTitle: work.paused ? "Resuming…" : "Pausing…",
-                    systemImage: work.paused ? "play.fill" : "pause.fill"
-                ) {
-                    await modelWork.setPaused(!work.paused, with: client)
-                }
-            }
+            Toggle("Only failed runs", isOn: $showsOnlyFailed)
+                .toggleStyle(.checkbox)
+                .help("List only the runs that failed")
         }
     }
 
-    private func content(_ client: HubClient) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.xl) {
-                if let failure = model.failure {
-                    HubErrorView(failure, retry: { Task { await model.load(with: client) } })
-                }
-                localModels(client)
-                let running = model.agentRuns.filter(\.isRunning)
-                if !running.isEmpty {
-                    HubSection("Running now") {
-                        ForEach(running) { run in
-                            HStack(spacing: Space.s) {
-                                ProgressView().controlSize(.small)
-                                Text(RunsSummary.getKindTitle(run.kind)).fontWeight(.medium)
-                                Text(run.input).foregroundStyle(.secondary).lineLimit(1)
-                                Spacer()
-                                Text(run.startedAt.formatted(.relative(presentation: .named))).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                HubSection("By kind") {
-                    let summaries = RunsSummary.summarize(taskRuns: model.taskRuns, agentRuns: model.agentRuns)
-                    if summaries.isEmpty {
-                        Text("No runs recorded yet.").foregroundStyle(.secondary)
-                    }
-                    Grid(alignment: .leading, horizontalSpacing: Space.l, verticalSpacing: Space.s) {
-                        ForEach(summaries) { summary in
-                            GridRow {
-                                Text(summary.title).fontWeight(.medium)
-                                Text("\(summary.runCount) runs")
-                                Text(describeProblems(summary))
-                                    .foregroundStyle(summary.failedCount + summary.invalidCount > 0 ? AnyShapeStyle(Tone.negative.color) : AnyShapeStyle(.secondary))
-                                Text(summary.models.map { "\($0.model): \(describeSeconds($0.averageSeconds)) average (\($0.runCount))" }.joined(separator: " · "))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                HubSection("Latest") {
-                    ForEach(getLatestRows().prefix(80)) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                            Image(systemName: row.symbolName).foregroundStyle(Tone.ofRunOutcome(row.outcome).color)
-                                .accessibilityLabel(row.outcome)
-                            Text(RunsSummary.getKindTitle(row.kind)).fontWeight(.medium).frame(width: 190, alignment: .leading)
-                            Text(row.detail).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer()
-                            Text(row.startedAt.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(.secondary)
-                        }
-                        if let error = row.error, !error.isEmpty {
-                            Text(error).font(.hubCaption).foregroundStyle(Tone.negative.color).lineLimit(2).padding(.leading, Space.xl)
-                        }
-                    }
-                }
-            }
-            .padding(Space.xl)
-            .frame(maxWidth: 1000, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// The local runtime and its queue: what runs, on which model, what
-    /// waits, and whether it's paused. The header has the pause.
+    /// The kind's page, once the kinds are read: a kind kept from before
+    /// that the hub no longer has shows All kinds.
     @ViewBuilder
-    private func localModels(_ client: HubClient) -> some View {
-        HubSection("Local models") {
-            if let work = modelWork.work {
-                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                    ToneChip(work.paused ? "Paused" : "Working", tone: work.paused ? .caution : .positive, symbol: work.paused ? "pause.fill" : "play.fill")
-                    if work.paused {
-                        Text("Only runs you start go ahead.").foregroundStyle(.secondary)
-                    }
+    private func kindPage(_ client: HubClient) -> some View {
+        if kinds.hasLoaded {
+            VStack(alignment: .leading, spacing: 0) {
+                RunKindHeader(model: kinds, kind: selectedKind, work: modelWork.work, client: client)
+                Divider()
+                ActivityRunsList(model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, client: client)
+            }
+            .onAppear {
+                if selectedKind == nil { selectedKindID = "" }
+            }
+        } else if let failure = kinds.failure {
+            HubErrorView(failure, retry: { Task { await kinds.load(with: client) } })
+                .padding(Space.xl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// The top of a kind's page: its name, what it does, its state and model,
+/// and its pause. All kinds has Pause all and Resume all, and a strip of
+/// what runs now, what's next, and what waits behind a pause.
+private struct RunKindHeader: View {
+    let model: RunKindsModel
+    /// Nil for All kinds.
+    let kind: RunKind?
+    let work: ModelWork?
+    let client: HubClient
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Text(kind?.title ?? "All kinds").font(.hubEntity)
+                let status = kind.map { $0.getStatus(failedCount: model.getFailedCount($0)) } ?? model.all.status
+                ToneChip(status.title, tone: status.tone, symbol: status.symbolName)
+                if let kind, let kindModel = model.getModel(for: kind) {
+                    Label(kindModel.name, systemImage: kindModel.markSymbol)
+                        .font(.hubSecondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
                 }
-                if modelWork.pauseFailure != nil {
-                    HubErrorView($modelWork.pauseFailure)
-                }
-                if modelWork.failure != nil {
-                    HubErrorView($modelWork.failure)
-                }
-                FactGrid {
-                    FactRow("Model", text: describeRuntime(work.runtime))
-                    FactRow("Running") {
-                        if let running = work.running {
-                            HStack(spacing: Space.s) {
-                                ProgressView().controlSize(.small)
-                                Text("\(RunsSummary.getKindTitle(running.kind)) on \(running.model), \(running.priority), started \(running.since.formatted(.relative(presentation: .named)))")
-                            }
-                        } else {
-                            Text("Nothing").foregroundStyle(.secondary)
-                        }
-                    }
-                    FactRow("Waiting") {
-                        Text(work.waiting.isEmpty ? "Nothing" : work.waitingCountsByKind.map { "\($0.title): \($0.count)" }.joined(separator: ", "))
-                            .foregroundStyle(work.waiting.isEmpty ? .secondary : .primary)
-                    }
-                    FactRow("Job facts", text: work.jobsAwaitingFacts == 1 ? "1 job waits to be read" : "\(work.jobsAwaitingFacts) jobs wait to be read")
-                }
-            } else if let failure = modelWork.failure {
-                HubErrorView(failure, retry: { Task { await modelWork.load(with: client) } })
-            } else {
-                ProgressView().controlSize(.small)
+                Spacer(minLength: Space.m)
+                controls
+            }
+            Text(kind?.description ?? "Every kind of run the hub records. Pausing holds only what the hub starts by itself; runs you start always go ahead.")
+                .font(.hubSecondary)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.pauseFailure != nil {
+                HubErrorView(Bindable(model).pauseFailure)
+            }
+            if kind == nil {
+                queueStrip
             }
         }
+        .padding(Space.l)
     }
 
-    private func describeRuntime(_ runtime: ModelRuntimeStatus) -> String {
-        switch runtime.state {
-        case "loading": "Loading \(runtime.model ?? "a model")…"
-        case "ready": "\(runtime.model ?? "A model") loaded" + (runtime.busy ? ", answering" : ", idle")
-        default: "None loaded"
-        }
-    }
-
-    private func describeProblems(_ summary: RunKindSummary) -> String {
-        if summary.failedCount + summary.invalidCount == 0 { return "no failures" }
-        return [summary.failedCount > 0 ? "\(summary.failedCount) failed" : nil, summary.invalidCount > 0 ? "\(summary.invalidCount) invalid" : nil]
-            .compactMap { $0 }.joined(separator: ", ")
-    }
-
-    private func describeSeconds(_ seconds: Double) -> String {
-        seconds >= 60 ? "\(Int(seconds / 60)) min \(Int(seconds.truncatingRemainder(dividingBy: 60))) s" : String(format: "%.1f s", seconds)
-    }
-
-    private struct LatestRow: Identifiable {
-        let id: UUID
-        let kind: String
-        let detail: String
-        let startedAt: Date
-        let outcome: String
-        let error: String?
-
-        var symbolName: String {
-            switch outcome {
-            case "succeeded": "checkmark.circle.fill"
-            case "running": "clock"
-            case "invalid": "questionmark.circle.fill"
-            default: "xmark.circle.fill"
+    @ViewBuilder
+    private var controls: some View {
+        if let kind {
+            if kind.isPausable {
+                AsyncButton(
+                    kind.paused ? "Resume" : "Pause", busyTitle: kind.paused ? "Resuming…" : "Pausing…",
+                    systemImage: kind.paused ? "play.fill" : "pause.fill"
+                ) {
+                    await model.setPaused(!kind.paused, kind: kind, with: client)
+                }
+                .help(kind.paused ? "Resume \(kind.title)" : "Pause \(kind.title); runs you start still go ahead")
             }
+        } else {
+            let all = model.all
+            AsyncButton("Pause all", busyTitle: "Pausing…", systemImage: "pause.fill") {
+                await model.setPaused(true, kind: nil, with: client)
+            }
+            .disabled(!all.canPauseAll)
+            .help("Pause every kind the hub starts by itself; runs you start still go ahead")
+            AsyncButton("Resume all", busyTitle: "Resuming…", systemImage: "play.fill") {
+                await model.setPaused(false, kind: nil, with: client)
+            }
+            .disabled(!all.canResumeAll)
+            .help("Resume every paused kind")
         }
     }
 
-    private func getLatestRows() -> [LatestRow] {
-        let taskRows = model.taskRuns.map { run in
-            LatestRow(
-                id: run.id, kind: run.kind, detail: "\(run.model) · \(describeSeconds(Double(run.durationMS) / 1000)) · \(run.promptTokens) → \(run.completionTokens) tokens",
-                startedAt: run.startedAt, outcome: run.outcome, error: run.error
-            )
+    private var queueStrip: some View {
+        let strip = RunKinds.describeQueue(model.kinds, work: work)
+        return FactGrid {
+            FactRow("Running now", text: strip.now)
+            FactRow("Next", text: strip.next, help: "The first call in the local models' queue that no pause holds")
+            FactRow("Held by a pause", text: strip.held, help: "The calls of paused kinds that wait for a resume")
         }
-        let agentRows = model.agentRuns.map { run in
-            let took = run.finishedAt.map { describeSeconds($0.timeIntervalSince(run.startedAt)) } ?? "running"
-            let cost = run.costUSDEstimate.flatMap(Double.init).map { " · " + $0.formatted(.currency(code: "USD").precision(.fractionLength(2))) } ?? ""
-            return LatestRow(id: run.id, kind: run.kind, detail: "\(run.input) · \(took)\(cost)", startedAt: run.startedAt, outcome: run.status, error: run.error)
-        }
-        return (taskRows + agentRows).sorted { $0.startedAt > $1.startedAt }
+        .font(.hubSecondary)
     }
 }
