@@ -57,6 +57,10 @@ public struct InstallState: Codable, Equatable, Sendable {
     public var startedAt: Date
     /// The launchd job running `hub-update`, which goes once the install ends.
     public var jobPlist: String?
+    /// The owner goes back from `to`, the version installed, to `from`, an
+    /// earlier one at `newApp`, restoring the database to `fromMigration`
+    /// when it migrated since.
+    public var goingBack: Bool?
     public var step: InstallStep
     /// The new server's log shows its migrations running.
     public var migrating: Bool?
@@ -69,7 +73,7 @@ public struct InstallState: Codable, Equatable, Sendable {
 
     public init(
         from: HubVersion, to: HubVersion, installed: URL, newApp: URL, reopenApp: Bool, fromMigration: Int, toMigration: Int,
-        startedAt: Date, jobPlist: URL?
+        startedAt: Date, jobPlist: URL?, goingBack: Bool = false, failure: String? = nil
     ) {
         self.from = from.description
         self.to = to.description
@@ -80,8 +84,26 @@ public struct InstallState: Codable, Equatable, Sendable {
         self.toMigration = toMigration
         self.startedAt = startedAt
         self.jobPlist = jobPlist?.path
+        self.goingBack = goingBack ? true : nil
+        self.failure = failure
         step = .waitingForApp
     }
+
+    /// Going back from `to` to `from`, the earlier version at `app`: what
+    /// Settings › Version, the crash prompt and the withdrawn banner start.
+    public static func makeGoingBack(
+        from running: HubVersion, to earlier: HubVersion, installed: URL, app: URL, databaseMigration: Int, restoredMigration: Int,
+        startedAt: Date, jobPlist: URL?
+    ) -> InstallState {
+        InstallState(
+            from: earlier, to: running, installed: installed, newApp: app, reopenApp: true, fromMigration: restoredMigration,
+            toMigration: databaseMigration, startedAt: startedAt, jobPlist: jobPlist, goingBack: true,
+            failure: "You went back from \(running) to \(earlier)."
+        )
+    }
+
+    /// Whether the owner goes back to an earlier version.
+    public var isGoingBack: Bool { goingBack == true }
 
     /// Whether this version changes the database.
     public var changesDatabase: Bool { toMigration > fromMigration }
@@ -129,6 +151,9 @@ public struct InstallProgress: Equatable, Sendable {
     }
 
     public static func make(_ state: InstallState) -> InstallProgress {
+        if state.isGoingBack {
+            return makeGoingBack(state)
+        }
         if state.step.isRollback || state.step == .rolledBack || state.step == .rollbackFailed {
             return makeRollback(state)
         }
@@ -174,6 +199,49 @@ public struct InstallProgress: Equatable, Sendable {
             subtitle: state.reopenApp ? "Job Search Hub reopens when it's done" : "Job Search Hub stays closed, as you left it",
             rows: rows, fraction: min(1, (Double(done) + current) / Double(rows.count))
         )
+    }
+
+    /// Going back from `to` to `from`: the app closes, the server stops, the
+    /// database goes back if it changed, the earlier bundle goes back in
+    /// place, its server is checked and the app reopens.
+    private static func makeGoingBack(_ state: InstallState) -> InstallProgress {
+        if state.step == .abandoned {
+            return InstallProgress(title: "Stayed on Job Search Hub \(state.to)", subtitle: state.failure ?? "Nothing changed.", rows: [], fraction: 1)
+        }
+        let order: [InstallStep] = [
+            .waitingForApp, .stoppingServer, .countingWrites, .restoringDatabase, .swappingBack, .startingOldServer, .checkingOldServer, .reporting, .rolledBack,
+        ]
+        let failed = state.step == .rollbackFailed
+        let reached: Int
+        if failed {
+            reached = order.firstIndex(where: { state.error?.contains($0.rawValue) == true }) ?? 0
+        } else {
+            reached = order.firstIndex(of: state.step) ?? 0
+        }
+        func status(_ step: InstallStep, through end: InstallStep) -> InstallProgressRow.Status {
+            let start = order.firstIndex(of: step)!, finish = order.firstIndex(of: end)!
+            if reached > finish { return .done }
+            if reached >= start { return failed ? .failed : .current }
+            return .waiting
+        }
+        let stopped = status(.waitingForApp, through: .stoppingServer)
+        var rows = [InstallProgressRow(stopped == .done ? "Server stopped" : "Stopping the server…", stopped)]
+        if state.changesDatabase {
+            rows.append(InstallProgressRow("Restoring the database from before \(state.to)", status(.countingWrites, through: .restoringDatabase)))
+        }
+        rows.append(InstallProgressRow("\(state.from) back in place", status(.swappingBack, through: .swappingBack)))
+        rows.append(InstallProgressRow("Checking \(state.from) works", status(.startingOldServer, through: .checkingOldServer)))
+        rows.append(InstallProgressRow("Reopening Job Search Hub", status(.reporting, through: .reporting)))
+        let done = rows.filter { $0.status == .done }.count
+        let current = rows.contains { $0.status == .current } ? 0.5 : 0
+        let title: String
+        switch state.step {
+        case .rolledBack: title = "Back on Job Search Hub \(state.from)"
+        case .rollbackFailed: title = "The hub couldn't go back by itself"
+        default: title = "Going back to Job Search Hub \(state.from)"
+        }
+        let subtitle = state.step == .rolledBack || failed ? (state.lost ?? state.failure ?? "") : "Job Search Hub reopens when it's done"
+        return InstallProgress(title: title, subtitle: subtitle, rows: rows, fraction: min(1, (Double(done) + current) / Double(rows.count)))
     }
 
     private static func makeRollback(_ state: InstallState) -> InstallProgress {
@@ -533,6 +601,11 @@ extension UpdatesFolder {
     /// The app writes its version here once its window is up and connected.
     public var launchedURL: URL { root.appending(path: "launched") }
     public var badVersionsURL: URL { root.appending(path: "bad-versions.json") }
+    /// The installs that ended in place, and the versions gone back to.
+    public var installsURL: URL { root.appending(path: "installs.json") }
+    /// The app's record of its run, which says whether the last one quit
+    /// cleanly.
+    public var runURL: URL { root.appending(path: "run.json") }
     public var reopenURL: URL { root.appending(path: "reopen.json") }
     /// The copy of `hub-update` the install's launchd job runs: outside the
     /// bundles, which the install moves.
@@ -551,6 +624,23 @@ extension UpdatesFolder {
     public func readBadVersions() -> Set<HubVersion> {
         guard let data = try? Data(contentsOf: badVersionsURL), let versions = try? JSONDecoder().decode([String].self, from: data) else { return [] }
         return Set(versions.compactMap(HubVersion.init))
+    }
+
+    public func readInstalls() -> [InstallRecord] {
+        (try? Data(contentsOf: installsURL)).flatMap { try? HubJSON.makeDecoder().decode([InstallRecord].self, from: $0) } ?? []
+    }
+
+    public func readRun() -> RunRecord? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? Data(contentsOf: runURL)).flatMap { try? decoder.decode(RunRecord.self, from: $0) }
+    }
+
+    public func writeRun(_ record: RunRecord) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try encoder.encode(record).write(to: runURL, options: .atomic)
     }
 
     public func writeLaunched(_ version: HubVersion) throws {

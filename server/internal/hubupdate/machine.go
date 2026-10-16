@@ -130,7 +130,11 @@ func (machine *Machine) Run(ctx context.Context) (State, error) {
 		return machine.stop(ctx, state, err)
 	}
 	state.Runs++
-	machine.log("hub-update run %d of the install of %s over %s, at %s", state.Runs, state.To, state.From, state.Step)
+	if state.GoingBack {
+		machine.log("hub-update run %d of going back from %s to %s, at %s", state.Runs, state.To, state.From, state.Step)
+	} else {
+		machine.log("hub-update run %d of the install of %s over %s, at %s", state.Runs, state.To, state.From, state.Step)
+	}
 	if state.Runs > machine.MaxRuns {
 		machine.giveUp(ctx, &state)
 	}
@@ -218,6 +222,11 @@ func (machine *Machine) take(ctx context.Context, state *State) {
 	case StepSwappingBack:
 		machine.swapBack(ctx, state)
 	case StepStartingOldServer:
+		if state.GoingBack {
+			// An older version than the one restored migrates the database
+			// up from it: the check reads its log from here.
+			state.ServerLog = machine.System.ServerLogEnd()
+		}
 		if err := machine.System.StartServer(ctx); err != nil {
 			if cutShort(ctx) {
 				return
@@ -227,13 +236,14 @@ func (machine *Machine) take(ctx context.Context, state *State) {
 		}
 		state.Step = StepCheckingOldServer
 	case StepCheckingOldServer:
-		if err := machine.waitForServer(ctx, state, state.From, false); err != nil {
+		if err := machine.waitForServer(ctx, state, state.From, state.GoingBack); err != nil {
 			if cutShort(ctx) {
 				return
 			}
 			machine.failRollback(ctx, state, fmt.Errorf("%s's server didn't come back: %w", state.From, err))
 			return
 		}
+		state.Migrating = false
 		state.Step = StepReporting
 	case StepReporting:
 		machine.report(ctx, state)
@@ -254,7 +264,7 @@ func (machine *Machine) waitForApp(ctx context.Context, state *State) {
 			return
 		}
 		if machine.Now().After(deadline) {
-			machine.abandon(ctx, state, "Job Search Hub didn't quit, so nothing was installed.")
+			machine.abandon(ctx, state, "Job Search Hub didn't quit, "+unchanged(*state))
 			return
 		}
 		if !machine.sleep(ctx) {
@@ -270,10 +280,23 @@ func (machine *Machine) stopServer(ctx context.Context, state *State) {
 			return
 		}
 		machine.log("The server didn't stop: %v", err)
-		machine.abandon(ctx, state, "The server didn't stop, so nothing was installed.")
+		machine.abandon(ctx, state, "The server didn't stop, "+unchanged(*state))
+		return
+	}
+	if state.GoingBack {
+		state.Step = StepCountingWrites
 		return
 	}
 	state.Step = StepSwapping
+}
+
+// unchanged ends a sentence saying why an install or going back ended
+// before it changed anything.
+func unchanged(state State) string {
+	if state.GoingBack {
+		return "so the hub stayed on " + state.To + "."
+	}
+	return "so nothing was installed."
 }
 
 // swapBundles puts the new bundle in place and the old one in previous/.
@@ -431,18 +454,33 @@ func (machine *Machine) checkApp(ctx context.Context, state *State) {
 // Install is one install, as Updates/installs.json records it, which going
 // back reads.
 type Install struct {
-	From string    `json:"from"`
-	To   string    `json:"to"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Dump is the dump taken before To migrated the database, or, going
+	// back, the one restored.
 	Dump string    `json:"dump,omitempty"`
 	At   time.Time `json:"at"`
+	// WentBack says the owner went back from From to To.
+	WentBack bool `json:"went_back,omitempty"`
 }
+
+// InstallsFile lists, in Updates, the installs that ended in place, and the
+// versions gone back to, the oldest first.
+const InstallsFile = "installs.json"
 
 func (machine *Machine) record(state *State) {
 	install := Install{From: state.From, To: state.To, At: machine.Now()}
 	if dump, ok := machine.findFreshDump(*state); ok {
 		install.Dump = dump
 	}
-	path := filepath.Join(machine.Updates, "installs.json")
+	machine.addInstall(install)
+	machine.removeDownload(state.NewApp, state.To)
+	machine.log("Installed %s.", state.To)
+	state.Step = StepInstalled
+}
+
+func (machine *Machine) addInstall(install Install) {
+	path := filepath.Join(machine.Updates, InstallsFile)
 	var installs []Install
 	if data, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(data, &installs)
@@ -451,12 +489,14 @@ func (machine *Machine) record(state *State) {
 	if err := writeJSON(path, installs); err != nil {
 		machine.log("Couldn't record the install: %v", err)
 	}
-	// The download's folder is empty but for its checks.
-	if folder := filepath.Dir(state.NewApp); filepath.Base(folder) == state.To && filepath.Dir(folder) == machine.Updates {
+}
+
+// removeDownload removes the folder of version's download that held app,
+// which is empty but for its checks once the app moved out of it.
+func (machine *Machine) removeDownload(app, version string) {
+	if folder := filepath.Dir(app); filepath.Base(folder) == version && filepath.Dir(folder) == machine.Updates {
 		_ = os.RemoveAll(folder)
 	}
-	machine.log("Installed %s.", state.To)
-	state.Step = StepInstalled
 }
 
 // rollBack starts the rollback, saying why in the owner's words, and why in
@@ -492,6 +532,10 @@ func (machine *Machine) stopNewServer(ctx context.Context, state *State) {
 // what it wrote since, which restoring the dump loses. Without a dump no
 // migration ran, and nothing is lost.
 func (machine *Machine) countWrites(ctx context.Context, state *State) {
+	if state.GoingBack {
+		machine.countWritesGoingBack(ctx, state)
+		return
+	}
 	state.Step = StepRestoringDatabase
 	state.Lost = "Nothing was lost."
 	if state.ToMigration <= state.FromMigration {
@@ -520,6 +564,48 @@ func (machine *Machine) countWrites(ctx context.Context, state *State) {
 		state.Dump = dump
 		state.Lost = fmt.Sprintf("Anything %s wrote couldn't be counted, and was lost.", state.To)
 	}
+}
+
+// countWritesGoingBack finds the dump of the migration the owner goes back
+// to, and what was written since the version after it marked where its
+// writes began, which restoring the dump loses. Without the dump the earlier
+// server can't run on the database, so nothing changes.
+func (machine *Machine) countWritesGoingBack(ctx context.Context, state *State) {
+	if state.ToMigration <= state.FromMigration {
+		state.Lost = "Nothing was lost."
+		state.Step = StepRestoringDatabase
+		return
+	}
+	uncounted := fmt.Sprintf("What was written since %s changed the database couldn't be counted, and was lost.", state.To)
+	if running, found := machine.findBundle(*state, state.To); found {
+		counted, err := machine.System.CountWrites(ctx, CommandPath(running, "hub-server"), state.FromMigration)
+		if err == nil {
+			if counted.Dump == "" {
+				machine.abandon(ctx, state, fmt.Sprintf("The copy of the database from before %s changed it is gone, %s", state.To, unchanged(*state)))
+				return
+			}
+			state.Dump = counted.Dump
+			state.Lost = counted.Lost
+			if !counted.Marked || state.Lost == "" {
+				state.Lost = uncounted
+			}
+			machine.log("Counted what going back loses: %s", state.Lost)
+			state.Step = StepRestoringDatabase
+			return
+		}
+		if cutShort(ctx) {
+			return
+		}
+		machine.log("Couldn't count what going back loses: %v", err)
+	}
+	dump, ok := machine.findGoingBackDump(*state)
+	if !ok {
+		machine.abandon(ctx, state, fmt.Sprintf("The copy of the database from before %s changed it is gone, %s", state.To, unchanged(*state)))
+		return
+	}
+	state.Dump = dump
+	state.Lost = uncounted
+	state.Step = StepRestoringDatabase
 }
 
 func (machine *Machine) restoreDatabase(ctx context.Context, state *State) {
@@ -571,7 +657,11 @@ func (machine *Machine) report(ctx context.Context, state *State) {
 	if err := machine.markBad(state.To); err != nil {
 		machine.log("Couldn't mark %s bad: %v", state.To, err)
 	}
-	if err := machine.System.PostUpdate(ctx, state.Failure, state.Lost); err != nil {
+	if state.GoingBack {
+		// The owner asked for it, at the Mac: the feed isn't told.
+		machine.addInstall(Install{From: state.To, To: state.From, Dump: state.Dump, At: machine.Now(), WentBack: true})
+		machine.removeDownload(state.NewApp, state.From)
+	} else if err := machine.System.PostUpdate(ctx, state.Failure, state.Lost); err != nil {
 		if cutShort(ctx) {
 			return
 		}
@@ -624,10 +714,15 @@ func (machine *Machine) abandon(ctx context.Context, state *State, failure strin
 func (machine *Machine) giveUp(ctx context.Context, state *State) {
 	stopped := fmt.Errorf("hub-update stopped %d times on this install", state.Runs-1)
 	beforeSwap := state.Step == StepWaitingForApp || state.Step == StepStoppingServer ||
-		(state.Step == StepSwapping && isVersion(state.Installed, state.From))
+		(state.Step == StepSwapping && isVersion(state.Installed, state.From)) ||
+		(state.GoingBack && state.Step == StepCountingWrites)
 	if beforeSwap {
 		machine.log("Giving up: %v", stopped)
-		machine.abandon(ctx, state, fmt.Sprintf("hub-update kept stopping before it put %s in place, so nothing was installed.", state.To))
+		if state.GoingBack {
+			machine.abandon(ctx, state, fmt.Sprintf("hub-update kept stopping before it went back to %s, %s", state.From, unchanged(*state)))
+		} else {
+			machine.abandon(ctx, state, fmt.Sprintf("hub-update kept stopping before it put %s in place, so nothing was installed.", state.To))
+		}
 		return
 	}
 	machine.failRollback(ctx, state, stopped)
@@ -641,8 +736,13 @@ func (machine *Machine) failRollback(ctx context.Context, state *State, err erro
 	}
 	if state.Dump == "" && (state.Step == StepStoppingNewServer || state.Step == StepCountingWrites) {
 		// Counting writes, which finds the dump, is still to come: restore
-		// the one the new server took, if it migrated.
-		if dump, ok := machine.findFreshDump(*state); ok {
+		// the one the new server took, if it migrated, or the one going back
+		// needs.
+		find := machine.findFreshDump
+		if state.GoingBack {
+			find = machine.findGoingBackDump
+		}
+		if dump, ok := find(*state); ok {
 			state.Dump = dump
 		}
 	}
@@ -650,7 +750,9 @@ func (machine *Machine) failRollback(ctx context.Context, state *State, err erro
 	state.Error = fmt.Sprintf("The rollback stopped at %s: %v", state.Step, err)
 	state.Commands = machine.commandsToFinish(*state)
 	state.Step = StepRollbackFailed
-	if state.Failure == "" {
+	if state.GoingBack {
+		state.Failure = fmt.Sprintf("The hub couldn't go back to %s by itself.", state.From)
+	} else if state.Failure == "" {
 		state.Failure = fmt.Sprintf("%s couldn't be installed, and the hub couldn't go back to %s by itself.", state.To, state.From)
 	}
 }
@@ -733,6 +835,19 @@ func (machine *Machine) findFreshDump(state State) (string, bool) {
 	dump := filepath.Join(machine.Backups, fmt.Sprintf("hub-pre-migration-%d.dump", state.FromMigration))
 	info, err := os.Stat(dump)
 	if err != nil || info.ModTime().Before(state.StartedAt) {
+		return "", false
+	}
+	return dump, true
+}
+
+// findGoingBackDump is the dump of the migration going back returns the
+// database to, when the database migrated since and the dump is there.
+func (machine *Machine) findGoingBackDump(state State) (string, bool) {
+	if machine.Backups == "" || state.ToMigration <= state.FromMigration {
+		return "", false
+	}
+	dump := filepath.Join(machine.Backups, fmt.Sprintf("hub-pre-migration-%d.dump", state.FromMigration))
+	if _, err := os.Stat(dump); err != nil {
 		return "", false
 	}
 	return dump, true
