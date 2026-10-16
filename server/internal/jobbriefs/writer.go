@@ -148,7 +148,7 @@ func (writer *Writer) WriteFullBrief(ctx context.Context, jobID uuid.UUID) error
 	if err != nil {
 		return err
 	}
-	return writer.writeBrief(ctx, writer.FullClient, store.JobBriefTierFull, job, brief)
+	return writer.writeBrief(chatcompletions.WithStartedByOwner(ctx), writer.FullClient, store.JobBriefTierFull, job, brief)
 }
 
 // WriteNightlyFullBriefs writes the full briefs of the best-matched undecided
