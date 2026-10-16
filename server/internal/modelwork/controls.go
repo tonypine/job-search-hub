@@ -5,7 +5,6 @@ package modelwork
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 
 	"github.com/google/uuid"
@@ -36,6 +35,17 @@ type Controls struct {
 	Runtime runtimeStatus
 	// Facts is nil when job facts have no route.
 	Facts jobFactsReader
+	// Briefs, FullBriefs, CVs, Screens and Packs write a job's brief, full
+	// brief, tailored CV, recruiter screen and interview pack for a run the
+	// owner starts; nil leaves the kind off.
+	Briefs     jobBriefWriter
+	FullBriefs fullBriefWriter
+	CVs        cvDrafter
+	Screens    cvScreener
+	Packs      packPreparer
+	// Updates, when set, tells the apps a started run ended, or waits for
+	// the Mac.
+	Updates updateRecorder
 	// Drain, when set, lists the Claude runs running.
 	Drain *drain.Drain
 
@@ -146,16 +156,6 @@ func (controls *Controls) ListRunKinds(ctx context.Context) ([]RunKindState, err
 // DispatchJobFacts starts reading the job's facts ahead of background work
 // and returns once the run is queued; the job's facts change when it ends.
 func (controls *Controls) DispatchJobFacts(ctx context.Context, jobID uuid.UUID) error {
-	if controls.Facts == nil {
-		return ErrNotSetUp
-	}
-	if _, err := controls.Hub.GetJobForFacts(ctx, jobID); err != nil {
-		return err
-	}
-	go func() {
-		if err := controls.Facts.ReadJobNow(context.WithoutCancel(ctx), jobID); err != nil {
-			slog.Warn("dispatched job facts failed", "job", jobID, "error", err)
-		}
-	}()
-	return nil
+	_, err := controls.StartRun(ctx, store.Actor{Kind: store.ActorOwner}, StartRequest{Kind: store.AgentPromptKindJobFacts, SubjectID: jobID})
+	return err
 }

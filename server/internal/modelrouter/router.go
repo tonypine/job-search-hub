@@ -63,6 +63,9 @@ func New(hub *store.Store) *Router {
 // the provider it stood in for.
 func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
 	kind := request.GetRunKind()
+	if chosen, found := getChosenModel(ctx, kind); found {
+		return router.completeOnProvider(ctx, chosen.providerID, chosen.model, request, router.getRecorder())
+	}
 	route, err := router.hub.GetTaskRoute(ctx, kind)
 	if errors.Is(err, store.ErrTaskRouteNotFound) {
 		return chatcompletions.Answer{}, fmt.Errorf("no model is routed for %s: %w", kind, err)
@@ -70,7 +73,8 @@ func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.
 	if err != nil {
 		return chatcompletions.Answer{}, err
 	}
-	answer, err := router.completeOnProvider(ctx, route.ProviderID, route.Model, request, router.RecordRun)
+	recordRun := router.getRecorder()
+	answer, err := router.completeOnProvider(ctx, route.ProviderID, route.Model, request, recordRun)
 	if !errors.Is(err, chatcompletions.ErrUnreachable) || route.FallbackProviderID == nil {
 		return answer, err
 	}
@@ -78,20 +82,55 @@ func (router *Router) CompleteJSON(ctx context.Context, request chatcompletions.
 	if readErr != nil {
 		return chatcompletions.Answer{}, readErr
 	}
-	recordRun := router.RecordRun
-	if recordRun != nil {
-		recordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
+	recordFallback := recordRun
+	if recordFallback != nil {
+		recordFallback = func(ctx context.Context, record chatcompletions.RunRecord) {
 			record.FallbackFor = provider.Name
-			router.RecordRun(ctx, record)
+			recordRun(ctx, record)
 		}
 	}
-	return router.completeOnProvider(ctx, *route.FallbackProviderID, route.FallbackModel, request, recordRun)
+	return router.completeOnProvider(ctx, *route.FallbackProviderID, route.FallbackModel, request, recordFallback)
 }
 
 // CompleteJSONOn asks a given provider and model, past the task's route, as a
 // comparison does. It still waits its turn in the model queue.
 func (router *Router) CompleteJSONOn(ctx context.Context, providerID uuid.UUID, model string, request chatcompletions.JSONRequest) (chatcompletions.Answer, error) {
-	return router.completeOnProvider(ctx, providerID, model, request, router.RecordRun)
+	return router.completeOnProvider(ctx, providerID, model, request, router.getRecorder())
+}
+
+// getRecorder is RecordRun keeping each record under the id its context
+// gives it, as a started run's first record; nil without RecordRun.
+func (router *Router) getRecorder() func(context.Context, chatcompletions.RunRecord) {
+	if router.RecordRun == nil {
+		return nil
+	}
+	return func(ctx context.Context, record chatcompletions.RunRecord) {
+		if record.ID == nil {
+			record.ID = chatcompletions.TakeRunID(ctx, record.Kind)
+		}
+		router.RecordRun(ctx, record)
+	}
+}
+
+type chosenModelKey struct{}
+
+// chosenModel is the provider and model the owner chose for one run of kind.
+type chosenModel struct {
+	kind       string
+	providerID uuid.UUID
+	model      string
+}
+
+// WithModel runs the requests of kind made with ctx on the provider and
+// model given, past the kind's route and with no fallback: the model the
+// owner chose for one run. The route stays as it was.
+func WithModel(ctx context.Context, kind string, providerID uuid.UUID, model string) context.Context {
+	return context.WithValue(ctx, chosenModelKey{}, chosenModel{kind: kind, providerID: providerID, model: model})
+}
+
+func getChosenModel(ctx context.Context, kind string) (chosenModel, bool) {
+	chosen, found := ctx.Value(chosenModelKey{}).(chosenModel)
+	return chosen, found && chosen.kind == kind
 }
 
 // waitInQueue waits for the request's turn at the model; without a queue it

@@ -75,20 +75,22 @@ func scanAgentRun(row pgx.Row) (AgentRun, error) {
 }
 
 // StartAgentRun records a running agent run given version promptVersion of its
-// prompt, on model, empty when Claude Code picks it. subjectID is the job or company the run is for, nil when it isn't
-// known yet; its type is the kind's. A profile seed is for the owner's
-// profile, which has no id. Only the token's hash is stored; the token itself
-// exists only in the caller's hands.
-func (s *Store) StartAgentRun(ctx context.Context, kind, input string, subjectID *uuid.UUID, model string, promptVersion int, tokenHash []byte,
-	tokenExpiresAt time.Time) (AgentRun, error) {
+// prompt, on model, empty when Claude Code picks it. id is the id a run the
+// owner started was given, nil for a new one. subjectID is the job or
+// company the run is for, nil when it isn't known yet; its type is the
+// kind's. A profile seed is for the owner's profile, which has no id. Only
+// the token's hash is stored; the token itself exists only in the caller's
+// hands.
+func (s *Store) StartAgentRun(ctx context.Context, id *uuid.UUID, kind, input string, subjectID *uuid.UUID, model string, promptVersion int,
+	tokenHash []byte, tokenExpiresAt time.Time) (AgentRun, error) {
 	var subjectType *string
 	if subjectID != nil || kind == AgentRunKindProfileSeed {
 		subjectType = getRunSubjectType(kind)
 	}
 	return scanAgentRun(s.pool.QueryRow(ctx, `
-		INSERT INTO agent_runs (kind, input, subject_type, subject_id, model, agent_prompt_version, token_hash, token_expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING `+agentRunColumns, kind, input, subjectType, subjectID, model, promptVersion, tokenHash, tokenExpiresAt))
+		INSERT INTO agent_runs (id, kind, input, subject_type, subject_id, model, agent_prompt_version, token_hash, token_expires_at)
+		VALUES (coalesce($1, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING `+agentRunColumns, id, kind, input, subjectType, subjectID, model, promptVersion, tokenHash, tokenExpiresAt))
 }
 
 type AgentRunOutcome struct {

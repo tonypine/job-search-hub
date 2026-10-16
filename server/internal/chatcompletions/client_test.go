@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 )
 
@@ -272,5 +274,22 @@ func TestHeadersACostAndTheServersOwnErrorsAreForAServerThatAsksForThem(t *testi
 	status, body = http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}`
 	if _, err := plain.CompleteJSON(context.Background(), request); err != nil || received["usage"] != nil {
 		t.Fatalf("a plain request: %v, %v", err, received)
+	}
+}
+
+func TestAPresetRunIDGoesToTheFirstRecordOfItsKindOnly(t *testing.T) {
+	id := uuid.New()
+	ctx := chatcompletions.WithRunID(context.Background(), "job_brief_full", id)
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief"); taken != nil {
+		t.Fatalf("another kind took the id: %v", taken)
+	}
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief_full"); taken == nil || *taken != id {
+		t.Fatalf("the first record of the kind got %v, want %s", taken, id)
+	}
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief_full"); taken != nil {
+		t.Fatalf("a second record got the id too: %v", taken)
+	}
+	if taken := chatcompletions.TakeRunID(context.Background(), "job_brief_full"); taken != nil {
+		t.Fatalf("a context with no id gave %v", taken)
 	}
 }

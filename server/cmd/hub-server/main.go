@@ -319,13 +319,13 @@ func run() error {
 		GetLoadedModel: func() string { return modelRuntime.Status().Model },
 		UnloadModel:    modelRuntime.Unload,
 	})
-	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime, Drain: drainer}
+	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime, Drain: drainer, Updates: updateRecorder}
 	drainer.OnChange(modelQueue.SetDraining)
 	drainer.AddLister(func() []drain.Work { return listRunningModelCall(modelQueue) })
 
 	recordTaskRun := func(ctx context.Context, record chatcompletions.RunRecord) {
 		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
-			Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Provider: record.Provider, Model: record.Model,
+			ID: record.ID, Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Provider: record.Provider, Model: record.Model,
 			PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, InputHash: record.InputHash, Output: record.Output,
 			PromptTokens: record.PromptTokens, CompletionTokens: record.CompletionTokens, CostUSD: record.CostUSD, StartedAt: record.StartedAt,
 			Duration: record.Duration, Outcome: record.Outcome, Error: record.Error, StartedByOwner: record.StartedByOwner,
@@ -357,16 +357,22 @@ func run() error {
 	if modelClient != nil {
 		briefWriter := jobbriefs.NewWriter(hub, modelClient, rates)
 		briefWriter.IsPaused = modelWork.IsPaused
+		modelWork.Briefs = briefWriter
 		go briefWriter.Run(workCtx, jobBriefInterval)
-		go cvscreens.NewScreener(hub, modelClient).Run(workCtx, cvScreenInterval)
+		screener := cvscreens.NewScreener(hub, modelClient)
+		modelWork.Screens = screener
+		go screener.Run(workCtx, cvScreenInterval)
 		go marketgaps.NewAnalyzer(hub, modelClient, rates).Run(workCtx, marketGapsCheckInterval)
-		go interviewpacks.NewPreparer(hub, modelClient).Run(workCtx, interviewPackInterval)
+		preparer := interviewpacks.NewPreparer(hub, modelClient)
+		modelWork.Packs = preparer
+		go preparer.Run(workCtx, interviewPackInterval)
 		go hiringthread.NewReader(hub, modelClient).Run(workCtx, hiringThreadInterval)
 		// Full briefs and tailored CVs run on their kinds' routes, which can
 		// change while the hub runs; a kind with no route at start stays off.
 		if isKindRouted(taskRoutes, store.RunKindJobBriefFull) {
 			briefWriter.FullClient = modelClient
 			fullBriefs = briefWriter
+			modelWork.FullBriefs = briefWriter
 			go briefWriter.RunNightly(workCtx, fullBriefCheckInterval)
 			slog.Info("full briefs on")
 		} else {
@@ -376,6 +382,7 @@ func run() error {
 			cvDrafter = cvdrafts.NewDrafter(hub, modelClient)
 			cvDrafter.Rates = rates
 			cvDrafter.IsPaused = modelWork.IsPaused
+			modelWork.CVs = cvDrafter
 			if cvPrinter != nil {
 				cvDrafter.Printer = cvPrinter
 			}
@@ -392,10 +399,7 @@ func run() error {
 		}
 	}
 	if fullBriefs != nil {
-		api.RegisterJobBriefRoutes(routes, hub, fullBriefs, requireOwner)
 		mcptools.AddJobBriefTools(ownerTools, fullBriefs, hub)
-	} else {
-		api.RegisterJobBriefRoutes(routes, hub, nil, requireOwner)
 	}
 	if modelClient != nil {
 		extractor := jobfacts.NewExtractor(hub, modelClient)
@@ -407,6 +411,7 @@ func run() error {
 	}
 	api.RegisterModelWorkRoutes(routes, modelWork, requireOwner)
 	api.RegisterRunKindRoutes(routes, modelWork, requireOwner)
+	api.RegisterRunStartRoutes(routes, modelWork, requireOwner)
 	if modelClient != nil {
 		comparisonRunner := comparisons.NewRunner(hub, modelClient)
 		comparisonRunner.NewClaudeClient = newClaudeClient

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -91,6 +92,9 @@ type RunRecord struct {
 	// FallbackFor names the provider the request stood in for, when its
 	// route's provider was unreachable and it ran on the fallback.
 	FallbackFor string
+	// ID is the id to keep the record under, nil for a new one: the id a
+	// run the owner started was given before it ran.
+	ID *uuid.UUID
 }
 
 // TaskLabel says what a request is for: the record keeps it; the model never
@@ -126,6 +130,34 @@ func WithStartedByOwner(ctx context.Context) context.Context {
 func IsStartedByOwner(ctx context.Context) bool {
 	started, _ := ctx.Value(startedByOwnerKey{}).(bool)
 	return started
+}
+
+type runIDKey struct{}
+
+// presetRunID is the id a started run answered with, waiting for the first
+// record of its kind.
+type presetRunID struct {
+	kind  string
+	id    uuid.UUID
+	taken atomic.Bool
+}
+
+// WithRunID gives the first record of kind made with ctx the id, so a run
+// the owner started is recorded under the id its start answered with. The
+// records after it, such as a retry, get their own.
+func WithRunID(ctx context.Context, kind string, id uuid.UUID) context.Context {
+	return context.WithValue(ctx, runIDKey{}, &presetRunID{kind: kind, id: id})
+}
+
+// TakeRunID is the id ctx gives a record of kind, the first time it is
+// asked; nil after that, or when ctx gives none.
+func TakeRunID(ctx context.Context, kind string) *uuid.UUID {
+	preset, found := ctx.Value(runIDKey{}).(*presetRunID)
+	if !found || preset.kind != kind || !preset.taken.CompareAndSwap(false, true) {
+		return nil
+	}
+	id := preset.id
+	return &id
 }
 
 func NewClient(baseURL string) *Client {
