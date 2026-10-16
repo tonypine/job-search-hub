@@ -206,3 +206,28 @@ func TestRunMetricsCount90DaysOf100kRunsQuickly(t *testing.T) {
 	}
 	t.Logf("90 days by day of 100k runs: %v", took)
 }
+
+// A model call a provider charged for adds its cost; one on the Claude plan
+// adds nothing, whatever Claude reckons it would cost on its API.
+func TestRunMetricsCountWhatAProviderChargedButNotTheClaudePlan(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	from := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	for _, run := range []store.NewTaskRun{
+		{Kind: store.AgentPromptKindRecruiterScreen, BaseURL: "https://openrouter.ai/api/v1", Provider: "OpenRouter", Model: "anthropic/claude-sonnet-4.5",
+			CostUSD: "0.0081", StartedAt: from.Add(time.Hour), Outcome: store.RunOutcomeSucceeded},
+		{Kind: store.RunKindJobBriefFull, BaseURL: "claude-cli", Provider: "Claude", Model: "sonnet", CostUSD: "0.05", StartedAt: from.Add(2 * time.Hour),
+			Outcome: store.RunOutcomeSucceeded},
+	} {
+		if _, err := hub.RecordTaskRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics, err := hub.GetRunMetrics(ctx, store.RunMetricsFilter{From: from, To: from.Add(24 * time.Hour), Bucket: store.RunBucketDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Totals.Runs != 2 || metrics.Totals.CostUSD != "0.0081" || metrics.Totals.ClaudePlanRuns != 1 {
+		t.Errorf("totals = %+v", metrics.Totals)
+	}
+}
