@@ -198,8 +198,10 @@ func TestOpenRouterIsAddedWithAKeyAndItsModelsComeWithTheirPrices(t *testing.T) 
 	}
 
 	// A key OpenRouter refuses says so.
-	_, answer = send(t, http.MethodPut, service.url+"/v1/model-providers/"+provider.ID.String(), ownerToken,
-		fmt.Sprintf(`{"kind":"openrouter","name":"OpenRouter","base_url":%q,"api_key":"sk-or-wrong"}`, provider.BaseURL))
+	if status, answer = send(t, http.MethodPut, service.url+"/v1/model-providers/"+provider.ID.String(), ownerToken,
+		fmt.Sprintf(`{"kind":"openrouter","name":"OpenRouter","base_url":%q,"api_key":"sk-or-wrong"}`, provider.BaseURL)); status != http.StatusOK {
+		t.Fatalf("changing the key: %d %s", status, answer)
+	}
 	if status, answer = send(t, http.MethodGet, service.url+"/v1/model-providers/"+provider.ID.String()+"/models", ownerToken, ""); status != http.StatusBadGateway ||
 		!strings.Contains(string(answer), "OpenRouter refused the key") {
 		t.Errorf("a refused key: %d %s", status, answer)
