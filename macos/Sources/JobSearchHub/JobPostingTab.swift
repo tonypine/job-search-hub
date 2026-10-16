@@ -15,6 +15,7 @@ struct JobPostingTab: View {
     let postingAnchor: String
     /// Facts in a row, as the inspector fits them.
     private let columns = 2
+    private static let findFieldID = "posting-find-field"
 
     @State private var isShowingFacts = false
     @State private var isFinding = false
@@ -40,10 +41,11 @@ struct JobPostingTab: View {
                                 MarkLegend()
                             }
                             Spacer(minLength: 0)
-                            findButton
+                            findButton(proxy: proxy)
                         }
                         if isFinding {
                             findField(matches, proxy: proxy)
+                                .id(Self.findFieldID)
                         }
                     }
                 }
@@ -193,10 +195,18 @@ struct JobPostingTab: View {
 
     // MARK: Find
 
-    private var findButton: some View {
+    /// Opens the find field and scrolls it into view: ⌘F can come from
+    /// anywhere down the posting, far below the field.
+    private func findButton(proxy: ScrollViewProxy) -> some View {
         Button {
             isFinding = true
             isQueryFocused = true
+            Task {
+                // Once the field is laid out, when it has just opened.
+                guard (try? await Task.sleep(for: .milliseconds(50))) != nil else { return }
+                withAnimation { proxy.scrollTo(Self.findFieldID, anchor: .top) }
+                isQueryFocused = true
+            }
         } label: {
             HStack(spacing: Space.xs) {
                 Image(systemName: "magnifyingglass")
