@@ -184,6 +184,9 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 				INSERT INTO model_providers (kind, name, base_url, api_key, enforces_schema) VALUES ($1, $2, $3, $4, $5) RETURNING `+modelProviderColumns,
 				input.Kind, input.Name, input.BaseURL, key, input.EnforcesSchema))
 		} else {
+			if err := checkAgentsKeepClaude(ctx, tx, *id, input.Kind); err != nil {
+				return err
+			}
 			var key *string
 			if input.APIKey != nil {
 				trimmed := strings.TrimSpace(*input.APIKey)
@@ -208,6 +211,37 @@ func (s *Store) SaveModelProvider(ctx context.Context, actor Actor, id *uuid.UUI
 		})
 	})
 	return saved, err
+}
+
+// checkAgentsKeepClaude refuses turning the provider with id into one of
+// kind when an agent kind is routed to it and kind isn't the Claude
+// subscription. It locks the provider, so no agent route reaches it until
+// the change commits.
+func checkAgentsKeepClaude(ctx context.Context, tx pgx.Tx, id uuid.UUID, kind string) error {
+	var current string
+	err := tx.QueryRow(ctx, `SELECT kind FROM model_providers WHERE id = $1 FOR UPDATE`, id).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrModelProviderNotFound
+	}
+	if err != nil || current == kind || kind == ModelProviderKindClaudeSubscription {
+		return err
+	}
+	var agentKinds []string
+	for _, runKind := range RunKinds {
+		if runKind.Engine == RunEngineClaudeAgent {
+			agentKinds = append(agentKinds, runKind.ID)
+		}
+	}
+	var routed string
+	err = tx.QueryRow(ctx, `SELECT kind FROM task_routes WHERE provider_id = $1 AND kind = ANY($2) ORDER BY kind LIMIT 1`, id, agentKinds).Scan(&routed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	runKind, _ := GetRunKind(routed)
+	return fmt.Errorf("%w: %s is a Claude Code agent routed to this provider; route it to another Claude provider first", ErrAgentRunsOnClaude, runKind.Title)
 }
 
 // DeleteModelProvider removes a provider no route runs on.
@@ -259,7 +293,7 @@ func (s *Store) SaveTaskRoute(ctx context.Context, actor Actor, kind string, inp
 	var saved TaskRoute
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var providerKind string
-		err := tx.QueryRow(ctx, `SELECT kind FROM model_providers WHERE id = $1`, input.ProviderID).Scan(&providerKind)
+		err := tx.QueryRow(ctx, `SELECT kind FROM model_providers WHERE id = $1 FOR SHARE`, input.ProviderID).Scan(&providerKind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrModelProviderNotFound
 		}

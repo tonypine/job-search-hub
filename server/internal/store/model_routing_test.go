@@ -142,3 +142,35 @@ func TestAnAgentKindRunsOnlyOnTheClaudeSubscription(t *testing.T) {
 		t.Error("a kind the catalog lacks got a route")
 	}
 }
+
+func TestAProviderAnAgentRunsOnStaysClaude(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	claude, err := hub.EnsureClaudeTaskRoutes(ctx, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveTaskRoute(ctx, owner, store.AgentRunKindJobFix, store.TaskRouteInput{ProviderID: claude.ID, Model: "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	local := store.ModelProviderInput{Kind: store.ModelProviderKindOpenAICompatible, Name: claude.Name, BaseURL: "http://localhost:1234/v1"}
+	if _, err := hub.SaveModelProvider(ctx, owner, &claude.ID, local); !errors.Is(err, store.ErrAgentRunsOnClaude) {
+		t.Fatalf("turning an agent's provider into a local model: %v", err)
+	}
+	if got, err := hub.GetModelProvider(ctx, claude.ID); err != nil || got.Kind != store.ModelProviderKindClaudeSubscription {
+		t.Fatalf("provider after the refused change = %+v, %v", got, err)
+	}
+	if _, err := hub.SaveModelProvider(ctx, owner, &claude.ID, store.ModelProviderInput{Kind: store.ModelProviderKindClaudeSubscription, Name: "Claude Max"}); err != nil {
+		t.Fatalf("renaming an agent's provider: %v", err)
+	}
+	other, err := hub.SaveModelProvider(ctx, owner, nil, store.ModelProviderInput{Kind: store.ModelProviderKindClaudeSubscription, Name: "Other Claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveTaskRoute(ctx, owner, store.AgentRunKindJobFix, store.TaskRouteInput{ProviderID: other.ID, Model: "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveModelProvider(ctx, owner, &claude.ID, local); err != nil {
+		t.Fatalf("changing a provider no agent runs on: %v", err)
+	}
+}
