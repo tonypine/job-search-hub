@@ -8,7 +8,7 @@ private let companiesJSON = ##"""
 {"companies":[
   {"company":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Acme","domain":"acme.com",
               "website_url":"https://www.acme.com","careers_url":"https://acme.com/careers",
-              "headquarters_country":"Canada","employee_count_range":"51-200","summary":"Makes anvils.",
+              "headquarters_country":"Canada","employee_count_range":"51-200","industry":"Anvils","summary":"Makes anvils.",
               "found_via":"Referral: a former colleague","created_at":"2026-09-28T12:00:00.5Z","updated_at":"2026-09-28T12:05:00Z"},
    "watched_since":"2026-09-28T12:10:00.123456Z",
    "job_boards":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
@@ -45,12 +45,13 @@ private let dossierJSON = ##"""
     #expect(acme.company.websiteURL == "https://www.acme.com")
     #expect(acme.company.careersURL == "https://acme.com/careers")
     #expect(acme.company.foundVia == "Referral: a former colleague")
+    #expect(acme.company.industry == "Anvils")
     #expect(acme.watchedSince != nil)
     #expect(acme.jobBoards.first?.summaryLine == "ashby/acme · 42 open")
     #expect(acme.peopleCount == 4 && acme.unseenUpdates == 3 && acme.connectionCount == 2)
 
     let zeta = listed[1]
-    #expect(zeta.company.websiteURL == nil)
+    #expect(zeta.company.websiteURL == nil && zeta.company.industry == nil)
     #expect(zeta.watchedSince == nil)
     #expect(zeta.jobBoards.isEmpty)
 }
@@ -120,7 +121,10 @@ private let companyPageJSON = ##"""
 @Test func aCompanyWithoutAnIndustryShowsOnlyItsSize() throws {
     let listed = try HubJSON.makeDecoder().decode(CompaniesResponse.self, from: Data(companiesJSON.utf8)).companies
 
-    #expect(listed[0].company.industry == nil)
-    #expect(listed[0].company.industryAndSize == "51-200 people")
+    var withoutIndustry = listed[0].company
+    withoutIndustry.industry = nil
+
+    #expect(listed[0].company.industryAndSize == "Anvils · 51-200 people")
+    #expect(withoutIndustry.industryAndSize == "51-200 people")
     #expect(listed[1].company.industryAndSize == nil)
 }

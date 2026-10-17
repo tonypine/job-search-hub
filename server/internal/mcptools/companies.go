@@ -43,8 +43,8 @@ type updateCompanyInput struct {
 	WebsiteURL          *string   `json:"website_url,omitempty"`
 	CareersURL          *string   `json:"careers_url,omitempty" jsonschema:"the page listing open roles"`
 	HeadquartersCountry *string   `json:"headquarters_country,omitempty"`
-	Industry            *string   `json:"industry,omitempty" jsonschema:"what the company's market is, e.g. Developer tools or Fintech"`
 	EmployeeCountRange  *string   `json:"employee_count_range,omitempty" jsonschema:"e.g. 51-200"`
+	Industry            *string   `json:"industry,omitempty" jsonschema:"what the company does in one to three words, e.g. Payments or Health data"`
 	Summary             *string   `json:"summary,omitempty" jsonschema:"two or three sentences on what the company does"`
 	FoundVia            *string   `json:"found_via,omitempty" jsonschema:"how the company reached the hub, e.g. a referral or a job board"`
 	SourceURL           string    `json:"source_url,omitempty" jsonschema:"the page these facts came from"`
@@ -109,8 +109,8 @@ func addCompanyTools(server *mcp.Server, hub *store.Store) {
 			WebsiteURL:          input.WebsiteURL,
 			CareersURL:          input.CareersURL,
 			HeadquartersCountry: input.HeadquartersCountry,
-			Industry:            input.Industry,
 			EmployeeCountRange:  input.EmployeeCountRange,
+			Industry:            input.Industry,
 			Summary:             input.Summary,
 			FoundVia:            input.FoundVia,
 			SourceURL:           input.SourceURL,

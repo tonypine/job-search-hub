@@ -242,7 +242,7 @@ func formatAsData(value any) (string, error) {
 // fenced as data: agents wrote it from web pages, so it must never read as
 // instructions to the next agent.
 func getDossierText(ctx context.Context, hub *store.Store, input string) (string, error) {
-	company, found, err := findStoredCompany(ctx, hub, input)
+	company, found, err := FindStoredCompany(ctx, hub, input)
 	if err != nil || !found {
 		return missingDossierText, err
 	}
@@ -295,9 +295,9 @@ func getFilesText(ctx context.Context, hub *store.Store, companyID *uuid.UUID) (
 	return text.String(), nil
 }
 
-// findStoredCompany matches the input by id when it is one, by domain when
+// FindStoredCompany matches the input by id when it is one, by domain when
 // it is a domain or URL, and otherwise by a unique exact name.
-func findStoredCompany(ctx context.Context, hub *store.Store, input string) (store.Company, bool, error) {
+func FindStoredCompany(ctx context.Context, hub *store.Store, input string) (store.Company, bool, error) {
 	if id, err := uuid.Parse(strings.TrimSpace(input)); err == nil {
 		company, err := hub.GetCompany(ctx, id)
 		if errors.Is(err, store.ErrCompanyNotFound) {

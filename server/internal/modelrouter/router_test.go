@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
+	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -109,8 +115,9 @@ func TestAnUnreachableProviderFallsBack(t *testing.T) {
 	if err != nil || answer.Model != "fallback-model" || string(answer.Object) != `{"stack":"Rust"}` {
 		t.Fatalf("answer = %+v, %v", answer, err)
 	}
-	if len(records) != 2 || records[0].Outcome != chatcompletions.RunFailed || records[1].BaseURL != fallbackServer.url {
-		t.Fatalf("records = %+v; want the failed attempt, then the fallback's", records)
+	if len(records) != 2 || records[0].Outcome != chatcompletions.RunFailed || records[0].FallbackFor != "" || records[1].BaseURL != fallbackServer.url ||
+		records[1].FallbackFor != "http://127.0.0.1:9" {
+		t.Fatalf("records = %+v; want the failed attempt, then the fallback's, standing in for the route's provider", records)
 	}
 }
 
@@ -176,11 +183,19 @@ func TestAHubRuntimeRouteRunsOnTheHubsOwnRuntime(t *testing.T) {
 	var records []chatcompletions.RunRecord
 	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
 	runtime.failWith = errors.New("llama-server exited while loading")
-	if _, err := router.CompleteJSON(context.Background(), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
+	if _, err := router.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), request); !errors.Is(err, chatcompletions.ErrUnreachable) {
 		t.Fatalf("a runtime that can't load: %v", err)
 	}
-	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed {
+	if len(records) != 1 || records[0].BaseURL != modelrouter.HubRuntimeAddress || records[0].Outcome != chatcompletions.RunFailed ||
+		records[0].Provider != "Hub runtime" || !records[0].StartedByOwner {
 		t.Fatalf("records = %+v; want the failed start recorded", records)
+	}
+	runtime.failWith = nil
+	if _, err := router.CompleteJSON(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[1].Provider != "Hub runtime" || records[1].Outcome != chatcompletions.RunSucceeded || records[1].StartedByOwner {
+		t.Errorf("records = %+v; want the run on the runtime recorded under its provider", records)
 	}
 }
 
@@ -235,5 +250,232 @@ func TestARequestOnAGivenModelSkipsTheRoute(t *testing.T) {
 	}
 	if len(routed.received) != 0 || other.received[0]["model"] != "chosen-model" {
 		t.Fatalf("routed got %d requests; other got %v", len(routed.received), other.received)
+	}
+}
+
+func TestAModelChosenForOneRunIsUsedForItsKindAndRecordedUnderTheStartsID(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	routed := startModelServer(t, `{"stack":"Routed"}`)
+	route(t, hub, routed.url, true, "", nil)
+	other := startModelServer(t, `{"stack":"Go"}`)
+	provider, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{Name: "Other", BaseURL: other.url, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []chatcompletions.RunRecord
+	router := modelrouter.New(hub)
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+	runID := uuid.New()
+	ctx := chatcompletions.WithRunID(modelrouter.WithModel(context.Background(), store.AgentPromptKindJobFacts, provider.ID, "chosen-model"),
+		store.AgentPromptKindJobFacts, runID)
+
+	if answer, err := router.CompleteJSON(ctx, request); err != nil || string(answer.Object) != `{"stack":"Go"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(routed.received) != 0 || other.received[0]["model"] != "chosen-model" {
+		t.Fatalf("routed got %d requests; other got %v", len(routed.received), other.received)
+	}
+	if len(records) != 1 || records[0].ID == nil || *records[0].ID != runID || records[0].Model != "chosen-model" {
+		t.Fatalf("records = %+v", records)
+	}
+	if saved, _ := hub.GetTaskRoute(context.Background(), store.AgentPromptKindJobFacts); saved.Model != "routed-model" {
+		t.Fatalf("the route changed: %+v", saved)
+	}
+
+	// Another kind's request, and the next of this kind, keep to the route
+	// or get an id of their own.
+	if _, err := router.CompleteJSON(ctx, request); err != nil || records[1].ID != nil {
+		t.Fatalf("the second request: %v, record %+v", err, records[1])
+	}
+	screen := request
+	screen.SchemaName = store.AgentPromptKindRecruiterScreen
+	if _, err := router.CompleteJSON(ctx, screen); err == nil {
+		t.Fatal("a recruiter screen with no route of its own ran on the model chosen for job facts")
+	}
+}
+
+// startOpenRouter is a fake OpenRouter: it answers chat completions asked
+// with key, the hub's attribution and a request for the cost, with answer
+// and its usage, or with status and OpenRouter's error when status isn't 200.
+func startOpenRouter(t *testing.T, key string, status int, answer string) (string, *[]map[string]any) {
+	t.Helper()
+	var received []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		received = append(received, body)
+		usage, _ := body["usage"].(map[string]any)
+		if r.URL.Path != "/api/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer "+key || r.Header.Get("X-Title") != "Job Search Hub" ||
+			r.Header.Get("HTTP-Referer") == "" || usage["include"] != true {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":{"code":400,"message":"not asked as OpenRouter is"}}`))
+			return
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `{"error":{"code":%d,"message":"No instances available","metadata":{"provider_name":"Anthropic"}}}`, status)
+			return
+		}
+		completion, _ := json.Marshal(map[string]any{
+			"model":   body["model"],
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": answer}}},
+			"usage":   map[string]any{"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500, "cost": 0.0081},
+		})
+		w.Write(completion)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/api/v1", &received
+}
+
+var screenRequest = chatcompletions.JSONRequest{
+	System: "Screen the CV as its recruiter would.", User: "CV: Engineer", SchemaName: store.AgentPromptKindRecruiterScreen, MaxTokens: 100,
+	Schema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string"}}}`),
+}
+
+func addOpenRouter(t *testing.T, hub *store.Store, baseURL, key string) store.ModelProvider {
+	t.Helper()
+	provider, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{
+		Kind: store.ModelProviderKindOpenRouter, Name: "OpenRouter", BaseURL: baseURL, APIKey: &key, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return provider
+}
+
+func TestARecruiterScreenRoutedToOpenRouterRecordsItsModelTokensAndCost(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	baseURL, received := startOpenRouter(t, "sk-or-test", http.StatusOK, `{"verdict":"likely interview"}`)
+	provider := addOpenRouter(t, hub, baseURL, "sk-or-test")
+	if _, err := hub.SaveTaskRoute(context.Background(), owner, store.AgentPromptKindRecruiterScreen,
+		store.TaskRouteInput{ProviderID: provider.ID, Model: "anthropic/claude-sonnet-4.5"}); err != nil {
+		t.Fatal(err)
+	}
+	var records []chatcompletions.RunRecord
+	router := modelrouter.New(hub)
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+
+	answer, err := router.CompleteJSON(context.Background(), screenRequest)
+	if err != nil || string(answer.Object) != `{"verdict":"likely interview"}` || answer.Model != "anthropic/claude-sonnet-4.5" {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(*received) != 1 || (*received)[0]["model"] != "anthropic/claude-sonnet-4.5" {
+		t.Fatalf("OpenRouter got %v", *received)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %+v", records)
+	}
+	record := records[0]
+	if record.Kind != store.AgentPromptKindRecruiterScreen || record.Provider != "OpenRouter" || record.Model != "anthropic/claude-sonnet-4.5" ||
+		record.PromptTokens != 1200 || record.CompletionTokens != 300 || record.CostUSD != "0.0081" || record.Outcome != chatcompletions.RunSucceeded {
+		t.Fatalf("record = %+v", record)
+	}
+}
+
+func TestWhenOpenRouterIsDownTheFallbackRunsAndItsRunSaysSo(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	baseURL, _ := startOpenRouter(t, "sk-or-test", http.StatusServiceUnavailable, "")
+	provider := addOpenRouter(t, hub, baseURL, "sk-or-test")
+	local := startModelServer(t, `{"verdict":"likely interview"}`)
+	fallback, err := hub.SaveModelProvider(context.Background(), owner, nil, store.ModelProviderInput{Name: "This Mac", BaseURL: local.url, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveTaskRoute(context.Background(), owner, store.AgentPromptKindRecruiterScreen, store.TaskRouteInput{
+		ProviderID: provider.ID, Model: "anthropic/claude-sonnet-4.5", FallbackProviderID: &fallback.ID, FallbackModel: "qwen"}); err != nil {
+		t.Fatal(err)
+	}
+	var records []chatcompletions.RunRecord
+	router := modelrouter.New(hub)
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+
+	answer, err := router.CompleteJSON(context.Background(), screenRequest)
+	if err != nil || answer.Model != "qwen" || string(answer.Object) != `{"verdict":"likely interview"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(records) != 2 || records[0].Provider != "OpenRouter" || records[0].Outcome != chatcompletions.RunFailed ||
+		!strings.Contains(records[0].Error, "OpenRouter is down or busy (503): No instances available (Anthropic)") {
+		t.Fatalf("records = %+v; want OpenRouter's failure first", records)
+	}
+	if records[1].Provider != "This Mac" || records[1].Model != "qwen" || records[1].FallbackFor != "OpenRouter" || records[1].Outcome != chatcompletions.RunSucceeded {
+		t.Fatalf("the fallback's record = %+v", records[1])
+	}
+
+	// A key OpenRouter refuses isn't OpenRouter down: no fallback runs.
+	refusing, _ := startOpenRouter(t, "sk-or-test", http.StatusUnauthorized, "")
+	if _, err := hub.SaveModelProvider(context.Background(), owner, &provider.ID, store.ModelProviderInput{
+		Kind: store.ModelProviderKindOpenRouter, Name: "OpenRouter", BaseURL: refusing, EnforcesSchema: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.CompleteJSON(context.Background(), screenRequest); err == nil || errors.Is(err, chatcompletions.ErrUnreachable) ||
+		!strings.Contains(err.Error(), "OpenRouter refused the key") || len(local.received) != 1 {
+		t.Fatalf("a refused key: %v, the fallback got %d requests", err, len(local.received))
+	}
+}
+
+// writeFakeClaude is a Claude CLI that answers answer.
+func writeFakeClaude(t *testing.T, answer string) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncat <<'ANSWER'\n"+answer+"\nANSWER\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return binary
+}
+
+var fullBriefRequest = chatcompletions.JSONRequest{
+	System: "Brief the job.", User: "Title: Engineer", SchemaName: store.AgentPromptKindJobBrief, MaxTokens: 100,
+	Schema: json.RawMessage(`{"type":"object","required":["match"],"properties":{"match":{"type":"string"}}}`),
+	Task:   chatcompletions.TaskLabel{Kind: store.RunKindJobBriefFull},
+}
+
+func TestAClaudeRouteRunsOnTheCLIAndFallsBackToThisMacWithoutIt(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	claude, err := hub.EnsureClaudeTaskRoutes(ctx, "sonnet", store.ClaudeTaskKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []chatcompletions.RunRecord
+	queue := &recordingQueue{}
+	router := modelrouter.New(hub)
+	router.Queue = queue
+	router.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+	router.Claude = &claudeprint.Client{Binary: writeFakeClaude(t, `{"is_error":false,"structured_output":{"match":"strong"},"total_cost_usd":0.042,
+		"usage":{"input_tokens":10,"output_tokens":120},"modelUsage":{"claude-sonnet-5-5":{}}}`), Directory: t.TempDir()}
+
+	// A full brief takes its own kind's route, not the job_brief prompt's.
+	answer, err := router.CompleteJSON(ctx, fullBriefRequest)
+	if err != nil || string(answer.Object) != `{"match":"strong"}` || answer.Model != "claude-sonnet-5-5" {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(records) != 1 || records[0].Kind != store.RunKindJobBriefFull || records[0].Provider != claude.Name || records[0].BaseURL != claudeprint.BaseURL ||
+		records[0].CostUSD != "0.042" {
+		t.Fatalf("records = %+v", records)
+	}
+	if len(queue.tickets) != 0 {
+		t.Fatalf("a Claude run waited in this Mac's queue: %+v", queue.tickets)
+	}
+
+	// Without the CLI, Claude is unreachable, and the fallback on this Mac
+	// writes the brief.
+	local := startModelServer(t, `{"match":"possible"}`)
+	mac, err := hub.SaveModelProvider(ctx, owner, nil, store.ModelProviderInput{Name: "This Mac", BaseURL: local.url, EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveTaskRoute(ctx, owner, store.RunKindJobBriefFull, store.TaskRouteInput{ProviderID: claude.ID, Model: "sonnet",
+		FallbackProviderID: &mac.ID, FallbackModel: "qwen"}); err != nil {
+		t.Fatal(err)
+	}
+	router.Claude = nil
+	answer, err = router.CompleteJSON(ctx, fullBriefRequest)
+	if err != nil || answer.Model != "qwen" || string(answer.Object) != `{"match":"possible"}` {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if len(records) != 2 || records[1].Provider != "This Mac" || records[1].FallbackFor != claude.Name {
+		t.Fatalf("records = %+v", records)
+	}
+	if len(queue.tickets) != 1 || queue.tickets[0].Kind != store.RunKindJobBriefFull || queue.tickets[0].Model != "qwen" {
+		t.Fatalf("the fallback's turn = %+v", queue.tickets)
 	}
 }

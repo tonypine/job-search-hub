@@ -32,7 +32,7 @@ func writeFakeClaude(t *testing.T, answer string) (string, string) {
 }
 
 func TestAnAnswerComesFromTheStructuredOutputAndTheRunIsRecorded(t *testing.T) {
-	binary, argumentsFile := writeFakeClaude(t, `{"is_error":false,"result":"","structured_output":{"match":"strong"},
+	binary, argumentsFile := writeFakeClaude(t, `{"is_error":false,"result":"","structured_output":{"match":"strong"},"total_cost_usd":0.0315,
 		"usage":{"input_tokens":10,"cache_read_input_tokens":900,"output_tokens":120},"modelUsage":{"claude-sonnet-5-5":{}}}`)
 	var records []chatcompletions.RunRecord
 	client := &claudeprint.Client{Binary: binary, Directory: t.TempDir(), Model: "sonnet",
@@ -51,8 +51,27 @@ func TestAnAnswerComesFromTheStructuredOutputAndTheRunIsRecorded(t *testing.T) {
 		}
 	}
 	if len(records) != 1 || records[0].Outcome != chatcompletions.RunSucceeded || records[0].Kind != "job_brief" || records[0].BaseURL != claudeprint.BaseURL ||
-		records[0].PromptTokens != 910 || records[0].CompletionTokens != 120 || records[0].Model != "claude-sonnet-5-5" {
+		records[0].PromptTokens != 910 || records[0].CompletionTokens != 120 || records[0].Model != "claude-sonnet-5-5" ||
+		records[0].Provider != claudeprint.Provider || records[0].StartedByOwner || records[0].CostUSD != "0.0315" {
 		t.Errorf("records = %+v", records)
+	}
+
+	if _, err := client.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), chatcompletions.JSONRequest{
+		SchemaName: "job_brief", Schema: json.RawMessage(`{"type":"object"}`), Task: chatcompletions.TaskLabel{Kind: "job_brief_full"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[1].Kind != "job_brief_full" || !records[1].StartedByOwner {
+		t.Errorf("a full brief the owner asked for = %+v", records[1:])
+	}
+
+	// A client routed through a provider files its runs under its name.
+	client.Provider = "Claude subscription"
+	if _, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_cv", Schema: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if records[2].Provider != "Claude subscription" {
+		t.Errorf("a routed run's provider = %q", records[2].Provider)
 	}
 }
 
@@ -71,10 +90,11 @@ func TestAnAnswerWithoutStructuredOutputIsInvalid(t *testing.T) {
 	}
 }
 
-func TestAMissingBinaryFails(t *testing.T) {
+// A missing CLI is unreachable, so a route's fallback runs instead.
+func TestAMissingBinaryIsUnreachable(t *testing.T) {
 	client := &claudeprint.Client{Binary: filepath.Join(t.TempDir(), "absent"), Directory: t.TempDir()}
-	if _, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{}); err == nil || errors.Is(err, chatcompletions.ErrInvalidAnswer) {
-		t.Fatalf("error = %v, want a failure", err)
+	if _, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{}); !errors.Is(err, chatcompletions.ErrUnreachable) {
+		t.Fatalf("error = %v, want unreachable", err)
 	}
 }
 

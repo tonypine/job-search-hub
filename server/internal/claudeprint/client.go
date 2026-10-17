@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"time"
@@ -20,14 +21,20 @@ import (
 // BaseURL is what the run record names as the server of a Claude CLI run.
 const BaseURL = "claude-cli"
 
+// Provider is what the run record names as the provider of a Claude CLI run
+// when the client names none.
+const Provider = "Claude"
+
 // Client runs the CLI at Binary in Directory, an empty folder of its own so
 // no project's instructions reach the model, with Model ("sonnet", or a full
-// model id). RecordRun, when set, is told about every run. Drain, when set,
-// lists the runs and refuses new ones while the hub drains.
+// model id). RecordRun, when set, is told about every run, filed under
+// Provider, the routed provider's name. Drain, when set, lists the runs and
+// refuses new ones while the hub drains.
 type Client struct {
 	Binary    string
 	Directory string
 	Model     string
+	Provider  string
 	RecordRun func(context.Context, chatcompletions.RunRecord)
 	Drain     *drain.Drain
 }
@@ -37,7 +44,10 @@ type cliAnswer struct {
 	IsError          bool            `json:"is_error"`
 	Result           string          `json:"result"`
 	StructuredOutput json.RawMessage `json:"structured_output"`
-	Usage            struct {
+	// TotalCostUSD is what the run would cost on the API; on the owner's
+	// plan it's an estimate.
+	TotalCostUSD json.Number `json:"total_cost_usd"`
+	Usage        struct {
 		InputTokens              int `json:"input_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
@@ -56,14 +66,18 @@ func (client *Client) CompleteJSON(ctx context.Context, request chatcompletions.
 	if request.Task.SubjectID != nil {
 		subject = request.Task.SubjectID.String()
 	}
-	end, err := client.Drain.Begin(drain.TypeClaudeRun, request.SchemaName, subject)
+	end, err := client.Drain.Begin(drain.TypeClaudeRun, request.GetRunKind(), subject)
 	if err != nil {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: %w", chatcompletions.ErrUnreachable, err)
 	}
 	defer end()
+	provider := client.Provider
+	if provider == "" {
+		provider = Provider
+	}
 	record := chatcompletions.RunRecord{
-		Kind: request.SchemaName, Task: request.Task, BaseURL: BaseURL, Model: client.Model,
-		InputHash: chatcompletions.HashInput(request), StartedAt: time.Now(),
+		Kind: request.GetRunKind(), Task: request.Task, BaseURL: BaseURL, Provider: provider, Model: client.Model,
+		InputHash: chatcompletions.HashInput(request), StartedAt: time.Now(), StartedByOwner: chatcompletions.IsStartedByOwner(ctx),
 	}
 	answer, err := client.run(ctx, request, &record)
 	record.Duration = time.Since(record.StartedAt)
@@ -87,6 +101,9 @@ func (client *Client) run(ctx context.Context, request chatcompletions.JSONReque
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return chatcompletions.Answer{}, fmt.Errorf("%w: the Claude CLI isn't found: %v", chatcompletions.ErrUnreachable, err)
+	}
 	if err != nil {
 		return chatcompletions.Answer{}, fmt.Errorf("claude exited: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
@@ -96,6 +113,7 @@ func (client *Client) run(ctx context.Context, request chatcompletions.JSONReque
 	}
 	record.PromptTokens = answer.Usage.InputTokens + answer.Usage.CacheReadInputTokens + answer.Usage.CacheCreationInputTokens
 	record.CompletionTokens = answer.Usage.OutputTokens
+	record.CostUSD = answer.TotalCostUSD.String()
 	for model := range answer.ModelUsage {
 		record.Model = model
 	}

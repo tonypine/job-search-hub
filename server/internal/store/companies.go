@@ -23,22 +23,22 @@ type Company struct {
 	WebsiteURL          string    `json:"website_url,omitempty"`
 	CareersURL          string    `json:"careers_url,omitempty"`
 	HeadquartersCountry string    `json:"headquarters_country,omitempty"`
-	Industry            string    `json:"industry,omitempty"`
 	EmployeeCountRange  string    `json:"employee_count_range,omitempty"`
+	Industry            string    `json:"industry,omitempty"`
 	Summary             string    `json:"summary,omitempty"`
 	FoundVia            string    `json:"found_via,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
-const companyColumns = `id, name, domain, website_url, careers_url, headquarters_country, industry, employee_count_range, summary, found_via, created_at, updated_at`
+const companyColumns = `id, name, domain, website_url, careers_url, headquarters_country, employee_count_range, industry, summary, found_via, created_at, updated_at`
 
 // scanCompany reads the companyColumns, then any extra columns the query
 // selects after them into extra.
 func scanCompany(row pgx.Row, extra ...any) (Company, error) {
 	var company Company
 	destinations := append([]any{&company.ID, &company.Name, &company.Domain, &company.WebsiteURL, &company.CareersURL,
-		&company.HeadquartersCountry, &company.Industry, &company.EmployeeCountRange, &company.Summary, &company.FoundVia, &company.CreatedAt, &company.UpdatedAt}, extra...)
+		&company.HeadquartersCountry, &company.EmployeeCountRange, &company.Industry, &company.Summary, &company.FoundVia, &company.CreatedAt, &company.UpdatedAt}, extra...)
 	err := row.Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Company{}, ErrCompanyNotFound
@@ -135,8 +135,8 @@ type CompanyUpdate struct {
 	WebsiteURL          *string
 	CareersURL          *string
 	HeadquartersCountry *string
-	Industry            *string
 	EmployeeCountRange  *string
+	Industry            *string
 	Summary             *string
 	FoundVia            *string
 	SourceURL           string
@@ -162,8 +162,8 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 			{"website_url", current.WebsiteURL, update.WebsiteURL},
 			{"careers_url", current.CareersURL, update.CareersURL},
 			{"headquarters_country", current.HeadquartersCountry, update.HeadquartersCountry},
-			{"industry", current.Industry, update.Industry},
 			{"employee_count_range", current.EmployeeCountRange, update.EmployeeCountRange},
+			{"industry", current.Industry, update.Industry},
 			{"summary", current.Summary, update.Summary},
 			{"found_via", current.FoundVia, update.FoundVia},
 		}
@@ -187,13 +187,13 @@ func (s *Store) UpdateCompany(ctx context.Context, actor Actor, id uuid.UUID, up
 				careers_url = COALESCE($4, careers_url),
 				headquarters_country = COALESCE($5, headquarters_country),
 				employee_count_range = COALESCE($6, employee_count_range),
-				summary = COALESCE($7, summary),
-				found_via = COALESCE($8, found_via),
-				industry = COALESCE($9, industry),
+				industry = COALESCE($7, industry),
+				summary = COALESCE($8, summary),
+				found_via = COALESCE($9, found_via),
 				updated_at = now()
 			WHERE id = $1
 			RETURNING `+companyColumns,
-			id, update.Name, update.WebsiteURL, update.CareersURL, update.HeadquartersCountry, update.EmployeeCountRange, update.Summary, update.FoundVia, update.Industry))
+			id, update.Name, update.WebsiteURL, update.CareersURL, update.HeadquartersCountry, update.EmployeeCountRange, update.Industry, update.Summary, update.FoundVia))
 		if err != nil {
 			return err
 		}

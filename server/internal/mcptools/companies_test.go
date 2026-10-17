@@ -108,10 +108,15 @@ func TestFindAndUpdateCompanies(t *testing.T) {
 	}
 
 	updated := callTool[store.Company](t, session, "update_company", map[string]any{
-		"company_id": created.Company.ID, "careers_url": "https://clio.com/careers", "industry": "Legal software", "source_url": "https://clio.com",
+		"company_id": created.Company.ID, "careers_url": "https://clio.com/careers", "source_url": "https://clio.com",
 	})
-	if updated.CareersURL != "https://clio.com/careers" || updated.Industry != "Legal software" || updated.Name != "Clio" {
+	if updated.CareersURL != "https://clio.com/careers" || updated.Name != "Clio" {
 		t.Fatalf("update = %+v", updated)
+	}
+
+	updated = callTool[store.Company](t, session, "update_company", map[string]any{"company_id": created.Company.ID, "industry": "Legal software"})
+	if updated.Industry != "Legal software" || updated.CareersURL != "https://clio.com/careers" {
+		t.Fatalf("update with an industry = %+v", updated)
 	}
 }
 
