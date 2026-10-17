@@ -198,10 +198,19 @@ struct VersionSettingsContent: View {
         case .ready:
             EmptyView()
         case let .failedChecks(failed):
-            StatusCard(symbol: "exclamationmark.triangle.fill", tone: .negative, title: failed.title, detail: failed.problem.explanation) {
-                Button("Show log", action: showLog)
-                    .buttonStyle(VersionCapsuleStyle())
-                    .disabled(!page.hasInstallLog)
+            VStack(alignment: .leading, spacing: Space.l) {
+                StatusCard(symbol: "exclamationmark.triangle.fill", tone: .negative, title: failed.title, detail: failed.problem.explanation) {
+                    Button("Show log", action: showLog)
+                        .buttonStyle(VersionCapsuleStyle())
+                        .disabled(!page.hasInstallLog)
+                }
+                if let whatsNew = failed.whatsNew {
+                    VStack(alignment: .leading, spacing: Space.m) {
+                        Text("What's new in \(failed.version.description)").font(.hubSection)
+                        ChangeList(whatsNew: whatsNew, isShowingAllChanges: $isShowingAllChanges)
+                    }
+                    .hubCard()
+                }
             }
         case let .cannotCheck(since):
             StatusCard(symbol: "wifi.exclamationmark", tone: .caution, title: "Couldn't check for new versions since \(describeDay(since))",

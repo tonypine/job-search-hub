@@ -54,7 +54,8 @@ final class NewVersionChecker {
         facts = NewVersionFacts(
             running: running,
             lastCheckedAt: defaults.object(forKey: Self.lastCheckedKey) as? Date,
-            failingSince: defaults.object(forKey: Self.failingSinceKey) as? Date
+            failingSince: defaults.object(forKey: Self.failingSinceKey) as? Date,
+            isQAMode: feed.isQAMode
         )
         installedAt = try? Bundle.main.bundleURL.resourceValues(forKeys: [.creationDateKey]).creationDate
         readLocalState()
@@ -155,6 +156,7 @@ final class NewVersionChecker {
         // A version refused once isn't downloaded again until the next
         // launch, unless only the download failed.
         if let failed = facts.failed, failed.version == newest.version, !failed.problem.isDownloadFailure {
+            facts.failed?.whatsNew = whatsNew
             return
         }
 
@@ -166,7 +168,7 @@ final class NewVersionChecker {
                 checked = try await download(newest)
             } catch {
                 updates.removeFolder(for: newest.version)
-                facts.failed = FailedVersion(version: newest.version, problem: error)
+                facts.failed = FailedVersion(version: newest.version, problem: error, whatsNew: whatsNew)
                 updates.log("\(newest.version) \(error.title): \(error.explanation)", at: .now)
                 return
             }

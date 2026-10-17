@@ -102,7 +102,8 @@ private func readLogLines(_ updates: UpdatesFolder, naming version: HubVersion) 
     await checker.checkAndWait()
 
     #expect(recording.requestCount == 2)
-    #expect(checker.facts.failed == FailedVersion(version: newest, problem: .runningAppUnsigned))
+    #expect(checker.facts.failed?.version == newest)
+    #expect(checker.facts.failed?.problem == .runningAppUnsigned)
     #expect(readLogLines(checker.updates, naming: newest).count == 1)
 }
 
@@ -181,7 +182,8 @@ private func readLogLines(_ updates: UpdatesFolder, naming version: HubVersion) 
     recording.setAnswer(makeFeed(makeRelease("0.1.253"), makeRelease("0.1.252")), for: releasesPath)
     await checker.checkAndWait()
     #expect(checker.facts.ready?.version == ready)
-    #expect(checker.facts.failed == FailedVersion(version: refused, problem: .runningAppUnsigned))
+    #expect(checker.facts.failed?.version == refused)
+    #expect(checker.facts.failed?.problem == .runningAppUnsigned)
 
     recording.setAnswer(makeFeed(makeRelease("0.1.253", prerelease: true), makeRelease("0.1.252")), for: releasesPath)
     await checker.checkAndWait()
@@ -264,4 +266,26 @@ private func readLogLines(_ updates: UpdatesFolder, naming version: HubVersion) 
 
     #expect(recording.lastRequest?.url == GitHubRepository.releasesAPIURL)
     #expect(checker.facts.newestRelease == HubVersion("0.1.251"))
+}
+
+@MainActor
+@Test func inQAModeALocalBuildNamesTheVersionItRefusedWithItsWhatsNew() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    // A playbook QA build: a local build, signed ad hoc, so it refuses any
+    // download, reading the stub feed QA typed in Settings › Version.
+    let release = makeRelease("0.1.9999").replacingOccurrences(
+        of: #""assets""#, with: ###""body": "## New\n\n- Mac: A stub release to check against (#1)\n", "assets""###
+    )
+    let (session, _) = StubHub.makeSession(answers: ["/releases.json": makeFeed(release)])
+    let feed = ReleaseFeed(session: session, appVersion: "0.1.0-dev", arguments: ["JobSearchHub"], environment: [:], isQABuild: true)
+    let checker = NewVersionChecker(updates: UpdatesFolder(root: root), inspector: UnsignedInspector(), feed: feed, running: HubVersion("0.1.0-dev")!)
+    checker.qaFeedText = "http://localhost:54074/releases.json"
+
+    await checker.checkAndWait()
+
+    let failed = try #require(checker.facts.failed)
+    #expect(failed.version == HubVersion("0.1.9999"))
+    #expect(failed.whatsNew?.notes.map(\.text) == ["A stub release to check against"])
+    #expect(checker.status == .failedChecks(failed))
 }
