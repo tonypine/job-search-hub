@@ -213,6 +213,24 @@ private func makeRelease(_ tag: String, draft: Bool = false, prerelease: Bool = 
     #expect(ReleaseFeed.makeURL(arguments: ["JobSearchHub"], environment: [:], isQABuild: true, bundledURL: "file:///tmp/releases.json") == GitHubRepository.releasesAPIURL)
 }
 
+@Test func theFeedKnowsWhetherItsInQAModeAndKeepsItWhenReadingAnotherURL() async throws {
+    #expect(!ReleaseFeed(arguments: ["JobSearchHub"], environment: [:], isQABuild: false).isQAMode)
+    #expect(ReleaseFeed(arguments: ["JobSearchHub", "--qa-mode"], environment: [:], isQABuild: false).isQAMode)
+    #expect(ReleaseFeed(arguments: ["JobSearchHub"], environment: [:], isQABuild: true).isQAMode)
+
+    let body = #"[{"tag_name": "mac-v0.1.252", "draft": false, "prerelease": false, "assets": []}]"#
+    let (session, recording) = StubHub.makeSession(answers: ["/releases.json": .init(status: 200, body: body)])
+    let feed = ReleaseFeed(session: session, appVersion: "0.1.247", arguments: ["JobSearchHub"], environment: [:], isQABuild: true)
+    let stub = feed.reading(URL(string: "http://localhost:54074/releases.json")!)
+
+    #expect(feed.url == GitHubRepository.releasesAPIURL)
+    #expect(stub.url == URL(string: "http://localhost:54074/releases.json"))
+    #expect(stub.isQAMode)
+    #expect(try await stub.fetch().map(\.tagName) == ["mac-v0.1.252"])
+    #expect(recording.lastRequest?.url == URL(string: "http://localhost:54074/releases.json"))
+    #expect(recording.lastRequest?.value(forHTTPHeaderField: "User-Agent") == "JobSearchHub/0.1.247")
+}
+
 @Test func aHUB_RELEASES_URLThatIsntAnHTTPURLLeavesTheFeedOnGitHub() {
     for value in ["", "localhost:8765/releases.json", "file:///tmp/releases.json", "not a url"] {
         let url = ReleaseFeed.makeURL(arguments: ["JobSearchHub", "--qa-mode"], environment: [ReleaseFeed.urlVariable: value])

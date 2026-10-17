@@ -24,6 +24,11 @@ final class NewVersionChecker {
     private(set) var hasInstallLog = false
     /// The running version's release page, when it's a release.
     private(set) var runningReleaseURL: URL?
+    /// In QA mode, the releases' URL as Settings › Version shows it: at
+    /// first the stub feed the build or the launch named, or empty for
+    /// GitHub's; then the one QA types once it knows its port. A check reads
+    /// it when it holds an http(s) URL, and GitHub's releases otherwise.
+    var qaFeedText: String
 
     @ObservationIgnored let updates: UpdatesFolder
     @ObservationIgnored private let feed: ReleaseFeed
@@ -41,6 +46,7 @@ final class NewVersionChecker {
         self.updates = updates
         self.inspector = inspector
         self.feed = feed
+        qaFeedText = feed.isQAMode && feed.url != GitHubRepository.releasesAPIURL ? feed.url.absoluteString : ""
         let defaults = UserDefaults.standard
         facts = NewVersionFacts(
             running: running,
@@ -53,6 +59,16 @@ final class NewVersionChecker {
 
     var status: NewVersionStatus {
         NewVersionStatus.make(facts, now: .now)
+    }
+
+    /// A QA build, or launched with `--qa-mode`: Settings › Version shows
+    /// the release feed.
+    var isQAMode: Bool { feed.isQAMode }
+
+    /// The feed a check reads: in QA mode, the one Settings › Version shows.
+    private var currentFeed: ReleaseFeed {
+        guard feed.isQAMode else { return feed }
+        return feed.reading(ReleaseFeed.feedURL(qaFeedText) ?? GitHubRepository.releasesAPIURL)
     }
 
     /// Checks at launch, then every hour, until the app quits.
@@ -93,7 +109,7 @@ final class NewVersionChecker {
 
         let releases: [GitHubRelease]
         do {
-            releases = try await feed.fetch()
+            releases = try await currentFeed.fetch()
         } catch {
             facts.failingSince = facts.failingSince ?? .now
             UserDefaults.standard.set(facts.failingSince, forKey: Self.failingSinceKey)

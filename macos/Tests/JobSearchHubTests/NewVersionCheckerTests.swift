@@ -208,3 +208,60 @@ private func readLogLines(_ updates: UpdatesFolder, naming version: HubVersion) 
     #expect(checker.facts.failingSince == nil)
     #expect(checker.facts.newestRelease == HubVersion("0.1.252"))
 }
+
+@MainActor
+@Test func inQAModeTheCheckerReadsTheReleasesFromTheFeedTypedInSettings() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    // A QA build launched with no environment and built without a URL, as
+    // Symphony's QA pass starts it: the field starts empty.
+    let (session, recording) = StubHub.makeSession(answers: ["/releases.json": makeFeed(makeRelease("0.1.252"))])
+    let feed = ReleaseFeed(session: session, appVersion: "0.1.250", arguments: ["JobSearchHub"], environment: [:], isQABuild: true)
+    let checker = NewVersionChecker(updates: UpdatesFolder(root: root), inspector: UnsignedInspector(), feed: feed, running: HubVersion("0.1.250")!)
+    #expect(checker.isQAMode)
+    #expect(checker.qaFeedText == "")
+
+    checker.qaFeedText = " http://localhost:54074/releases.json "
+    await checker.checkAndWait()
+
+    #expect(recording.lastRequest?.url == URL(string: "http://localhost:54074/releases.json"))
+    #expect(checker.facts.failingSince == nil)
+    #expect(checker.facts.newestRelease == HubVersion("0.1.252"))
+}
+
+@MainActor
+@Test func inQAModeTheFeedFieldStartsFromTheBuildsURLAndClearingItReadsGitHub() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (session, recording) = StubHub.makeSession(answers: [releasesPath: makeFeed(makeRelease("0.1.251"))])
+    let feed = ReleaseFeed(
+        session: session, appVersion: "0.1.250", arguments: ["JobSearchHub"], environment: [:], isQABuild: true,
+        bundledURL: "http://localhost:54074/releases.json"
+    )
+    let checker = NewVersionChecker(updates: UpdatesFolder(root: root), inspector: UnsignedInspector(), feed: feed, running: HubVersion("0.1.250")!)
+    #expect(checker.qaFeedText == "http://localhost:54074/releases.json")
+
+    for text in ["", "localhost:54074/releases.json"] {
+        checker.qaFeedText = text
+        await checker.checkAndWait()
+
+        #expect(recording.lastRequest?.url == GitHubRepository.releasesAPIURL, "\(text)")
+        #expect(checker.facts.newestRelease == HubVersion("0.1.251"))
+    }
+}
+
+@MainActor
+@Test func outsideQAModeTheCheckerIgnoresTheFeedField() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (session, recording) = StubHub.makeSession(answers: [releasesPath: makeFeed(makeRelease("0.1.251"))])
+    let feed = ReleaseFeed(session: session, appVersion: "0.1.250", arguments: ["JobSearchHub"], environment: [:], isQABuild: false)
+    let checker = NewVersionChecker(updates: UpdatesFolder(root: root), inspector: UnsignedInspector(), feed: feed, running: HubVersion("0.1.250")!)
+    #expect(!checker.isQAMode)
+
+    checker.qaFeedText = "http://localhost:54074/releases.json"
+    await checker.checkAndWait()
+
+    #expect(recording.lastRequest?.url == GitHubRepository.releasesAPIURL)
+    #expect(checker.facts.newestRelease == HubVersion("0.1.251"))
+}

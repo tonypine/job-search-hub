@@ -12,8 +12,13 @@ struct VersionSettings: View {
         // Each minute, so "Checked 5 minutes ago" moves on.
         TimelineView(.everyMinute) { context in
             ScrollView {
-                VersionSettingsContent(page: makePage(now: context.date), checkNow: checker.checkNow) {
-                    NSWorkspace.shared.open(checker.updates.logURL)
+                VStack(spacing: Space.l) {
+                    if checker.isQAMode {
+                        QAReleaseFeedCard(checker: checker)
+                    }
+                    VersionSettingsContent(page: makePage(now: context.date), checkNow: checker.checkNow) {
+                        NSWorkspace.shared.open(checker.updates.logURL)
+                    }
                 }
                 .padding(Space.xl)
             }
