@@ -87,21 +87,13 @@ func (preparer *Preparer) PrepareOnce(ctx context.Context) (PassSummary, error) 
 	if err != nil || len(jobIDs) == 0 {
 		return PassSummary{}, err
 	}
-	rendered, err := prompts.RenderInterviewPrepPrompt(ctx, preparer.hub, prompt)
-	if err != nil {
-		return PassSummary{}, err
-	}
-	entries, err := preparer.hub.ListProfileEntries(ctx, store.ProfileEntryFilter{})
-	if err != nil {
-		return PassSummary{}, err
-	}
-	gaps, err := preparer.hub.ListMarketGaps(ctx)
+	inputs, err := preparer.readPackInputs(ctx, prompt, knowledgeHash)
 	if err != nil {
 		return PassSummary{}, err
 	}
 	var summary PassSummary
 	for _, jobID := range jobIDs {
-		err := preparer.preparePack(ctx, jobID, prompt, rendered, knowledgeHash, entries, gaps)
+		err := preparer.preparePack(ctx, jobID, inputs)
 		if errors.Is(err, chatcompletions.ErrUnreachable) || ctx.Err() != nil {
 			return summary, err
 		}
@@ -115,26 +107,70 @@ func (preparer *Preparer) PrepareOnce(ctx context.Context) (PassSummary, error) 
 	return summary, nil
 }
 
-func (preparer *Preparer) preparePack(ctx context.Context, jobID uuid.UUID, prompt store.AgentPrompt, rendered prompts.InterviewPrepPrompt,
-	knowledgeHash string, entries []store.ProfileEntry, gaps []store.MarketGap) error {
+// PrepareJob prepares the job's pack now, whether or not it awaits one: the
+// owner asked for it.
+func (preparer *Preparer) PrepareJob(ctx context.Context, jobID uuid.UUID) error {
+	prompt, err := preparer.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindInterviewPrep)
+	if err != nil {
+		return fmt.Errorf("read the interview_prep prompt: %w", err)
+	}
+	knowledgeHash, err := preparer.hub.GetKnowledgeHash(ctx)
+	if err != nil {
+		return err
+	}
+	inputs, err := preparer.readPackInputs(ctx, prompt, knowledgeHash)
+	if err != nil {
+		return err
+	}
+	return preparer.preparePack(chatcompletions.WithStartedByOwner(ctx), jobID, inputs)
+}
+
+// packInputs are what every pack is prepared from: the prompt, rendered with
+// the knowledge base, and the market gaps.
+type packInputs struct {
+	prompt        store.AgentPrompt
+	rendered      prompts.InterviewPrepPrompt
+	knowledgeHash string
+	entries       []store.ProfileEntry
+	gaps          []store.MarketGap
+}
+
+func (preparer *Preparer) readPackInputs(ctx context.Context, prompt store.AgentPrompt, knowledgeHash string) (packInputs, error) {
+	rendered, err := prompts.RenderInterviewPrepPrompt(ctx, preparer.hub, prompt)
+	if err != nil {
+		return packInputs{}, err
+	}
+	entries, err := preparer.hub.ListProfileEntries(ctx, store.ProfileEntryFilter{})
+	if err != nil {
+		return packInputs{}, err
+	}
+	gaps, err := preparer.hub.ListMarketGaps(ctx)
+	if err != nil {
+		return packInputs{}, err
+	}
+	return packInputs{prompt: prompt, rendered: rendered, knowledgeHash: knowledgeHash, entries: entries, gaps: gaps}, nil
+}
+
+func (preparer *Preparer) preparePack(ctx context.Context, jobID uuid.UUID, inputs packInputs) error {
 	job, err := preparer.hub.GetJobForFacts(ctx, jobID)
 	if err != nil {
 		return err
 	}
+	prompt := inputs.prompt
 	answer, err := preparer.client.CompleteJSON(ctx, chatcompletions.JSONRequest{
-		System: rendered.Body, User: formatPackInput(job.Job, gaps), SchemaName: store.AgentPromptKindInterviewPrep,
+		System: inputs.rendered.Body, User: formatPackInput(job.Job, inputs.gaps), SchemaName: store.AgentPromptKindInterviewPrep,
 		Schema: prompt.ResultSchema, Examples: prompt.Examples, MaxTokens: maximumAnswerTokens,
 		Task: chatcompletions.TaskLabel{SubjectID: &jobID, PromptID: &prompt.ID, PromptVersion: prompt.Version},
 	})
 	if err != nil {
 		return err
 	}
-	pack, err := convertAnswerToPack(answer.Object, rendered.EntryRefs, entries)
+	pack, err := convertAnswerToPack(answer.Object, inputs.rendered.EntryRefs, inputs.entries)
 	if err != nil {
 		return err
 	}
 	return preparer.hub.SaveInterviewPack(ctx, store.InterviewPack{
-		JobID: jobID, PromptID: prompt.ID, KnowledgeHash: knowledgeHash, Model: answer.Model, Pack: pack,
+		JobID: jobID, PromptID: prompt.ID, KnowledgeHash: inputs.knowledgeHash, Model: answer.Model, Pack: pack,
 	})
 }
 

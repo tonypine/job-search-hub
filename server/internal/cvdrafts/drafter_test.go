@@ -223,3 +223,32 @@ func TestGoodFitsAndPursuedJobsGetAPrintedCVOnce(t *testing.T) {
 		t.Errorf("after generating, needing = %v, want only the pursued job", needing)
 	}
 }
+
+func TestAPassDraftsNoCVWhileTailoredCVsArePaused(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	if _, err := hub.SaveBaseCV(ctx, owner, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.SaveJobCriteria(ctx, owner, store.JobCriteria{Roles: []string{"Product Engineer"}, SeniorityLevels: []string{"Senior"}}); err != nil {
+		t.Fatal(err)
+	}
+	pursued := addJobWithFacts(t, hub, "Platform Engineer", "", `{"technologies":["Go"]}`)
+	if _, err := hub.DecideJob(ctx, owner, pursued.ID, store.JobDecisionPursue, ""); err != nil {
+		t.Fatal(err)
+	}
+	claude := &fakeClaude{answer: `{"label":"Platform Engineer","summary":"Builds.","roles":[{"role":0,"bullets":[{"text":"Led the web app.","source":"base:w0h1"}]}]}`}
+	drafter := NewDrafter(hub, claude)
+	paused := true
+	drafter.IsPaused = func(kind string) bool { return paused && kind == store.AgentPromptKindJobCV }
+
+	drafter.generateNeededCVs(ctx)
+	if claude.request.User != "" {
+		t.Fatal("a pass drafted a CV while tailored CVs are paused")
+	}
+	paused = false
+	drafter.generateNeededCVs(ctx)
+	if needing, _ := drafter.ListJobsNeedingCV(ctx); claude.request.User == "" || len(needing) != 0 {
+		t.Fatalf("after the resume, still needing %v", needing)
+	}
+}

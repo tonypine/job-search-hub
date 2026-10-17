@@ -1447,7 +1447,7 @@ struct AndroidBoard: View {
                         .frame(width: 440)
                     Callout(text: "On the Mac, Settings › Phones shows each phone's version beside its name, and “0.1.253 is out” when one is behind.")
                         .frame(width: 440)
-                    Callout(text: "After the app has installed itself once, Android 12 and later may let it update without the confirmation. The ticket checks it on the owner's phone.")
+                    Callout(text: "After the app has installed itself once, Android 12 and later let it update without the confirmation. Where Android still asks, the confirmation opens as before.")
                         .frame(width: 440)
                 }
             }

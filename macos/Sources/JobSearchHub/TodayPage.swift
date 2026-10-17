@@ -13,13 +13,15 @@ final class TodayModel {
     private(set) var updates: [HubUpdate] = []
     /// Everyone who can get the owner in; Today lists the recruiters waiting.
     private(set) var people: [RelatedPerson] = []
+    /// The features waiting on the owner's first use.
+    private(set) var firstSteps: [FirstStep] = []
     private(set) var hasLoaded = false
     private(set) var loadError: HubFailure?
     /// Why the last action on an item failed: a decision, a follow-up.
     var actionError: HubFailure?
     var toast: ToastMessage?
 
-    /// Reads the four sources Today sums up. One that fails keeps what it
+    /// Reads the five sources Today sums up. One that fails keeps what it
     /// showed, and the error says so.
     func load(with client: HubClient) async {
         async let queue = client.getDecisionQueue()
@@ -29,11 +31,13 @@ final class TodayModel {
             as: HubUpdateList.self
         )
         async let people = client.get("v1/people", as: PeopleResponse.self)
+        async let firstSteps = client.get("v1/first-steps", as: FirstStepsResponse.self)
         var failure: (any Error)?
         do { self.queue = try await queue.items } catch { failure = failure ?? error }
         do { board = PipelineBoard(try await pipeline) } catch { failure = failure ?? error }
         do { self.updates = try await updates.updates } catch { failure = failure ?? error }
         do { self.people = try await people.people } catch { failure = failure ?? error }
+        do { self.firstSteps = try await firstSteps.steps } catch { failure = failure ?? error }
         loadError = failure.map { HubFailure("Couldn't load everything for Today", $0) }
         hasLoaded = true
     }
@@ -104,7 +108,7 @@ struct TodayPage: View {
     private static let twoColumnWidth: CGFloat = 720
 
     /// Switches the window to another page: Decide, Pipeline, the full
-    /// history of updates.
+    /// history of updates, and the pages Get started's rows land on.
     let openPage: (Page) -> Void
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
@@ -182,7 +186,7 @@ struct TodayPage: View {
         let followUps = Today.getDueFollowUps(model.board, now: .now)
         return TodayItems(
             decisions: Today.getTopDecisions(model.queue), followUps: followUps, news: Today.getUnseenNews(model.updates),
-            recruiters: Today.getWaitingRecruiters(model.people),
+            recruiters: Today.getWaitingRecruiters(model.people), starts: Today.getStartRows(model.firstSteps),
             chips: Today.getChips(toDecide: model.queue.count, followUps: followUps, updates: model.updates)
         )
     }
@@ -201,7 +205,7 @@ struct TodayPage: View {
             if items.isEmpty && activity.lines.isEmpty && model.hasLoaded && model.loadError == nil {
                 ContentUnavailableView(
                     "Nothing needs you now", systemImage: "sun.max",
-                    description: Text("Jobs to decide, follow-ups due, replies and recruiters waiting show here.")
+                    description: Text("Jobs to decide, follow-ups due, replies, recruiters waiting and features to start show here.")
                 )
             }
         }
@@ -261,6 +265,7 @@ struct TodayPage: View {
 
     @ViewBuilder
     private func leftCards(_ items: TodayItems, client: HubClient) -> some View {
+        if !items.starts.isEmpty { startCard(items.starts) }
         if !items.decisions.isEmpty { decideCard(items.decisions, client: client) }
         if !items.recruiters.isEmpty { recruitersCard(items.recruiters, client: client) }
     }
@@ -446,6 +451,38 @@ struct TodayPage: View {
         }
     }
 
+    private func startCard(_ rows: [StartRow]) -> some View {
+        TodayCard("Get started", rows: {
+            ForEach(rows) { row in
+                HStack(alignment: .center, spacing: Space.m) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(row.title).fontWeight(.semibold)
+                        Text(row.detail).font(.hubSecondary).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(row.button, systemImage: row.symbol) { start(row.destination) }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                }
+                if row.id != rows.last?.id { Divider() }
+            }
+        })
+    }
+
+    /// Lands on the page a Get started row names.
+    private func start(_ destination: StartDestination) {
+        switch destination {
+        case .profileInterview:
+            openPage(.profile)
+            details.show(.profileInterview, from: .profile)
+        case .decide:
+            openPage(.decide)
+        case let .comparison(id):
+            openPage(.modelLab)
+            requests.ask(.openComparison(id), on: .modelLab)
+        }
+    }
+
     private var hubCard: some View {
         TodayCard("Hub", link: "Activity") { openPage(.activity) } rows: {
             // The lines' values, not indices into them: a stale index after the
@@ -518,21 +555,22 @@ private struct TodayItems {
     let followUps: [DueFollowUp]
     let news: [HubUpdate]
     let recruiters: [RelatedPerson]
+    let starts: [StartRow]
     let chips: [TodayChip]
 
     /// No card has anything; the Hub card's lines are read apart.
-    var isEmpty: Bool { decisions.isEmpty && followUps.isEmpty && news.isEmpty && recruiters.isEmpty }
+    var isEmpty: Bool { decisions.isEmpty && followUps.isEmpty && news.isEmpty && recruiters.isEmpty && starts.isEmpty }
 }
 
-/// One of Today's cards: its title, a link to the page with the rest, and
-/// its rows.
+/// One of Today's cards: its title, a link to the page with the rest when
+/// it has one, and its rows.
 private struct TodayCard<Rows: View>: View {
     let title: String
-    let link: String
+    let link: String?
     let openLink: () -> Void
     @ViewBuilder let rows: Rows
 
-    init(_ title: String, link: String, openLink: @escaping () -> Void, @ViewBuilder rows: () -> Rows) {
+    init(_ title: String, link: String? = nil, openLink: @escaping () -> Void = {}, @ViewBuilder rows: () -> Rows) {
         self.title = title
         self.link = link
         self.openLink = openLink
@@ -543,7 +581,9 @@ private struct TodayCard<Rows: View>: View {
         HubSection(title) {
             VStack(alignment: .leading, spacing: Space.m) { rows }
         } trailing: {
-            Button(link, action: openLink).buttonStyle(.link)
+            if let link {
+                Button(link, action: openLink).buttonStyle(.link)
+            }
         }
         .hubCard()
     }

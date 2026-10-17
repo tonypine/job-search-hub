@@ -39,6 +39,18 @@ func TestThePhoneQueuesWorkTheMacClaimsOnceAndFinishes(t *testing.T) {
 	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks/"+task.ID.String()+"/claim", ownerToken, ""); status != http.StatusConflict {
 		t.Errorf("a second claim: %d, want 409", status)
 	}
+	// An install restarted the Mac app mid-task: it goes back to the queue,
+	// and is claimed again.
+	status, body = send(t, http.MethodPost, service.url+"/v1/tasks/"+task.ID.String()+"/release", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"status":"queued"`) {
+		t.Fatalf("release: %d %s", status, body)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks/"+task.ID.String()+"/release", ownerToken, ""); status != http.StatusConflict {
+		t.Errorf("releasing a queued task: %d, want 409", status)
+	}
+	if status, _ := send(t, http.MethodPost, service.url+"/v1/tasks/"+task.ID.String()+"/claim", ownerToken, ""); status != http.StatusOK {
+		t.Fatalf("claim after the release: %d", status)
+	}
 	status, body = send(t, http.MethodPost, service.url+"/v1/tasks/"+task.ID.String()+"/finish", ownerToken, `{"succeeded":true,"result":"Acme has 3 open jobs\nRead from its Workable board."}`)
 	if status != http.StatusOK || !strings.Contains(string(body), `"status":"succeeded"`) {
 		t.Fatalf("finish: %d %s", status, body)

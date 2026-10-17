@@ -5,13 +5,17 @@ import UserNotifications
 /// Shows the app's notifications as banners even while the app is in front;
 /// without a delegate, macOS keeps them out of sight. Also answers Control-
 /// Command-F with full screen, opens the main window when launch ends
-/// without one, and starts looking for new versions.
+/// without one, starts looking for new versions, reads how the last install
+/// ended, and installs at ⌘Q when asked to.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var fullScreenShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         fullScreenShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: Self.toggleFullScreenOnShortcut)
+        // Before the checker: what the last install installed is part of
+        // its What's new.
+        Installer.shared.readLaunchState()
         NewVersionChecker.shared.start()
         // Window state saved by a build whose main scene differs restores
         // nothing, and SwiftUI then opens no window: the app runs with none
@@ -36,6 +40,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !NSApp.sendAction(Selector(("showNewMainWindow:")), to: nil, from: nil) {
             _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
         }
+    }
+
+    /// After *Install when I quit*, ⌘Q installs: at once, or once the work
+    /// running finishes.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Installer.shared.shouldTerminate()
     }
 
     nonisolated func userNotificationCenter(

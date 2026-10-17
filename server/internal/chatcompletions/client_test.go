@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 )
 
@@ -128,6 +130,25 @@ func TestEveryRequestIsRecordedWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestARunIsRecordedUnderItsTasksKindAndProviderAndWhoAskedForIt(t *testing.T) {
+	var records []chatcompletions.RunRecord
+	client, _ := answerWith(t, http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}`)
+	client.Provider = "LM Studio"
+	client.RecordRun = func(_ context.Context, run chatcompletions.RunRecord) { records = append(records, run) }
+	full := request
+	full.Task.Kind = "job_brief_full"
+	if _, err := client.CompleteJSON(chatcompletions.WithStartedByOwner(context.Background()), full); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CompleteJSON(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Kind != "job_brief_full" || !records[0].StartedByOwner || records[0].Provider != "LM Studio" ||
+		records[1].Kind != request.SchemaName || records[1].StartedByOwner {
+		t.Errorf("records = %+v", records)
+	}
+}
+
 func TestAKeyIsSentAsABearerToken(t *testing.T) {
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,5 +226,70 @@ func TestTheSchemaReachesTheModelInTheOrderItWasWritten(t *testing.T) {
 	format := body[strings.Index(body, `"response_format"`):]
 	if !(strings.Index(format, `"reason"`) < strings.Index(format, `"posting_says"`) && strings.Index(format, `"posting_says"`) < strings.Index(format, `"answer"`)) {
 		t.Errorf("response_format = %s, want reason, posting_says, answer as written", format)
+	}
+}
+
+func TestHeadersACostAndTheServersOwnErrorsAreForAServerThatAsksForThem(t *testing.T) {
+	var headers http.Header
+	var received map[string]any
+	status, body := http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"stack\":\"Go\"}"}}],
+		"usage":{"prompt_tokens":40,"completion_tokens":8,"cost":0.00012}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers, received = r.Header.Clone(), nil
+		json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer server.Close()
+	var records []chatcompletions.RunRecord
+	client := chatcompletions.NewClient(server.URL)
+	client.Headers = map[string]string{"X-Title": "Job Search Hub"}
+	client.AskForCost = true
+	client.ReadError = func(status int, payload []byte) error {
+		return fmt.Errorf("%w: read %d", chatcompletions.ErrUnreachable, status)
+	}
+	client.RecordRun = func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }
+
+	if _, err := client.CompleteJSON(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if headers.Get("X-Title") != "Job Search Hub" || fmt.Sprint(received["usage"]) != "map[include:true]" {
+		t.Fatalf("headers = %v, body = %v", headers, received)
+	}
+	if len(records) != 1 || records[0].CostUSD != "0.00012" || records[0].PromptTokens != 40 {
+		t.Fatalf("records = %+v", records)
+	}
+
+	status, body = http.StatusServiceUnavailable, `{"error":{"code":503,"message":"down"}}`
+	if _, err := client.CompleteJSON(context.Background(), request); !errors.Is(err, chatcompletions.ErrUnreachable) || !strings.Contains(err.Error(), "read 503") {
+		t.Fatalf("a 503: %v", err)
+	}
+	status, body = http.StatusOK, `{"error":{"code":502,"message":"the model's provider failed"}}`
+	if _, err := client.CompleteJSON(context.Background(), request); !strings.Contains(fmt.Sprint(err), "read 502") {
+		t.Fatalf("an error in a 200: %v", err)
+	}
+
+	// A server that isn't asked for its cost isn't sent the field.
+	plain := chatcompletions.NewClient(server.URL)
+	status, body = http.StatusOK, `{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}`
+	if _, err := plain.CompleteJSON(context.Background(), request); err != nil || received["usage"] != nil {
+		t.Fatalf("a plain request: %v, %v", err, received)
+	}
+}
+
+func TestAPresetRunIDGoesToTheFirstRecordOfItsKindOnly(t *testing.T) {
+	id := uuid.New()
+	ctx := chatcompletions.WithRunID(context.Background(), "job_brief_full", id)
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief"); taken != nil {
+		t.Fatalf("another kind took the id: %v", taken)
+	}
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief_full"); taken == nil || *taken != id {
+		t.Fatalf("the first record of the kind got %v, want %s", taken, id)
+	}
+	if taken := chatcompletions.TakeRunID(ctx, "job_brief_full"); taken != nil {
+		t.Fatalf("a second record got the id too: %v", taken)
+	}
+	if taken := chatcompletions.TakeRunID(context.Background(), "job_brief_full"); taken != nil {
+		t.Fatalf("a context with no id gave %v", taken)
 	}
 }

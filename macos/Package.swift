@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "JobSearchHub", targets: ["JobSearchHub"]),
         .executable(name: "hub-cvprint", targets: ["CVPrint"]),
+        .executable(name: "hub-install-steps", targets: ["InstallSteps"]),
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0"),
@@ -19,6 +20,8 @@ let package = Package(
         ),
         // The hub server prints CVs with it: WebKit, offscreen, no window.
         .executableTarget(name: "CVPrint"),
+        // hub-update shows an install's steps with it while the app is closed.
+        .executableTarget(name: "InstallSteps", dependencies: ["JobSearchHubCore"]),
         // What both test targets share: StubHub, the canned URLSession.
         .target(name: "HubTestSupport", path: "Tests/HubTestSupport"),
         .testTarget(name: "JobSearchHubCoreTests", dependencies: ["JobSearchHubCore", "HubTestSupport"]),

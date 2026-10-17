@@ -360,11 +360,15 @@ func TestExistingApplicationsAreDatedGoneOutFromTheChangeLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Created before the rollback: the store reads columns later migrations add.
+	company, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := provider.DownTo(ctx, appliedAtMigration-1); err != nil {
 		t.Fatal(err)
 	}
 
-	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
 	phases, _ := hub.ListPipelinePhases(ctx)
 	saved, applied, interviewing, closed := phases[0], phases[1], phases[3], phases[5]
 	now := time.Now().UTC().Truncate(time.Second)

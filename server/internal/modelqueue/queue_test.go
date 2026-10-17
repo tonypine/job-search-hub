@@ -83,7 +83,7 @@ func receive(t *testing.T, order <-chan string) string {
 }
 
 func TestCallsRunOneAtATimeByPriority(t *testing.T) {
-	queue := modelqueue.New(false, modelqueue.Settings{})
+	queue := modelqueue.New(nil, modelqueue.Settings{})
 	order := make(chan string, 4)
 	releaseFirst := waitAsync(t, queue, "facts 1", modelqueue.Ticket{Kind: "facts 1", Model: "big", Priority: modelqueue.PriorityBackground}, order)
 	if got := receive(t, order); got != "facts 1" {
@@ -116,7 +116,7 @@ func TestTheLoadedModelKeepsItsTurnUntilAnotherCallRunsOutOfPatience(t *testing.
 	now := &clock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	loaded := atomic.Value{}
 	loaded.Store("big")
-	queue := modelqueue.New(false, modelqueue.Settings{Now: now.Now, GetLoadedModel: func() string { return loaded.Load().(string) }})
+	queue := modelqueue.New(nil, modelqueue.Settings{Now: now.Now, GetLoadedModel: func() string { return loaded.Load().(string) }})
 	order := make(chan string, 8)
 
 	releaseFacts := waitAsync(t, queue, "facts 1", modelqueue.Ticket{Kind: "facts 1", Model: "big", Priority: modelqueue.PriorityBackground}, order)
@@ -136,36 +136,99 @@ func TestTheLoadedModelKeepsItsTurnUntilAnotherCallRunsOutOfPatience(t *testing.
 	releaseMail()
 }
 
-func TestAPausedQueueRunsOnlyDispatchedCallsAndUnloads(t *testing.T) {
-	unloads := atomic.Int32{}
-	queue := modelqueue.New(true, modelqueue.Settings{UnloadModel: func() { unloads.Add(1) }})
-	order := make(chan string, 4)
-	releaseFacts := waitAsync(t, queue, "facts", modelqueue.Ticket{Kind: "facts", Model: "big", Priority: modelqueue.PriorityBackground}, order)
-	releaseDispatched := waitAsync(t, queue, "dispatched", modelqueue.Ticket{Kind: "dispatched", Model: "big", Priority: modelqueue.PriorityDispatched}, order)
-	if got := receive(t, order); got != "dispatched" {
-		t.Fatalf("paused: %s ran", got)
-	}
-	releaseDispatched()
+// noneGranted fails when a call gets a turn within a moment.
+func noneGranted(t *testing.T, order <-chan string, why string) {
+	t.Helper()
 	select {
 	case got := <-order:
-		t.Fatalf("paused, yet %s ran", got)
+		t.Fatalf("%s, yet %s ran", why, got)
 	case <-time.After(100 * time.Millisecond):
-	}
-	waitUntil(t, func() bool { return unloads.Load() > 0 })
-
-	queue.SetPaused(false)
-	if got := receive(t, order); got != "facts" {
-		t.Fatalf("after resuming: %s", got)
-	}
-	releaseFacts()
-	queue.SetPaused(true)
-	if !queue.Status().Paused {
-		t.Fatal("still running after the pause")
 	}
 }
 
+func TestAPausedKindWaitsWhileTheOthersRun(t *testing.T) {
+	unloads := atomic.Int32{}
+	queue := modelqueue.New(map[string]bool{"job_facts": false, "job_brief": true}, modelqueue.Settings{UnloadModel: func() { unloads.Add(1) }})
+	order := make(chan string, 4)
+	releaseBrief := waitAsync(t, queue, "job_brief", modelqueue.Ticket{Kind: "job_brief", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	releaseFacts := waitAsync(t, queue, "job_facts", modelqueue.Ticket{Kind: "job_facts", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	if got := receive(t, order); got != "job_facts" {
+		t.Fatalf("with briefs paused, %s ran", got)
+	}
+	releaseFacts()
+	noneGranted(t, order, "briefs are paused")
+	if status := queue.Status(); status.WaitingByKind["job_brief"] != 1 || !queue.IsPaused("job_brief") || queue.IsPaused("job_facts") {
+		t.Fatalf("status = %+v", status)
+	}
+	if unloads.Load() != 0 {
+		t.Fatal("the model unloaded while job facts can still run")
+	}
+
+	queue.SetPaused("job_brief", false)
+	if got := receive(t, order); got != "job_brief" {
+		t.Fatalf("after resuming briefs: %s", got)
+	}
+	releaseBrief()
+}
+
+func TestPausingEveryKindThenResumingOneRunsOnlyThatOne(t *testing.T) {
+	queue := modelqueue.New(map[string]bool{"job_facts": true, "job_brief": true, "mail_triage": true}, modelqueue.Settings{})
+	order := make(chan string, 4)
+	releaseFacts := waitAsync(t, queue, "job_facts", modelqueue.Ticket{Kind: "job_facts", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	releaseBrief := waitAsync(t, queue, "job_brief", modelqueue.Ticket{Kind: "job_brief", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	releaseMail := waitAsync(t, queue, "mail_triage", modelqueue.Ticket{Kind: "mail_triage", Model: "big", Priority: modelqueue.PrioritySorting}, order)
+	noneGranted(t, order, "every kind is paused")
+
+	queue.SetPaused("mail_triage", false)
+	if got := receive(t, order); got != "mail_triage" {
+		t.Fatalf("after resuming mail sorting: %s", got)
+	}
+	releaseMail()
+	noneGranted(t, order, "only mail sorting is resumed")
+	if waiting := queue.Status().WaitingByKind; waiting["job_facts"] != 1 || waiting["job_brief"] != 1 || waiting["mail_triage"] != 0 {
+		t.Fatalf("waiting = %v", waiting)
+	}
+
+	queue.SetPaused("job_facts", false)
+	queue.SetPaused("job_brief", false)
+	receive(t, order)
+	releaseFacts()
+	receive(t, order)
+	releaseBrief()
+}
+
+func TestAKindTheQueueCantPauseNeverWaitsForAResume(t *testing.T) {
+	queue := modelqueue.New(map[string]bool{"job_facts": true}, modelqueue.Settings{})
+	order := make(chan string, 1)
+	release := waitAsync(t, queue, "comparison", modelqueue.Ticket{Kind: "comparison", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	if got := receive(t, order); got != "comparison" {
+		t.Fatalf("ran %s", got)
+	}
+	release()
+}
+
+func TestAPausedKindStillRunsADispatchedCallAndEveryKindPausedUnloads(t *testing.T) {
+	unloads := atomic.Int32{}
+	queue := modelqueue.New(map[string]bool{"job_facts": true, "job_brief": true}, modelqueue.Settings{UnloadModel: func() { unloads.Add(1) }})
+	order := make(chan string, 4)
+	releaseBrief := waitAsync(t, queue, "job_brief", modelqueue.Ticket{Kind: "job_brief", Model: "big", Priority: modelqueue.PriorityBackground}, order)
+	releaseDispatched := waitAsync(t, queue, "job_facts", modelqueue.Ticket{Kind: "job_facts", Model: "big", Priority: modelqueue.PriorityDispatched}, order)
+	if got := receive(t, order); got != "job_facts" {
+		t.Fatalf("paused: %s ran", got)
+	}
+	releaseDispatched()
+	noneGranted(t, order, "briefs are paused")
+	waitUntil(t, func() bool { return unloads.Load() > 0 })
+
+	queue.SetPaused("job_brief", false)
+	if got := receive(t, order); got != "job_brief" {
+		t.Fatalf("after resuming: %s", got)
+	}
+	releaseBrief()
+}
+
 func TestACallThatStopsWaitingLeavesTheQueue(t *testing.T) {
-	queue := modelqueue.New(true, modelqueue.Settings{})
+	queue := modelqueue.New(map[string]bool{"facts": true}, modelqueue.Settings{})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if _, err := queue.Wait(ctx, modelqueue.Ticket{Kind: "facts", Priority: modelqueue.PriorityBackground}); !errors.Is(err, context.DeadlineExceeded) {
@@ -185,7 +248,7 @@ func TestAPriorityTravelsInTheContext(t *testing.T) {
 }
 
 func TestNoCallGetsATurnWhileTheHubDrainsAndTheRunningOneFinishes(t *testing.T) {
-	queue := modelqueue.New(false, modelqueue.Settings{})
+	queue := modelqueue.New(nil, modelqueue.Settings{})
 	order := make(chan string, 4)
 	releaseRunning := waitAsync(t, queue, "facts", modelqueue.Ticket{Kind: "facts", Model: "big", Priority: modelqueue.PriorityBackground}, order)
 	if got := receive(t, order); got != "facts" {

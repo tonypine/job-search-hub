@@ -95,6 +95,14 @@ struct PromptsPage: View {
                         await model.select(model.summaries.first?.kind, with: client)
                     }
                 }
+                // An install waits for a prompt being edited; the draft goes
+                // with the page.
+                .onChange(of: model.hasChanges, initial: true) {
+                    UnsavedEdits.shared.set(
+                        "prompt", title: "The \(model.selectedSummary?.title ?? "selected") prompt", page: .prompts, isUnsaved: model.hasChanges
+                    )
+                }
+                .onDisappear { UnsavedEdits.shared.set("prompt", title: "", page: .prompts, isUnsaved: false) }
             }
         }
         .navigationTitle("Prompts")

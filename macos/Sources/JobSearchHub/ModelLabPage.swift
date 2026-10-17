@@ -105,6 +105,9 @@ struct ModelLabPage: View {
                 .task(id: model.hasRunningComparison) { await model.watchList(with: client) }
                 .task(id: model.selectedID) { await model.watchSelected(with: client) }
                 .onChange(of: events.revision) { Task { await model.loadList(with: client) } }
+                .onPageRequest(.modelLab) { request in
+                    if case let .openComparison(id) = request { model.selectedID = id }
+                }
                 .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Comparison…") { isAddingComparison = true })
                 .sheet(isPresented: $isAddingComparison) {
                     NewComparisonSheet(client: client) { comparison in

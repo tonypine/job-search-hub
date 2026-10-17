@@ -1,0 +1,85 @@
+#!/bin/bash
+# Stands in for launchctl in hub-update's end-to-end test. The server's
+# agent runs the installed bundle's hub-server in the background, as launchd
+# runs it from the agent's plist, logs it to server.log, and remembers how
+# it last exited. Only the calls hub-update makes are answered.
+set -eu
+agent="$HOME/launchd"
+server="$HOME/Applications/Job Search Hub.app/Contents/Helpers/bin/hub-server"
+log="$HOME/Library/Logs/JobSearchHub/server.log"
+mkdir -p "$agent" "$(dirname "$log")"
+
+start() {
+	if [ -f "$agent/pid" ]; then
+		return 0
+	fi
+	rm -f "$agent/started"
+	# The wrapper records the server's pid, then, once it exits, its exit
+	# code before it removes the pid.
+	nohup bash -c '
+		"$1" & child=$!
+		echo "$child" > "$2/pid"
+		touch "$2/started"
+		set +e
+		wait "$child"
+		echo "$?" > "$2/last-exit"
+		rm -f "$2/pid"
+	' wrapper "$server" "$agent" >>"$log" 2>&1 </dev/null &
+	for _ in $(seq 100); do
+		if [ -f "$agent/started" ]; then
+			return 0
+		fi
+		sleep 0.05
+	done
+	echo "the server didn't start" >&2
+	return 1
+}
+
+stop() {
+	if [ -f "$agent/pid" ]; then
+		kill -TERM "$(cat "$agent/pid")" 2>/dev/null || true
+	fi
+}
+
+case "$1" in
+print)
+	if [ ! -f "$agent/loaded" ]; then
+		echo "Could not find service \"$2\" in domain" >&2
+		exit 113
+	fi
+	echo "$2 = {"
+	if [ -f "$agent/pid" ]; then
+		printf '\tstate = running\n'
+	else
+		printf '\tstate = not running\n'
+	fi
+	if [ -f "$agent/last-exit" ]; then
+		printf '\tlast exit code = %s\n' "$(cat "$agent/last-exit")"
+	fi
+	echo "}"
+	;;
+kill)
+	stop
+	;;
+kickstart)
+	start
+	;;
+bootstrap)
+	touch "$agent/loaded"
+	start
+	;;
+bootout)
+	stop
+	for _ in $(seq 200); do
+		if [ ! -f "$agent/pid" ]; then
+			break
+		fi
+		sleep 0.05
+	done
+	rm -f "$agent/loaded"
+	;;
+*)
+	echo "launchctl stand-in: unknown command $*" >&2
+	exit 64
+	;;
+esac
