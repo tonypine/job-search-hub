@@ -117,6 +117,7 @@ struct RunKindsColumn: View {
 /// kinds the hub starts by itself are paused.
 private struct AllKindsRow: View {
     let all: AllRunKinds
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.s) {
@@ -125,13 +126,14 @@ private struct AllKindsRow: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("All kinds").fontWeight(.semibold).lineLimit(1)
                     Spacer(minLength: Space.s)
-                    Text(all.stateWord).font(.hubCaption).foregroundStyle(all.status == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(all.status.tone.color))
-                        .lineLimit(1)
+                    Text(all.stateWord).font(.hubCaption).foregroundStyle(all.status.wordStyle(on: prominence))
+                        .fixedSize()
                 }
                 Text(all.activityLine).font(.hubCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pausedLine = all.pausedLine {
-                    Text(pausedLine).font(.hubCaption).foregroundStyle(Tone.caution.color)
+                    Text(pausedLine).font(.hubCaption)
+                        .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(Tone.caution.color))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -142,38 +144,31 @@ private struct AllKindsRow: View {
 }
 
 /// A kind's row: its state's glyph, its name and word, and its model with
-/// its provider's mark. Hovering a kind that pauses swaps its word for its
-/// pause or resume.
+/// its provider's mark. The word goes under the name when the two don't fit
+/// on one line. Hovering a kind that pauses shows its pause or resume in
+/// the word's place.
 private struct RunKindRow: View {
     let kind: RunKind
     let failedCount: Int
     let kindModel: RunKindModel?
     let togglePause: @MainActor () async -> Void
     @State private var isHovering = false
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         let status = kind.getStatus(failedCount: failedCount)
         HStack(alignment: .firstTextBaseline, spacing: Space.s) {
             RunKindGlyph(status: status)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                    // The name keeps its room; the word gives way first.
-                    Text(kind.title).lineLimit(1)
-                        .layoutPriority(1)
-                        .help(kind.title)
-                    Spacer(minLength: Space.s)
-                    if isHovering && kind.isPausable {
-                        AsyncButton(kind.paused ? "Resume" : "Pause", busyTitle: kind.paused ? "Resuming…" : "Pausing…",
-                                    systemImage: kind.paused ? "play.fill" : "pause.fill", action: togglePause)
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .help(kind.paused ? "Resume \(kind.title)" : "Pause \(kind.title); runs you start still go ahead")
-                    } else {
-                        Text(kind.getStateWord(failedCount: failedCount))
-                            .font(.hubCaption)
-                            .foregroundStyle(status == .idle || status == .onDemand ? AnyShapeStyle(.secondary) : AnyShapeStyle(status.tone.color))
-                            .lineLimit(1)
-                            .help(status == .failed ? "Failed in the last day" : "")
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                        name.fixedSize()
+                        Spacer(minLength: Space.s)
+                        word(status, pauseAlignment: .trailing)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        name
+                        word(status, pauseAlignment: .leading)
                     }
                 }
                 if let kindModel {
@@ -189,12 +184,51 @@ private struct RunKindRow: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
     }
+
+    private var name: some View {
+        Text(kind.title).lineLimit(1)
+            .help(kind.title)
+    }
+
+    /// The state's word, whole. The pause covers it while hovered, so the
+    /// row keeps its layout.
+    private func word(_ status: RunKindStatus, pauseAlignment: Alignment) -> some View {
+        let showsPause = isHovering && kind.isPausable
+        return Text(kind.getStateWord(failedCount: failedCount))
+            .font(.hubCaption)
+            .foregroundStyle(status.wordStyle(on: prominence))
+            .fixedSize()
+            .help(status == .failed ? "Failed in the last day" : "")
+            .opacity(showsPause ? 0 : 1)
+            .accessibilityHidden(showsPause)
+            .overlay(alignment: pauseAlignment) {
+                if showsPause {
+                    AsyncButton(kind.paused ? "Resume" : "Pause", busyTitle: kind.paused ? "Resuming…" : "Pausing…",
+                                systemImage: kind.paused ? "play.fill" : "pause.fill", action: togglePause)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .fixedSize()
+                        .help(kind.paused ? "Resume \(kind.title)" : "Pause \(kind.title); runs you start still go ahead")
+                }
+            }
+    }
+}
+
+extension RunKindStatus {
+    /// The style of a state's word: its tone, or the row's own text color
+    /// on a selected row's highlight, where the tones lose their contrast.
+    @MainActor
+    func wordStyle(on prominence: BackgroundProminence) -> AnyShapeStyle {
+        if self == .idle || self == .onDemand { return AnyShapeStyle(.secondary) }
+        return prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(tone.color)
+    }
 }
 
 /// A kind's state at a glance: a spinner while it runs, otherwise its
 /// symbol in its tone.
 struct RunKindGlyph: View {
     let status: RunKindStatus
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         Group {
@@ -202,7 +236,7 @@ struct RunKindGlyph: View {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: status.symbolName)
-                    .foregroundStyle(status.tone.color)
+                    .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(status.tone.color))
             }
         }
         .frame(width: 14)
