@@ -98,13 +98,19 @@ struct OpenJobsCell: View {
     let bestMatch: JobMatch?
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        Group {
             if fittingJobs > 0 {
-                // The count keeps its width; the chip truncates first.
-                Text("\(fittingJobs) open").monospacedDigit().layoutPriority(1)
-                if let bestMatch {
-                    ToneChip("Best: \(bestMatch.title)", tone: bestMatch.tone)
-                        .help("The best match the briefs found among them")
+                // The chip keeps its size, so in a narrow column it drops
+                // out and the count stays whole.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.s) {
+                        count
+                        if let bestMatch {
+                            ToneChip("Best: \(bestMatch.title)", tone: bestMatch.tone)
+                                .help("The best match the briefs found among them")
+                        }
+                    }
+                    count
                 }
             } else {
                 Text("None that pass").foregroundStyle(.tertiary)
@@ -114,6 +120,10 @@ struct OpenJobsCell: View {
         .lineLimit(1)
         .help(fittingJobs == 1 ? "1 open job passes the screen" : "\(fittingJobs) open jobs pass the screen")
         .companyRowCell()
+    }
+
+    private var count: some View {
+        Text("\(fittingJobs) open").monospacedDigit().fixedSize()
     }
 }
 
