@@ -132,7 +132,9 @@ struct ActivityRunsList: View {
     /// them, so those stay small: the columns give way to the inspector
     /// rather than widen the window. It opens at its columns' ideal widths,
     /// so those, Kind's included, add up to less than a 1400 pt window
-    /// leaves beside the sidebar and the run kinds column.
+    /// leaves beside the sidebar and the run kinds column. Took and Tokens
+    /// or cost are wide enough for "1 min 35 s" and "12,000 → 3,400" whole;
+    /// on a kind's page, Ran for takes the room Kind leaves.
     private var list: some View {
         VStack(spacing: 0) {
             Table(model.runs, selection: $selectedRunID) {
@@ -152,30 +154,30 @@ struct ActivityRunsList: View {
                 TableColumn("Ran for") { run in
                     RunSubjectCell(run: run) { subject in details.show(subject, from: .activity) }
                 }
-                .width(min: 100, ideal: kind == nil ? 220 : 280)
+                .width(min: 100, ideal: kind == nil ? 236 : 350)
                 if !isCompact {
                     TableColumn("Model") { run in
                         Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
                             .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
                     }
-                    .width(min: 50, ideal: 100)
+                    .width(min: 50, ideal: 96)
                     TableColumn("Took") { run in
                         Text(run.durationText).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 40, ideal: 48)
+                    .width(min: 40, ideal: 70)
                     TableColumn("Tokens or cost") { run in
-                        Text(run.usageText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                        Text(run.usageCellText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                             .help(run.usageText ?? "")
                     }
-                    .width(min: 50, ideal: 100)
+                    .width(min: 50, ideal: 96)
                 }
                 TableColumn("Started") { run in
                     Text(run.startedAt.formatted(Self.startFormat)).foregroundStyle(.secondary).lineLimit(1)
                         .help(run.startedAt.formatted(date: .complete, time: .standard))
                 }
-                .width(min: 64, ideal: 110)
+                .width(min: 64, ideal: 108)
             }
             if let run = selectedFailedRun {
                 Divider()

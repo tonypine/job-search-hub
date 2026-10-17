@@ -186,6 +186,9 @@ private let runsJSON = #"""
     #expect(runs[0].usageText == "900 → 140 tokens")
     #expect(runs[1].usageText == 0.421.formatted(.currency(code: "USD").precision(.fractionLength(2))))
     #expect(runs[3].usageText == nil)
+    #expect(runs[0].usageCellText == "900 → 140")
+    #expect(runs[1].usageCellText == runs[1].usageText)
+    #expect(runs[3].usageCellText == nil)
 }
 
 @Test func anAgentRunsAnswerReadsAsIndentedJSON() throws {

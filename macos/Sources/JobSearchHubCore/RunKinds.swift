@@ -408,6 +408,13 @@ public struct ActivityRun: Decodable, Equatable, Identifiable, Sendable {
         guard promptTokens + completionTokens > 0 else { return nil }
         return "\(promptTokens.formatted()) → \(completionTokens.formatted()) tokens"
     }
+
+    /// The usage short enough for a table cell, under a heading that says
+    /// what it counts: the tokens without their unit, or the cost.
+    public var usageCellText: String? {
+        guard costUSDEstimate.flatMap(Double.init) == nil, promptTokens + completionTokens > 0 else { return usageText }
+        return "\(promptTokens.formatted()) → \(completionTokens.formatted())"
+    }
 }
 
 /// A page of runs, the latest first, and the cursor of the next; empty after

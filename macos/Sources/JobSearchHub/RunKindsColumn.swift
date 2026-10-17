@@ -21,12 +21,15 @@ struct RunKindsColumn: View {
 
     var body: some View {
         List(selection: $selection) {
-            AllKindsRow(all: model.all)
+            AllKindsRow(all: model.all, isSelected: selection == "")
                 .tag("")
             ForEach(model.sections) { section in
                 Section(section.group.title) {
                     ForEach(section.kinds) { kind in
-                        RunKindRow(kind: kind, failedCount: model.getFailedCount(kind), kindModel: model.getModel(for: kind)) {
+                        RunKindRow(
+                            kind: kind, failedCount: model.getFailedCount(kind), kindModel: model.getModel(for: kind),
+                            isSelected: selection == kind.id
+                        ) {
                             await model.setPaused(!kind.paused, kind: kind, with: client)
                         }
                         .tag(kind.id)
@@ -117,23 +120,23 @@ struct RunKindsColumn: View {
 /// kinds the hub starts by itself are paused.
 private struct AllKindsRow: View {
     let all: AllRunKinds
-    @Environment(\.backgroundProminence) private var prominence
+    let isSelected: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-            RunKindGlyph(status: all.status)
+            RunKindGlyph(status: all.status, isSelected: isSelected)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("All kinds").fontWeight(.semibold).lineLimit(1)
                     Spacer(minLength: Space.s)
-                    Text(all.stateWord).font(.hubCaption).foregroundStyle(all.status.wordStyle(on: prominence))
+                    Text(all.stateWord).font(.hubCaption).foregroundStyle(all.status.wordStyle(isSelected: isSelected))
                         .fixedSize()
                 }
                 Text(all.activityLine).font(.hubCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pausedLine = all.pausedLine {
                     Text(pausedLine).font(.hubCaption)
-                        .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(Tone.caution.color))
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(Tone.caution.color))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -151,14 +154,14 @@ private struct RunKindRow: View {
     let kind: RunKind
     let failedCount: Int
     let kindModel: RunKindModel?
+    let isSelected: Bool
     let togglePause: @MainActor () async -> Void
     @State private var isHovering = false
-    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         let status = kind.getStatus(failedCount: failedCount)
         HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-            RunKindGlyph(status: status)
+            RunKindGlyph(status: status, isSelected: isSelected)
             VStack(alignment: .leading, spacing: 2) {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .firstTextBaseline, spacing: Space.s) {
@@ -196,7 +199,7 @@ private struct RunKindRow: View {
         let showsPause = isHovering && kind.isPausable
         return Text(kind.getStateWord(failedCount: failedCount))
             .font(.hubCaption)
-            .foregroundStyle(status.wordStyle(on: prominence))
+            .foregroundStyle(status.wordStyle(isSelected: isSelected))
             .fixedSize()
             .help(status == .failed ? "Failed in the last day" : "")
             .opacity(showsPause ? 0 : 1)
@@ -216,19 +219,20 @@ private struct RunKindRow: View {
 
 extension RunKindStatus {
     /// The style of a state's word: its tone, or the row's own text color
-    /// on a selected row's highlight, where the tones lose their contrast.
+    /// on a selected row's highlight, accent or gray, where the tones lose
+    /// their contrast.
     @MainActor
-    func wordStyle(on prominence: BackgroundProminence) -> AnyShapeStyle {
-        if self == .idle || self == .onDemand { return AnyShapeStyle(.secondary) }
-        return prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(tone.color)
+    func wordStyle(isSelected: Bool) -> AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(.primary) }
+        return self == .idle || self == .onDemand ? AnyShapeStyle(.secondary) : AnyShapeStyle(tone.color)
     }
 }
 
 /// A kind's state at a glance: a spinner while it runs, otherwise its
-/// symbol in its tone.
+/// symbol in its tone, or in the row's text color when it's selected.
 struct RunKindGlyph: View {
     let status: RunKindStatus
-    @Environment(\.backgroundProminence) private var prominence
+    var isSelected = false
 
     var body: some View {
         Group {
@@ -236,7 +240,7 @@ struct RunKindGlyph: View {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: status.symbolName)
-                    .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(status.tone.color))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(status.tone.color))
             }
         }
         .frame(width: 14)
