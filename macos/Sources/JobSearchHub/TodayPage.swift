@@ -124,7 +124,7 @@ struct TodayPage: View {
     @State private var followingUp: PipelineCard?
     @State private var followUpNote = ""
     /// The Decide card has the keyboard: ↑↓ move through its jobs, Return
-    /// opens one, and P, L and S decide the one open.
+    /// opens one as a page, and P, L and S decide the one open.
     @FocusState private var isDecideFocused: Bool
     /// The palette asked for the keyboard before the queue was read.
     @State private var focusesDecideOnLoad = false
@@ -139,6 +139,8 @@ struct TodayPage: View {
                 .task { await model.load(with: client) }
                 .task { await activity.watch(with: client) }
                 .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                // A job's page goes through the jobs to decide.
+                .onChange(of: model.queue.map(\.id), initial: true) { _, order in details.setJobOrder(order, on: .today) }
                 .onChange(of: events.revision) { Task { await activity.load(with: client) } }
                 .onPageRequest(.today) { request in
                     guard request == .focusList else { return }
@@ -313,7 +315,12 @@ struct TodayPage: View {
             return .handled
         }
         .onKeyPress(.return) {
-            open(.job(openDecisionID(items) ?? items[0].id))
+            // The job open in the inspector opens as a page; with none, the first opens beside.
+            if openDecisionID(items) != nil {
+                details.expand(on: .today)
+            } else {
+                open(.job(items[0].id))
+            }
             return .handled
         }
         .onKeyPress(characters: .letters, phases: .down) { press in
@@ -335,7 +342,7 @@ struct TodayPage: View {
             }
             return .handled
         }
-        .accessibilityHint("Up and down arrows move through the jobs; P pursues, L leaves for later and S skips the one open.")
+        .accessibilityHint("Up and down arrows move through the jobs; Return opens the one open as a page; P pursues, L leaves for later and S skips it.")
     }
 
     /// The job to decide open in the inspector, if one is.

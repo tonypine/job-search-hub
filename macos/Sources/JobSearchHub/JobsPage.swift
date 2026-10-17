@@ -198,6 +198,8 @@ struct JobsPage: View {
     @State private var isAddingByURL = false
     @State private var fix: JobFixTarget?
     @State private var hover = JobRowHover()
+    /// The table has the keyboard, as when a job's page goes back to it.
+    @FocusState private var isTableFocused: Bool
     @Environment(RemoteTaskRunner.self) private var taskRunner
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
@@ -241,7 +243,13 @@ struct JobsPage: View {
                 .onChange(of: details.getEntry(on: .jobs)) {
                     // Closing the details of one job deselects it; several selected jobs show no details at all.
                     if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                    // ↑ and ↓ on a job's page select the job it moves to, so going back finds it.
+                    if details.getExpandedJob(on: .jobs) != nil, case let .job(jobID)? = details.getEntry(on: .jobs)?.subject, model.selectedID != jobID {
+                        model.selectedIDs = [jobID]
+                    }
                 }
+                // A job's page goes through the rows as they show.
+                .onChange(of: getRowOrder().map(\.id), initial: true) { _, order in details.setJobOrder(order, on: .jobs) }
                 .sheet(item: $model.reasonTarget) { target in
                     SkipReasonSheet(jobCount: target.jobIDs.count) { reason in
                         await model.addSkipReason(reason, to: target.jobIDs, through: decisions, with: client)
@@ -265,7 +273,11 @@ struct JobsPage: View {
                 }
                 .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
                 .onPageRequest(.jobs) { request in
-                    if request == .addJobByURL { isAddingByURL = true }
+                    switch request {
+                    case .addJobByURL: isAddingByURL = true
+                    case .focusList: isTableFocused = true
+                    default: break
+                    }
                 }
             }
         }
@@ -315,13 +327,26 @@ struct JobsPage: View {
         }
     }
 
-    private func table(client: HubClient) -> some View {
+    /// The rows the filters keep, in their order: grouped by when the hub
+    /// first saw them when sorted by Posted, else as sorted.
+    private func getRowGroups() -> (items: [JobListItem], groups: [JobGroup]?) {
         let sort = sortOrder.wrappedValue
         let shownItems = model.getShownItems(filteredBy: filter.wrappedValue, sortedBy: sort)
         // Sorted by Posted, the rows group by when the hub first saw them.
         let groups = sort.first?.column == .posted
             ? JobGroups.make(shownItems, newestFirst: sort.first?.order == .reverse, now: .now)
             : nil
+        return (shownItems, groups)
+    }
+
+    /// The rows as the table shows them, top to bottom.
+    private func getRowOrder() -> [JobListItem] {
+        let rows = getRowGroups()
+        return rows.groups.map { $0.flatMap(\.items) } ?? rows.items
+    }
+
+    private func table(client: HubClient) -> some View {
+        let (shownItems, groups) = getRowGroups()
         return Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
             TableColumn("Job", sortUsing: JobsSortComparator(.title)) { item in
                 JobCell(
@@ -415,8 +440,9 @@ struct JobsPage: View {
                     .disabled(ids.isEmpty)
             }
         } primaryAction: { ids in
-            open(ids)
+            openPage(ids)
         }
+        .focused($isTableFocused)
         .onKeyPress(characters: .letters, phases: .down) { press in
             // P, L and S decide the selected rows; Skip leaves skipped jobs alone.
             guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
@@ -487,6 +513,14 @@ struct JobsPage: View {
 
     private func decide(_ ids: Set<UUID>, _ decision: JobDecisionKind, with client: HubClient) {
         Task { await model.decide(ids, decision, through: decisions, with: client) }
+    }
+
+    /// Return or a double-click on a job opens it as a page in the list's
+    /// place; the posting is in the row's menu.
+    private func openPage(_ ids: Set<UUID>) {
+        guard ids.count == 1, let jobID = ids.first else { return }
+        details.show(.job(jobID), from: .jobs)
+        details.expand(on: .jobs)
     }
 
     private func open(_ ids: Set<UUID>) {

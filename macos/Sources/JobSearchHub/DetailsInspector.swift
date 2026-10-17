@@ -16,6 +16,12 @@ final class DetailsInspector {
     private(set) var history = InspectorHistory()
     /// A session to resume, or start, once its Session tab shows.
     private(set) var sessionToStart: InspectorSubject?
+    /// The page whose job shows as a page in the content column, in place
+    /// of its list and of the inspector (P2); nil while the list shows.
+    private(set) var expandedPage: Page?
+    /// Each page's jobs in its list's order and filters, for the job page's
+    /// position and its ↑ and ↓.
+    private(set) var lists: [Page: JobPageList] = [:]
 
     /// Shows a page's selection, or hides the inspector when nothing is
     /// selected. Another page than before starts a new history.
@@ -28,13 +34,64 @@ final class DetailsInspector {
             hide()
             return
         }
+        if case .job = subject {} else { expandedPage = nil }
         history.push(subject, tab: tab)
     }
 
     /// Opens a subject from inside the inspector, as the next step of its
-    /// history, over the same page.
+    /// history, over the same page. From a job's page, a company or a person
+    /// opens in the inspector beside the list.
     func open(_ subject: InspectorSubject, tab: InspectorTab? = nil) {
+        if case .job = subject {} else { expandedPage = nil }
         history.push(subject, tab: tab)
+    }
+
+    // MARK: The job's page
+
+    /// The job shown as a page over the page's list, if one is.
+    func getExpandedJob(on page: Page) -> UUID? {
+        guard expandedPage == page, self.page == page, case let .job(jobID) = history.current?.subject else { return nil }
+        return jobID
+    }
+
+    /// Opens the job the inspector shows over the page as a page, in place
+    /// of the list.
+    func expand(on page: Page) {
+        guard self.page == page, case let .job(jobID) = history.current?.subject else { return }
+        lists[page]?.show(jobID)
+        expandedPage = page
+    }
+
+    /// Goes back from the job's page to the list and the inspector.
+    func collapse() {
+        expandedPage = nil
+    }
+
+    /// Takes the page's jobs in its list's order and filters.
+    func setJobOrder(_ order: [UUID], on page: Page) {
+        var list = lists[page] ?? JobPageList()
+        let shown: UUID? = if self.page == page, case let .job(jobID) = history.current?.subject { jobID } else { nil }
+        list.setOrder(order, showing: shown)
+        lists[page] = list
+    }
+
+    /// "3 of 48": where the job shown as a page stands in its list.
+    func getPosition(on page: Page) -> String? {
+        getExpandedJob(on: page).flatMap { lists[page]?.getPosition(of: $0) }
+    }
+
+    /// The job a step down (1) or up (-1) the list from the one shown as a
+    /// page; nil at either end.
+    func getNeighbor(by step: Int, on page: Page) -> UUID? {
+        getExpandedJob(on: page).flatMap { lists[page]?.getNeighbor(of: $0, by: step) }
+    }
+
+    /// Shows the list's next (1) or previous (-1) job on the page, on the
+    /// tab shown.
+    func move(by step: Int, on page: Page) {
+        guard let jobID = getNeighbor(by: step, on: page) else { return }
+        history.push(.job(jobID), tab: history.current?.tab)
+        lists[page]?.show(jobID)
     }
 
     /// Opens a subject's Session tab over the page and resumes its latest
@@ -63,6 +120,7 @@ final class DetailsInspector {
     func hide() {
         history.clear()
         sessionToStart = nil
+        expandedPage = nil
     }
 
     func getEntry(on page: Page) -> InspectorEntry? {
@@ -98,7 +156,8 @@ struct DetailsInspectorContent: View {
 }
 
 /// The inspector's own controls, on a bar at its top: back and forward
-/// through what it showed (⌘[ and ⌘]), and Hide. They stay out of the
+/// through what it showed (⌘[ and ⌘]), for a job ⤢, which opens it as a
+/// page in place of the list, and Hide. They stay out of the
 /// window's toolbar: items declared inside the inspector get a section of
 /// the toolbar that follows the inspector's divider, and that section could
 /// keep the window's constraint updates from settling until AppKit stopped
@@ -110,13 +169,18 @@ struct InspectorNavigationBar: View {
         HStack(spacing: Space.xs) {
             Button("Back", systemImage: "chevron.backward") { details.goBack() }
                 .keyboardShortcut("[", modifiers: .command)
-                .disabled(!details.history.canGoBack)
+                // A job open as a page has ⌘[ to go back to its list.
+                .disabled(!details.history.canGoBack || details.expandedPage != nil)
                 .help("Back (⌘[)")
             Button("Forward", systemImage: "chevron.forward") { details.goForward() }
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(!details.history.canGoForward)
+                .disabled(!details.history.canGoForward || details.expandedPage != nil)
                 .help("Forward (⌘])")
             Spacer(minLength: 0)
+            if case .job = details.history.current?.subject, let page = details.page {
+                Button("Open as a page", systemImage: "arrow.up.left.and.arrow.down.right") { details.expand(on: page) }
+                    .help("Open the job as a page, beside the cards that judge it (Return on its row)")
+            }
             Button("Hide details", systemImage: "sidebar.trailing") { details.hide() }
                 .help("Close the details")
         }

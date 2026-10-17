@@ -1,11 +1,26 @@
 import JobSearchHubCore
 import SwiftUI
 
+/// How a job's Posting tab is laid out: in the inspector's column, or on
+/// the job's page, wide or narrow.
+enum JobPostingLayout {
+    /// In the inspector, inside its scroll view: the outline as chips over
+    /// the posting.
+    case inspector
+    /// On a wide page: the outline in a column on the left, the posting at
+    /// a reading measure, and the rail on the right.
+    case wide
+    /// On a page under the wide width: the outline hides and the rail goes
+    /// under the posting.
+    case narrow
+}
+
 /// A job's Posting tab: the key facts on one card, with who read them and
 /// every fact behind its ⋯; then where the text came from, the posting's
 /// outline and the marks' legend with Find (⌘F); then the posting to read,
-/// with the phrases the screen quoted marked.
-struct JobPostingTab: View {
+/// with the phrases the screen quoted marked. On a page it scrolls itself,
+/// beside or over a rail of cards.
+struct JobPostingTab<Rail: View>: View {
     let jobID: UUID
     let details: JobDetails
     let client: HubClient
@@ -13,9 +28,18 @@ struct JobPostingTab: View {
     /// The id that "Open in posting" scrolls to: where the posting starts,
     /// under the key facts.
     let postingAnchor: String
-    /// Facts in a row, as the inspector fits them.
-    private let columns = 2
-    private static let findFieldID = "posting-find-field"
+    var layout = JobPostingLayout.inspector
+    /// On a page, the view with this id to scroll to, such as a rail's card;
+    /// cleared once there. The inspector scrolls its own.
+    @Binding var scrollTarget: String?
+    @ViewBuilder let rail: Rail
+    /// The widest a page lets the posting run (P3).
+    static var measure: CGFloat { 640 }
+    static var outlineWidth: CGFloat { 160 }
+    static var railWidth: CGFloat { 340 }
+    /// Facts in a row: as the inspector fits them, or as a page does.
+    private var columns: Int { layout == .inspector ? 2 : 3 }
+    private static var findFieldID: String { "posting-find-field" }
 
     @State private var isShowingFacts = false
     @State private var isFinding = false
@@ -25,44 +49,105 @@ struct JobPostingTab: View {
     @State private var passedHeadings: Set<Int> = []
     @FocusState private var isQueryFocused: Bool
 
+    init(
+        jobID: UUID, details: JobDetails, client: HubClient, model: JobDetailModel, postingAnchor: String, layout: JobPostingLayout,
+        scrollTarget: Binding<String?>, @ViewBuilder rail: () -> Rail
+    ) {
+        self.jobID = jobID
+        self.details = details
+        self.client = client
+        self.model = model
+        self.postingAnchor = postingAnchor
+        self.layout = layout
+        _scrollTarget = scrollTarget
+        self.rail = rail()
+    }
+
     var body: some View {
         let document = PostingDocument(markdown: details.job.description ?? "")
+        ScrollViewReader { proxy in
+            switch layout {
+            case .inspector:
+                posting(document, proxy: proxy)
+            case .wide:
+                HStack(alignment: .top, spacing: Space.xl) {
+                    outlineColumn(document.outline, proxy: proxy)
+                        .frame(width: Self.outlineWidth)
+                    ScrollView {
+                        HStack(alignment: .top, spacing: Space.xl) {
+                            posting(document, proxy: proxy)
+                                .frame(minWidth: 0, maxWidth: Self.measure, alignment: .topLeading)
+                            VStack(alignment: .leading, spacing: Space.l) { rail }
+                                .frame(width: Self.railWidth, alignment: .topLeading)
+                        }
+                        .padding(.vertical, Space.l)
+                        .padding(.trailing, Space.xl)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .task(id: scrollTarget) { await scrollToTarget(proxy) }
+                }
+                .padding(.leading, Space.xl)
+            case .narrow:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Space.xl) {
+                        posting(document, proxy: proxy)
+                        VStack(alignment: .leading, spacing: Space.l) { rail }
+                    }
+                    .frame(minWidth: 0, maxWidth: Self.measure, alignment: .topLeading)
+                    .padding(Space.xl)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .task(id: scrollTarget) { await scrollToTarget(proxy) }
+            }
+        }
+    }
+
+    /// The key facts, where the text came from with the marks' legend and
+    /// Find, then the posting to read.
+    private func posting(_ document: PostingDocument, proxy: ScrollViewProxy) -> some View {
         let marks = document.findMarks(for: details.postingQuotes)
         let matches = isFinding ? document.findMatches(of: query) : []
-        ScrollViewReader { proxy in
-            VStack(alignment: .leading, spacing: Space.l) {
-                keyFacts
-                VStack(alignment: .leading, spacing: Space.m) {
-                    sourceLine
-                    if !document.blocks.isEmpty {
+        return VStack(alignment: .leading, spacing: Space.l) {
+            keyFacts
+            VStack(alignment: .leading, spacing: Space.m) {
+                sourceLine
+                if !document.blocks.isEmpty {
+                    if layout == .inspector {
                         outline(document.outline, proxy: proxy)
-                        HStack(spacing: Space.m) {
-                            if !marks.isEmpty {
-                                MarkLegend()
-                            }
-                            Spacer(minLength: 0)
-                            findButton(proxy: proxy)
+                    }
+                    HStack(spacing: Space.m) {
+                        if !marks.isEmpty {
+                            MarkLegend()
                         }
-                        if isFinding {
-                            findField(matches, proxy: proxy)
-                                .id(Self.findFieldID)
-                        }
+                        Spacer(minLength: 0)
+                        findButton(proxy: proxy)
+                    }
+                    if isFinding {
+                        findField(matches, proxy: proxy)
+                            .id(Self.findFieldID)
                     }
                 }
-                .id(postingAnchor)
-                if document.blocks.isEmpty {
-                    Text("The board kept no text for this posting; the original has it.").foregroundStyle(.secondary)
-                } else {
-                    PostingReader(document: document, marks: marks, matches: matches) { block, isPassed in
-                        if isPassed {
-                            passedHeadings.insert(block)
-                        } else {
-                            passedHeadings.remove(block)
-                        }
+            }
+            .id(postingAnchor)
+            if document.blocks.isEmpty {
+                Text("The board kept no text for this posting; the original has it.").foregroundStyle(.secondary)
+            } else {
+                PostingReader(document: document, marks: marks, matches: matches, size: layout == .inspector ? .inspector : .page) { block, isPassed in
+                    if isPassed {
+                        passedHeadings.insert(block)
+                    } else {
+                        passedHeadings.remove(block)
                     }
                 }
             }
         }
+    }
+
+    /// Scrolls the page to the view asked for, once it's laid out.
+    private func scrollToTarget(_ proxy: ScrollViewProxy) async {
+        guard let target = scrollTarget, (try? await Task.sleep(for: .milliseconds(50))) != nil else { return }
+        withAnimation { proxy.scrollTo(target, anchor: .top) }
+        scrollTarget = nil
     }
 
     // MARK: Key facts
@@ -191,6 +276,52 @@ struct JobPostingTab: View {
                 }
             }
         }
+    }
+
+    /// On a wide page, the posting's headings down a column beside it,
+    /// each scrolling to its heading; the last one scrolled past is marked
+    /// with a bar.
+    private func outlineColumn(_ headings: [PostingHeading], proxy: ScrollViewProxy) -> some View {
+        let current = passedHeadings.max()
+        return ScrollView {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                if !headings.isEmpty {
+                    Text("On this posting".uppercased())
+                        .font(.hubCaption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, Space.xs)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                ForEach(headings) { heading in
+                    let isCurrent = heading.block == current
+                    Button {
+                        withAnimation { proxy.scrollTo(PostingReader.blockID(heading.block), anchor: .top) }
+                    } label: {
+                        Text(heading.title)
+                            .font(.hubSecondary)
+                            .fontWeight(isCurrent ? .semibold : .regular)
+                            .foregroundStyle(isCurrent ? .primary : .secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .padding(.leading, Space.s)
+                            .padding(.vertical, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .leading) {
+                                Rectangle()
+                                    .fill(isCurrent ? Color.hubAccent : Color.secondary.opacity(0.25))
+                                    .frame(width: isCurrent ? 2 : 1)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Go to \(heading.title)")
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                }
+            }
+            .padding(.vertical, Space.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.never)
     }
 
     // MARK: Find
@@ -373,5 +504,15 @@ private extension FitVerdict {
         case .unclear: "Unclear on the screen"
         case .no: "Fails the screen"
         }
+    }
+}
+
+extension JobPostingTab where Rail == EmptyView {
+    /// The tab in the inspector, whose scroll view it sits in.
+    init(jobID: UUID, details: JobDetails, client: HubClient, model: JobDetailModel, postingAnchor: String) {
+        self.init(
+            jobID: jobID, details: details, client: client, model: model, postingAnchor: postingAnchor, layout: .inspector,
+            scrollTarget: .constant(nil)
+        ) { EmptyView() }
     }
 }

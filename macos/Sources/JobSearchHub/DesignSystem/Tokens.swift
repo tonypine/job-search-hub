@@ -88,6 +88,8 @@ extension Font {
     static let hubReading = Font.system(size: 14)
     /// A posting read in the inspector (P3 Reader): 13 pt.
     static let hubPosting = Font.system(size: 13)
+    /// A posting read on a job's page, at a 600–640 pt measure: 14 pt.
+    static let hubPostingOnPage = Font.system(size: 14)
     /// Company, location, reasons; shown in `.secondary`.
     static let hubSecondary = Font.callout
     /// Who wrote it and when.
