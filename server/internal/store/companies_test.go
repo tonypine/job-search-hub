@@ -272,7 +272,7 @@ func TestIndustryIsStoredAndItsChangesRecorded(t *testing.T) {
 
 // The migration that adds companies.industry, which the prompt tests roll
 // back and apply again.
-const industryMigration = 87
+const industryMigration = 91
 
 // rollBackIndustryMigration returns a function that applies it again.
 func rollBackIndustryMigration(t *testing.T, pool *pgxpool.Pool) func() {
