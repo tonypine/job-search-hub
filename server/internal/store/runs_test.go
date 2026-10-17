@@ -239,13 +239,24 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The companies and the job come first: the store writes columns later
+	// migrations add, which rolling back drops.
+	company, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &company.ID, Title: "Frontend Engineer", URL: "https://acme.com/jobs/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := provider.DownTo(ctx, runSubjectsMigration-1); err != nil {
 		t.Fatal(err)
 	}
 
-	company, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
-	other, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Globex", Domain: "globex.com"})
-	job, _, _ := hub.AddManualJob(ctx, owner, store.ManualJobInput{CompanyID: &company.ID, Title: "Frontend Engineer", URL: "https://acme.com/jobs/1"})
 	if _, err := pool.Exec(ctx, `INSERT INTO model_providers (kind, name, base_url) VALUES
 		('openai_compatible', 'LM Studio', 'http://localhost:1234/v1'), ('hub_runtime', 'This Mac', '')`); err != nil {
 		t.Fatal(err)

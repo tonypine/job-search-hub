@@ -307,7 +307,13 @@ func TestAPausedFullBriefStartedOnAnOpenRouterModelRunsAheadOfBackgroundWorkOnTh
 		!run.StartedByOwner || run.Outcome != store.RunOutcomeSucceeded {
 		t.Fatalf("the job's run = %+v, want started %s", run, started.ID)
 	}
-	if brief, _ := service.hub.GetJobBrief(ctx, job.ID); brief == nil || brief.Tier != store.JobBriefTierFull || brief.Model != "anthropic/claude-sonnet-4.5" {
+	// The run is recorded when the model answers, before the brief is saved.
+	var brief *store.JobBrief
+	waitFor(t, "the job's brief", func() bool {
+		brief, _ = service.hub.GetJobBrief(ctx, job.ID)
+		return brief != nil
+	})
+	if brief.Tier != store.JobBriefTierFull || brief.Model != "anthropic/claude-sonnet-4.5" {
 		t.Fatalf("the job's brief = %+v", brief)
 	}
 	if route, _ := service.hub.GetTaskRoute(ctx, store.RunKindJobBriefFull); route.Model != "qwen3.8-27b" {
