@@ -145,7 +145,9 @@ struct CompaniesPage: View {
                 .help("Research of \(research.company) failed. Show why, and try again")
                 .accessibilityLabel("Research of \(research.company) failed")
             }
-            PageSearchField(text: $model.search, prompt: "Search companies", width: PageHeaderMetrics.compactSearchWidth)
+            // "Search companies" doesn't fit the narrower field; its help
+            // says what it searches.
+            PageSearchField(text: $model.search, prompt: "Search", width: PageHeaderMetrics.compactSearchWidth)
                 .help("Search names and domains")
             CompanyColumnsMenu(customization: columnCustomization)
                 .labelStyle(.iconOnly)
