@@ -251,7 +251,14 @@ struct PipelinePage: View {
                 .onChange(of: selectedCardSubject, initial: true) { details.show(selectedCardSubject, from: .pipeline) }
                 .onChange(of: details.getEntry(on: .pipeline)) {
                     if details.getEntry(on: .pipeline) == nil { selectedCardID = nil }
+                    // ↑ and ↓ on a job's page select the card it moves to, so going back finds it.
+                    if details.getExpandedJob(on: .pipeline) != nil, case let .job(jobID)? = details.getEntry(on: .pipeline)?.subject,
+                       let card = model.board.cards.first(where: { $0.application.jobID == jobID }), card.id != selectedCardID {
+                        selectedCardID = card.id
+                    }
                 }
+                // A job's page goes through the cards as they show, phase by phase.
+                .onChange(of: getJobOrder(), initial: true) { _, order in details.setJobOrder(order, on: .pipeline) }
                 .onChange(of: research.state) { finishFindingPeople(with: client) }
             }
         }
@@ -349,6 +356,7 @@ struct PipelinePage: View {
     private func makeCardActions(with client: HubClient) -> PipelineCardActions {
         PipelineCardActions(
             phases: model.board.phases, movingCardID: model.movingCardID, selectedCardID: $selectedCardID,
+            onOpenPage: { cardID in openPage(cardID) },
             onFollowUp: { cardID in
                 followUpNote = model.draftedTo[cardID].map { "Wrote to \($0)" } ?? ""
                 followUpCardID = cardID
@@ -426,6 +434,21 @@ struct PipelinePage: View {
         }
     }
 
+    /// The jobs of the cards shown, column by column, top to bottom, or the
+    /// closed cards in the Closed scope.
+    private func getJobOrder() -> [UUID] {
+        let cards = model.scope == .closed ? model.closedCards : model.columns.flatMap { model.getShownCards(in: $0) }
+        return cards.compactMap(\.application.jobID)
+    }
+
+    /// A double-click opens a card's job as a page in the board's place.
+    private func openPage(_ cardID: UUID) {
+        guard let jobID = model.board.cards.first(where: { $0.id == cardID })?.application.jobID else { return }
+        selectedCardID = cardID
+        details.show(.job(jobID), from: .pipeline)
+        details.expand(on: .pipeline)
+    }
+
     /// The selected card's details.
     private var selectedCardSubject: InspectorSubject? {
         model.board.cards.first { $0.id == selectedCardID }.flatMap(getSubject)
@@ -497,12 +520,13 @@ struct PipelinePage: View {
     }
 }
 
-/// What a card's click, drag and menu do: select it, carry it to another
-/// phase, follow up, close, skip or restore it.
+/// What a card's click, drag and menu do: select it, open its job as a
+/// page, carry it to another phase, follow up, close, skip or restore it.
 struct PipelineCardActions {
     let phases: [PipelinePhase]
     let movingCardID: UUID?
     let selectedCardID: Binding<UUID?>
+    let onOpenPage: (UUID) -> Void
     let onFollowUp: (UUID) -> Void
     let onSkip: (UUID) -> Void
     let onRestore: (UUID) -> Void
@@ -636,6 +660,8 @@ struct PipelineCardItem: View {
             secondRoute: secondRoute
         )
         .onTapGesture { actions.selectedCardID.wrappedValue = card.id }
+        // Alongside the click, so selecting never waits to rule out a double-click.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { actions.onOpenPage(card.id) })
         .draggable(card.id.uuidString)
         .contextMenu {
             if let jobURL = card.jobURL.flatMap(URL.init(string:)) {

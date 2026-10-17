@@ -42,6 +42,13 @@ public extension Company {
         }
         return parts.isEmpty ? domain : parts.joined(separator: " · ")
     }
+
+    /// "Developer tools · 51-200 people", what follows the company's name in
+    /// a job's header; nil when the hub knows neither.
+    var industryAndSize: String? {
+        let facts = [industry, employeeCountRange.map { "\($0) people" }].compactMap { $0 }.filter { !$0.isEmpty }
+        return facts.isEmpty ? nil : facts.joined(separator: " · ")
+    }
 }
 
 public struct JobBoard: Codable, Equatable, Identifiable, Sendable {

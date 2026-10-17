@@ -56,7 +56,9 @@ enum VersionSnapshots {
             facts.running = HubVersion("0.1.0-dev.abc1234")!
         case "failed-checks":
             facts.ready = nil
-            facts.failed = FailedVersion(version: ready.version, problem: .otherTeam(found: "OTHERTEAM9", expected: "OWNERTEAM1"))
+            facts.failed = FailedVersion(
+                version: ready.version, problem: .otherTeam(found: "OTHERTEAM9", expected: "OWNERTEAM1"), whatsNew: ready.whatsNew
+            )
         case "cannot-check":
             facts = NewVersionFacts(running: running, lastCheckedAt: now.addingTimeInterval(-30 * 3600), failingSince: now.addingTimeInterval(-26 * 3600))
         case "withdrawn":

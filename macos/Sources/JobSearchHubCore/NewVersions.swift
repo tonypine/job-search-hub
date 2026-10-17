@@ -354,7 +354,9 @@ public struct WhatsNew: Equatable, Sendable {
 /// instead, when it holds an http(s) URL, so QA can serve a stub feed.
 /// Without the flag the variable is ignored. A QA build also carries a URL
 /// in its Info.plist as HubReleasesURL, which make-app.sh writes, for a
-/// launcher that passes no environment; the variable wins over it.
+/// launcher that passes no environment; the variable wins over it. In QA
+/// mode, Settings › Version also takes a URL, for QA that knows its stub
+/// feed's port only once the app is running.
 public struct ReleaseFeed: Sendable {
     public static let urlVariable = "HUB_RELEASES_URL"
     public static let urlInfoKey = "HubReleasesURL"
@@ -372,8 +374,10 @@ public struct ReleaseFeed: Sendable {
     }
 
     private let session: URLSession
-    private let url: URL
+    public let url: URL
     private let appVersion: String
+    /// A QA build, or launched with `--qa-mode`.
+    public let isQAMode: Bool
 
     /// Without a URL, the feed reads GitHub's, or QA's from
     /// HUB_RELEASES_URL, or the bundle's HubReleasesURL, in QA mode: a QA
@@ -390,6 +394,12 @@ public struct ReleaseFeed: Sendable {
         self.session = session
         self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild, bundledURL: bundledURL)
         self.appVersion = appVersion
+        isQAMode = isQABuild || arguments.contains(HubConnection.qaModeArgument)
+    }
+
+    /// The same feed, reading the releases from another URL.
+    public func reading(_ url: URL) -> ReleaseFeed {
+        ReleaseFeed(session: session, url: url, appVersion: appVersion, arguments: [], environment: [:], isQABuild: isQAMode, bundledURL: nil)
     }
 
     /// In QA mode, HUB_RELEASES_URL when it holds an http(s) URL, else the
@@ -403,7 +413,8 @@ public struct ReleaseFeed: Sendable {
         return url
     }
 
-    private static func feedURL(_ text: String?) -> URL? {
+    /// The text as a feed URL, when it's an http(s) URL with a host.
+    public static func feedURL(_ text: String?) -> URL? {
         guard let text = text?.trimmingCharacters(in: .whitespaces),
               let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host() != nil
         else { return nil }
