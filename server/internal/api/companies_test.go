@@ -127,6 +127,52 @@ func TestACompanysDossierIsServedByID(t *testing.T) {
 	}
 }
 
+func TestTheCompaniesListAndADossierCarryTheIndustry(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	acme, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	zeta, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.com"})
+	industry := "Payments"
+	if _, err := service.hub.UpdateCompany(ctx, owner, acme.ID, store.CompanyUpdate{Industry: &industry}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/companies", ownerToken, "")
+	var listed struct {
+		Companies []struct {
+			Company map[string]any `json:"company"`
+		} `json:"companies"`
+	}
+	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Companies) != 2 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	if got := listed.Companies[0].Company["industry"]; got != industry {
+		t.Fatalf("acme's industry = %v, want %q: %s", got, industry, body)
+	}
+	if _, sent := listed.Companies[1].Company["industry"]; sent {
+		t.Fatalf("zeta has no industry stored but the list sent one: %s", body)
+	}
+
+	status, body = send(t, http.MethodGet, service.url+"/v1/companies/"+acme.ID.String(), ownerToken, "")
+	var dossier struct {
+		Company map[string]any `json:"company"`
+	}
+	if err := json.Unmarshal(body, &dossier); status != http.StatusOK || err != nil || dossier.Company["industry"] != industry {
+		t.Fatalf("dossier: %d %s", status, body)
+	}
+	status, body = send(t, http.MethodGet, service.url+"/v1/companies/"+zeta.ID.String(), ownerToken, "")
+	var zetaDossier struct {
+		Company map[string]any `json:"company"`
+	}
+	if err := json.Unmarshal(body, &zetaDossier); status != http.StatusOK || err != nil {
+		t.Fatalf("zeta's dossier: %d %s", status, body)
+	}
+	if _, sent := zetaDossier.Company["industry"]; sent {
+		t.Fatalf("zeta has no industry stored but its dossier sent one: %s", body)
+	}
+}
+
 func TestTheAppRoutesAreForTheOwnerOnly(t *testing.T) {
 	service := startAPI(t)
 	agentToken := startTriage(t, service).Token

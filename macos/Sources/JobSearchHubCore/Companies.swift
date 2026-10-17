@@ -12,15 +12,35 @@ public struct Company: Codable, Equatable, Identifiable, Sendable {
     public var careersURL: String?
     public var headquartersCountry: String?
     public var employeeCountRange: String?
+    /// What the company does in one to three words: "Payments".
+    public var industry: String?
     public var summary: String?
     public var foundVia: String?
     public var createdAt: Date
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, name, domain, headquartersCountry, employeeCountRange, summary, foundVia, createdAt, updatedAt
+        case id, name, domain, headquartersCountry, employeeCountRange, industry, summary, foundVia, createdAt, updatedAt
         case websiteURL = "websiteUrl"
         case careersURL = "careersUrl"
+    }
+}
+
+public extension Company {
+    /// What a company's row says under its name: "Payments · 51-200 people".
+    /// The headquarters country stands in for an industry the hub doesn't
+    /// know, and the domain for a line that would be empty.
+    var contextLine: String {
+        var parts: [String] = []
+        if let industry, !industry.isEmpty {
+            parts.append(industry)
+        } else if let country = headquartersCountry, !country.isEmpty {
+            parts.append(country)
+        }
+        if let size = employeeCountRange, !size.isEmpty {
+            parts.append("\(size) people")
+        }
+        return parts.isEmpty ? domain : parts.joined(separator: " · ")
     }
 }
 

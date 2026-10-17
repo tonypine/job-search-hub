@@ -40,18 +40,40 @@ func startModelWorkAPI(t *testing.T, withFacts bool) (string, *store.Store, chan
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	})
 	read := make(chan uuid.UUID, 1)
-	controls := &modelwork.Controls{Hub: hub, Queue: modelqueue.New(true, modelqueue.Settings{}), Runtime: stubRuntime{}}
+	pauses, err := hub.GetRunKindPauses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controls := &modelwork.Controls{Hub: hub, Queue: modelqueue.New(pauses, modelqueue.Settings{}), Runtime: stubRuntime{}}
 	if withFacts {
 		controls.Facts = recordingFactsReader{read: read}
+		routeJobKinds(t, hub, "qwen3.8-27b")
 	}
 	routes := http.NewServeMux()
 	api.RegisterModelWorkRoutes(routes, controls, requireOwner)
+	api.RegisterRunStartRoutes(routes, controls, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return server.URL, hub, read
 }
 
-func TestModelWorkShowsItsStateAndPausesAndResumes(t *testing.T) {
+// isEveryKindPaused says whether the hub saved a pause for every kind it
+// starts by itself, or a resume for every one when paused is false.
+func isEveryKindPaused(t *testing.T, hub *store.Store, paused bool) bool {
+	t.Helper()
+	pauses, err := hub.GetRunKindPauses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kindPaused := range pauses {
+		if kindPaused != paused {
+			return false
+		}
+	}
+	return true
+}
+
+func TestModelWorkShowsItsStateAndPausesAndResumesEveryKind(t *testing.T) {
 	url, hub, _ := startModelWorkAPI(t, true)
 	status, answer := send(t, http.MethodGet, url+"/v1/model-work", ownerToken, "")
 	var work modelwork.Status
@@ -59,15 +81,18 @@ func TestModelWorkShowsItsStateAndPausesAndResumes(t *testing.T) {
 		t.Fatalf("status: %d %s", status, answer)
 	}
 	status, answer = send(t, http.MethodPost, url+"/v1/model-work/resume", ownerToken, "")
-	if json.Unmarshal(answer, &work); status != http.StatusOK || work.Paused {
+	if json.Unmarshal(answer, &work); status != http.StatusOK || work.Paused || len(work.PausedKinds) != 0 {
 		t.Fatalf("resume: %d %s", status, answer)
 	}
-	if paused, _ := hub.GetModelWorkPaused(context.Background()); paused {
-		t.Fatal("the resume wasn't saved")
+	if !isEveryKindPaused(t, hub, false) {
+		t.Fatal("the resume wasn't saved for every kind")
 	}
-	send(t, http.MethodPost, url+"/v1/model-work/pause", ownerToken, "")
-	if paused, _ := hub.GetModelWorkPaused(context.Background()); !paused {
-		t.Fatal("the pause wasn't saved")
+	status, answer = send(t, http.MethodPost, url+"/v1/model-work/pause", ownerToken, "")
+	if json.Unmarshal(answer, &work); status != http.StatusOK || !work.Paused || len(work.PausedKinds) != len(store.ListAutomaticRunKindIDs()) {
+		t.Fatalf("pause: %d %s", status, answer)
+	}
+	if !isEveryKindPaused(t, hub, true) {
+		t.Fatal("the pause wasn't saved for every kind")
 	}
 	if status, _ := send(t, http.MethodGet, url+"/v1/model-work", "", ""); status != http.StatusUnauthorized {
 		t.Errorf("without the owner token: %d", status)

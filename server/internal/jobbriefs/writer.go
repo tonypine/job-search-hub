@@ -31,7 +31,7 @@ const (
 	// a local model's context.
 	maximumDescriptionLength = 12_000
 	maximumAnswerTokens      = 1500
-	// maximumNightlyFullBriefs is how many full briefs Claude writes a night.
+	// maximumNightlyFullBriefs is how many full briefs are written a night.
 	maximumNightlyFullBriefs = 10
 	// nightStartHour and nightEndHour are the local hours the night's full
 	// briefs may start between.
@@ -43,13 +43,17 @@ type modelClient interface {
 	CompleteJSON(ctx context.Context, request chatcompletions.JSONRequest) (chatcompletions.Answer, error)
 }
 
-// Writer writes pre-briefs through client, the local model's route, and
-// full briefs through FullClient, Claude, when it's set.
+// Writer writes pre-briefs through client, on the job_brief route, and full
+// briefs through FullClient, on the job_brief_full route, when it's set.
 type Writer struct {
 	hub        *store.Store
 	client     modelClient
 	rates      jobfit.RateSource
 	FullClient modelClient
+	// IsPaused, when set, says whether a kind's background runs wait for a
+	// resume. The night's full briefs ask it before each brief; a full brief
+	// the owner asks for doesn't. Pre-briefs wait in the model queue.
+	IsPaused func(kind string) bool
 }
 
 func NewWriter(hub *store.Store, client modelClient, rates jobfit.RateSource) *Writer {
@@ -57,7 +61,7 @@ func NewWriter(hub *store.Store, client modelClient, rates jobfit.RateSource) *W
 }
 
 // ErrNoFullBriefs says the hub has no way to write full briefs.
-var ErrNoFullBriefs = errors.New("full briefs are off: no Claude CLI is set up")
+var ErrNoFullBriefs = errors.New("full briefs are off: no model is routed for them")
 
 // PassSummary counts one pass over the jobs to brief.
 type PassSummary struct {
@@ -131,11 +135,25 @@ func (writer *Writer) WriteOnce(ctx context.Context) (PassSummary, error) {
 	for _, judged := range fitting[:min(len(fitting), maximumBriefsPerPass)] {
 		jobsToBrief = append(jobsToBrief, judged.JobToBrief)
 	}
-	return writer.writeBriefs(ctx, writer.client, store.JobBriefTierPre, jobsToBrief, brief, summary)
+	return writer.writeBriefs(ctx, writer.client, store.JobBriefTierPre, jobsToBrief, brief, summary, "")
 }
 
-// WriteFullBrief writes the job's full brief with Claude, now, whatever its
-// fit: the owner asked for it.
+// WriteBrief writes the job's pre-brief now, on the model pre-briefs are
+// routed to, whatever its fit: the owner asked for it.
+func (writer *Writer) WriteBrief(ctx context.Context, jobID uuid.UUID) error {
+	brief, err := writer.readBriefContext(ctx)
+	if err != nil {
+		return err
+	}
+	job, err := writer.hub.GetJobToBrief(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	return writer.writeBrief(chatcompletions.WithStartedByOwner(ctx), writer.client, store.JobBriefTierPre, job, brief)
+}
+
+// WriteFullBrief writes the job's full brief now, on the model full briefs
+// are routed to, whatever its fit: the owner asked for it.
 func (writer *Writer) WriteFullBrief(ctx context.Context, jobID uuid.UUID) error {
 	if writer.FullClient == nil {
 		return ErrNoFullBriefs
@@ -148,11 +166,12 @@ func (writer *Writer) WriteFullBrief(ctx context.Context, jobID uuid.UUID) error
 	if err != nil {
 		return err
 	}
-	return writer.writeBrief(ctx, writer.FullClient, store.JobBriefTierFull, job, brief)
+	return writer.writeBrief(chatcompletions.WithStartedByOwner(ctx), writer.FullClient, store.JobBriefTierFull, job, brief)
 }
 
 // WriteNightlyFullBriefs writes the full briefs of the best-matched undecided
-// jobs, up to maximumNightlyFullBriefs a night.
+// jobs, up to maximumNightlyFullBriefs a night. While full briefs are paused
+// it starts none; a pause during the pass lets the brief running finish.
 func (writer *Writer) WriteNightlyFullBriefs(ctx context.Context) (PassSummary, error) {
 	if writer.FullClient == nil {
 		return PassSummary{}, ErrNoFullBriefs
@@ -168,18 +187,19 @@ func (writer *Writer) WriteNightlyFullBriefs(ctx context.Context) (PassSummary, 
 	if err != nil {
 		return PassSummary{}, err
 	}
-	return writer.writeBriefs(ctx, writer.FullClient, store.JobBriefTierFull, jobs, brief, PassSummary{})
+	return writer.writeBriefs(ctx, writer.FullClient, store.JobBriefTierFull, jobs, brief, PassSummary{}, store.RunKindJobBriefFull)
 }
 
 // RunNightly writes the night's full briefs once a night, between
 // nightStartHour and nightEndHour, checking every interval. A night the Mac
-// sleeps through is skipped, not made up during the day.
+// sleeps through is skipped, not made up during the day. A night spent
+// paused waits for the resume, until the night ends.
 func (writer *Writer) RunNightly(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var lastNight string
 	for {
-		if !drain.IsDraining(ctx) {
+		if !drain.IsDraining(ctx) && !writer.isPaused(store.RunKindJobBriefFull) {
 			now := time.Now()
 			if isNightDue(now, lastNight) {
 				lastNight = now.Format(time.DateOnly)
@@ -229,9 +249,13 @@ func (writer *Writer) readBriefContext(ctx context.Context) (briefContext, error
 }
 
 // writeBriefs writes each job's brief of the tier through client. A job the
-// model fails on is logged and counted; an unreachable model stops the pass.
-func (writer *Writer) writeBriefs(ctx context.Context, client modelClient, tier string, jobs []store.JobToBrief, brief briefContext, summary PassSummary) (PassSummary, error) {
+// model fails on is logged and counted; an unreachable model stops the pass,
+// and so does a pause of pausedKind, when set, before the next brief.
+func (writer *Writer) writeBriefs(ctx context.Context, client modelClient, tier string, jobs []store.JobToBrief, brief briefContext, summary PassSummary, pausedKind string) (PassSummary, error) {
 	for _, job := range jobs {
+		if pausedKind != "" && writer.isPaused(pausedKind) {
+			return summary, nil
+		}
 		err := writer.writeBrief(ctx, client, tier, job, brief)
 		if errors.Is(err, chatcompletions.ErrUnreachable) || ctx.Err() != nil {
 			return summary, err
@@ -244,6 +268,10 @@ func (writer *Writer) writeBriefs(ctx context.Context, client modelClient, tier 
 		summary.Written++
 	}
 	return summary, nil
+}
+
+func (writer *Writer) isPaused(kind string) bool {
+	return writer.IsPaused != nil && writer.IsPaused(kind)
 }
 
 // judgedJob is a job to brief with its fit level, which orders the pass.
@@ -274,10 +302,14 @@ type pointAnswer struct {
 }
 
 func (writer *Writer) writeBrief(ctx context.Context, client modelClient, tier string, job store.JobToBrief, brief briefContext) error {
+	task := chatcompletions.TaskLabel{SubjectID: &job.Job.ID, PromptID: &brief.prompt.ID, PromptVersion: brief.prompt.Version}
+	if tier == store.JobBriefTierFull {
+		task.Kind = store.RunKindJobBriefFull
+	}
 	answer, err := client.CompleteJSON(ctx, chatcompletions.JSONRequest{
 		System: brief.rendered.Body, User: formatBriefInput(job),
 		SchemaName: store.AgentPromptKindJobBrief, Schema: brief.prompt.ResultSchema, Examples: brief.prompt.Examples, MaxTokens: maximumAnswerTokens,
-		Task: chatcompletions.TaskLabel{SubjectID: &job.Job.ID, PromptID: &brief.prompt.ID, PromptVersion: brief.prompt.Version},
+		Task: task,
 	})
 	if err != nil {
 		return err

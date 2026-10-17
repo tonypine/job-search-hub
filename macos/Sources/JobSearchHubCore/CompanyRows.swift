@@ -42,18 +42,9 @@ public enum CompanyStanding: Equatable, Sendable {
 }
 
 public extension CompanySummary {
-    /// What the row says under the name: "Canada · 51-200 people", or the
-    /// domain when the hub knows neither.
-    var contextLine: String {
-        var parts: [String] = []
-        if let country = company.headquartersCountry, !country.isEmpty {
-            parts.append(country)
-        }
-        if let size = company.employeeCountRange, !size.isEmpty {
-            parts.append("\(size) people")
-        }
-        return parts.isEmpty ? company.domain : parts.joined(separator: " · ")
-    }
+    /// What the row says under the name: "Payments · 51-200 people", the
+    /// company's own context line.
+    var contextLine: String { company.contextLine }
 
     var hasFittingJobs: Bool { (fittingJobs ?? 0) > 0 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -104,7 +105,7 @@ func AddCVTools(server *mcp.Server, drafter cvDrafter) {
 		if _, err := getOwnerActor(ctx); err != nil {
 			return nil, generateMissingCVsOutput{}, err
 		}
-		queued, err := drafter.GenerateMissingCVs(ctx)
+		queued, err := drafter.GenerateMissingCVs(chatcompletions.WithStartedByOwner(ctx))
 		return nil, generateMissingCVsOutput{Queued: queued}, err
 	})
 	addTool(server, &mcp.Tool{
@@ -115,7 +116,7 @@ func AddCVTools(server *mcp.Server, drafter cvDrafter) {
 		if _, err := getOwnerActor(ctx); err != nil {
 			return nil, draftCVOutput{}, err
 		}
-		cv, err := drafter.DraftCV(ctx, input.JobID)
+		cv, err := drafter.DraftCV(chatcompletions.WithStartedByOwner(ctx), input.JobID)
 		if err != nil {
 			return nil, draftCVOutput{}, err
 		}
