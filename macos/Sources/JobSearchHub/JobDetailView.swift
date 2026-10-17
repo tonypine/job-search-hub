@@ -176,8 +176,6 @@ struct JobDetailView: View {
     @State private var scrollTarget: String?
     /// The page is at least the wide width.
     @State private var isWide = true
-    /// The page has the keyboard, for P, L and S.
-    @FocusState private var isPageFocused: Bool
     @Environment(RemoteTaskRunner.self) private var taskRunner
 
     /// The ids the strip and the screen scroll to.
@@ -235,7 +233,14 @@ struct JobDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .modifier(PageKeys(isEnabled: layout == .page, isFocused: $isPageFocused) { key in decide(byKey: key) })
+        .background {
+            if layout == .page {
+                JobPageKeys { key in
+                    guard case let .letter(letter) = key else { return false }
+                    return decide(byKey: letter)
+                }
+            }
+        }
         .onChange(of: model.details?.job.title, initial: true) { showTitle(model.details?.job.title) }
         .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
         .alert("Followed up", isPresented: Binding(get: { followingUpApplicationID != nil }, set: { if !$0 { followingUpApplicationID = nil } })) {

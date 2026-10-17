@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import JobSearchHub
 import JobSearchHubCore
@@ -122,4 +123,35 @@ private func makeInspector(showing index: Int = 2) -> DetailsInspector {
     details.hide()
 
     #expect(details.expandedPage == nil)
+}
+
+// MARK: The page's keys
+
+private func getKey(_ keyCode: UInt16, _ characters: String?, _ modifiers: NSEvent.ModifierFlags = [], isTyping: Bool = false) -> JobPageKey? {
+    JobPageKey.get(keyCode: keyCode, characters: characters, modifiers: modifiers, isTyping: isTyping)
+}
+
+@Test func upDownAndEscapeMoveThroughTheListAndGoBack() {
+    // Arrow keys carry the numeric pad and function flags.
+    #expect(getKey(126, "\u{F700}", [.numericPad, .function]) == .previous)
+    #expect(getKey(125, "\u{F701}", [.numericPad, .function]) == .next)
+    #expect(getKey(53, "\u{1B}") == .back)
+    #expect(getKey(33, "[", .command) == .back)
+    // ⇧↓ or ⌥↓ is not the page's.
+    #expect(getKey(125, "\u{F701}", [.numericPad, .function, .shift]) == nil)
+}
+
+@Test func plainLettersGoToTheJobInEitherCase() {
+    #expect(getKey(35, "p") == .letter("p"))
+    #expect(getKey(37, "L", .shift) == .letter("L"))
+    #expect(getKey(1, "s", .command) == nil)
+    #expect(getKey(1, "s", .control) == nil)
+    #expect(getKey(18, "1") == nil)
+}
+
+@Test func aFieldOrATerminalKeepsEveryKeyButCommandBracket() {
+    #expect(getKey(125, "\u{F701}", [.numericPad, .function], isTyping: true) == nil)
+    #expect(getKey(53, "\u{1B}", isTyping: true) == nil)
+    #expect(getKey(35, "p", isTyping: true) == nil)
+    #expect(getKey(33, "[", .command, isTyping: true) == .back)
 }

@@ -169,11 +169,12 @@ struct InspectorNavigationBar: View {
         HStack(spacing: Space.xs) {
             Button("Back", systemImage: "chevron.backward") { details.goBack() }
                 .keyboardShortcut("[", modifiers: .command)
-                .disabled(!details.history.canGoBack)
+                // A job open as a page has ⌘[ to go back to its list.
+                .disabled(!details.history.canGoBack || details.expandedPage != nil)
                 .help("Back (⌘[)")
             Button("Forward", systemImage: "chevron.forward") { details.goForward() }
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(!details.history.canGoForward)
+                .disabled(!details.history.canGoForward || details.expandedPage != nil)
                 .help("Forward (⌘])")
             Spacer(minLength: 0)
             if case .job = details.history.current?.subject, let page = details.page {
