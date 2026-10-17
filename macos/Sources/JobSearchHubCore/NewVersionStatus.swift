@@ -35,10 +35,13 @@ public struct ReadyVersion: Equatable, Sendable {
 public struct FailedVersion: Equatable, Sendable {
     public var version: HubVersion
     public var problem: DownloadProblem
+    /// What's in it, from its release notes; nil when unknown.
+    public var whatsNew: WhatsNew?
 
-    public init(version: HubVersion, problem: DownloadProblem) {
+    public init(version: HubVersion, problem: DownloadProblem, whatsNew: WhatsNew? = nil) {
         self.version = version
         self.problem = problem
+        self.whatsNew = whatsNew
     }
 
     /// "0.1.252 didn't pass its checks".
@@ -64,10 +67,14 @@ public struct NewVersionFacts: Equatable, Sendable {
     public var ready: ReadyVersion?
     public var failed: FailedVersion?
     public var isRunningWithdrawn: Bool
+    /// A QA build, or launched with `--qa-mode`: a local build names a
+    /// refused version, so QA sees what a check against its stub feed found.
+    public var isQAMode: Bool
 
     public init(
         running: HubVersion, isChecking: Bool = false, lastCheckedAt: Date? = nil, failingSince: Date? = nil,
-        newestRelease: HubVersion? = nil, ready: ReadyVersion? = nil, failed: FailedVersion? = nil, isRunningWithdrawn: Bool = false
+        newestRelease: HubVersion? = nil, ready: ReadyVersion? = nil, failed: FailedVersion? = nil, isRunningWithdrawn: Bool = false,
+        isQAMode: Bool = false
     ) {
         self.running = running
         self.isChecking = isChecking
@@ -77,6 +84,7 @@ public struct NewVersionFacts: Equatable, Sendable {
         self.ready = ready
         self.failed = failed
         self.isRunningWithdrawn = isRunningWithdrawn
+        self.isQAMode = isQAMode
     }
 }
 
@@ -104,7 +112,8 @@ public enum NewVersionStatus: Equatable, Sendable {
     /// version, a newer download that failed its checks, a day without a
     /// check, a local build, then a ready version or none. A local build
     /// never names a failed download: one unsigned, as `swift run` builds
-    /// it, refuses every version.
+    /// it, refuses every version. In QA mode it does: QA's builds are local
+    /// ones, and a refused version is what a stub feed shows them.
     public static func make(_ facts: NewVersionFacts, now: Date) -> NewVersionStatus {
         if facts.isChecking {
             return .checking
@@ -112,7 +121,7 @@ public enum NewVersionStatus: Equatable, Sendable {
         if facts.isRunningWithdrawn {
             return .withdrawn(facts.running)
         }
-        if let failed = facts.failed, !facts.running.isLocalBuild, failed.version > (facts.ready?.version ?? facts.running) {
+        if let failed = facts.failed, !facts.running.isLocalBuild || facts.isQAMode, failed.version > (facts.ready?.version ?? facts.running) {
             return .failedChecks(failed)
         }
         if let since = facts.failingSince, now.timeIntervalSince(since) >= staleAfter {

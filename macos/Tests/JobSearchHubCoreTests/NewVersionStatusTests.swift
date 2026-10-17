@@ -67,3 +67,13 @@ private let ready = ReadyVersion(
     phone.whatsNew.notes.append(ChangeNote(kind: .new, parts: [.phone], text: "Snooze a follow-up", pullRequest: 73))
     #expect(phone.installSummary == "The server restarts for about 10 seconds. The database stays as it is. The phone changes install on the phone.")
 }
+
+@Test func inQAModeALocalBuildNamesARefusedVersion() {
+    let failed = FailedVersion(version: HubVersion("0.1.9999")!, problem: .runningAppUnsigned, whatsNew: ready.whatsNew)
+    var facts = NewVersionFacts(running: HubVersion("0.1.0-dev")!, lastCheckedAt: now, failed: failed, isQAMode: true)
+    #expect(NewVersionStatus.make(facts, now: now) == .failedChecks(failed))
+
+    // Without one, it's a local build as ever.
+    facts.failed = nil
+    #expect(NewVersionStatus.make(facts, now: now) == .localBuild(commit: nil))
+}
