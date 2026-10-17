@@ -36,7 +36,8 @@ struct JobSearchHubApp: App {
         WindowGroup("Job Search Hub", id: "main") {
             ContentView(
                 initialPage: Self.pageFromLaunchArguments(), initialJobID: Self.jobFromLaunchArguments(),
-                opensSession: ProcessInfo.processInfo.arguments.contains("--session")
+                opensSession: ProcessInfo.processInfo.arguments.contains("--session"),
+                opensJobPage: ProcessInfo.processInfo.arguments.contains("--job-page")
             )
                 .environment(connection)
                 .environment(events)
@@ -120,7 +121,8 @@ struct JobSearchHubApp: App {
     }
 
     /// `--job <id>` opens that job's details on the Jobs or Pipeline page;
-    /// with `--session`, the Jobs page opens it on its Session tab.
+    /// with `--session`, the Jobs page opens it on its Session tab, and with
+    /// `--job-page`, as a page in place of the list.
     private static func jobFromLaunchArguments() -> UUID? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flagIndex = arguments.firstIndex(of: "--job"), flagIndex + 1 < arguments.count else { return nil }
@@ -194,11 +196,14 @@ struct ContentView: View {
     @State private var pendingLeave: PendingLeave?
     let initialJobID: UUID?
     let opensSession: Bool
+    /// `--job-page`: the launch job opens as a page once its details show.
+    @State private var opensJobPage: Bool
 
-    init(initialPage: Page, initialJobID: UUID?, opensSession: Bool) {
+    init(initialPage: Page, initialJobID: UUID?, opensSession: Bool, opensJobPage: Bool = false) {
         _selectedPage = State(initialValue: initialPage)
         self.initialJobID = initialJobID
         self.opensSession = opensSession
+        _opensJobPage = State(initialValue: opensJobPage && initialJobID != nil)
     }
 
     var body: some View {
@@ -228,7 +233,20 @@ struct ContentView: View {
             // The page stays in the tree without one, so its state outlives
             // a hub address that is briefly invalid while being edited.
             ZStack {
+                // A job open as a page takes the list's place. The list stays
+                // underneath, hidden and out of reach of the keyboard, so it
+                // comes back with its selection and its scroll as they were.
                 page
+                    .opacity(expandedJobID == nil ? 1 : 0)
+                    .allowsHitTesting(expandedJobID == nil)
+                    .accessibilityHidden(expandedJobID != nil)
+                    .disabled(expandedJobID != nil)
+                if let expandedJobID, let selectedPage, let client = connection.makeClient() {
+                    JobPageView(jobID: expandedJobID, listPage: selectedPage, client: client) {
+                        details.collapse()
+                        requests.ask(.focusList, on: selectedPage)
+                    }
+                }
                 if connectionProblem == .notSetUp {
                     ConnectToHubView()
                         .navigationTitle(selectedPage?.title ?? "Job Search Hub")
@@ -273,7 +291,9 @@ struct ContentView: View {
                 Text("You have \(SaveBar.describe(criteria.changeCount)) on Criteria. Discarded, they're gone.")
             }
         }
-        .inspector(isPresented: Binding(get: { shownEntry != nil }, set: { if !$0 { details.hide() } })) {
+        // A job open as a page closes the inspector, and collapsing it
+        // brings the inspector back with the same job.
+        .inspector(isPresented: Binding(get: { shownEntry != nil && expandedJobID == nil }, set: { if !$0 && expandedJobID == nil { details.hide() } })) {
             if let shownEntry, let client = connection.makeClient() {
                 VStack(spacing: 0) {
                     InspectorNavigationBar(details: details)
@@ -362,9 +382,17 @@ struct ContentView: View {
                 await counts.refresh(with: client)
             }
         }
+        .onChange(of: shownEntry) {
+            if opensJobPage, let selectedPage, shownEntry?.subject == initialJobID.map(InspectorSubject.job) {
+                opensJobPage = false
+                details.expand(on: selectedPage)
+            }
+        }
         // A page opened in a folded group, from `--page` or a link, unfolds it.
         .onChange(of: selectedPage, initial: true) {
             if let group = selectedPage?.group { isExpanded(group).wrappedValue = true }
+            // Another page opens on its list, not on a job left open as a page.
+            details.collapse()
             installer.shownPage = selectedPage
         }
     }
@@ -439,6 +467,11 @@ struct ContentView: View {
 
     private var shownEntry: InspectorEntry? {
         selectedPage.flatMap { details.getEntry(on: $0) }
+    }
+
+    /// The job open as a page in place of the page's list, if one is.
+    private var expandedJobID: UUID? {
+        selectedPage.flatMap { details.getExpandedJob(on: $0) }
     }
 
     /// Does what the palette's row says: opens a job, company or person in

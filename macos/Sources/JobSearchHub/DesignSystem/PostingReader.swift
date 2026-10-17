@@ -6,16 +6,26 @@ import SwiftUI
 /// at 13 pt with a 1.3 line height. Phrases a screen check quoted are marked
 /// in the check's tone, and find matches in the accent; hovering a marked
 /// block names the checks and why. Each block is identified by
-/// `PostingReader.blockID(_:)`, to scroll to.
+/// `PostingReader.blockID(_:)`, to scroll to. On a page, where it runs at a
+/// reading measure, it's a point larger.
 struct PostingReader: View {
+    /// Where the posting is read: in the inspector's column at 13 pt, or on
+    /// a page at 14 pt.
+    enum Size {
+        case inspector, page
+
+        var font: Font { self == .page ? .hubPostingOnPage : .hubPosting }
+        var lineSpacing: CGFloat { (self == .page ? 14 : 13) * 0.3 }
+    }
+
     let document: PostingDocument
     var marks: [PostingMark] = []
     var matches: [PostingSpan] = []
+    var size = Size.inspector
     /// Called as a heading's top passes the reading line near the top of the
     /// scroll view, going down (true) or back up (false), with its block.
     var onHeadingPassed: (Int, Bool) -> Void = { _, _ in }
 
-    private static let lineSpacing: CGFloat = 13 * 0.3
     private static let headingSpace: CGFloat = 13 * 1.25
     static let paragraphSpace: CGFloat = 13 * 0.75
     static let itemSpace: CGFloat = 13 * 0.35
@@ -76,8 +86,8 @@ struct PostingReader: View {
 
     private func reading(_ index: Int) -> some View {
         Text(style(index))
-            .font(.hubPosting)
-            .lineSpacing(Self.lineSpacing)
+            .font(size.font)
+            .lineSpacing(size.lineSpacing)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

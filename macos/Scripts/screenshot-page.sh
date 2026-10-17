@@ -1,6 +1,6 @@
 #!/bin/bash
 # Opens a build of the app on one page, captures only its window, and quits it.
-# Usage: Scripts/screenshot-page.sh <page> <output.png> [more app arguments, e.g. --job <id>]
+# Usage: Scripts/screenshot-page.sh <page> <output.png> [more app arguments, e.g. --job <id>, with --job-page to open it as a page]
 #
 # It runs make-app.sh's build/JobSearchHub.app, or the bundle SCREENSHOT_APP
 # names, as a process of its own, and quits only that one: the installed app
