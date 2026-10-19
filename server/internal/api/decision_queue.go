@@ -20,6 +20,9 @@ type decisionQueueItem struct {
 	BriefTier   string             `json:"brief_tier"`
 	Fit         jobfit.Fit         `json:"fit"`
 	Decision    *store.JobDecision `json:"decision,omitempty"`
+	// UnseenUpdates counts the updates about the job the owner hasn't seen,
+	// for the queue row's dot.
+	UnseenUpdates int `json:"unseen_updates"`
 }
 
 type decisionQueueResponse struct {
@@ -60,7 +63,7 @@ func RegisterDecisionRoutes(routes *http.ServeMux, hub *store.Store, rateSource 
 		for _, queuedItem := range queued {
 			items = append(items, decisionQueueItem{
 				Job: queuedItem.Job, CompanyName: queuedItem.CompanyName, Match: queuedItem.Match, Reason: queuedItem.Reason, BriefTier: queuedItem.BriefTier,
-				Fit: jobfit.Judge(queuedItem.Job, queuedItem.Facts, criteria, rates), Decision: queuedItem.Decision,
+				Fit: jobfit.Judge(queuedItem.Job, queuedItem.Facts, criteria, rates), Decision: queuedItem.Decision, UnseenUpdates: queuedItem.UnseenUpdates,
 			})
 		}
 		writeJSON(w, http.StatusOK, decisionQueueResponse{Items: items, Total: len(items)})

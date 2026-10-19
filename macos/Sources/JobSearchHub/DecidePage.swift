@@ -8,11 +8,27 @@ final class DecideModel {
     private(set) var signals: DecisionSignals?
     private(set) var isLoading = false
     private(set) var loadError: HubFailure?
-    /// Why the last decision failed.
+    /// Why the last decision, or its Undo, failed.
     var actionError: HubFailure?
     var toast: ToastMessage?
-    var selectedID: UUID?
+    /// The skipped job whose reason sheet is open, from the toast.
+    var reasonTarget: JobSkipTarget?
+    /// The job open beside the queue, the one P, L and S decide.
+    var selectedID: UUID? {
+        didSet {
+            if selectedID != restoringID { restoringID = nil }
+        }
+    }
+
+    /// The job an Undo brought back, which stays open while the queue reads
+    /// again, even when a read started before the Undo lands without it.
+    private var restoringID: UUID?
     private var hasLoaded = false
+
+    /// "7 to decide · 12 decided this week".
+    var subtitle: String {
+        DecisionSignals.makeSubtitle(toDecide: items.count, signals: signals)
+    }
 
     /// Reads the queue and the signals. The first read selects the best job;
     /// later reads keep the selection's place in the queue, so after a
@@ -34,6 +50,10 @@ final class DecideModel {
         }
         let isFirstLoad = !hasLoaded
         hasLoaded = true
+        if let restoringID {
+            if items.contains(where: { $0.id == restoringID }) { self.restoringID = nil }
+            return
+        }
         if let selectedID, items.contains(where: { $0.id == selectedID }) { return }
         if isFirstLoad {
             selectedID = items.first?.id
@@ -44,198 +64,323 @@ final class DecideModel {
         }
     }
 
-    /// Records the decision and says so, then brings up the next job: the
-    /// one after it, which stays selected once the queue reads again.
-    func decide(_ item: DecisionQueueItem, _ decision: JobDecisionKind, reason: String = "", through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
+    /// The job a step down (1) or up (-1) the queue, without deciding; it
+    /// stops at either end.
+    func move(by step: Int) {
+        guard !items.isEmpty else { return }
+        selectedID = KeyboardDecision.move(from: selectedID, by: step, in: items.map(\.id))
+    }
+
+    /// Decides the job at once and brings up the next, then says so with
+    /// Undo, so nothing asks first; Skip's note offers a reason too. Later
+    /// does nothing to a job already left for later.
+    func decide(_ item: DecisionQueueItem, _ decision: JobDecisionKind, through decisions: JobDecisions, with client: HubClient) async {
+        if decision == .later && item.decision != nil { return }
         let nextID = KeyboardDecision.getNextID(after: item.id, in: items.map(\.id))
         do {
-            _ = try await decisions.decide(item.id, decision, reason: reason, with: client)
+            _ = try await decisions.decide(item.id, decision, with: client)
         } catch {
-            return HubFailure("Couldn't record the decision", error)
+            actionError = HubFailure("Couldn't record the decision", error)
+            return
         }
         if selectedID == item.id { selectedID = nextID }
-        switch decision {
-        case .pursue: toast = ToastMessage(text: "Pursued \(item.job.title)")
-        case .later: toast = ToastMessage(text: "Left \(item.job.title) for later", tone: .neutral, symbol: "clock")
-        case .skip: toast = ToastMessage(text: "Skipped \(item.job.title)", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
+        let undo: @MainActor () -> Void = { [weak self] in
+            Task { await self?.undo(item, through: decisions, with: client) }
         }
-        return nil
+        switch decision {
+        case .pursue:
+            toast = ToastMessage(text: "Pursued \(item.job.title)", undo: undo)
+        case .later:
+            toast = ToastMessage(text: "Left \(item.job.title) for later", tone: .neutral, symbol: "clock", undo: undo)
+        case .skip:
+            toast = ToastMessage(
+                text: "Skipped \(item.job.title)", tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName, undo: undo,
+                action: ToastAction(title: "Add reason") { [weak self] in
+                    self?.reasonTarget = JobSkipTarget(jobIDs: [item.id])
+                }
+            )
+        }
+    }
+
+    /// Takes the decision back, which puts the job back in the queue, and
+    /// opens it again. A pursue's card leaves the pipeline with it, unless
+    /// the card changed since, which the note then says.
+    func undo(_ item: DecisionQueueItem, through decisions: JobDecisions, with client: HubClient) async {
+        let cleared: [UUID: ClearedJobDecision]
+        do {
+            cleared = try await decisions.clear([item.id], with: client)
+        } catch {
+            actionError = HubFailure("Couldn't undo the decision", error)
+            return
+        }
+        restoringID = item.id
+        selectedID = item.id
+        if cleared[item.id]?.keptApplicationID != nil {
+            toast = ToastMessage(
+                text: "\(item.job.title) stays on the pipeline: its card changed since the pursue", tone: .neutral, symbol: "info.circle"
+            )
+        }
+    }
+
+    /// Saves why the skipped job was skipped, or returns why it failed.
+    func addSkipReason(_ reason: String, to ids: Set<UUID>, through decisions: JobDecisions, with client: HubClient) async -> HubFailure? {
+        do {
+            _ = try await decisions.dismiss(ids, reason: reason, with: client)
+            return nil
+        } catch {
+            return HubFailure("Couldn't save the reason", error)
+        }
     }
 }
 
-/// The briefed jobs to decide, best match first. The selected job opens on
-/// its brief, where Pursue, Skip and Later decide it and bring up the next.
-/// From the keyboard: ↑↓ move, Return opens, and P, L and S decide.
+/// The briefed jobs to decide, best match first, in a narrow column, with
+/// the selected job's page beside it: the posting and the cards that judge
+/// it, so deciding is reading (TP-672). There's no inspector: P, L and S
+/// decide the open job and bring up the next, with Undo; ↑↓ move through the
+/// queue without deciding.
+///
+/// Nothing here follows its content's width: the queue is a constant 300
+/// pt, its rows a constant height, and the job's page takes what's left and
+/// asks for none of its own, so no window width can loop the layout (#54).
 struct DecidePage: View {
+    /// The queue's width, whatever the window's.
+    static let queueWidth: CGFloat = 300
+
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = DecideModel()
-    @State private var skipping: DecisionQueueItem?
+    /// The open job's tab, kept as the queue moves on.
+    @State private var tab = InspectorTab.posting
     @FocusState private var isQueueFocused: Bool
 
     var body: some View {
         Group {
             if let client = connection.makeClient() {
-                VStack(spacing: 0) {
-                    header
-                    queue(client)
-                }
-                .task { await model.load(with: client) }
-                .onChange(of: [events.revision, decisions.revision]) { Task { await model.load(with: client) } }
-                .onChange(of: model.selectedID, initial: true) {
-                    details.show(model.selectedID.map(InspectorSubject.job), from: .decide)
-                }
-                .onChange(of: details.getEntry(on: .decide)) {
-                    // ⌘K can open another queued job; the list then selects it too.
-                    if details.getEntry(on: .decide) == nil {
-                        model.selectedID = nil
-                    } else if let openItem {
-                        model.selectedID = openItem.id
+                content(client)
+                    .task { await model.load(with: client) }
+                    .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                    // The page owns the inspector's history while it shows, so a
+                    // company opened from the job's page shows beside it.
+                    .onAppear { details.show(nil, from: .decide) }
+                    .onChange(of: details.getEntry(on: .decide)) { openQueuedJob() }
+                    .onPageRequest(.decide) { request in
+                        if request == .focusList { isQueueFocused = true }
                     }
-                }
-                .onPageRequest(.decide) { request in
-                    if request == .focusList { isQueueFocused = true }
-                }
-                .sheet(item: $skipping) { item in
-                    SkipJobsSheet(jobCount: 1) { reason in
-                        await model.decide(item, .skip, reason: reason, through: decisions, with: client)
+                    .sheet(item: $model.reasonTarget) { target in
+                        SkipReasonSheet(jobCount: target.jobIDs.count) { reason in
+                            await model.addSkipReason(reason, to: target.jobIDs, through: decisions, with: client)
+                        }
                     }
-                }
             }
         }
         .navigationTitle("Decide")
-        .navigationSubtitle(model.items.count == 1 ? "1 job to decide" : "\(model.items.count) jobs to decide")
+        .navigationSubtitle(model.subtitle)
     }
 
-    /// The page's header: no scopes or search, so the keys that work the
-    /// queue sit where they would.
-    private var header: some View {
-        PageHeader {
-            Text("↑↓ move · Return opens · P pursue · L later · S skip")
-                .font(.hubSecondary)
-                .foregroundStyle(.secondary)
-        } trailing: {
-            EmptyView()
-        }
-    }
-
-    /// The queued job the inspector shows, the one P, L and S decide.
-    private var openItem: DecisionQueueItem? {
-        model.items.first { details.getEntry(on: .decide)?.subject == .job($0.id) }
-    }
-
-    private func reload() async {
-        if let client = connection.makeClient() { await model.load(with: client) }
-    }
-
-    /// The queue, under how deciding went this week. The summary sits above
-    /// the list rather than in it: a list row whose height follows the list's
-    /// width can keep the window's layout from settling as the inspector
-    /// opens beside hundreds of rows. For the same reason it always takes two
-    /// lines, so its height doesn't follow the page's width either.
-    private func queue(_ client: HubClient) -> some View {
-        List(selection: $model.selectedID) {
-            ForEach(model.items) { item in
-                DecisionQueueRow(item: item).tag(item.id)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let signals = model.signals {
-                VStack(spacing: 0) {
-                    Text(signals.summary).font(.hubCaption).foregroundStyle(.secondary)
-                        .lineLimit(2, reservesSpace: true)
-                        .help(signals.summary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Space.l)
-                        .padding(.vertical, Space.s)
-                    Divider()
+    @ViewBuilder
+    private func content(_ client: HubClient) -> some View {
+        if let loadError = model.loadError, model.items.isEmpty {
+            HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
+        } else if model.items.isEmpty && !model.isLoading {
+            ContentUnavailableView("Nothing to decide", systemImage: "checkmark.circle",
+                                   description: Text("Briefed jobs wait here until you pursue, skip or leave them for later."))
+        } else {
+            HStack(spacing: 0) {
+                DecideQueueColumn(items: model.items, selectedID: $model.selectedID, isFocused: $isQueueFocused) { item, decision in
+                    Task { await model.decide(item, decision, through: decisions, with: client) }
                 }
-                .background(.background)
+                .frame(width: Self.queueWidth)
+                Divider()
+                jobPage(client)
             }
-        }
-        .focused($isQueueFocused)
-        .contextMenu(forSelectionType: UUID.self) { ids in
-            if let item = model.items.first(where: { ids == [$0.id] }) {
-                Button("Pursue") { decide(item, .pursue, with: client) }
-                    .keyboardShortcut("p", modifiers: [])
-                if item.decision == nil {
-                    Button("Later") { decide(item, .later, with: client) }
-                        .keyboardShortcut("l", modifiers: [])
+            // ↑ and ↓ go through the queue wherever the keyboard is on the
+            // page, but in a field; the job's page takes P, L and S.
+            .background {
+                JobPageKeys { key in
+                    switch key {
+                    case .previous: model.move(by: -1)
+                    case .next: model.move(by: 1)
+                    case .back, .letter: return false
+                    }
+                    return true
                 }
-                Button("Skip…") { decide(item, .skip, with: client) }
-                    .keyboardShortcut("s", modifiers: [])
             }
-        } primaryAction: { ids in
-            // Return, or a double-click, opens the job, also after its details were closed.
-            if let id = ids.first { details.show(.job(id), from: .decide) }
-        }
-        .onKeyPress(characters: .letters, phases: .down) { press in
-            guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
-                  let decision = press.characters.first.flatMap(KeyboardDecision.getDecision(for:)),
-                  let item = openItem
-            else { return .ignored }
-            decide(item, decision, with: client)
-            return .handled
-        }
-        .overlay(alignment: .bottom) {
-            if model.actionError != nil {
-                HubErrorView($model.actionError)
+            .overlay(alignment: .bottom) {
+                if model.loadError != nil || model.actionError != nil {
+                    VStack(spacing: Space.s) {
+                        // A read that failed leaves the queue from the last one up.
+                        if let loadError = model.loadError {
+                            HubErrorView(loadError, retry: { Task { await model.load(with: client) } })
+                        }
+                        if model.actionError != nil {
+                            HubErrorView($model.actionError)
+                        }
+                    }
                     .frame(maxWidth: 560)
                     .padding(Space.l)
+                }
             }
-        }
-        .toast($model.toast)
-        .overlay {
-            if let loadError = model.loadError {
-                HubErrorView(loadError, style: .page, retry: { Task { await reload() } })
-            } else if model.items.isEmpty && !model.isLoading {
-                ContentUnavailableView("Nothing to decide", systemImage: "checkmark.circle",
-                                       description: Text("Briefed jobs wait here until you pursue, skip or leave them for later."))
-            }
+            .toast($model.toast)
         }
     }
 
-    /// Pursues the job or leaves it for later, then brings up the next; Skip
-    /// asks why first. Later does nothing to a job already left for later.
-    private func decide(_ item: DecisionQueueItem, _ decision: JobDecisionKind, with client: HubClient) {
-        switch decision {
-        case .skip:
-            skipping = item
-        case .later where item.decision != nil:
-            break
-        case .pursue, .later:
-            Task {
-                if let failure = await model.decide(item, decision, through: decisions, with: client) {
-                    model.actionError = failure
+    /// The open job as a page, without the posting's outline: the queue
+    /// takes its place on the left.
+    @ViewBuilder
+    private func jobPage(_ client: HubClient) -> some View {
+        Group {
+            if let item = openItem {
+                JobDetailView(jobID: item.id, client: client, tab: $tab, layout: .page, showsOutline: false) { decision in
+                    await model.decide(item, decision, through: decisions, with: client)
+                }
+                .id(item.id)
+            } else if let selectedID = model.selectedID {
+                // A job an Undo brought back, before the queue reads it again.
+                JobDetailView(jobID: selectedID, client: client, tab: $tab, layout: .page, showsOutline: false)
+                    .id(selectedID)
+            } else {
+                ContentUnavailableView("Select a job", systemImage: "rectangle.stack",
+                                       description: Text("Its posting and the cards that judge it open here."))
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .background(.background)
+    }
+
+    /// The queued job open beside the queue, the one P, L and S decide.
+    private var openItem: DecisionQueueItem? {
+        model.items.first { $0.id == model.selectedID }
+    }
+
+    /// A queued job opened in the inspector, from ⌘K or a company's jobs,
+    /// opens beside the queue instead; any other job stays in the inspector.
+    private func openQueuedJob() {
+        guard case let .job(jobID)? = details.getEntry(on: .decide)?.subject, model.items.contains(where: { $0.id == jobID }) else { return }
+        model.selectedID = jobID
+        details.hide()
+    }
+}
+
+/// The queue's column: how it's ordered on top, the jobs, and the keys that
+/// work them at its foot.
+struct DecideQueueColumn: View {
+    let items: [DecisionQueueItem]
+    @Binding var selectedID: UUID?
+    var isFocused: FocusState<Bool>.Binding
+    let decide: (DecisionQueueItem, JobDecisionKind) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("Best match first")
+                .font(.hubSecondary)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, Space.l)
+                .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36, alignment: .leading)
+            Divider()
+            List(selection: $selectedID) {
+                ForEach(items) { item in
+                    DecisionQueueRow(item: item).tag(item.id)
                 }
             }
+            .focused(isFocused)
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let item = items.first(where: { ids == [$0.id] }) {
+                    Button("Pursue") { decide(item, .pursue) }
+                    if item.decision == nil {
+                        Button("Later") { decide(item, .later) }
+                    }
+                    Button("Skip") { decide(item, .skip) }
+                }
+            }
+            Divider()
+            DecideKeyLegend()
         }
     }
 }
 
-/// One job in the queue: its match, title, company and the brief's reason.
-/// Its height never depends on the list's width: each line is truncated,
-/// and the reason always takes two lines. Rows that grow as the list
-/// narrows can loop the window's layout until AppKit stops the app.
+/// The keys that work the queue, at its foot: P Pursue, L Later, S Skip,
+/// ↑↓ Move.
+struct DecideKeyLegend: View {
+    var body: some View {
+        HStack(spacing: Space.m) {
+            entry("P", "Pursue")
+            entry("L", "Later")
+            entry("S", "Skip")
+            entry("↑↓", "Move")
+            Spacer(minLength: 0)
+        }
+        .font(.hubCaption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, Space.l)
+        .frame(height: 32)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("P pursues, L leaves for later, S skips, and the arrow keys move through the queue")
+    }
+
+    private func entry(_ key: String, _ title: String) -> some View {
+        HStack(spacing: Space.xs) {
+            Text(key)
+                .font(.caption2.weight(.medium).monospaced())
+                .padding(.horizontal, Space.xs)
+                .padding(.vertical, 1)
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.separator))
+            Text(title)
+        }
+        .fixedSize()
+    }
+}
+
+/// One job in the queue: its match in its tone and its company, the title,
+/// the brief's reason, and a dot for updates you haven't seen. Its height
+/// never depends on the list's width: each line is truncated, and the
+/// reason always takes two lines. Rows that grow as the list narrows can
+/// loop the window's layout until AppKit stops the app.
 struct DecisionQueueRow: View {
     let item: DecisionQueueItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            HStack(spacing: Space.s) {
-                ToneChip(item.match)
-                Text(item.job.title).fontWeight(.medium).lineLimit(1)
-                if item.decision != nil {
-                    ToneChip("Later", tone: .neutral, symbol: "clock")
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Space.xs) {
+                QueueMatchWord(match: item.match)
+                if let company = item.companyName, !company.isEmpty {
+                    Text("· \(company)").foregroundStyle(.secondary)
                 }
+                if item.decision != nil {
+                    Label("Later", systemImage: "clock")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.secondary)
+                        .help("Left for later")
+                }
+                Spacer(minLength: Space.xs)
+                UnseenDot(count: item.unseenUpdates ?? 0)
             }
-            if let company = item.companyName {
-                Text(company).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
-            }
+            .font(.hubCaption)
+            .lineLimit(1)
+            Text(item.job.title).fontWeight(.semibold).lineLimit(1)
             Text(item.reason).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
         }
         .padding(.vertical, Space.xs)
+    }
+}
+
+/// A queue row's match word, in its tone, or in the row's text color on the
+/// selected row of the focused queue: that row is drawn in the accent, which
+/// a match in the accent tone would vanish into. The word reads the
+/// prominence itself, not the row: a List makes each row's own body where
+/// it lists its rows, before the selected row's environment applies, so
+/// only the views inside a row see it.
+private struct QueueMatchWord: View {
+    let match: JobMatch
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Text(match.title)
+            .fontWeight(.medium)
+            .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(match.tone.color))
     }
 }
