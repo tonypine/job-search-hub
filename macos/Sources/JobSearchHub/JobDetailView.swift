@@ -164,6 +164,14 @@ struct JobDetailView: View {
     var layout = JobDetailLayout.inspector
     /// Told the job's title once it's read, for a page's top bar.
     var showTitle: (String?) -> Void = { _ in }
+    /// A page shows the posting's outline beside it when wide; Decide's
+    /// page, beside its queue, leaves it out.
+    var showsOutline = true
+    /// Makes Pursue, Later and Skip, from the action bar or P, L and S, when
+    /// the page around the job decides them, as Decide does: it brings up the
+    /// next job and offers Undo, so Skip asks nothing first. Nil records them
+    /// here, and Skip asks why.
+    var decide: (@MainActor (JobDecisionKind) async -> Void)?
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
     @Environment(DetailsInspector.self) private var inspector
@@ -315,7 +323,7 @@ struct JobDetailView: View {
     private func page(_ details: JobDetails) -> some View {
         let tabs: [InspectorTab] = hasPrep(details) ? [.posting, .prep, .session] : [.posting, .session]
         let shown = InspectorTab.resolve(tab, among: tabs)
-        let wideWidth = JobDetailLayout.wideWidth
+        let wideWidth = showsOutline ? JobDetailLayout.wideWidth : JobDetailLayout.wideWidth - JobPostingTab<EmptyView>.outlineWidth - Space.xl
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: Space.m) {
                 if isWide {
@@ -360,7 +368,7 @@ struct JobDetailView: View {
                         .padding(.top, Space.m)
                 }
                 JobPostingTab(
-                    jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting, layout: isWide ? .wide : .narrow,
+                    jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting, layout: isWide ? .wide(showsOutline: showsOutline) : .narrow,
                     scrollTarget: $scrollTarget
                 ) {
                     whyItFits(details.brief).id(Anchor.whyItFits)
@@ -389,15 +397,33 @@ struct JobDetailView: View {
         let isOpen = details.job.dismissedAt == nil && details.phase == nil
         switch decision {
         case .pursue where isOpen:
-            Task { await model.decide(jobID, .pursue, through: decisions, with: client) }
+            Task { await record(.pursue) }
         case .later where isOpen && details.decision?.decision != .later:
-            Task { await model.decide(jobID, .later, through: decisions, with: client) }
+            Task { await record(.later) }
         case .skip where details.job.dismissedAt == nil:
-            isAskingToSkip = true
+            skip()
         default:
             return false
         }
         return true
+    }
+
+    /// Records the decision through the page that decides it, or here.
+    private func record(_ decision: JobDecisionKind) async {
+        if let decide {
+            await decide(decision)
+        } else {
+            await model.decide(jobID, decision, through: decisions, with: client)
+        }
+    }
+
+    /// Skips the job at once where the page offers Undo, or asks why first.
+    private func skip() {
+        if decide != nil {
+            Task { await record(.skip) }
+        } else {
+            isAskingToSkip = true
+        }
     }
 
     // MARK: Header
@@ -500,20 +526,22 @@ struct JobDetailView: View {
                 openPostingButton(details)
             } else {
                 AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward", key: "P") {
-                    await model.decide(jobID, .pursue, through: decisions, with: client)
+                    await record(.pursue)
                 }
                 .help("Put it on the pipeline (P on Decide, Today and a job's page)")
             }
         } secondary: {
             if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
                 AsyncButton("Later", busyTitle: "Later", key: "L") {
-                    await model.decide(jobID, .later, through: decisions, with: client)
+                    await record(.later)
                 }
                 .help("Leave it for another day (L on Decide, Today and a job's page)")
             }
             if details.job.dismissedAt == nil {
-                Button { isAskingToSkip = true } label: { KeyLabel(title: "Skip…", key: "S") }
-                    .help("Take it out as not for you, with a reason (S on Decide, Today and a job's page)")
+                Button(action: skip) { KeyLabel(title: decide == nil ? "Skip…" : "Skip", key: "S") }
+                    .help(decide == nil
+                        ? "Take it out as not for you, with a reason (S on Decide, Today and a job's page)"
+                        : "Take it out as not for you, with Undo and a reason from the note that says so (S)")
             }
         } overflow: {
             Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
