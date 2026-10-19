@@ -160,10 +160,11 @@ struct ActivityPage: View {
                     // Not a split view: its panes' least widths, added up,
                     // would widen the window when the inspector opens. The
                     // column keeps its width, and the kind's page takes what
-                    // is left and gives way to the inspector. A table asks
-                    // the window for its columns' least widths, so beside the
-                    // inspector the column steps aside and the runs drop
-                    // their model, time and usage.
+                    // is left and gives way to the inspector. Beside the
+                    // inspector the column steps aside, and the runs drop
+                    // their model, time and usage. Brought back there, the
+                    // column takes its least width; the width it was dragged
+                    // to comes back when the inspector closes.
                     HStack(spacing: 0) {
                         if isShowingRunKinds {
                             RunKindsColumn(
@@ -173,15 +174,29 @@ struct ActivityPage: View {
                                     showsOnlyFailed = true
                                 }
                             )
-                            .frame(width: min(max(runKindsWidth, Self.runKindsWidths.lowerBound), Self.runKindsWidths.upperBound))
-                            ColumnResizeHandle(width: $runKindsWidth, range: Self.runKindsWidths)
-                                .zIndex(1)
+                            .frame(width: runKindsColumnWidth)
+                            if isInspectorShown {
+                                Divider()
+                            } else {
+                                ColumnResizeHandle(width: $runKindsWidth, range: Self.runKindsWidths)
+                                    .zIndex(1)
+                            }
                         }
                         kindPage(client)
-                            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
                             .clipped()
                     }
+                    .clipped()
                 }
+                // The page tells the window the same sizes whatever it shows,
+                // as the inspector does: a frame with every bound set takes
+                // the size it's offered. Sizes that followed the run kinds
+                // column and the runs' columns, added up, pushed the window's
+                // content past its edges beside the inspector.
+                .frame(
+                    minWidth: 0, idealWidth: Self.idealSize.width, maxWidth: .infinity,
+                    minHeight: 0, idealHeight: Self.idealSize.height, maxHeight: .infinity, alignment: .topLeading
+                )
                 .task(id: events.revision) {
                     await kinds.load(with: client)
                     await kinds.loadModels(with: client)
@@ -198,6 +213,9 @@ struct ActivityPage: View {
     }
 
     static let runKindsWidths = 220.0...400.0
+    /// The size the page asks for: less than a 1400 pt window leaves it
+    /// beside the sidebar and the widest inspector, 720 pt.
+    static let idealSize = CGSize(width: 400, height: 600)
 
     private var isInspectorShown: Bool {
         details.getEntry(on: .activity) != nil
@@ -205,6 +223,15 @@ struct ActivityPage: View {
 
     private var isShowingRunKinds: Bool {
         showsRunKinds && !hidesRunKindsForInspector
+    }
+
+    private var runKindsColumnWidth: Double {
+        isInspectorShown ? Self.runKindsWidths.lowerBound : min(max(runKindsWidth, Self.runKindsWidths.lowerBound), Self.runKindsWidths.upperBound)
+    }
+
+    private var runsRoom: ActivityRunsList.Room {
+        guard isInspectorShown else { return .full }
+        return isShowingRunKinds ? .besideInspectorAndKinds : .besideInspector
     }
 
     /// The selected kind; nil on All kinds, and while the kinds load.
@@ -243,7 +270,7 @@ struct ActivityPage: View {
                 RunKindHeader(model: kinds, kind: selectedKind, work: modelWork.work, client: client)
                 Divider()
                 ActivityRunsList(
-                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, isCompact: isInspectorShown, client: client
+                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, room: runsRoom, client: client
                 )
             }
             .onAppear {

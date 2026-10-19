@@ -78,13 +78,24 @@ final class ActivityRunsModel {
 /// event. A run's job and company open in the inspector; a failed run,
 /// selected, shows its error and what to open under the table.
 struct ActivityRunsList: View {
+    /// The room the runs have, which sets their columns and those columns'
+    /// widths.
+    enum Room {
+        /// Beside the sidebar and the run kinds column: every column.
+        case full
+        /// Beside the inspector: the runs drop their model, time and usage,
+        /// so the table's widths leave the inspector room in the window.
+        case besideInspector
+        /// Beside the inspector and the run kinds column at its least width:
+        /// the same columns, narrower.
+        case besideInspectorAndKinds
+    }
+
     let model: ActivityRunsModel
     /// Nil for All kinds, whose rows name each run's kind.
     let kind: RunKind?
     let showsOnlyFailed: Bool
-    /// Beside the inspector: the runs drop their model, time and usage, so
-    /// the table's least width leaves the inspector room in the window.
-    let isCompact: Bool
+    let room: Room
     let client: HubClient
     @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
@@ -104,10 +115,12 @@ struct ActivityRunsList: View {
                     Color.clear
                 }
             } else if model.runs.isEmpty {
+                // It fills the page, so the kind's header stays at the top.
                 ContentUnavailableView(
                     showsOnlyFailed ? "No failed runs" : "No runs yet", systemImage: showsOnlyFailed ? "checkmark.circle" : "clock",
                     description: Text(kind.map { "Runs of \($0.title) show here as they start." } ?? "Every run the hub records shows here as it starts.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 list
             }
@@ -127,14 +140,14 @@ struct ActivityRunsList: View {
         }
     }
 
-    /// The runs as a table, with the selected failed run under it. A table
-    /// asks the window for its columns' least widths and the spacing between
-    /// them, so those stay small: the columns give way to the inspector
-    /// rather than widen the window. It opens at its columns' ideal widths,
-    /// so those, Kind's included, add up to less than a 1400 pt window
-    /// leaves beside the sidebar and the run kinds column. Took and Tokens
-    /// or cost are wide enough for "1 min 35 s" and "12,000 → 3,400" whole;
-    /// on a kind's page, Ran for takes the room Kind leaves.
+    /// The runs as a table, with the selected failed run under it. It opens
+    /// at its columns' ideal widths, so in each room those, with the spacing
+    /// between them, add up to less than a 1400 pt window leaves the table,
+    /// and its columns' least widths stay small: the columns give way to the
+    /// inspector rather than widen the window. Took and Tokens or cost are
+    /// wide enough for "1 min 35 s" and "12,000 → 3,400" whole, and Started
+    /// for "May 28 at 10:58 PM"; on a kind's page, Ran for takes the room
+    /// Kind leaves.
     private var list: some View {
         VStack(spacing: 0) {
             Table(model.runs, selection: $selectedRunID) {
@@ -147,15 +160,17 @@ struct ActivityRunsList: View {
                 .width(18)
                 if kind == nil {
                     TableColumn("Kind") { run in
-                        Text(RunsSummary.getKindTitle(run.kind)).lineLimit(1)
+                        let title = RunsSummary.getKindTitle(run.kind)
+                        Text(title).lineLimit(1)
+                            .help(title)
                     }
-                    .width(min: 60, ideal: 100)
+                    .width(min: 60, ideal: room == .besideInspectorAndKinds ? 72 : 100)
                 }
                 TableColumn("Ran for") { run in
                     RunSubjectCell(run: run) { subject in details.show(subject, from: .activity) }
                 }
-                .width(min: 100, ideal: kind == nil ? 236 : 350)
-                if !isCompact {
+                .width(min: 100, ideal: ranForWidth)
+                if room == .full {
                     TableColumn("Model") { run in
                         Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
                             .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
@@ -177,7 +192,7 @@ struct ActivityRunsList: View {
                     Text(run.startedAt.formatted(Self.startFormat)).foregroundStyle(.secondary).lineLimit(1)
                         .help(run.startedAt.formatted(date: .complete, time: .standard))
                 }
-                .width(min: 64, ideal: 108)
+                .width(min: Self.startedWidth, ideal: Self.startedWidth)
             }
             if let run = selectedFailedRun {
                 Divider()
@@ -200,6 +215,21 @@ struct ActivityRunsList: View {
 
     /// A run's start: the day and the time, short enough for its column.
     private static let startFormat = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
+    /// Started's width, which it keeps in every room: "Oct 19 at 4:42 PM"
+    /// takes 108 pt, and a month, day and hour with wider figures 124.
+    private static let startedWidth: CGFloat = 126
+
+    /// Ran for's ideal width in each room: what the columns have less the
+    /// other columns' ideal widths and about 17 pt of spacing for each. At
+    /// 1400 pt the columns have about 855 pt beside the run kinds column,
+    /// 645 beside the inspector and 425 beside both.
+    private var ranForWidth: CGFloat {
+        switch room {
+        case .full: kind == nil ? 218 : 332
+        case .besideInspector: kind == nil ? 236 : 350
+        case .besideInspectorAndKinds: kind == nil ? 110 : 200
+        }
+    }
 
     private var selectedFailedRun: ActivityRun? {
         guard let selectedRunID, let run = model.runs.first(where: { $0.id == selectedRunID }), run.isFailed else { return nil }
