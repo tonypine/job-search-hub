@@ -334,13 +334,16 @@ struct DecideKeyLegend: View {
 /// loop the window's layout until AppKit stops the app.
 struct DecisionQueueRow: View {
     let item: DecisionQueueItem
+    /// Increased on the selected row of the focused queue, drawn in the
+    /// accent, which a match in the accent tone would vanish into.
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: Space.xs) {
                 Text(item.match.title)
                     .fontWeight(.medium)
-                    .foregroundStyle(item.match.tone.color)
+                    .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(item.match.tone.color))
                 if let company = item.companyName, !company.isEmpty {
                     Text("· \(company)").foregroundStyle(.secondary)
                 }
