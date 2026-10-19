@@ -306,7 +306,10 @@ struct JobsPage: View {
                 selection: $model.status
             )
         } trailing: {
-            PageSearchField(text: $model.search, prompt: "Search jobs")
+            // The narrower search field, as on Companies: with the default
+            // one, the five scopes and their counts don't fit beside it and
+            // the inspector at 1400 wide, and All is cut off.
+            PageSearchField(text: $model.search, prompt: "Search jobs", width: PageHeaderMetrics.compactSearchWidth)
                 .help("Search titles, locations and companies")
             ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
                 .labelStyle(.iconOnly)

@@ -103,7 +103,7 @@ enum PageHeaderMetrics {
     /// The search field's width.
     static let searchWidth: CGFloat = 200
     /// The search field's width on a page whose scopes need the room, such
-    /// as Companies beside the inspector at 1400 wide.
+    /// as Jobs and Companies beside the inspector at 1400 wide.
     static let compactSearchWidth: CGFloat = 150
 }
 
