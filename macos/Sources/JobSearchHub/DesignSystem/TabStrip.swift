@@ -27,16 +27,22 @@ struct TabStrip<ID: Hashable>: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .center, spacing: Space.l) {
-                ForEach(items) { item in tab(item) }
-            }
-            .frame(height: Self.height)
+            tabRow
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
         .overlay(alignment: .bottom) {
             if showsRule { Divider() }
         }
+    }
+
+    /// The tabs at their own width, which the strip scrolls when it's
+    /// wider than the room it has.
+    var tabRow: some View {
+        HStack(alignment: .center, spacing: Space.l) {
+            ForEach(items) { item in tab(item) }
+        }
+        .frame(height: Self.height)
     }
 
     private func tab(_ item: TabStripItem<ID>) -> some View {

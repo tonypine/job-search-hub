@@ -151,6 +151,7 @@ struct CompaniesPage: View {
                 .help("Search names and domains")
             CompanyColumnsMenu(customization: columnCustomization)
                 .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
                 .fixedSize()
             Button("Add", systemImage: "plus") { isAddingCompany = true }
                 .help("Research a company and watch it (⌘N)")
