@@ -10,6 +10,7 @@ import Testing
     """#
     let queue = try HubJSON.makeDecoder().decode(DecisionQueueResponse.self, from: Data(queueJSON.utf8))
     #expect(queue.items.first?.match == .strong && queue.items.first?.companyName == "Acme" && queue.items.first?.decision == nil)
+    #expect(queue.items.first?.unseenUpdates == nil)
 
     let signalsJSON = #"{"since":"2026-09-23T20:51:42.7Z","decisions":{"pursue":1,"skip":2,"later":0},"median_hours_to_decide":36,"good_or_unclear_seen":127,"good_or_unclear_decided":9}"#
     let signals = try HubJSON.makeDecoder().decode(DecisionSignals.self, from: Data(signalsJSON.utf8))
@@ -22,4 +23,22 @@ import Testing
     #expect(DecisionSignals.formatWait(72) == "3 days")
     #expect(DecisionSignals.formatWait(1.0 / 60) == "1 minute")
     #expect(DecisionSignals.formatWait(1.2) == "1 hour")
+}
+
+@Test func aQueuedJobSaysItsUnseenUpdates() throws {
+    let json = #"""
+    {"items":[{"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Frontend Engineer","url":"https://acme.com/1",
+               "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
+               "match":"possible","reason":"React.","brief_tier":"pre","fit":{"level":"good","checks":[]},"unseen_updates":2}],"total":1}
+    """#
+    let queue = try HubJSON.makeDecoder().decode(DecisionQueueResponse.self, from: Data(json.utf8))
+    #expect(queue.items.first?.unseenUpdates == 2)
+}
+
+@Test func theSubtitleCountsTheQueueAndTheWeeksDecisions() {
+    let signals = DecisionSignals(
+        since: .now, decisions: ["pursue": 3, "skip": 8, "later": 1], medianHoursToDecide: nil, goodOrUnclearSeen: 0, goodOrUnclearDecided: 0
+    )
+    #expect(DecisionSignals.makeSubtitle(toDecide: 7, signals: signals) == "7 to decide · 12 decided this week")
+    #expect(DecisionSignals.makeSubtitle(toDecide: 1, signals: nil) == "1 to decide")
 }
