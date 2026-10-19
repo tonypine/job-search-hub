@@ -150,6 +150,7 @@ struct DecidePage: View {
     @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(UnseenUpdates.self) private var unseen
     @State private var model = DecideModel()
     /// The open job's tab, kept as the queue moves on.
     @State private var tab = InspectorTab.posting
@@ -160,7 +161,7 @@ struct DecidePage: View {
             if let client = connection.makeClient() {
                 content(client)
                     .task { await model.load(with: client) }
-                    .onChange(of: [events.revision, decisions.revision]) { Task { await model.load(with: client) } }
+                    .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
                     // The page owns the inspector's history while it shows, so a
                     // company opened from the job's page shows beside it.
                     .onAppear { details.show(nil, from: .decide) }
