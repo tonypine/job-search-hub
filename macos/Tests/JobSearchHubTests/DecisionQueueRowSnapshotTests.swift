@@ -78,10 +78,19 @@ struct InkOnBackground {
             )
             context?.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         }
-        let colors = stride(from: 0, to: bytes.count, by: 4).map { index -> SIMD3<Double>? in
-            bytes[index + 3] == 255 ? SIMD3(Double(bytes[index]), Double(bytes[index + 1]), Double(bytes[index + 2])) / 255 : nil
+        var colors: [SIMD3<Double>?] = []
+        colors.reserveCapacity(width * height)
+        for index in stride(from: 0, to: bytes.count, by: 4) {
+            guard bytes[index + 3] == 255 else {
+                colors.append(nil)
+                continue
+            }
+            let red = Double(bytes[index]) / 255
+            let green = Double(bytes[index + 1]) / 255
+            let blue = Double(bytes[index + 2]) / 255
+            colors.append(SIMD3<Double>(red, green, blue))
         }
-        let background = colors.lazy.compactMap { $0 }.first ?? SIMD3(repeating: 0)
+        let background: SIMD3<Double> = colors.lazy.compactMap { $0 }.first ?? SIMD3<Double>(repeating: 0)
         self.background = background
         pixels = colors.map { $0 ?? background }
     }
@@ -89,7 +98,13 @@ struct InkOnBackground {
     /// The most any pixel in the columns goes toward white: 0 is the
     /// background, 1 white.
     func getLightest(in columns: Range<Int>) -> Double {
-        columns.flatMap { x in (0..<height).map { y in measure(pixels[y * width + x]).toward } }.max() ?? 0
+        var lightest = 0.0
+        for x in columns {
+            for y in 0..<height {
+                lightest = max(lightest, measure(pixels[y * width + x]).toward)
+            }
+        }
+        return lightest
     }
 
     /// The most any pixel strays from the line between the background and
@@ -105,7 +120,9 @@ struct InkOnBackground {
 
     private func measure(_ pixel: SIMD3<Double>) -> (toward: Double, stray: Double) {
         let line = SIMD3<Double>(1, 1, 1) - background
-        let toward = min(max(((pixel - background) * line).sum() / (line * line).sum(), 0), 1)
+        let along: Double = ((pixel - background) * line).sum()
+        let total: Double = (line * line).sum()
+        let toward: Double = min(max(along / total, 0), 1)
         return (toward, length(pixel - (background + toward * line)))
     }
 
