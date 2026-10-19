@@ -209,10 +209,18 @@ struct DecidePage: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if model.actionError != nil {
-                    HubErrorView($model.actionError)
-                        .frame(maxWidth: 560)
-                        .padding(Space.l)
+                if model.loadError != nil || model.actionError != nil {
+                    VStack(spacing: Space.s) {
+                        // A read that failed leaves the queue from the last one up.
+                        if let loadError = model.loadError {
+                            HubErrorView(loadError, retry: { Task { await model.load(with: client) } })
+                        }
+                        if model.actionError != nil {
+                            HubErrorView($model.actionError)
+                        }
+                    }
+                    .frame(maxWidth: 560)
+                    .padding(Space.l)
                 }
             }
             .toast($model.toast)

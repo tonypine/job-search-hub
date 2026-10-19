@@ -154,3 +154,51 @@ private func makeHub(items: [String] = threeJobs) -> (HubClient, StubHub.Recordi
     #expect(recording.requestCount == requests)
     #expect(model.toast == nil)
 }
+
+@MainActor @Test func aDecisionThatFailsKeepsTheJobOpen() async throws {
+    let (client, recording) = makeHub()
+    let model = DecideModel()
+    let decisions = JobDecisions()
+    await model.load(with: client)
+
+    recording.setAnswer(StubHub.Answer(status: 500, body: #"{"error":"boom"}"#), for: "/v1/jobs/\(firstID.uuidString)/decision")
+    await model.decide(model.items[0], .pursue, through: decisions, with: client)
+
+    #expect(model.actionError?.title == "Couldn't record the decision")
+    #expect(model.selectedID == firstID)
+    #expect(model.toast == nil)
+}
+
+@MainActor @Test func anUndoThatFailsLeavesTheNextJobOpen() async throws {
+    let (client, recording) = makeHub()
+    let model = DecideModel()
+    let decisions = JobDecisions()
+    await model.load(with: client)
+    let item = model.items[0]
+    await model.decide(item, .pursue, through: decisions, with: client)
+    #expect(model.selectedID == secondID)
+
+    recording.setAnswer(StubHub.Answer(status: 500, body: #"{"error":"boom"}"#), for: "/v1/jobs/\(firstID.uuidString)/decision")
+    await model.undo(item, through: decisions, with: client)
+
+    #expect(model.actionError?.title == "Couldn't undo the decision")
+    #expect(model.selectedID == secondID)
+}
+
+@MainActor @Test func aReadThatFailsKeepsTheQueueUp() async throws {
+    let (client, recording) = makeHub()
+    let model = DecideModel()
+    await model.load(with: client)
+    model.move(by: 1)
+
+    recording.setAnswer(StubHub.Answer(status: 500, body: #"{"error":"boom"}"#), for: queuePath)
+    await model.load(with: client)
+
+    #expect(model.loadError?.title == "Couldn't load the queue")
+    #expect(model.items.count == 3)
+    #expect(model.selectedID == secondID)
+
+    recording.setAnswer(queue(threeJobs), for: queuePath)
+    await model.load(with: client)
+    #expect(model.loadError == nil)
+}
