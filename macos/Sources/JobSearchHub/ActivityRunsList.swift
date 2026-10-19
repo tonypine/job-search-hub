@@ -78,24 +78,10 @@ final class ActivityRunsModel {
 /// event. A run's job and company open in the inspector; a failed run,
 /// selected, shows its error and what to open under the table.
 struct ActivityRunsList: View {
-    /// The room the runs have, which sets their columns and those columns'
-    /// widths.
-    enum Room {
-        /// Beside the sidebar and the run kinds column: every column.
-        case full
-        /// Beside the inspector: the runs drop their model, time and usage,
-        /// so the table's widths leave the inspector room in the window.
-        case besideInspector
-        /// Beside the inspector and the run kinds column at its least width:
-        /// the same columns, narrower.
-        case besideInspectorAndKinds
-    }
-
     let model: ActivityRunsModel
     /// Nil for All kinds, whose rows name each run's kind.
     let kind: RunKind?
     let showsOnlyFailed: Bool
-    let room: Room
     let client: HubClient
     @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
@@ -140,14 +126,14 @@ struct ActivityRunsList: View {
         }
     }
 
-    /// The runs as a table, with the selected failed run under it. It opens
-    /// at its columns' ideal widths, so in each room those, with the spacing
-    /// between them, add up to less than a 1400 pt window leaves the table,
-    /// and its columns' least widths stay small: the columns give way to the
-    /// inspector rather than widen the window. Took and Tokens or cost are
-    /// wide enough for "1 min 35 s" and "12,000 → 3,400" whole, and Started
-    /// for "May 28 at 10:58 PM"; on a kind's page, Ran for takes the room
-    /// Kind leaves.
+    /// The runs as a table, with the selected failed run under it. Its
+    /// columns keep readable widths in any room, and the table scrolls
+    /// sideways when the page is narrower than they are: beside the
+    /// inspector, or beside the inspector and the run kinds column. Took,
+    /// Tokens or cost and Started have fixed widths, so they're never cut;
+    /// Kind, Ran for and Model give way down to their least widths, then
+    /// the table scrolls. At 1400 pt beside the run kinds column, every
+    /// column's least width, with about 17 pt of spacing for each, fits.
     private var list: some View {
         VStack(spacing: 0) {
             Table(model.runs, selection: $selectedRunID) {
@@ -164,35 +150,33 @@ struct ActivityRunsList: View {
                         Text(title).lineLimit(1)
                             .help(title)
                     }
-                    .width(min: 60, ideal: room == .besideInspectorAndKinds ? 72 : 100)
+                    .width(min: 120, ideal: 150)
                 }
                 TableColumn("Ran for") { run in
                     RunSubjectCell(run: run) { subject in details.show(subject, from: .activity) }
                 }
-                .width(min: 100, ideal: ranForWidth)
-                if room == .full {
-                    TableColumn("Model") { run in
-                        Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
-                            .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
-                    }
-                    .width(min: 50, ideal: 96)
-                    TableColumn("Took") { run in
-                        Text(run.durationText).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .width(min: 40, ideal: 70)
-                    TableColumn("Tokens or cost") { run in
-                        Text(run.usageCellText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .help(run.usageText ?? "")
-                    }
-                    .width(min: 50, ideal: 96)
+                .width(min: 170, ideal: 240)
+                TableColumn("Model") { run in
+                    Text(run.modelText).foregroundStyle(.secondary).lineLimit(1)
+                        .help(run.provider.isEmpty ? run.modelText : "\(run.modelText) from \(run.provider)")
                 }
+                .width(min: 90, ideal: 110)
+                TableColumn("Took") { run in
+                    Text(run.durationText).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .width(Self.tookWidth)
+                TableColumn("Tokens or cost") { run in
+                    Text(run.usageCellText ?? "").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .help(run.usageText ?? "")
+                }
+                .width(Self.usageWidth)
                 TableColumn("Started") { run in
                     Text(run.startedAt.formatted(Self.startFormat)).foregroundStyle(.secondary).lineLimit(1)
                         .help(run.startedAt.formatted(date: .complete, time: .standard))
                 }
-                .width(min: Self.startedWidth, ideal: Self.startedWidth)
+                .width(Self.startedWidth)
             }
             if let run = selectedFailedRun {
                 Divider()
@@ -215,21 +199,14 @@ struct ActivityRunsList: View {
 
     /// A run's start: the day and the time, short enough for its column.
     private static let startFormat = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
-    /// Started's width, which it keeps in every room: "Oct 19 at 4:42 PM"
-    /// takes 108 pt, and a month, day and hour with wider figures 124.
+    /// Took's width: "125 min 35 s", a run of two hours, in monospaced
+    /// figures.
+    private static let tookWidth: CGFloat = 88
+    /// Tokens or cost's width: "120,000 → 34,000" in monospaced figures.
+    private static let usageWidth: CGFloat = 116
+    /// Started's width: "Oct 19 at 4:42 PM" takes 108 pt, and a month, day
+    /// and hour with wider figures 124.
     private static let startedWidth: CGFloat = 126
-
-    /// Ran for's ideal width in each room: what the columns have less the
-    /// other columns' ideal widths and about 17 pt of spacing for each. At
-    /// 1400 pt the columns have about 855 pt beside the run kinds column,
-    /// 645 beside the inspector and 425 beside both.
-    private var ranForWidth: CGFloat {
-        switch room {
-        case .full: kind == nil ? 218 : 332
-        case .besideInspector: kind == nil ? 236 : 350
-        case .besideInspectorAndKinds: kind == nil ? 110 : 200
-        }
-    }
 
     private var selectedFailedRun: ActivityRun? {
         guard let selectedRunID, let run = model.runs.first(where: { $0.id == selectedRunID }), run.isFailed else { return nil }
@@ -300,12 +277,17 @@ private struct FailedRunDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                Image(systemName: run.outcomeSymbol)
-                    .foregroundStyle(Tone.ofRunOutcome(run.outcome).color)
-                Text("\(RunsSummary.getKindTitle(run.kind)) failed").font(.hubSecondary.weight(.semibold))
+            // Its title and buttons wrap at the page's width, which beside
+            // the inspector can be narrower than they are on one line.
+            FlowLayout(spacing: Space.s, lineSpacing: Space.xs) {
+                Label {
+                    Text("\(RunsSummary.getKindTitle(run.kind)) failed").font(.hubSecondary.weight(.semibold))
+                } icon: {
+                    Image(systemName: run.outcomeSymbol)
+                        .foregroundStyle(Tone.ofRunOutcome(run.outcome).color)
+                }
                 if let subject = run.subjectText {
-                    Text(subject).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subject).font(.hubSecondary).foregroundStyle(.secondary)
                 }
             }
             ScrollView {
@@ -317,7 +299,7 @@ private struct FailedRunDetail: View {
             }
             .frame(maxHeight: 120)
             .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: Space.s) {
+            FlowLayout(spacing: Space.s, lineSpacing: Space.s) {
                 if let jobID = run.jobID {
                     Button("Open Job", systemImage: "briefcase") { open(.job(jobID)) }
                 }

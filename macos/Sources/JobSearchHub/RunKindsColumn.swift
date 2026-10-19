@@ -165,12 +165,14 @@ private struct RunKindRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                        name.fixedSize()
+                        name().fixedSize()
                         Spacer(minLength: Space.s)
                         word(status, pauseAlignment: .trailing)
                     }
+                    // At the column's least width, beside the inspector, a
+                    // long name wraps rather than being cut.
                     VStack(alignment: .leading, spacing: 2) {
-                        name
+                        name(lines: 2).fixedSize(horizontal: false, vertical: true)
                         word(status, pauseAlignment: .leading)
                     }
                 }
@@ -188,8 +190,8 @@ private struct RunKindRow: View {
         .onHover { isHovering = $0 }
     }
 
-    private var name: some View {
-        Text(kind.title).lineLimit(1)
+    private func name(lines: Int = 1) -> some View {
+        Text(kind.title).lineLimit(lines)
             .help(kind.title)
     }
 

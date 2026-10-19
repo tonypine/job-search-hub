@@ -148,9 +148,13 @@ struct ActivityPage: View {
     @State private var runs = ActivityRunsModel()
     @State private var showsOnlyFailed = false
     /// The column steps aside while the inspector shows a run's job or
-    /// company, and comes back when it closes; Show run kinds brings it back
-    /// sooner.
+    /// company in a window without room for both, and comes back when it
+    /// closes; Show run kinds brings it back sooner.
     @State private var hidesRunKindsForInspector = false
+    /// Whether the page is wide enough for the run kinds column at its
+    /// widest beside the runs at their ideal widths, as at 2560 pt with the
+    /// inspector open.
+    @State private var hasRoomForRunKinds = false
 
     var body: some View {
         Group {
@@ -160,11 +164,12 @@ struct ActivityPage: View {
                     // Not a split view: its panes' least widths, added up,
                     // would widen the window when the inspector opens. The
                     // column keeps its width, and the kind's page takes what
-                    // is left and gives way to the inspector. Beside the
-                    // inspector the column steps aside, and the runs drop
-                    // their model, time and usage. Brought back there, the
-                    // column takes its least width; the width it was dragged
-                    // to comes back when the inspector closes.
+                    // is left and gives way to the inspector: its header
+                    // wraps, and the runs scroll sideways. Beside the
+                    // inspector in a window without room for both, the
+                    // column steps aside; brought back there, it takes its
+                    // least width, and the width it was dragged to comes
+                    // back when the inspector closes.
                     HStack(spacing: 0) {
                         if isShowingRunKinds {
                             RunKindsColumn(
@@ -175,7 +180,7 @@ struct ActivityPage: View {
                                 }
                             )
                             .frame(width: runKindsColumnWidth)
-                            if isInspectorShown {
+                            if isCrowdedByInspector {
                                 Divider()
                             } else {
                                 ColumnResizeHandle(width: $runKindsWidth, range: Self.runKindsWidths)
@@ -197,14 +202,17 @@ struct ActivityPage: View {
                     minWidth: 0, idealWidth: Self.idealSize.width, maxWidth: .infinity,
                     minHeight: 0, idealHeight: Self.idealSize.height, maxHeight: .infinity, alignment: .topLeading
                 )
+                .onGeometryChange(for: Bool.self) { proxy in
+                    proxy.size.width >= Self.runKindsWidths.upperBound + Self.runsWidth
+                } action: { hasRoomForRunKinds = $0 }
                 .task(id: events.revision) {
                     await kinds.load(with: client)
                     await kinds.loadModels(with: client)
                 }
                 .task { await kinds.watch(with: client) }
                 .task { await modelWork.watch(with: client, every: .seconds(3)) }
-                .onChange(of: isInspectorShown, initial: true) { _, shown in
-                    hidesRunKindsForInspector = shown
+                .onChange(of: isCrowdedByInspector, initial: true) { _, crowded in
+                    hidesRunKindsForInspector = crowded
                 }
             }
         }
@@ -216,9 +224,18 @@ struct ActivityPage: View {
     /// The size the page asks for: less than a 1400 pt window leaves it
     /// beside the sidebar and the widest inspector, 720 pt.
     static let idealSize = CGSize(width: 400, height: 600)
+    /// The runs' columns at their ideal widths on All kinds (848 pt), with
+    /// about 17 pt of spacing for each and the table's insets.
+    static let runsWidth = 1000.0
 
     private var isInspectorShown: Bool {
         details.getEntry(on: .activity) != nil
+    }
+
+    /// The inspector shows, and the page hasn't room for the run kinds
+    /// column beside the runs.
+    private var isCrowdedByInspector: Bool {
+        isInspectorShown && !hasRoomForRunKinds
     }
 
     private var isShowingRunKinds: Bool {
@@ -226,12 +243,7 @@ struct ActivityPage: View {
     }
 
     private var runKindsColumnWidth: Double {
-        isInspectorShown ? Self.runKindsWidths.lowerBound : min(max(runKindsWidth, Self.runKindsWidths.lowerBound), Self.runKindsWidths.upperBound)
-    }
-
-    private var runsRoom: ActivityRunsList.Room {
-        guard isInspectorShown else { return .full }
-        return isShowingRunKinds ? .besideInspectorAndKinds : .besideInspector
+        isCrowdedByInspector ? Self.runKindsWidths.lowerBound : min(max(runKindsWidth, Self.runKindsWidths.lowerBound), Self.runKindsWidths.upperBound)
     }
 
     /// The selected kind; nil on All kinds, and while the kinds load.
@@ -270,7 +282,7 @@ struct ActivityPage: View {
                 RunKindHeader(model: kinds, kind: selectedKind, work: modelWork.work, client: client)
                 Divider()
                 ActivityRunsList(
-                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, room: runsRoom, client: client
+                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, client: client
                 )
             }
             .onAppear {
@@ -298,20 +310,25 @@ private struct RunKindHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                Text(kind?.title ?? "All kinds").font(.hubEntity).lineLimit(1)
-                    .layoutPriority(1)
-                let status = kind.map { $0.getStatus(failedCount: model.getFailedCount($0)) } ?? model.all.status
-                ToneChip(status.title, tone: status.tone, symbol: status.symbolName)
-                if let kind, let kindModel = model.getModel(for: kind) {
-                    Label(kindModel.name, systemImage: kindModel.markSymbol)
-                        .font(.hubSecondary)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
+            // On one line where it fits; beside the inspector, the name,
+            // state and model wrap, and the buttons go under them.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    title.lineLimit(1)
+                        .layoutPriority(1)
+                    status
+                    Spacer(minLength: Space.m)
+                    controls
                 }
-                Spacer(minLength: Space.m)
-                controls
+                VStack(alignment: .leading, spacing: Space.s) {
+                    FlowLayout(spacing: Space.s, lineSpacing: Space.xs) {
+                        title
+                        status
+                    }
+                    FlowLayout(spacing: Space.s, lineSpacing: Space.s) {
+                        controls
+                    }
+                }
             }
             Text(kind?.description ?? "Every kind of run the hub records. Pausing holds only what the hub starts by itself; runs you start always go ahead.")
                 .font(.hubSecondary)
@@ -325,6 +342,24 @@ private struct RunKindHeader: View {
             }
         }
         .padding(Space.l)
+    }
+
+    private var title: some View {
+        Text(kind?.title ?? "All kinds").font(.hubEntity)
+    }
+
+    /// The state's chip, and a kind's model.
+    @ViewBuilder
+    private var status: some View {
+        let state = kind.map { $0.getStatus(failedCount: model.getFailedCount($0)) } ?? model.all.status
+        ToneChip(state.title, tone: state.tone, symbol: state.symbolName)
+        if let kind, let kindModel = model.getModel(for: kind) {
+            Label(kindModel.name, systemImage: kindModel.markSymbol)
+                .font(.hubSecondary)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
+        }
     }
 
     @ViewBuilder
