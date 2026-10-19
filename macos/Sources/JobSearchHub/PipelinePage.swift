@@ -807,9 +807,13 @@ struct SecondRoutes {
 }
 
 /// An overdue card's next route, on one line: write to someone at the
-/// company or someone who can introduce you (the others in its menu), or
-/// find who to write to, then ✓ records the follow-up.
+/// company or someone who can introduce you (the others in the chevron's
+/// menu), or find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
+    /// The width each control beside the Write to link takes: the chevron
+    /// and the ✓.
+    static let controlWidth: CGFloat = 16
+
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
     let canFindPeople: Bool
@@ -819,37 +823,76 @@ struct SecondRouteRow: View {
 
     var body: some View {
         HStack(spacing: Space.s) {
-            if let first = candidates.first {
-                Menu {
-                    ForEach(candidates) { person in
-                        Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
-                            .help(person.whatTheyCanDo)
-                    }
-                } label: {
-                    Label("Write to \(first.name)", systemImage: "paperplane").lineLimit(1)
-                } primaryAction: {
-                    onWrite(first)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.visible)
-                .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
-            } else if isFindingPeople {
-                ProgressView().controlSize(.small)
-                Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
-            } else {
-                Button("Find people", systemImage: "person.2") { onFindPeople() }
-                    .buttonStyle(.link)
-                    .lineLimit(1)
-                    .disabled(!canFindPeople)
-                    .help(findPeopleHelp)
-            }
-            Spacer(minLength: 0)
+            route.frame(maxWidth: .infinity, alignment: .leading)
             Button("Followed up…", systemImage: "checkmark") { onFollowUp() }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .fixedSize()
+                .frame(width: Self.controlWidth)
                 .help("Followed up…: record the message you sent; it restarts the count to the next follow-up")
         }
         .font(.hubCaption)
+    }
+
+    @ViewBuilder private var route: some View {
+        if let first = candidates.first {
+            HStack(spacing: Space.xs) {
+                // A SwiftUI button rather than a menu's label: an AppKit menu
+                // draws its title in the body font, and in a narrow card it
+                // cut the name off, "Write to Alex…" (TP-1101).
+                Button { onWrite(first) } label: {
+                    Self.makeWriteLabel(to: first.name)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Tone.accent.color)
+                .accessibilityLabel("Write to \(first.name)")
+                .help("Draft a message to \(first.name) with the outreach prompt; you send it yourself. \(first.whatTheyCanDo)")
+                if candidates.count > 1 {
+                    Menu {
+                        ForEach(candidates) { person in
+                            Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
+                                .help(person.whatTheyCanDo)
+                        }
+                    } label: {
+                        Label("Write to someone else", systemImage: "chevron.down")
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.borderless)
+                    .menuIndicator(.hidden)
+                    .labelStyle(.iconOnly)
+                    .fixedSize()
+                    .frame(width: Self.controlWidth)
+                    .help("Write to someone else at the company")
+                }
+            }
+        } else if isFindingPeople {
+            HStack(spacing: Space.s) {
+                ProgressView().controlSize(.small)
+                Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
+            }
+        } else {
+            Button("Find people", systemImage: "person.2") { onFindPeople() }
+                .buttonStyle(.link)
+                .lineLimit(1)
+                .disabled(!canFindPeople)
+                .help(findPeopleHelp)
+        }
+    }
+
+    /// The width the Write to link has in a row that wide, beside the
+    /// chevron and the ✓.
+    static func getWriteLabelRoom(rowWidth: CGFloat) -> CGFloat {
+        rowWidth - Space.xs - controlWidth - Space.s - controlWidth
+    }
+
+    /// "Write to Alex Kim", or just the name beside the paperplane when the
+    /// card is too narrow for both, so it always says who to write to.
+    static func makeWriteLabel(to name: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            Label("Write to \(name)", systemImage: "paperplane")
+            Label(name, systemImage: "paperplane")
+        }
+        .lineLimit(1)
     }
 
     private var findPeopleHelp: String {
