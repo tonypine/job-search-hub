@@ -374,7 +374,7 @@ struct PipelinePage: View {
         GeometryReader { geometry in
             let columns = model.columns
             let drawerPhase = model.drawerPhase
-            let columnWidth = getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
+            let columnWidth = Self.getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
             let secondRoutes = makeSecondRoutes(with: client)
             let actions = makeCardActions(with: client)
             ScrollView(.horizontal) {
@@ -503,7 +503,7 @@ struct PipelinePage: View {
     /// Shares the width left of the Closed drawer among the columns so every
     /// phase shows at once, down to a readable minimum; below it the board
     /// scrolls sideways.
-    private func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
+    static func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
         let count = CGFloat(max(columnCount, 1))
         let drawerWidth = hasDrawer ? ClosedDrawer.width + Self.columnSpacing : 0
         let widthForColumns = availableWidth - Self.boardPadding * 2 - Self.columnSpacing * (count - 1) - drawerWidth
@@ -567,7 +567,7 @@ struct PipelineColumn: View {
                 }
             }
         }
-        .padding(Space.s)
+        .padding(PipelineCardView.columnPadding)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
@@ -696,6 +696,14 @@ struct PipelineCardItem: View {
 /// skipped wait in its tooltip and the inspector.
 struct PipelineCardView: View {
     private static let edgeWidth: CGFloat = 3
+    /// The card's inset inside its column, and its content's inside it.
+    static let columnPadding = Space.s
+    static let padding = Space.m
+
+    /// The width a card's lines get in a column that wide.
+    static func getContentWidth(columnWidth: CGFloat) -> CGFloat {
+        columnWidth - 2 * (columnPadding + padding)
+    }
 
     let card: PipelineCard
     let isMoving: Bool
@@ -729,7 +737,7 @@ struct PipelineCardView: View {
                 secondRoute
             }
         }
-        .padding(Space.m)
+        .padding(Self.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background)
         .overlay(alignment: .leading) {
@@ -807,8 +815,8 @@ struct SecondRoutes {
 }
 
 /// An overdue card's next route, on one line: write to someone at the
-/// company or someone who can introduce you (the others in its menu), or
-/// find who to write to, then ✓ records the follow-up.
+/// company or someone who can introduce you (the others in the menu beside
+/// it), or find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
@@ -818,21 +826,41 @@ struct SecondRouteRow: View {
     let onFollowUp: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        // Spaced by xs on each side of the spacer, so the link keeps an s
+        // gap from ✓ and still fits a card in a column at its minimum.
+        HStack(spacing: Space.xs) {
             if let first = candidates.first {
-                Menu {
-                    ForEach(candidates) { person in
-                        Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
-                            .help(person.whatTheyCanDo)
+                // A link and a small menu beside it, not a borderless menu
+                // with the name as its label: that menu asks about 160 pt
+                // for "Write to Alex Kim", more than a card on a 1400 pt
+                // board has, so it read "Write to Alex…" (TP-1104).
+                HStack(spacing: Space.xs) {
+                    Button { onWrite(first) } label: {
+                        Label("Write to \(first.name)", systemImage: "paperplane")
+                            .lineLimit(1)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Label("Write to \(first.name)", systemImage: "paperplane").lineLimit(1)
-                } primaryAction: {
-                    onWrite(first)
+                    .buttonStyle(.plain)
+                    .help("Draft a message to \(first.name) with the outreach prompt; you send it yourself. \(first.whatTheyCanDo)")
+                    if candidates.count > 1 {
+                        Menu {
+                            ForEach(candidates) { person in
+                                Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
+                                    .help(person.whatTheyCanDo)
+                            }
+                        } label: {
+                            Image(systemName: "chevron.down").imageScale(.small)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Write to someone else")
+                        .accessibilityLabel("Write to someone else")
+                    }
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.visible)
-                .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
+                .foregroundStyle(Tone.accent.color)
+                .layoutPriority(1)
             } else if isFindingPeople {
                 ProgressView().controlSize(.small)
                 Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
