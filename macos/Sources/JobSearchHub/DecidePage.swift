@@ -342,16 +342,11 @@ struct DecideKeyLegend: View {
 /// loop the window's layout until AppKit stops the app.
 struct DecisionQueueRow: View {
     let item: DecisionQueueItem
-    /// Increased on the selected row of the focused queue, drawn in the
-    /// accent, which a match in the accent tone would vanish into.
-    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: Space.xs) {
-                Text(item.match.title)
-                    .fontWeight(.medium)
-                    .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(item.match.tone.color))
+                QueueMatchWord(match: item.match)
                 if let company = item.companyName, !company.isEmpty {
                     Text("· \(company)").foregroundStyle(.secondary)
                 }
@@ -370,5 +365,22 @@ struct DecisionQueueRow: View {
             Text(item.reason).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
         }
         .padding(.vertical, Space.xs)
+    }
+}
+
+/// A queue row's match word, in its tone, or in the row's text color on the
+/// selected row of the focused queue: that row is drawn in the accent, which
+/// a match in the accent tone would vanish into. The word reads the
+/// prominence itself, not the row: a List makes each row's own body where
+/// it lists its rows, before the selected row's environment applies, so
+/// only the views inside a row see it.
+private struct QueueMatchWord: View {
+    let match: JobMatch
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Text(match.title)
+            .fontWeight(.medium)
+            .foregroundStyle(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(match.tone.color))
     }
 }

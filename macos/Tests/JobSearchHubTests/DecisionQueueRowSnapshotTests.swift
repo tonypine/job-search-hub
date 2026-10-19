@@ -7,8 +7,10 @@ import Testing
 // Decide's queue row drawn offscreen with ImageRenderer, from made-up jobs,
 // as the queue draws it and as the focused queue draws its selected row: on
 // the accent, with increased prominence and white text. A match word or a
-// dot left in its tone there can vanish into the accent (TP-672's QA). With
-// HUB_SNAPSHOT_DIR set, as CI's macos job sets it, the PNGs are written there.
+// dot left in its tone there can vanish into the accent (TP-672's QA, twice:
+// the second time the row read the prominence at its root, where a List row
+// never sees it). With HUB_SNAPSHOT_DIR set, as CI's macos job sets it, the
+// PNGs are written there.
 
 private let matches: [JobMatch] = [.strong, .possible, .stretch, .mismatch]
 
@@ -28,7 +30,11 @@ enum DecisionQueueRowSnapshots {
     }
 
     static func render(_ item: DecisionQueueItem, isSelected: Bool) -> CGImage? {
-        let row = DecisionQueueRow(item: item)
+        // A List makes each row's own body where it lists its rows, before
+        // the selected row's environment applies; only the views inside the
+        // row see it. The row is made the same way here, so a color it
+        // picks from the environment itself stays as the List would leave it.
+        let row = DecisionQueueRow(item: item).body
             .padding(.horizontal, Space.s)
             .frame(width: width, alignment: .leading)
         let content = Group {
