@@ -417,6 +417,10 @@ struct JobsPage: View {
             }
         }
         .alternatingRowBackgrounds(.disabled)
+        .hubTableSelection(revision: JobsTableRevision(
+            selection: model.selectedIDs,
+            rows: groups.map { $0.map { $0.items.map(\.id) } } ?? [shownItems.map(\.id)]
+        ))
         .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -551,6 +555,13 @@ struct JobsHeaderTrailing: View {
         Button("Add", systemImage: "plus", action: onAdd)
             .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
     }
+}
+
+/// What the Jobs table's selection highlight follows: the selected jobs, and
+/// the rows in their groups, since a group's heading is a row too.
+private struct JobsTableRevision: Hashable {
+    let selection: Set<UUID>
+    let rows: [[UUID]]
 }
 
 struct AddJobSheet: View {
