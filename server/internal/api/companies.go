@@ -4,15 +4,30 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/tonypine/job-search-hub/server/internal/jobfit"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 type companiesResponse struct {
-	Companies []store.CompanySummary `json:"companies"`
+	Companies []companyListItem `json:"companies"`
 }
+
+// companyListItem is a row of the companies list with what the company has
+// open for the owner: its open jobs that pass the screen, the best match
+// their briefs found, and when the newest of them was first seen.
+type companyListItem struct {
+	store.CompanySummary
+	FittingJobs            int        `json:"fitting_jobs"`
+	BestMatch              *string    `json:"best_match,omitempty"`
+	NewestFittingJobSeenAt *time.Time `json:"newest_fitting_job_seen_at,omitempty"`
+}
+
+// matchRanks orders a brief's match classes, the best highest.
+var matchRanks = map[string]int{"mismatch": 1, "stretch": 2, "possible": 3, "strong": 4}
 
 // companyMailListSize is how many of a company's latest messages its page
 // shows.
@@ -36,14 +51,14 @@ type companyResponse struct {
 
 // RegisterCompanyRoutes adds the owner-only routes the app reads companies
 // through.
-func RegisterCompanyRoutes(routes *http.ServeMux, hub *store.Store, requireOwner func(http.Handler) http.Handler) {
+func RegisterCompanyRoutes(routes *http.ServeMux, hub *store.Store, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/companies", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		summaries, err := hub.ListCompanySummaries(r.Context())
+		companies, err := listCompanies(r.Context(), hub, rateSource)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, companiesResponse{Companies: summaries})
+		writeJSON(w, http.StatusOK, companiesResponse{Companies: companies})
 	})))
 
 	routes.Handle("GET /v1/companies/{id}", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +77,40 @@ func RegisterCompanyRoutes(routes *http.ServeMux, hub *store.Store, requireOwner
 			writeJSON(w, http.StatusOK, response)
 		}
 	})))
+}
+
+// listCompanies reads every company's row, and judges every open job to
+// count the ones that pass the screen at each company.
+func listCompanies(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) ([]companyListItem, error) {
+	summaries, err := hub.ListCompanySummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fitting := map[uuid.UUID]companyListItem{}
+	err = walkOpenJobs(ctx, hub, rateSource, func(item store.JobListItem, level jobfit.Level) {
+		if level != jobfit.LevelGood || item.Job.CompanyID == nil {
+			return
+		}
+		counted := fitting[*item.Job.CompanyID]
+		counted.FittingJobs++
+		if item.Match != nil && (counted.BestMatch == nil || matchRanks[*item.Match] > matchRanks[*counted.BestMatch]) {
+			counted.BestMatch = item.Match
+		}
+		if seenAt := item.Job.FirstSeenAt; counted.NewestFittingJobSeenAt == nil || seenAt.After(*counted.NewestFittingJobSeenAt) {
+			counted.NewestFittingJobSeenAt = &seenAt
+		}
+		fitting[*item.Job.CompanyID] = counted
+	})
+	if err != nil {
+		return nil, err
+	}
+	companies := make([]companyListItem, 0, len(summaries))
+	for _, summary := range summaries {
+		item := fitting[summary.Company.ID]
+		item.CompanySummary = summary
+		companies = append(companies, item)
+	}
+	return companies, nil
 }
 
 func getCompanyResponse(ctx context.Context, hub *store.Store, id uuid.UUID) (companyResponse, error) {

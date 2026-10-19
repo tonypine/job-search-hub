@@ -239,8 +239,8 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The companies and the job come first: the store writes columns later
-	// migrations add, which rolling back drops.
+	// The store writes the current schema, so the companies and the job come
+	// before the rollback.
 	company, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +256,6 @@ func TestRunsRecordedBeforeSubjectsAreLinkedWhereTheyCanBe(t *testing.T) {
 	if _, err := provider.DownTo(ctx, runSubjectsMigration-1); err != nil {
 		t.Fatal(err)
 	}
-
 	if _, err := pool.Exec(ctx, `INSERT INTO model_providers (kind, name, base_url) VALUES
 		('openai_compatible', 'LM Studio', 'http://localhost:1234/v1'), ('hub_runtime', 'This Mac', '')`); err != nil {
 		t.Fatal(err)
