@@ -6,16 +6,36 @@ hooks:
   after_create: |
     git config core.hooksPath .githooks
     cd server && go mod download
+# The Mac app's QA pass runs the real hub beside the app in the QA VM:
+# server/scripts/dev-server.sh builds hub-server and starts it on its own
+# Postgres cluster with a made-up job search (see README, "QA dev server").
+# It listens on 127.0.0.1:8090, the app's default hub URL, and the app takes
+# the dev server's owner token, a documented QA value, from HUB_OWNER_TOKEN.
+verification:
+  enabled: true
+  dev_server:
+    build_cmd: server/scripts/dev-server.sh build
+    start_cmd: server/scripts/dev-server.sh start
+    health_check_url: http://127.0.0.1:8090/v1/health
+    health_timeout_ms: 180000
 # How Symphony's QA pass builds and opens the apps, over symphony.yml's
-# defaults. make-app.sh signs ad hoc in the QA VM, which has no Apple identity,
-# and leaves out the bundled hub command there, since the VM has no Go.
+# defaults. make-app.sh signs ad hoc in the QA VM, which has no Apple identity.
+# The VM has Go now (Symphony's scripts/qa-vm/provision.sh), so HUB_QA_BUILD=1
+# keeps the build a QA build: it starts from empty connection settings at every
+# launch and reads the token from the environment. requires names the tools the
+# VM must have, so a pass on a VM without them says so instead of blocking.
 # The Android build needs a writable ANDROID_USER_HOME for the debug keystore,
 # a temp dir for the Kotlin daemon, and no Gradle daemon in the sandbox.
 auto_review:
   playbooks:
     macos_app:
-      build: cd macos && ./Scripts/make-app.sh
+      build: cd macos && HUB_QA_BUILD=1 ./Scripts/make-app.sh
       app: macos/build/JobSearchHub.app
+      dev_server: true
+      dev_server_port: 8090
+      requires: [go, pg_ctl, initdb, jq]
+      launch_env:
+        HUB_OWNER_TOKEN: qa-dev-server-owner-token-not-a-secret
     android_app:
       build: cd android && ANDROID_HOME="$HOME/Library/Android/sdk" ANDROID_USER_HOME="$TMPDIR/android-home" JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR" ./gradlew --no-daemon :app:assembleDebug
       apk_path: android/app/build/outputs/apk/debug/app-debug.apk
