@@ -32,13 +32,12 @@ func getJudgedJobDetails(ctx context.Context, hub *store.Store, rateSource excha
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
-	confirmed := true
-	roles, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Kind: store.ProfileEntryRole, Confirmed: &confirmed})
+	experienceMonths, err := readExperienceMonths(ctx, hub)
 	if err != nil {
 		return judgedJobDetails{}, err
 	}
 	fit := jobfit.Judge(details.Job, details.RawFacts, criteria, rates)
-	screenOut := buildScreenOutAnswers(details, fit, countExperienceMonths(roles, time.Now()))
+	screenOut := buildScreenOutAnswers(indexLabelledFacts(details), fit, experienceMonths)
 	return judgedJobDetails{JobDetails: details, Fit: fit, ScreenOut: screenOut}, nil
 }
 
@@ -49,10 +48,13 @@ type jobsResponse struct {
 	FactColumns []store.JobFactColumn `json:"fact_columns"`
 }
 
-// judgedJobListItem is a row of the jobs list with its fit.
+// judgedJobListItem is a row of the jobs list with its fit and the answers
+// that could screen the owner out, as its details have them, so the row's
+// screen reads as the job's page does.
 type judgedJobListItem struct {
 	store.JobListItem
-	Fit jobfit.Fit `json:"fit"`
+	Fit       jobfit.Fit        `json:"fit"`
+	ScreenOut []screenOutAnswer `json:"screen_out"`
 }
 
 // judgedJobDetails are a job's details with its fit and the answers that
@@ -119,9 +121,16 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
+		experienceMonths, err := readExperienceMonths(r.Context(), hub)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
 		judged := make([]judgedJobListItem, 0, len(jobs))
 		for _, item := range jobs {
-			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: jobfit.Judge(item.Job, item.Facts, criteria, rates)})
+			fit := jobfit.Judge(item.Job, item.Facts, criteria, rates)
+			screenOut := buildScreenOutAnswers(indexFlatFacts(item.Facts), fit, experienceMonths)
+			judged = append(judged, judgedJobListItem{JobListItem: item, Fit: fit, ScreenOut: screenOut})
 		}
 		factColumns, err := hub.ListJobFactColumns(r.Context())
 		if err != nil {

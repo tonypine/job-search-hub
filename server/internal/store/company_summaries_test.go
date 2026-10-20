@@ -29,6 +29,11 @@ func TestACompanyRowNamesThePeopleYouKnowAndWhereYourApplicationStands(t *testin
 	if _, err := hub.ImportConnections(ctx, owner, connections); err != nil {
 		t.Fatal(err)
 	}
+	// A contact research stored at Acme comes after the connections.
+	if _, _, err := hub.AddPerson(ctx, owner, store.PersonInput{CompanyID: acme.ID, Name: "Eve Example", Relevance: "hiring_manager",
+		SourceURL: "https://acme.example/team"}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Three applications at Acme: one in Applied, one closed and one
 	// dismissed after it. Only the one in Applied is open.
@@ -66,14 +71,48 @@ func TestACompanyRowNamesThePeopleYouKnowAndWhereYourApplicationStands(t *testin
 		t.Fatalf("summaries = %+v, %v", summaries, err)
 	}
 	acmeRow, zetaRow := summaries[0], summaries[1]
-	if acmeRow.Company.ID != acme.ID || acmeRow.ConnectionCount != 4 ||
+	if acmeRow.Company.ID != acme.ID || acmeRow.ConnectionCount != 4 || acmeRow.KnownPeopleCount != 5 ||
 		!slices.Equal(acmeRow.KnownPeople, []string{"Dana Example", "Ada Example", "Cleo Example"}) {
-		t.Fatalf("Acme's people = %d %q; want 4, the three connected longest named", acmeRow.ConnectionCount, acmeRow.KnownPeople)
+		t.Fatalf("Acme's people = %d connections, %d in all, %q; want 4 and 5, the three connected longest named",
+			acmeRow.ConnectionCount, acmeRow.KnownPeopleCount, acmeRow.KnownPeople)
 	}
 	if acmeRow.ApplicationPhase == nil || *acmeRow.ApplicationPhase != "Applied" {
 		t.Fatalf("Acme's phase = %v; want Applied, its one open application", acmeRow.ApplicationPhase)
 	}
-	if zetaRow.Company.ID != zeta.ID || zetaRow.KnownPeople == nil || len(zetaRow.KnownPeople) != 0 || zetaRow.ApplicationPhase != nil {
+	if zetaRow.Company.ID != zeta.ID || zetaRow.KnownPeople == nil || len(zetaRow.KnownPeople) != 0 || zetaRow.KnownPeopleCount != 0 ||
+		zetaRow.ApplicationPhase != nil {
 		t.Fatalf("Zeta = %+v; want no one known and no application", zetaRow)
+	}
+}
+
+// A company where the owner has no connection still names the people a
+// job's People card lists there: those who can introduce the owner, then
+// the stored contacts closest to the hire.
+func TestACompanyRowNamesItsContactsWhenYouHaveNoConnectionThere(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	acme, _, _ := hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.example"})
+
+	for _, contact := range []struct{ name, relevance string }{
+		{"Abe Example", "other"}, {"Bo Example", "engineer"}, {"Cy Example", "hiring_manager"},
+	} {
+		if _, _, err := hub.AddPerson(ctx, owner, store.PersonInput{CompanyID: acme.ID, Name: contact.name, Relevance: contact.relevance,
+			SourceURL: "https://acme.example/team"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := hub.AddWarmPath(ctx, owner, acme.ID, store.NewWarmPath{Name: "Zed Example", HowKnown: "A former colleague"}); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := hub.ListCompanySummaries(ctx)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("summaries = %+v, %v", summaries, err)
+	}
+	row := summaries[0]
+	if row.ConnectionCount != 0 || row.PeopleCount != 3 || row.KnownPeopleCount != 4 ||
+		!slices.Equal(row.KnownPeople, []string{"Zed Example", "Cy Example", "Bo Example"}) {
+		t.Fatalf("Acme's people = %d connections, %d stored, %d in all, %q; want 0, 3 and 4, the introducer then the contacts closest to the hire",
+			row.ConnectionCount, row.PeopleCount, row.KnownPeopleCount, row.KnownPeople)
 	}
 }

@@ -14,6 +14,7 @@ struct JobSearchHubApp: App {
     @State private var taskRunner: RemoteTaskRunner
     @State private var profileSeed = ProfileSeed()
     @State private var jobDecisions = JobDecisions()
+    @State private var applicationChanges = ApplicationChanges()
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
@@ -47,6 +48,7 @@ struct JobSearchHubApp: App {
                 .environment(jobFinder)
                 .environment(profileSeed)
                 .environment(jobDecisions)
+                .environment(applicationChanges)
                 .environment(taskRunner)
                 .environment(newVersions)
                 .frame(minWidth: 900, minHeight: 600)
@@ -170,6 +172,7 @@ struct ContentView: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(SidebarCounts.self) private var counts
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var applicationChanges
     @Environment(NewVersionChecker.self) private var newVersions
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
@@ -307,10 +310,10 @@ struct ContentView: View {
                 // constraints on every pass, and a window whose constraint
                 // updates never settle is stopped by AppKit.
                 .frame(
-                    minWidth: 0, idealWidth: 480, maxWidth: .infinity,
+                    minWidth: 0, idealWidth: InspectorWidth.ideal, maxWidth: .infinity,
                     minHeight: 0, idealHeight: 600, maxHeight: .infinity, alignment: .top
                 )
-                .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
+                .inspectorColumnWidth(min: InspectorWidth.min, ideal: InspectorWidth.ideal, max: InspectorWidth.max)
             }
         }
         .overlay(alignment: .top) {
@@ -377,7 +380,9 @@ struct ContentView: View {
                 await unseen.refresh(with: client)
             }
         }
-        .task(id: [events.revision, decisions.revision, connection.hasToken ? 1 : 0]) {
+        // A follow-up, move, skip or restore raises no update: the badge
+        // reads again on the application changes' revision.
+        .task(id: [events.revision, decisions.revision, applicationChanges.revision, connection.hasToken ? 1 : 0]) {
             if let client = connection.makeClient() {
                 await counts.refresh(with: client)
             }

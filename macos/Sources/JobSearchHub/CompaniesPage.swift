@@ -13,20 +13,29 @@ final class CompaniesModel {
     var selectedID: UUID?
     var search = ""
     var scope: CompanyScope = .watching
+    /// The filters that are on, as chips under the scopes.
+    var filters: Set<CompanyFilter> = []
 
-    /// The scope's companies whose name or domain holds the search.
+    /// The scope's companies the filters keep whose name or domain holds the
+    /// search.
     var shownSummaries: [CompanySummary] {
         let query = search.trimmingCharacters(in: .whitespaces)
-        let inScope = scope.getSummaries(summaries)
+        let inScope = scope.getSummaries(summaries).filter(filters.keeps)
         guard !query.isEmpty else { return inScope }
         return inScope.filter { $0.company.name.localizedStandardContains(query) || $0.company.domain.localizedStandardContains(query) }
     }
 
-    /// The suggestions whose name holds the search.
+    /// The suggestions the filters keep whose name holds the search.
     var shownSuggestions: [CompanySuggestion] {
         let query = search.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return suggestions ?? [] }
-        return (suggestions ?? []).filter { $0.organization.localizedStandardContains(query) }
+        let kept = (suggestions ?? []).filter(filters.keeps)
+        guard !query.isEmpty else { return kept }
+        return kept.filter { $0.organization.localizedStandardContains(query) }
+    }
+
+    /// How many of the scope's rows the filter keeps, in the *+ Filter* menu.
+    func getCount(keptBy filter: CompanyFilter) -> Int {
+        scope == .suggested ? (suggestions ?? []).count(where: filter.keeps) : scope.getSummaries(summaries).count(where: filter.keeps)
     }
 
     /// How many each scope holds, Suggested once read.
@@ -70,7 +79,7 @@ struct CompaniesPage: View {
     /// Which columns show, in what order and width, kept across launches.
     /// Renamed when the default widths change, so widths an earlier build
     /// saved don't push the Board column past the inspector.
-    @AppStorage("companiesTableColumns.v2") private var savedColumns = Data()
+    @AppStorage("companiesTableColumns.v3") private var savedColumns = Data()
 
     var body: some View {
         Group {
@@ -119,9 +128,9 @@ struct CompaniesPage: View {
 
     /// The page's controls, in its header rather than in the window's
     /// toolbar: the scopes, then a research that failed, the search, the
-    /// columns and Add.
+    /// columns and Add, and under them the filters that are on as chips.
     private var header: some View {
-        PageHeader {
+        PageHeader(chips: filterChips) {
             TabStrip(
                 items: CompanyScope.allCases.map { scope in
                     TabStripItem(id: scope, title: scope.title, count: model.getCount(of: scope))
@@ -151,9 +160,28 @@ struct CompaniesPage: View {
                 .help("Search names and domains")
             CompanyColumnsMenu(customization: columnCustomization)
                 .labelStyle(.iconOnly)
+                .menuIndicator(.hidden)
                 .fixedSize()
             Button("Add", systemImage: "plus") { isAddingCompany = true }
                 .help("Research a company and watch it (⌘N)")
+        } filterMenu: {
+            ForEach(CompanyFilter.allCases, id: \.self) { filter in
+                Toggle("\(filter.title) (\(model.getCount(keptBy: filter)))", isOn: Binding(
+                    get: { model.filters.contains(filter) },
+                    set: { isOn in
+                        if isOn { model.filters.insert(filter) } else { model.filters.remove(filter) }
+                    }
+                ))
+            }
+            Divider()
+            Button("Clear filters") { model.filters = [] }
+                .disabled(model.filters.isEmpty)
+        }
+    }
+
+    private var filterChips: [PageFilterChip] {
+        CompanyFilter.allCases.filter(model.filters.contains).map { filter in
+            PageFilterChip(id: filter.rawValue, title: filter.title) { model.filters.remove(filter) }
         }
     }
 
@@ -193,13 +221,13 @@ struct CompaniesPage: View {
 
     private func table(client: HubClient) -> some View {
         Table(of: CompanyRow.self, selection: selection, columnCustomization: columnCustomization) {
-            // The default columns' ideal widths add up to 660, which fits the
-            // table beside the inspector in a 1400-wide window: the table
-            // doesn't shrink its columns when the inspector opens.
+            // Company is the one default column that resizes; the others
+            // keep one width (CompanyRowLayout). Its ideal width fits the
+            // table beside the inspector in a 1400-wide window.
             TableColumn("Company") { row in
                 CompanyCell(row: row, researchStep: getResearchStep(of: row))
             }
-            .width(min: 170, ideal: 200)
+            .width(min: CompanyRowLayout.companyMinWidth, ideal: CompanyRowLayout.companyIdealWidth)
             .customizationID("company")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Open jobs") { row in
@@ -209,23 +237,23 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 120, ideal: 150)
+            .width(CompanyRowLayout.openJobsWidth)
             .customizationID("openJobs")
             TableColumn("People you know") { row in
                 switch row {
-                case let .company(summary): KnownPeopleCell(names: summary.knownPeople ?? [], count: summary.connectionCount)
+                case let .company(summary): KnownPeopleCell(names: summary.knownPeople ?? [], count: summary.peopleYouKnow)
                 case let .suggestion(suggestion): KnownPeopleCell(names: [], count: suggestion.connectionCount)
                 case .research: EmptyView()
                 }
             }
-            .width(min: 70, ideal: 100)
+            .width(CompanyRowLayout.peopleWidth)
             .customizationID("peopleYouKnow")
             TableColumn("You") { row in
                 if let summary = row.summary {
                     StandingCell(standing: summary.getStanding(now: .now))
                 }
             }
-            .width(min: 80, ideal: 100)
+            .width(CompanyRowLayout.youWidth)
             .customizationID("you")
             TableColumn("Board") { row in
                 switch row {
@@ -238,7 +266,7 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 90, ideal: 110)
+            .width(CompanyRowLayout.boardWidth)
             .customizationID("board")
             TableColumn("Domain") { row in
                 optionalCell(row.summary?.company.domain)
@@ -268,7 +296,7 @@ struct CompaniesPage: View {
             ForEach(rows) { row in TableRow(row) }
         }
         .alternatingRowBackgrounds(.disabled)
-        .hubTableSelection(revision: [model.selectedID?.uuidString ?? ""] + rows.map(\.id))
+        .hubTableSelection(revision: [model.selectedID?.uuidString ?? ""] + rows.map(\.id), cellSpacing: CompanyRowLayout.cellSpacing)
         .overlay { emptyState(client: client) }
     }
 
@@ -305,17 +333,32 @@ struct CompaniesPage: View {
                     "No suggestions", systemImage: "sparkles",
                     description: Text("Import your LinkedIn archive in Settings › Accounts; the companies you follow show up here, beside the ones on startups.gallery's remote list with a job that passes your screen, read weekly.")
                 )
-            } else if model.suggestions != nil && model.shownSuggestions.isEmpty {
+            } else if model.suggestions != nil && model.shownSuggestions.isEmpty && !query.isEmpty {
                 ContentUnavailableView.search(text: query)
+            } else if model.suggestions != nil && model.shownSuggestions.isEmpty {
+                noneKeptView
             }
         } else if let loadError = model.loadError {
             HubErrorView(loadError, style: .page, retry: { Task { await model.load(with: client) } })
         } else if rows.isEmpty && !model.isLoading && !query.isEmpty {
             ContentUnavailableView.search(text: query)
+        } else if rows.isEmpty && !model.isLoading && !model.filters.isEmpty {
+            noneKeptView
         } else if rows.isEmpty && !model.isLoading && model.scope == .withOpenJobs {
             ContentUnavailableView("No open jobs that pass", systemImage: "briefcase", description: Text("Companies with an open job that passes your screen show here."))
         } else if rows.isEmpty && !model.isLoading {
             ContentUnavailableView("No companies watched", systemImage: "building.2", description: Text("Add a company, or pick one under Suggested."))
+        }
+    }
+
+    /// No row the filters keep, with the way back.
+    private var noneKeptView: some View {
+        ContentUnavailableView {
+            Label("No companies match the filters", systemImage: "line.3.horizontal.decrease")
+        } description: {
+            Text("Remove a filter to see more.")
+        } actions: {
+            Button("Clear filters") { model.filters = [] }
         }
     }
 

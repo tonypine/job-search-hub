@@ -91,6 +91,9 @@ public struct JobListItem: Codable, Equatable, Identifiable, Sendable {
     public var match: JobMatch?
     /// The pipeline phase its card is in; nil when it isn't on the pipeline.
     public var pipelinePhase: String?
+    /// The answers that could screen the owner out, as the job's details
+    /// have them; nil from a hub that doesn't send them.
+    public var screenOut: [ScreenOutAnswer]?
 
     public var id: UUID { job.id }
 

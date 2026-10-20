@@ -62,6 +62,47 @@ private var utc: Calendar {
     #expect(CompanyScope.allCases.map(\.title) == ["Watching", "With open jobs", "Suggested"])
 }
 
+@Test func theFiltersKeepTheRowsThatAnswerTheirQuestion() throws {
+    var rows = try makeRows()
+    rows[2].unseenUpdates = 2
+    func getNames(_ filters: Set<CompanyFilter>) -> [String] {
+        rows.filter(filters.keeps).map(\.company.name)
+    }
+    #expect(getNames([]) == ["Northwind", "Globex", "Brightline"])
+    #expect(getNames([.knowSomeone]) == ["Northwind"])
+    #expect(getNames([.onPipeline]) == ["Globex"])
+    #expect(getNames([.noBoard]) == ["Brightline"])
+    #expect(getNames([.unseenUpdates]) == ["Brightline"])
+    // Filters that are on all apply.
+    #expect(getNames([.noBoard, .unseenUpdates]) == ["Brightline"])
+    #expect(getNames([.knowSomeone, .onPipeline]).isEmpty)
+    #expect(CompanyFilter.allCases.map(\.title) == ["You know someone", "On the pipeline", "No board", "New updates"])
+}
+
+@Test func theContactsStoredAtACompanyAreAmongThePeopleYouKnowThere() throws {
+    var rows = try makeRows()
+    // An older hub sends no count of everyone: its connections stand in.
+    #expect(rows[0].knownPeopleCount == nil && rows[0].peopleYouKnow == 2)
+    // Globex has no connection, but a contact research stored there.
+    rows[1].peopleCount = 1
+    rows[1].knownPeopleCount = 1
+    rows[1].knownPeople = ["Rae Example"]
+    #expect(rows[1].peopleYouKnow == 1)
+    #expect(rows.filter(CompanyFilter.knowSomeone.keeps).map(\.company.name) == ["Northwind", "Globex"])
+}
+
+@Test func onlyYouKnowSomeoneKeepsASuggestion() throws {
+    let json = #"{"organization":"Hooli","source":"linkedin","connection_count":2,"open_jobs":3,"fitting_jobs":1}"#
+    var suggestion = try HubJSON.makeDecoder().decode(CompanySuggestion.self, from: Data(json.utf8))
+    #expect(Set<CompanyFilter>().keeps(suggestion))
+    #expect(Set([CompanyFilter.knowSomeone]).keeps(suggestion))
+    for filter in [CompanyFilter.onPipeline, .noBoard, .unseenUpdates] {
+        #expect(!filter.keeps(suggestion))
+    }
+    suggestion.connectionCount = 0
+    #expect(!CompanyFilter.knowSomeone.keeps(suggestion))
+}
+
 @Test func aResearchIsMatchedToItsRowByNameDomainOrLink() throws {
     let northwind = try makeRows()[0]
     #expect(northwind.isResearched(as: "Northwind"))

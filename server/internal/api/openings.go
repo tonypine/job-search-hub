@@ -12,7 +12,8 @@ import (
 // openJobsPageSize is the page open jobs are read by.
 const openJobsPageSize = 500
 
-// companyOpenings are the open jobs at one company, by its normalized name.
+// companyOpenings are the open jobs at one company, by its normalized name;
+// fitting are the ones that pass the screen.
 type companyOpenings struct {
 	companyID *uuid.UUID
 	open      int
@@ -20,15 +21,15 @@ type companyOpenings struct {
 	jobs      []opening
 }
 
-// opening is an open job as a draft names it.
+// opening is an open job as a draft names it, with its screen's level.
 type opening struct {
 	Title string       `json:"title"`
 	URL   string       `json:"url"`
 	Fit   jobfit.Level `json:"fit"`
 }
 
-// getOpeningsByCompany counts every open job, and the ones judged a good
-// fit, by the normalized name of its company.
+// getOpeningsByCompany counts every open job, and the ones that pass the
+// screen, by the normalized name of its company.
 func getOpeningsByCompany(ctx context.Context, hub *store.Store, rateSource exchangeRateSource) (map[string]companyOpenings, error) {
 	openings := map[string]companyOpenings{}
 	err := walkOpenJobs(ctx, hub, rateSource, func(item store.JobListItem, level jobfit.Level) {
@@ -54,10 +55,14 @@ func countOpening(counted companyOpenings, item store.JobListItem, level jobfit.
 	return counted
 }
 
-// walkOpenJobs calls visit with every open job and how well it fits, a page
-// at a time.
+// walkOpenJobs calls visit with every open job and its screen's level, as
+// the job's page reads it with the screen-out answers, a page at a time.
 func walkOpenJobs(ctx context.Context, hub *store.Store, rateSource exchangeRateSource, visit func(store.JobListItem, jobfit.Level)) error {
 	criteria, rates, err := jobfit.ReadInputs(ctx, hub, rateSource)
+	if err != nil {
+		return err
+	}
+	experienceMonths, err := readExperienceMonths(ctx, hub)
 	if err != nil {
 		return err
 	}
@@ -67,7 +72,8 @@ func walkOpenJobs(ctx context.Context, hub *store.Store, rateSource exchangeRate
 			return err
 		}
 		for _, item := range jobs {
-			visit(item, jobfit.Judge(item.Job, item.Facts, criteria, rates).Level)
+			fit := jobfit.Judge(item.Job, item.Facts, criteria, rates)
+			visit(item, judgeScreenLevel(fit, buildScreenOutAnswers(indexFlatFacts(item.Facts), fit, experienceMonths)))
 		}
 		if offset+len(jobs) >= total || len(jobs) == 0 {
 			return nil

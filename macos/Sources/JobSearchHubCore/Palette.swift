@@ -159,7 +159,7 @@ public struct PaletteItem: Hashable, Identifiable, Sendable {
         let detail = [item.companyName, item.job.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
         return PaletteItem(
             kind: .job, target: .open(.job(item.id)), title: item.job.title, detail: detail.isEmpty ? nil : detail,
-            chip: PaletteChip(item.fit.level.label, tone: item.fit.level.tone), symbolName: Page.jobs.symbolName
+            chip: PaletteChip(item.screenLevel.label, tone: item.screenLevel.tone), symbolName: Page.jobs.symbolName
         )
     }
 

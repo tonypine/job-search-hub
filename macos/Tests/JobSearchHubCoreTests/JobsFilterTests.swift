@@ -73,9 +73,9 @@ private func getTitles(_ filter: JobsFilter, _ items: [JobListItem], previousVis
 
 @Test func choicesCountTheLoadedJobs() {
     let items = [
-        makeItem("a", level: .good, source: "himalayas", checks: [FitCheck(name: "Stack", verdict: .no, reason: "")]),
+        makeItem("a", level: .good, source: "himalayas", checks: [FitCheck(name: "Stack", verdict: .yes, reason: "")]),
         makeItem("b", level: .poor, source: "himalayas", checks: [FitCheck(name: "Stack", verdict: .no, reason: "")]),
-        makeItem("c", level: .poor, source: "job_board", pay: Pay(ranges: [])),
+        makeItem("c", level: .poor, source: "job_board", checks: [FitCheck(name: "Stack", verdict: .no, reason: "")], pay: Pay(ranges: [])),
     ]
     let choices = JobsFilterChoices(items: items)
 
@@ -85,6 +85,17 @@ private func getTitles(_ filter: JobsFilter, _ items: [JobListItem], previousVis
         JobsFilterChoice(value: "himalayas", title: "Himalayas", count: 2), JobsFilterChoice(value: "job_board", title: "Company board", count: 1),
     ])
     #expect(choices.withPayCount == 1)
+}
+
+@Test func theScreenFilterHidesByTheScreenAsTheJobsPageReadsIt() {
+    var failsExperience = makeItem("fails experience", level: .good, checks: [FitCheck(name: "Role", verdict: .yes, reason: "")])
+    failsExperience.screenOut = [ScreenOutAnswer(name: "Experience", verdict: .no, answer: "asks for 12 years; you have 8 years")]
+    let items = [failsExperience, makeItem("passes", level: .good, checks: [FitCheck(name: "Role", verdict: .yes, reason: "")])]
+    var filter = JobsFilter()
+    filter.hiddenFitLevels = JobsFilter.passesScreenHiddenLevels
+
+    #expect(getTitles(filter, items) == ["passes"])
+    #expect(JobsFilterChoices(items: items).fitLevelCounts == [.good: 1, .poor: 1])
 }
 
 @Test func aFilterSurvivesEncoding() throws {

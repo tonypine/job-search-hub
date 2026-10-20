@@ -36,6 +36,17 @@ private func decodeBoard() throws -> PipelineBoard {
     #expect(board.cards.map(\.unseenUpdates) == [0, 1])
 }
 
+@Test func aSearchMatchesACardsJobTitleOrCompanyName() throws {
+    let board = try decodeBoard()
+    let withJob = try #require(board.cards.first { $0.jobTitle == "Backend Engineer" })
+    let companyOnly = try #require(board.cards.first { $0.jobTitle == nil })
+
+    #expect(withJob.matches("backend") && withJob.matches(" acme "))
+    #expect(companyOnly.matches("Glob") && !companyOnly.matches("Backend"))
+    #expect(withJob.matches("") && companyOnly.matches("  "))
+    #expect(!withJob.matches("Initech"))
+}
+
 @Test func aMovedApplicationReplacesItsCardAndKeepsTheJob() throws {
     var board = try decodeBoard()
     var moved = board.cards[1].application

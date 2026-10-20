@@ -269,6 +269,68 @@ jobs:
           jq -e --arg want "$want" --arg commit "$(git rev-parse HEAD)" \
             '.version == $want and .commit == $commit and .newest_migration > 0' "$RUNNER_TEMP/version.json"
 
+      # Symphony's QA pass runs the hub this way in its QA VM, for the Mac
+      # app: on its own cluster from the PATH's Postgres 18, seeded, on 8090.
+      # A start clears what a killed run left; TERM leaves nothing behind.
+      - name: The QA dev server starts seeded and stops clean
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          runs="$RUNNER_TEMP/hub-dev-server"
+          # Healthy once this run's own hub-server answers: a killed run's
+          # may still answer until the new run has cleared it.
+          wait_healthy() {
+            for _ in $(seq 60); do
+              grep -q "^Hub dev server at" "$1" && curl -fsS http://127.0.0.1:8090/v1/health > /dev/null 2>&1 && return 0
+              sleep 1
+            done
+            echo "::error::the dev server didn't answer /v1/health within 60 s"
+            cat "$1"
+            return 1
+          }
+          scripts/dev-server.sh build
+
+          # A run killed outright leaves its hub-server and cluster running.
+          scripts/dev-server.sh start > "$RUNNER_TEMP/killed-dev-server.log" 2>&1 &
+          killed=$!
+          wait_healthy "$RUNNER_TEMP/killed-dev-server.log"
+          kill -KILL "$killed"
+
+          scripts/dev-server.sh start > "$RUNNER_TEMP/dev-server.log" 2>&1 &
+          dev_server=$!
+          wait_healthy "$RUNNER_TEMP/dev-server.log"
+          grep -q "Cleared $runs/$killed" "$RUNNER_TEMP/dev-server.log"
+          test ! -e "$runs/$killed"
+
+          owner="Authorization: Bearer qa-dev-server-owner-token-not-a-secret"
+          curl -fsS --header "$owner" http://127.0.0.1:8090/v1/pipeline > "$RUNNER_TEMP/pipeline.json"
+          curl -fsS --header "$owner" http://127.0.0.1:8090/v1/people > "$RUNNER_TEMP/people.json"
+          # The overdue Applied cards nobody answered, and who to write to
+          # at each: the hiring manager first, then the rest.
+          jq -e '(.phases | map({key: .id, value: .name}) | from_entries) as $phase
+            | [.cards[] | select($phase[.application.phase_id] == "Applied" and .application.contacted_at == null
+                and .follow_up_due_at != null and (.follow_up_due_at | sub("\\.[0-9]+"; "") | fromdateiso8601) < now)
+                | .company_name] | sort
+            == ["Brightwater Labs", "Larkspur Freight", "Quillfeather Systems"]' "$RUNNER_TEMP/pipeline.json"
+          jq -e '[.cards[] | .application.phase_id] | length == 7' "$RUNNER_TEMP/pipeline.json"
+          jq -e '([.people[] | select(.company_name == "Brightwater Labs") | .name] | sort == ["Dana Whitfield", "Priya Castellanos", "Tomasz Ellery"])
+            and ([.people[] | select(.company_name == "Brightwater Labs" and .relevance == "hiring_manager") | .name] == ["Dana Whitfield"])
+            and ([.people[] | select(.company_name == "Quillfeather Systems") | .name] == ["Ines Marchetti"])
+            and ([.people[] | select(.company_name == "Larkspur Freight")] | length == 0)' "$RUNNER_TEMP/people.json"
+
+          kill -TERM "$dev_server"
+          wait "$dev_server" || true
+          if curl -fsS http://127.0.0.1:8090/v1/health > /dev/null 2>&1; then
+            echo "::error::the dev server still answers after TERM"
+            exit 1
+          fi
+          if [ -n "$(ls -A "$runs")" ] || pgrep -f "$runs/" > /dev/null || pgrep -f "$PWD/bin/dev-server/hub-server" > /dev/null; then
+            echo "::error::the dev server left a cluster, a hub-server or a folder behind"
+            ls -la "$runs"
+            ps -ef | grep -E "hub-dev-server|hub-server" || true
+            exit 1
+          fi
+
   # Runs only when macos/ changes: the Swift tests run against StubHub, not
   # the server, and macOS minutes cost 10x Linux ones. Scripts/make-app.sh
   # runs signed ad hoc, as CI has no Keychain identity, to check the version
@@ -374,9 +436,14 @@ jobs:
             exit 1
           fi
           sed 's/^::error:://' "$RUNNER_TEMP/verify-app"
-          grep -q '^::error::Contents/Helpers/bin/hub-server is signed ad hoc' "$RUNNER_TEMP/verify-app"
-          grep -q '^::error::Contents/MacOS/JobSearchHub is signed ad hoc' "$RUNNER_TEMP/verify-app"
-          if grep -v -e 'is signed ad hoc, not by team' -e 'is not fit to publish' "$RUNNER_TEMP/verify-app"; then
+          grep -q '^::error::Contents/Helpers/bin/hub-server is signed ad hoc' "$RUNNER_TEMP/verify-app" ||
+            { echo "::error::verify-app.sh didn't name Contents/Helpers/bin/hub-server's ad hoc signature."; exit 1; }
+          grep -q '^::error::Contents/MacOS/JobSearchHub is signed ad hoc' "$RUNNER_TEMP/verify-app" ||
+            { echo "::error::verify-app.sh didn't name Contents/MacOS/JobSearchHub's ad hoc signature."; exit 1; }
+          if grep -v -e 'is signed ad hoc, not by team' -e 'is not fit to publish' "$RUNNER_TEMP/verify-app" > "$RUNNER_TEMP/verify-app-more"; then
+            # Each line an annotation of its own: the run's page shows those
+            # without signing in, where its log needs admin rights.
+            sed -e 's/^::error:://' -e 's/^/::error::verify-app.sh: /' "$RUNNER_TEMP/verify-app-more"
             echo "::error::verify-app.sh found more than the ad hoc signatures, above."
             exit 1
           fi

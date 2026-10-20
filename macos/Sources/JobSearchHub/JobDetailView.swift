@@ -108,11 +108,9 @@ extension JobDetailModel {
 
     /// Counts a follow-up on the job's application, then shows the job as it
     /// now stands.
-    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, with client: HubClient) async {
+    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send(
-                "POST", "v1/applications/\(applicationID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self
-            )
+            _ = try await changes.recordFollowUp(applicationID, note: note, with: client)
             await load(jobID, with: client)
         } catch {
             actionError = HubFailure("Couldn't record the follow-up", error)
@@ -164,8 +162,17 @@ struct JobDetailView: View {
     var layout = JobDetailLayout.inspector
     /// Told the job's title once it's read, for a page's top bar.
     var showTitle: (String?) -> Void = { _ in }
+    /// A page shows the posting's outline beside it when wide; Decide's
+    /// page, beside its queue, leaves it out.
+    var showsOutline = true
+    /// Makes Pursue, Later and Skip, from the action bar or P, L and S, when
+    /// the page around the job decides them, as Decide does: it brings up the
+    /// next job and offers Undo, so Skip asks nothing first. Nil records them
+    /// here, and Skip asks why.
+    var decide: (@MainActor (JobDecisionKind) async -> Void)?
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(DetailsInspector.self) private var inspector
     @State private var model = JobDetailModel()
     @State private var isAskingToSkip = false
@@ -248,7 +255,7 @@ struct JobDetailView: View {
             Button("Record") {
                 guard let applicationID = followingUpApplicationID else { return }
                 let note = followUpNote
-                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, with: client) }
+                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -315,7 +322,7 @@ struct JobDetailView: View {
     private func page(_ details: JobDetails) -> some View {
         let tabs: [InspectorTab] = hasPrep(details) ? [.posting, .prep, .session] : [.posting, .session]
         let shown = InspectorTab.resolve(tab, among: tabs)
-        let wideWidth = JobDetailLayout.wideWidth
+        let wideWidth = showsOutline ? JobDetailLayout.wideWidth : JobDetailLayout.wideWidth - JobPostingTab<EmptyView>.outlineWidth - Space.xl
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: Space.m) {
                 if isWide {
@@ -360,7 +367,7 @@ struct JobDetailView: View {
                         .padding(.top, Space.m)
                 }
                 JobPostingTab(
-                    jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting, layout: isWide ? .wide : .narrow,
+                    jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting, layout: isWide ? .wide(showsOutline: showsOutline) : .narrow,
                     scrollTarget: $scrollTarget
                 ) {
                     whyItFits(details.brief).id(Anchor.whyItFits)
@@ -389,15 +396,33 @@ struct JobDetailView: View {
         let isOpen = details.job.dismissedAt == nil && details.phase == nil
         switch decision {
         case .pursue where isOpen:
-            Task { await model.decide(jobID, .pursue, through: decisions, with: client) }
+            Task { await record(.pursue) }
         case .later where isOpen && details.decision?.decision != .later:
-            Task { await model.decide(jobID, .later, through: decisions, with: client) }
+            Task { await record(.later) }
         case .skip where details.job.dismissedAt == nil:
-            isAskingToSkip = true
+            skip()
         default:
             return false
         }
         return true
+    }
+
+    /// Records the decision through the page that decides it, or here.
+    private func record(_ decision: JobDecisionKind) async {
+        if let decide {
+            await decide(decision)
+        } else {
+            await model.decide(jobID, decision, through: decisions, with: client)
+        }
+    }
+
+    /// Skips the job at once where the page offers Undo, or asks why first.
+    private func skip() {
+        if decide != nil {
+            Task { await record(.skip) }
+        } else {
+            isAskingToSkip = true
+        }
     }
 
     // MARK: Header
@@ -427,7 +452,7 @@ struct JobDetailView: View {
     }
 
     private func verdictStrip(_ details: JobDetails) -> some View {
-        VerdictStrip(cells: details.getVerdicts(peopleYouKnow: getPeople(details).count(where: JobOutreach.isKnown))) { open($0) }
+        VerdictStrip(cells: details.getVerdicts(people: getPeople(details))) { open($0) }
     }
 
     /// "Northwind · Developer tools · 51-200 people", the name opening the
@@ -500,20 +525,22 @@ struct JobDetailView: View {
                 openPostingButton(details)
             } else {
                 AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward", key: "P") {
-                    await model.decide(jobID, .pursue, through: decisions, with: client)
+                    await record(.pursue)
                 }
                 .help("Put it on the pipeline (P on Decide, Today and a job's page)")
             }
         } secondary: {
             if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
                 AsyncButton("Later", busyTitle: "Later", key: "L") {
-                    await model.decide(jobID, .later, through: decisions, with: client)
+                    await record(.later)
                 }
                 .help("Leave it for another day (L on Decide, Today and a job's page)")
             }
             if details.job.dismissedAt == nil {
-                Button { isAskingToSkip = true } label: { KeyLabel(title: "Skip…", key: "S") }
-                    .help("Take it out as not for you, with a reason (S on Decide, Today and a job's page)")
+                Button(action: skip) { KeyLabel(title: decide == nil ? "Skip…" : "Skip", key: "S") }
+                    .help(decide == nil
+                        ? "Take it out as not for you, with a reason (S on Decide, Today and a job's page)"
+                        : "Take it out as not for you, with Undo and a reason from the note that says so (S)")
             }
         } overflow: {
             Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
@@ -586,7 +613,7 @@ struct JobDetailView: View {
     /// what speaks for you and against, side by side, each with what backs
     /// it; one over the other on a page's rail.
     private func whyItFits(_ brief: JobBrief?) -> some View {
-        HubCard("Why it fits", meta: brief.map(describeAuthor)) {
+        HubCard("Why it fits", meta: brief.map { Self.describeAuthor(isFull: $0.isFull, writtenAt: $0.writtenAt) }) {
             if let brief {
                 Text(brief.reason).hubReading().textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if !brief.strengths.isEmpty || !brief.weaknesses.isEmpty {
@@ -618,9 +645,10 @@ struct JobDetailView: View {
         }
     }
 
-    /// "local model · 2 days ago".
-    private func describeAuthor(_ brief: JobBrief) -> String {
-        "\(brief.isFull ? "Claude" : "local model") · \(brief.writtenAt.formatted(.relative(presentation: .named)))"
+    /// "local model · 2 days ago", "local model · 5 min ago": short units
+    /// keep it whole beside Write full brief on a page's rail.
+    static func describeAuthor(isFull: Bool, writtenAt: Date) -> String {
+        "\(isFull ? "Claude" : "local model") · \(writtenAt.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))"
     }
 
     /// For you or Against: a line per point, with what backs it as a tag
@@ -704,10 +732,9 @@ struct JobDetailView: View {
     private func people(_ details: JobDetails) -> some View {
         let everyone = getPeople(details)
         let shown = Array(everyone.prefix(JobOutreach.shownLimit))
-        let known = everyone.count(where: JobOutreach.isKnown)
         let companyName = details.companyName ?? "the company"
         let total = model.people?.count ?? everyone.count
-        return HubCard("People", meta: known > 0 ? "\(known) you know at \(companyName)" : nil) {
+        return HubCard("People", meta: JobOutreach.describe(everyone).map { "\($0) at \(companyName)" }) {
             if shown.isEmpty {
                 Text("No one you know at \(companyName) yet.").foregroundStyle(.secondary)
             }

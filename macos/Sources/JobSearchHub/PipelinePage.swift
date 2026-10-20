@@ -22,6 +22,9 @@ final class PipelineModel {
     /// Why the last change to a card failed: a move, a follow-up, a skip.
     var actionError: HubFailure?
     var scope = PipelineScope.active
+    /// What the header's search holds: only cards whose job or company
+    /// holds it show, on the board and in the Closed scope.
+    var search = ""
     /// Everyone who can get the owner in, read while a card waits for a
     /// second route; nil until read.
     private(set) var people: [RelatedPerson]?
@@ -42,14 +45,26 @@ final class PipelineModel {
     /// the skipped cards' board and on a board without one.
     var drawerPhase: PipelinePhase? { scope == .skipped ? nil : activeBoard.closedPhase }
 
-    /// The cards that ended, for the Closed scope and the drawer's count.
-    var closedCards: [PipelineCard] { activeBoard.closedCards }
+    /// The cards that ended that hold the search, for the Closed scope.
+    var shownClosedCards: [PipelineCard] { activeBoard.closedCards.filter { $0.matches(search) } }
 
-    /// The board's cards for a phase, only the due ones in the Due scope.
+    /// Whether the search hides any card.
+    var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The board's cards for a phase that hold the search, only the due
+    /// ones in the Due scope.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
-        let cards = board.getCards(in: phase)
+        let cards = board.getCards(in: phase).filter { $0.matches(search) }
         guard scope == .due else { return cards }
         return cards.filter { $0.getFollowUpStatus(now: .now)?.isDue == true }
+    }
+
+    /// Puts the job on the board, in its first phase, reads the board again
+    /// and returns the card's id; a job already on it keeps its card.
+    func addApplication(for jobID: UUID, with client: HubClient) async throws -> UUID {
+        let response = try await client.send("POST", "v1/applications", body: AddApplicationRequest(jobID: jobID), as: ApplicationResponse.self)
+        await load(with: client)
+        return response.application.id
     }
 
     /// How many cards each scope holds.
@@ -63,9 +78,9 @@ final class PipelineModel {
     }
 
     /// Records a follow-up, then reads the board again for its new due date.
-    func recordFollowUp(_ cardID: UUID, note: String, with client: HubClient) async {
+    func recordFollowUp(_ cardID: UUID, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            _ = try await changes.recordFollowUp(cardID, note: note, with: client)
             draftedTo[cardID] = nil
             await load(with: client)
         } catch {
@@ -75,9 +90,9 @@ final class PipelineModel {
 
     /// Skips the card, taking it off the board without closing it, then reads
     /// the board again.
-    func skip(_ cardID: UUID, note: String, with client: HubClient) async {
+    func skip(_ cardID: UUID, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.dismissApplication(cardID, note: note)
+            _ = try await changes.dismiss(cardID, note: note, with: client)
             await load(with: client)
         } catch {
             actionError = HubFailure("Couldn't skip the card", error)
@@ -85,9 +100,9 @@ final class PipelineModel {
     }
 
     /// Puts the card back in the phase it left, then reads the skipped cards again.
-    func restore(_ cardID: UUID, with client: HubClient) async {
+    func restore(_ cardID: UUID, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.restoreApplication(cardID)
+            _ = try await changes.restore(cardID, with: client)
             await load(with: client)
         } catch {
             actionError = HubFailure("Couldn't restore the card", error)
@@ -176,23 +191,34 @@ final class PipelineModel {
 
     /// Saves the move, then places the card from the server's answer. A move
     /// the server refuses leaves the card where it was.
-    func move(_ cardID: UUID, to phase: PipelinePhase, closedReason: String?, with client: HubClient) async {
+    func move(_ cardID: UUID, to phase: PipelinePhase, closedReason: String?, through changes: ApplicationChanges, with client: HubClient) async {
         guard movingCardID == nil, let card = board.cards.first(where: { $0.id == cardID }), card.application.phaseID != phase.id else { return }
         movingCardID = cardID
         defer { movingCardID = nil }
         do {
-            let response = try await client.send(
-                "PATCH", "v1/applications/\(cardID.uuidString)",
-                body: MoveApplicationRequest(phaseID: phase.id, closedReason: closedReason), as: ApplicationResponse.self
-            )
+            let application = try await changes.move(cardID, to: phase.id, closedReason: closedReason, with: client)
             if scope == .skipped {
-                skippedBoard.replaceApplication(response.application)
+                skippedBoard.replaceApplication(application)
             } else {
-                activeBoard.replaceApplication(response.application)
+                activeBoard.replaceApplication(application)
             }
         } catch {
             actionError = HubFailure("Couldn't move the card", error)
         }
+    }
+}
+
+/// The Pipeline header's search and Add, which puts an application on the
+/// board by hand: its job's posting URL, in the board's first phase.
+struct PipelineHeaderTrailing: View {
+    @Binding var search: String
+    let onAdd: () -> Void
+
+    var body: some View {
+        PageSearchField(text: $search, prompt: "Search applications")
+            .help("Search job titles and companies")
+        Button("Add", systemImage: "plus", action: onAdd)
+            .help("Add an application by its posting's URL (⌘N)")
     }
 }
 
@@ -213,6 +239,7 @@ struct PipelinePage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(CompanyResearch.self) private var research
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
@@ -222,6 +249,7 @@ struct PipelinePage: View {
     @State private var followUpNote = ""
     @State private var skippingCardID: UUID?
     @State private var skipNote = ""
+    @State private var isAdding = false
     /// A job whose card is selected once the board loads.
     let initialJobID: UUID?
 
@@ -260,6 +288,20 @@ struct PipelinePage: View {
                 // A job's page goes through the cards as they show, phase by phase.
                 .onChange(of: getJobOrder(), initial: true) { _, order in details.setJobOrder(order, on: .pipeline) }
                 .onChange(of: research.state) { finishFindingPeople(with: client) }
+                .sheet(isPresented: $isAdding) {
+                    AddJobSheet(client: client, failureTitle: "Couldn't add the application") { job in
+                        let cardID = try await model.addApplication(for: job.id, with: client)
+                        model.search = ""
+                        // A change of scope clears the selection, so the card
+                        // is selected only on the board that already shows it.
+                        if model.scope == .active {
+                            selectedCardID = cardID
+                        } else {
+                            model.scope = .active
+                        }
+                    }
+                }
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Application…") { isAdding = true })
             }
         }
         .navigationTitle("Pipeline")
@@ -284,16 +326,21 @@ struct PipelinePage: View {
     /// The page's controls, in its header over the board rather than in
     /// the window's toolbar, which reaches over the details inspector: the
     /// board, its cards whose follow-up is due, the closed cards, or the
-    /// skipped cards.
+    /// skipped cards on the left; the search and Add on the right.
     private var header: some View {
         PageHeader {
             TabStrip(
-                items: PipelineScope.allCases.map { scope in TabStripItem(id: scope, title: scope.title, count: model.getCount(scope)) },
+                items: Self.makeScopes(counts: Dictionary(uniqueKeysWithValues: PipelineScope.allCases.map { ($0, model.getCount($0)) })),
                 selection: $model.scope
             )
         } trailing: {
-            EmptyView()
+            PipelineHeaderTrailing(search: $model.search) { isAdding = true }
         }
+    }
+
+    /// The scopes, each with its count.
+    static func makeScopes(counts: [PipelineScope: Int]) -> [TabStripItem<PipelineScope>] {
+        PipelineScope.allCases.map { scope in TabStripItem(id: scope, title: scope.title, count: counts[scope]) }
     }
 
     /// The board, or the closed cards in the Closed scope, with the
@@ -310,7 +357,7 @@ struct PipelinePage: View {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
                 guard let cardID = followUpCardID else { return }
-                Task { await model.recordFollowUp(cardID, note: followUpNote, with: client) }
+                Task { await model.recordFollowUp(cardID, note: followUpNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -332,7 +379,7 @@ struct PipelinePage: View {
             TextField("Reason (optional)", text: $skipNote)
             Button("Skip") {
                 guard let cardID = skippingCardID else { return }
-                Task { await model.skip(cardID, note: skipNote, with: client) }
+                Task { await model.skip(cardID, note: skipNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -343,7 +390,7 @@ struct PipelinePage: View {
             Button("Close") {
                 guard let pendingClose else { return }
                 let reason = closedReason.trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await model.move(pendingClose.cardID, to: pendingClose.phase, closedReason: reason.isEmpty ? nil : reason, with: client) }
+                Task { await model.move(pendingClose.cardID, to: pendingClose.phase, closedReason: reason.isEmpty ? nil : reason, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -365,7 +412,7 @@ struct PipelinePage: View {
                 skipNote = ""
                 skippingCardID = cardID
             },
-            onRestore: { cardID in Task { await model.restore(cardID, with: client) } },
+            onRestore: { cardID in Task { await model.restore(cardID, through: changes, with: client) } },
             onMove: { cardID, target in requestMove(cardID, to: target, with: client) }
         )
     }
@@ -374,7 +421,7 @@ struct PipelinePage: View {
         GeometryReader { geometry in
             let columns = model.columns
             let drawerPhase = model.drawerPhase
-            let columnWidth = getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
+            let columnWidth = Self.getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
             let secondRoutes = makeSecondRoutes(with: client)
             let actions = makeCardActions(with: client)
             ScrollView(.horizontal) {
@@ -402,11 +449,11 @@ struct PipelinePage: View {
     /// The closed cards, side by side in as many columns as fit, newest
     /// first. A card goes back on the board from its menu.
     private func closedList(client: HubClient) -> some View {
-        let cards = model.closedCards
+        let cards = model.shownClosedCards
         let actions = makeCardActions(with: client)
         return ScrollView(.vertical) {
             if cards.isEmpty {
-                Text("No application has ended. Drop a card on Closed, at the board's end, when one does.")
+                Text(model.isSearching ? "No closed application matches the search." : "No application has ended. Drop a card on Closed, at the board's end, when one does.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(Space.xxl)
@@ -425,19 +472,20 @@ struct PipelinePage: View {
     }
 
     /// What an empty column says: what goes there, or that nothing in it is
-    /// due or skipped.
+    /// due, skipped or matches the search.
     private func getEmptyText(for phase: PipelinePhase) -> String {
+        if model.isSearching { return "Nothing matches" }
         switch model.scope {
-        case .due: "Nothing due"
-        case .skipped: "Nothing skipped"
-        case .active, .closed: phase.emptyHint
+        case .due: return "Nothing due"
+        case .skipped: return "Nothing skipped"
+        case .active, .closed: return phase.emptyHint
         }
     }
 
     /// The jobs of the cards shown, column by column, top to bottom, or the
     /// closed cards in the Closed scope.
     private func getJobOrder() -> [UUID] {
-        let cards = model.scope == .closed ? model.closedCards : model.columns.flatMap { model.getShownCards(in: $0) }
+        let cards = model.scope == .closed ? model.shownClosedCards : model.columns.flatMap { model.getShownCards(in: $0) }
         return cards.compactMap(\.application.jobID)
     }
 
@@ -503,7 +551,7 @@ struct PipelinePage: View {
     /// Shares the width left of the Closed drawer among the columns so every
     /// phase shows at once, down to a readable minimum; below it the board
     /// scrolls sideways.
-    private func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
+    static func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
         let count = CGFloat(max(columnCount, 1))
         let drawerWidth = hasDrawer ? ClosedDrawer.width + Self.columnSpacing : 0
         let widthForColumns = availableWidth - Self.boardPadding * 2 - Self.columnSpacing * (count - 1) - drawerWidth
@@ -515,7 +563,7 @@ struct PipelinePage: View {
             closedReason = ""
             pendingClose = PendingClose(cardID: cardID, phase: phase)
         } else {
-            Task { await model.move(cardID, to: phase, closedReason: nil, with: client) }
+            Task { await model.move(cardID, to: phase, closedReason: nil, through: changes, with: client) }
         }
     }
 }
@@ -567,7 +615,7 @@ struct PipelineColumn: View {
                 }
             }
         }
-        .padding(Space.s)
+        .padding(PipelineCardView.columnPadding)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
@@ -671,6 +719,16 @@ struct PipelineCardItem: View {
                 Button("Restore") { actions.onRestore(card.id) }
             } else {
                 Button("Followed up…") { actions.onFollowUp(card.id) }
+                // The second route's choice of who to write to: its link
+                // writes to the first, and the row has no room for more.
+                if let secondRoute, !secondRoute.candidates.isEmpty {
+                    Menu("Write to") {
+                        ForEach(secondRoute.candidates) { person in
+                            Button(SecondRoute.getMenuTitle(for: person)) { secondRoute.onWrite(person) }
+                                .help(person.whatTheyCanDo)
+                        }
+                    }
+                }
                 Menu("Move to") {
                     ForEach(actions.phases.filter { $0.id != card.application.phaseID }) { target in
                         Button(target.name) { actions.onMove(card.id, target) }
@@ -696,6 +754,14 @@ struct PipelineCardItem: View {
 /// skipped wait in its tooltip and the inspector.
 struct PipelineCardView: View {
     private static let edgeWidth: CGFloat = 3
+    /// The card's inset inside its column, and its content's inside it.
+    static let columnPadding = Space.s
+    static let padding = Space.m
+
+    /// The width a card's lines get in a column that wide.
+    static func getContentWidth(columnWidth: CGFloat) -> CGFloat {
+        columnWidth - 2 * (columnPadding + padding)
+    }
 
     let card: PipelineCard
     let isMoving: Bool
@@ -729,7 +795,7 @@ struct PipelineCardView: View {
                 secondRoute
             }
         }
-        .padding(Space.m)
+        .padding(Self.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background)
         .overlay(alignment: .leading) {
@@ -806,9 +872,9 @@ struct SecondRoutes {
     }
 }
 
-/// An overdue card's next route, on one line: write to someone at the
-/// company or someone who can introduce you (the others in its menu), or
-/// find who to write to, then ✓ records the follow-up.
+/// An overdue card's next route, on one line where the name fits: write to
+/// someone at the company or someone who can introduce you (the others in
+/// the card's menu), or find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
@@ -818,21 +884,25 @@ struct SecondRouteRow: View {
     let onFollowUp: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        // Spaced by xs on each side of the spacer, so the link keeps an s
+        // gap from ✓ and the rest of the row.
+        HStack(spacing: Space.xs) {
             if let first = candidates.first {
-                Menu {
-                    ForEach(candidates) { person in
-                        Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
-                            .help(person.whatTheyCanDo)
-                    }
-                } label: {
-                    Label("Write to \(first.name)", systemImage: "paperplane").lineLimit(1)
-                } primaryAction: {
-                    onWrite(first)
+                // A link that takes the row, not a borderless menu with the
+                // name as its label (about 160 pt for "Write to Alex Kim")
+                // or a chevron beside it: on a 1400 pt board the card has
+                // 163 pt for the row, ✓ included, so either cut the name
+                // (TP-1104). A name too long for one line wraps to a second
+                // rather than being cut, as in a column at its minimum.
+                Button { onWrite(first) } label: {
+                    Label("Write to \(first.name)", systemImage: "paperplane")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.visible)
-                .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
+                .buttonStyle(.plain)
+                .foregroundStyle(Tone.accent.color)
+                .layoutPriority(1)
+                .help(writeHelp(to: first))
             } else if isFindingPeople {
                 ProgressView().controlSize(.small)
                 Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
@@ -850,6 +920,11 @@ struct SecondRouteRow: View {
                 .help("Followed up…: record the message you sent; it restarts the count to the next follow-up")
         }
         .font(.hubCaption)
+    }
+
+    private func writeHelp(to person: RelatedPerson) -> String {
+        let others = candidates.count > 1 ? " The card's menu has the others under Write to." : ""
+        return "Draft a message to \(person.name) with the outreach prompt; you send it yourself. \(person.whatTheyCanDo)\(others)"
     }
 
     private var findPeopleHelp: String {

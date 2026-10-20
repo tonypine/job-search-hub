@@ -3,13 +3,14 @@ import SwiftUI
 
 /// How a job's Posting tab is laid out: in the inspector's column, or on
 /// the job's page, wide or narrow.
-enum JobPostingLayout {
+enum JobPostingLayout: Equatable {
     /// In the inspector, inside its scroll view: the outline as chips over
     /// the posting.
     case inspector
-    /// On a wide page: the outline in a column on the left, the posting at
-    /// a reading measure, and the rail on the right.
-    case wide
+    /// On a wide page: the outline in a column on the left, unless the page
+    /// leaves it out, the posting at a reading measure, and the rail on the
+    /// right.
+    case wide(showsOutline: Bool)
     /// On a page under the wide width: the outline hides and the rail goes
     /// under the posting.
     case narrow
@@ -69,10 +70,12 @@ struct JobPostingTab<Rail: View>: View {
             switch layout {
             case .inspector:
                 posting(document, proxy: proxy)
-            case .wide:
+            case let .wide(showsOutline):
                 HStack(alignment: .top, spacing: Space.xl) {
-                    outlineColumn(document.outline, proxy: proxy)
-                        .frame(width: Self.outlineWidth)
+                    if showsOutline {
+                        outlineColumn(document.outline, proxy: proxy)
+                            .frame(width: Self.outlineWidth)
+                    }
                     ScrollView {
                         HStack(alignment: .top, spacing: Space.xl) {
                             posting(document, proxy: proxy)
@@ -84,6 +87,12 @@ struct JobPostingTab<Rail: View>: View {
                         .padding(.trailing, Space.xl)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
+                    // No scroller, as in the design: one lands over the
+                    // rail's cards, hiding their right edge and trailing
+                    // links, whatever gutter they leave it (TP-1129). The
+                    // wheel and the trackpad still scroll, and the outline
+                    // marks where you are.
+                    .scrollIndicators(.never)
                     .task(id: scrollTarget) { await scrollToTarget(proxy) }
                 }
                 .padding(.leading, Space.xl)

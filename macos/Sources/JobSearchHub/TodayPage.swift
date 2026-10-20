@@ -60,9 +60,9 @@ final class TodayModel {
 
     /// Records a follow-up, then reads again, so the card leaves Follow up
     /// with its new due date.
-    func recordFollowUp(_ card: PipelineCard, note: String, with client: HubClient) async {
+    func recordFollowUp(_ card: PipelineCard, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send("POST", "v1/applications/\(card.id.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            _ = try await changes.recordFollowUp(card.id, note: note, with: client)
             toast = ToastMessage(text: "Recorded the follow-up on \(card.title)")
             await load(with: client)
         } catch {
@@ -104,8 +104,6 @@ struct TodayPage: View {
     /// How many follow-ups, updates and recruiters a card lists before its
     /// link to the rest.
     private static let shownCount = 5
-    /// Below it, the cards stack in one column.
-    private static let twoColumnWidth: CGFloat = 720
 
     /// Switches the window to another page: Decide, Pipeline, the full
     /// history of updates, and the pages Get started's rows land on.
@@ -115,11 +113,11 @@ struct TodayPage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(RecruiterReplyDraft.self) private var replyDraft
     @Environment(PageRequests.self) private var requests
     @State private var model = TodayModel()
     @State private var activity = HubActivityModel()
-    @State private var isWide = true
     @State private var skipping: DecisionQueueItem?
     @State private var followingUp: PipelineCard?
     @State private var followUpNote = ""
@@ -136,6 +134,10 @@ struct TodayPage: View {
                     header
                     content(client)
                 }
+                // The column's width is the window's to give: the page asks
+                // for none of its own, so its cards can never push the split
+                // view past the window when the inspector opens beside it.
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
                 .task { await model.load(with: client) }
                 .task { await activity.watch(with: client) }
                 .onChange(of: [events.revision, unseen.revision, decisions.revision]) { Task { await model.load(with: client) } }
@@ -195,14 +197,12 @@ struct TodayPage: View {
 
     private func content(_ client: HubClient) -> some View {
         let items = self.items
-        let twoColumnWidth = Self.twoColumnWidth
         return ScrollView {
             cards(items, client: client)
                 .padding(Space.xl)
                 .frame(maxWidth: 1200, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onGeometryChange(for: Bool.self) { proxy in proxy.size.width >= twoColumnWidth } action: { isWide = $0 }
         .overlay {
             if items.isEmpty && activity.lines.isEmpty && model.hasLoaded && model.loadError == nil {
                 ContentUnavailableView(
@@ -228,7 +228,7 @@ struct TodayPage: View {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
                 guard let card = followingUp else { return }
-                Task { await model.recordFollowUp(card, note: followUpNote, with: client) }
+                Task { await model.recordFollowUp(card, note: followUpNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -237,7 +237,7 @@ struct TodayPage: View {
     }
 
     /// The chips, then the cards that have something: in two columns when
-    /// the page is wide enough, else one.
+    /// both fit, else one.
     @ViewBuilder
     private func cards(_ items: TodayItems, client: HubClient) -> some View {
         VStack(alignment: .leading, spacing: Space.l) {
@@ -251,16 +251,9 @@ struct TodayPage: View {
             if let loadError = model.loadError {
                 HubErrorView(loadError, retry: { Task { await model.load(with: client) } })
             }
-            if isWide {
-                HStack(alignment: .top, spacing: Space.l) {
-                    VStack(spacing: Space.l) { leftCards(items, client: client) }.frame(maxWidth: .infinity, alignment: .top)
-                    VStack(spacing: Space.l) { rightCards(items, client: client) }.frame(maxWidth: .infinity, alignment: .top)
-                }
-            } else {
-                VStack(spacing: Space.l) {
-                    leftCards(items, client: client)
-                    rightCards(items, client: client)
-                }
+            TodayColumns(spacing: Space.l) {
+                VStack(spacing: Space.l) { leftCards(items, client: client) }
+                VStack(spacing: Space.l) { rightCards(items, client: client) }
             }
         }
     }
@@ -556,6 +549,74 @@ struct TodayPage: View {
     }
 }
 
+/// Today's two columns of cards: side by side when the page is at least
+/// `twoColumnWidth` wide and each column's narrowest still fits half of it,
+/// else the second under the first. Its own narrowest is the wider column's,
+/// never the two side by side: beside a 420 pt inspector in a 1400 pt window
+/// the page has 732 pt, less than the 855 pt the two columns of cards
+/// needed, and a minimum that followed them grew the split view past the
+/// window (TP-1134).
+struct TodayColumns: Layout {
+    /// Below it, the cards stack in one column whatever they need.
+    static let twoColumnWidth: CGFloat = 720
+
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let width = proposal.width, width.isFinite else {
+            // The ideal size: the columns side by side at their own widths.
+            let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+            let used = sizes.filter { $0.width > 0 }
+            return CGSize(
+                width: used.map(\.width).reduce(0, +) + spacing * CGFloat(max(used.count - 1, 0)),
+                height: sizes.map(\.height).max() ?? 0
+            )
+        }
+        let narrowest = getNarrowest(subviews)
+        if isSideBySide(subviews, narrowest: narrowest, width: width) {
+            let columnWidth = getColumnWidth(width)
+            let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)).height }.max() ?? 0
+            return CGSize(width: width, height: height)
+        }
+        let columnWidth = max(width, narrowest)
+        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)).height }.filter { $0 > 0 }
+        return CGSize(width: columnWidth, height: heights.reduce(0, +) + spacing * CGFloat(max(heights.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        if isSideBySide(subviews, narrowest: getNarrowest(subviews), width: bounds.width) {
+            let columnWidth = getColumnWidth(bounds.width)
+            let proposal = ProposedViewSize(width: columnWidth, height: nil)
+            for (index, subview) in subviews.enumerated() {
+                subview.place(at: CGPoint(x: bounds.minX + CGFloat(index) * (columnWidth + spacing), y: bounds.minY), proposal: proposal)
+            }
+            return
+        }
+        let proposal = ProposedViewSize(width: bounds.width, height: nil)
+        var y = bounds.minY
+        for subview in subviews {
+            let height = subview.sizeThatFits(proposal).height
+            subview.place(at: CGPoint(x: bounds.minX, y: y), proposal: proposal)
+            if height > 0 { y += height + spacing }
+        }
+    }
+
+    /// Whether the columns go side by side at this width.
+    private func isSideBySide(_ subviews: Subviews, narrowest: CGFloat, width: CGFloat) -> Bool {
+        subviews.count > 1 && width >= Self.twoColumnWidth && narrowest <= getColumnWidth(width)
+    }
+
+    /// Each column's width side by side.
+    private func getColumnWidth(_ width: CGFloat) -> CGFloat {
+        (width - spacing) / 2
+    }
+
+    /// The widest of the columns' narrowest widths.
+    private func getNarrowest(_ subviews: Subviews) -> CGFloat {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: 0, height: nil)).width }.max() ?? 0
+    }
+}
+
 /// What Today's cards list.
 private struct TodayItems {
     let decisions: [DecisionQueueItem]
@@ -618,7 +679,7 @@ private struct TodayItemButton<Content: View>: View {
 
 /// A job to decide: its match, title, company and the brief's reason, with
 /// Pursue, Later and Skip… under it.
-private struct TodayDecisionRow: View {
+struct TodayDecisionRow: View {
     let item: DecisionQueueItem
     let isOpen: Bool
     let open: () -> Void

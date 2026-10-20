@@ -58,3 +58,36 @@ func TestTheQueueHoldsBriefedUndecidedJobsBestMatchFirst(t *testing.T) {
 		t.Errorf("first item = %+v", items[0])
 	}
 }
+
+func TestAQueuedJobCountsItsUnseenUpdatesUntilSeen(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	prompt, _ := hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	hash, _ := hub.GetKnowledgeHash(ctx)
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.com/engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.SaveJobBrief(ctx, store.JobBrief{JobID: job.ID, Tier: store.JobBriefTierPre, PromptID: prompt.ID, Model: "m", Match: "strong", Reason: "Fits", KnowledgeHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.RecordUpdate(ctx, store.NewUpdate{Kind: "reply", Title: "Acme replied", JobID: &job.ID}); err != nil {
+		t.Fatal(err)
+	}
+	unseen := func() int {
+		items, err := hub.ListDecisionQueue(ctx, time.Now())
+		if err != nil || len(items) != 1 {
+			t.Fatalf("queue = %+v, %v", items, err)
+		}
+		return items[0].UnseenUpdates
+	}
+	if got := unseen(); got != 1 {
+		t.Errorf("unseen = %d, want 1", got)
+	}
+	if _, err := hub.MarkUpdatesSeen(ctx, store.UpdateSelection{JobID: &job.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := unseen(); got != 0 {
+		t.Errorf("after seeing the job: %d, want 0", got)
+	}
+}

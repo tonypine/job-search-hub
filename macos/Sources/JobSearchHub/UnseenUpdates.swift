@@ -27,13 +27,15 @@ final class UnseenUpdates {
 }
 
 /// The dot on something with updates the owner hasn't seen. With none it
-/// stays clear but keeps its space, so rows line up.
+/// stays clear but keeps its space, so rows line up. On a selected row of a
+/// focused list, drawn in the accent, it takes the row's text color instead.
 struct UnseenDot: View {
     let count: Int
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         Circle()
-            .fill(Tone.accent.color)
+            .fill(prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(Tone.accent.color))
             .frame(width: 7, height: 7)
             .opacity(count > 0 ? 1 : 0)
             .accessibilityHidden(count == 0)
