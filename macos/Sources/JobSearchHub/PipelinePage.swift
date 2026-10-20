@@ -374,7 +374,7 @@ struct PipelinePage: View {
         GeometryReader { geometry in
             let columns = model.columns
             let drawerPhase = model.drawerPhase
-            let columnWidth = getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
+            let columnWidth = Self.getColumnWidth(availableWidth: geometry.size.width, columnCount: columns.count, hasDrawer: drawerPhase != nil)
             let secondRoutes = makeSecondRoutes(with: client)
             let actions = makeCardActions(with: client)
             ScrollView(.horizontal) {
@@ -503,7 +503,7 @@ struct PipelinePage: View {
     /// Shares the width left of the Closed drawer among the columns so every
     /// phase shows at once, down to a readable minimum; below it the board
     /// scrolls sideways.
-    private func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
+    static func getColumnWidth(availableWidth: CGFloat, columnCount: Int, hasDrawer: Bool) -> CGFloat {
         let count = CGFloat(max(columnCount, 1))
         let drawerWidth = hasDrawer ? ClosedDrawer.width + Self.columnSpacing : 0
         let widthForColumns = availableWidth - Self.boardPadding * 2 - Self.columnSpacing * (count - 1) - drawerWidth
@@ -567,7 +567,7 @@ struct PipelineColumn: View {
                 }
             }
         }
-        .padding(Space.s)
+        .padding(PipelineCardView.columnPadding)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(isTargeted ? AnyShapeStyle(Tone.accent.fill) : AnyShapeStyle(.quinary), in: RoundedRectangle(cornerRadius: Radius.card))
@@ -671,6 +671,16 @@ struct PipelineCardItem: View {
                 Button("Restore") { actions.onRestore(card.id) }
             } else {
                 Button("Followed up…") { actions.onFollowUp(card.id) }
+                // The second route's choice of who to write to: its link
+                // writes to the first, and the row has no room for more.
+                if let secondRoute, !secondRoute.candidates.isEmpty {
+                    Menu("Write to") {
+                        ForEach(secondRoute.candidates) { person in
+                            Button(SecondRoute.getMenuTitle(for: person)) { secondRoute.onWrite(person) }
+                                .help(person.whatTheyCanDo)
+                        }
+                    }
+                }
                 Menu("Move to") {
                     ForEach(actions.phases.filter { $0.id != card.application.phaseID }) { target in
                         Button(target.name) { actions.onMove(card.id, target) }
@@ -696,6 +706,14 @@ struct PipelineCardItem: View {
 /// skipped wait in its tooltip and the inspector.
 struct PipelineCardView: View {
     private static let edgeWidth: CGFloat = 3
+    /// The card's inset inside its column, and its content's inside it.
+    static let columnPadding = Space.s
+    static let padding = Space.m
+
+    /// The width a card's lines get in a column that wide.
+    static func getContentWidth(columnWidth: CGFloat) -> CGFloat {
+        columnWidth - 2 * (columnPadding + padding)
+    }
 
     let card: PipelineCard
     let isMoving: Bool
@@ -729,7 +747,7 @@ struct PipelineCardView: View {
                 secondRoute
             }
         }
-        .padding(Space.m)
+        .padding(Self.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background)
         .overlay(alignment: .leading) {
@@ -806,9 +824,9 @@ struct SecondRoutes {
     }
 }
 
-/// An overdue card's next route, on one line: write to someone at the
-/// company or someone who can introduce you (the others in its menu), or
-/// find who to write to, then ✓ records the follow-up.
+/// An overdue card's next route, on one line where the name fits: write to
+/// someone at the company or someone who can introduce you (the others in
+/// the card's menu), or find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
@@ -818,21 +836,25 @@ struct SecondRouteRow: View {
     let onFollowUp: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        // Spaced by xs on each side of the spacer, so the link keeps an s
+        // gap from ✓ and the rest of the row.
+        HStack(spacing: Space.xs) {
             if let first = candidates.first {
-                Menu {
-                    ForEach(candidates) { person in
-                        Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
-                            .help(person.whatTheyCanDo)
-                    }
-                } label: {
-                    Label("Write to \(first.name)", systemImage: "paperplane").lineLimit(1)
-                } primaryAction: {
-                    onWrite(first)
+                // A link that takes the row, not a borderless menu with the
+                // name as its label (about 160 pt for "Write to Alex Kim")
+                // or a chevron beside it: on a 1400 pt board the card has
+                // 163 pt for the row, ✓ included, so either cut the name
+                // (TP-1104). A name too long for one line wraps to a second
+                // rather than being cut, as in a column at its minimum.
+                Button { onWrite(first) } label: {
+                    Label("Write to \(first.name)", systemImage: "paperplane")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.visible)
-                .help("Draft a message to \(first.name) with the outreach prompt, or pick someone else; you send it yourself. \(first.whatTheyCanDo)")
+                .buttonStyle(.plain)
+                .foregroundStyle(Tone.accent.color)
+                .layoutPriority(1)
+                .help(writeHelp(to: first))
             } else if isFindingPeople {
                 ProgressView().controlSize(.small)
                 Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
@@ -850,6 +872,11 @@ struct SecondRouteRow: View {
                 .help("Followed up…: record the message you sent; it restarts the count to the next follow-up")
         }
         .font(.hubCaption)
+    }
+
+    private func writeHelp(to person: RelatedPerson) -> String {
+        let others = candidates.count > 1 ? " The card's menu has the others under Write to." : ""
+        return "Draft a message to \(person.name) with the outreach prompt; you send it yourself. \(person.whatTheyCanDo)\(others)"
     }
 
     private var findPeopleHelp: String {
