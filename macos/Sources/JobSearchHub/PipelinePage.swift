@@ -22,6 +22,9 @@ final class PipelineModel {
     /// Why the last change to a card failed: a move, a follow-up, a skip.
     var actionError: HubFailure?
     var scope = PipelineScope.active
+    /// What the header's search holds: only cards whose job or company
+    /// holds it show, on the board and in the Closed scope.
+    var search = ""
     /// Everyone who can get the owner in, read while a card waits for a
     /// second route; nil until read.
     private(set) var people: [RelatedPerson]?
@@ -42,14 +45,26 @@ final class PipelineModel {
     /// the skipped cards' board and on a board without one.
     var drawerPhase: PipelinePhase? { scope == .skipped ? nil : activeBoard.closedPhase }
 
-    /// The cards that ended, for the Closed scope and the drawer's count.
-    var closedCards: [PipelineCard] { activeBoard.closedCards }
+    /// The cards that ended that hold the search, for the Closed scope.
+    var shownClosedCards: [PipelineCard] { activeBoard.closedCards.filter { $0.matches(search) } }
 
-    /// The board's cards for a phase, only the due ones in the Due scope.
+    /// Whether the search hides any card.
+    var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The board's cards for a phase that hold the search, only the due
+    /// ones in the Due scope.
     func getShownCards(in phase: PipelinePhase) -> [PipelineCard] {
-        let cards = board.getCards(in: phase)
+        let cards = board.getCards(in: phase).filter { $0.matches(search) }
         guard scope == .due else { return cards }
         return cards.filter { $0.getFollowUpStatus(now: .now)?.isDue == true }
+    }
+
+    /// Puts the job on the board, in its first phase, reads the board again
+    /// and returns the card's id; a job already on it keeps its card.
+    func addApplication(for jobID: UUID, with client: HubClient) async throws -> UUID {
+        let response = try await client.send("POST", "v1/applications", body: AddApplicationRequest(jobID: jobID), as: ApplicationResponse.self)
+        await load(with: client)
+        return response.application.id
     }
 
     /// How many cards each scope holds.
@@ -193,6 +208,20 @@ final class PipelineModel {
     }
 }
 
+/// The Pipeline header's search and Add, which puts an application on the
+/// board by hand: its job's posting URL, in the board's first phase.
+struct PipelineHeaderTrailing: View {
+    @Binding var search: String
+    let onAdd: () -> Void
+
+    var body: some View {
+        PageSearchField(text: $search, prompt: "Search applications")
+            .help("Search job titles and companies")
+        Button("Add", systemImage: "plus", action: onAdd)
+            .help("Add an application by its posting's URL (⌘N)")
+    }
+}
+
 /// A move into a closed phase, waiting for the reason the application ended.
 private struct PendingClose {
     let cardID: UUID
@@ -220,6 +249,7 @@ struct PipelinePage: View {
     @State private var followUpNote = ""
     @State private var skippingCardID: UUID?
     @State private var skipNote = ""
+    @State private var isAdding = false
     /// A job whose card is selected once the board loads.
     let initialJobID: UUID?
 
@@ -258,6 +288,20 @@ struct PipelinePage: View {
                 // A job's page goes through the cards as they show, phase by phase.
                 .onChange(of: getJobOrder(), initial: true) { _, order in details.setJobOrder(order, on: .pipeline) }
                 .onChange(of: research.state) { finishFindingPeople(with: client) }
+                .sheet(isPresented: $isAdding) {
+                    AddJobSheet(client: client, failureTitle: "Couldn't add the application") { job in
+                        let cardID = try await model.addApplication(for: job.id, with: client)
+                        model.search = ""
+                        // A change of scope clears the selection, so the card
+                        // is selected only on the board that already shows it.
+                        if model.scope == .active {
+                            selectedCardID = cardID
+                        } else {
+                            model.scope = .active
+                        }
+                    }
+                }
+                .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Application…") { isAdding = true })
             }
         }
         .navigationTitle("Pipeline")
@@ -282,16 +326,21 @@ struct PipelinePage: View {
     /// The page's controls, in its header over the board rather than in
     /// the window's toolbar, which reaches over the details inspector: the
     /// board, its cards whose follow-up is due, the closed cards, or the
-    /// skipped cards.
+    /// skipped cards on the left; the search and Add on the right.
     private var header: some View {
         PageHeader {
             TabStrip(
-                items: PipelineScope.allCases.map { scope in TabStripItem(id: scope, title: scope.title, count: model.getCount(scope)) },
+                items: Self.makeScopes(counts: Dictionary(uniqueKeysWithValues: PipelineScope.allCases.map { ($0, model.getCount($0)) })),
                 selection: $model.scope
             )
         } trailing: {
-            EmptyView()
+            PipelineHeaderTrailing(search: $model.search) { isAdding = true }
         }
+    }
+
+    /// The scopes, each with its count.
+    static func makeScopes(counts: [PipelineScope: Int]) -> [TabStripItem<PipelineScope>] {
+        PipelineScope.allCases.map { scope in TabStripItem(id: scope, title: scope.title, count: counts[scope]) }
     }
 
     /// The board, or the closed cards in the Closed scope, with the
@@ -400,11 +449,11 @@ struct PipelinePage: View {
     /// The closed cards, side by side in as many columns as fit, newest
     /// first. A card goes back on the board from its menu.
     private func closedList(client: HubClient) -> some View {
-        let cards = model.closedCards
+        let cards = model.shownClosedCards
         let actions = makeCardActions(with: client)
         return ScrollView(.vertical) {
             if cards.isEmpty {
-                Text("No application has ended. Drop a card on Closed, at the board's end, when one does.")
+                Text(model.isSearching ? "No closed application matches the search." : "No application has ended. Drop a card on Closed, at the board's end, when one does.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(Space.xxl)
@@ -423,19 +472,20 @@ struct PipelinePage: View {
     }
 
     /// What an empty column says: what goes there, or that nothing in it is
-    /// due or skipped.
+    /// due, skipped or matches the search.
     private func getEmptyText(for phase: PipelinePhase) -> String {
+        if model.isSearching { return "Nothing matches" }
         switch model.scope {
-        case .due: "Nothing due"
-        case .skipped: "Nothing skipped"
-        case .active, .closed: phase.emptyHint
+        case .due: return "Nothing due"
+        case .skipped: return "Nothing skipped"
+        case .active, .closed: return phase.emptyHint
         }
     }
 
     /// The jobs of the cards shown, column by column, top to bottom, or the
     /// closed cards in the Closed scope.
     private func getJobOrder() -> [UUID] {
-        let cards = model.scope == .closed ? model.closedCards : model.columns.flatMap { model.getShownCards(in: $0) }
+        let cards = model.scope == .closed ? model.shownClosedCards : model.columns.flatMap { model.getShownCards(in: $0) }
         return cards.compactMap(\.application.jobID)
     }
 
