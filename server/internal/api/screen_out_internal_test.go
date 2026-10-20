@@ -66,7 +66,7 @@ func TestScreenOutAnswersNameTheLanguagesAsked(t *testing.T) {
 		{Key: "years_of_experience", Value: json.RawMessage(`10`), Evidence: "10+ years"},
 	}}}
 	answers := map[string]screenOutAnswer{}
-	for _, answer := range buildScreenOutAnswers(details, jobfit.Fit{}, 6*12) {
+	for _, answer := range buildScreenOutAnswers(indexLabelledFacts(details), jobfit.Fit{}, 6*12) {
 		answers[answer.Name] = answer
 	}
 	if languages := answers["Languages"]; languages.Verdict != "" || languages.Answer != "English, German" || languages.Evidence != "fluent German" {
@@ -79,10 +79,44 @@ func TestScreenOutAnswersNameTheLanguagesAsked(t *testing.T) {
 		t.Errorf("answers = %+v, want six", answers)
 	}
 	none := map[string]screenOutAnswer{}
-	for _, answer := range buildScreenOutAnswers(store.JobDetails{}, jobfit.Fit{}, 0) {
+	for _, answer := range buildScreenOutAnswers(indexLabelledFacts(store.JobDetails{}), jobfit.Fit{}, 0) {
 		none[answer.Name] = answer
 	}
 	if languages := none["Languages"]; languages.Answer != "the posting doesn't say" {
 		t.Errorf("unread Languages = %+v", languages)
+	}
+}
+
+func TestAJobsListRowIsAnsweredAsItsDetailsAre(t *testing.T) {
+	raw := json.RawMessage(`{"location":{"evidence":"Remote in LATAM","restriction":"LATAM","open_to_brazil":"yes"},
+		"contract":{"evidence":"as a contractor","as_written":"contractor","kinds":["contractor"]},
+		"years_of_experience":{"evidence":"12+ years","value":12},
+		"languages":{"evidence":"fluent English","value":["English"]}}`)
+	values, evidence, err := store.FlattenJobFacts(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	details := store.JobDetails{Facts: &store.LabelledJobFacts{}}
+	for key, value := range values {
+		details.Facts.Entries = append(details.Facts.Entries, store.JobFactEntry{Key: key, Value: value, Evidence: evidence[key]})
+	}
+	fit := jobfit.Fit{Checks: []jobfit.Check{{Name: "Where they hire", Verdict: jobfit.VerdictYes, Reason: "open to someone in Brazil"}}}
+
+	fromDetails := buildScreenOutAnswers(indexLabelledFacts(details), fit, 8*12)
+	fromRow := buildScreenOutAnswers(indexFlatFacts(store.FlattenJobFactsToJSON(raw)), fit, 8*12)
+	if len(fromRow) != len(fromDetails) {
+		t.Fatalf("row answers = %+v, want %+v", fromRow, fromDetails)
+	}
+	for i, answer := range fromRow {
+		want := fromDetails[i]
+		if answer.Name != want.Name || answer.Verdict != want.Verdict || answer.Answer != want.Answer || answer.Evidence != "" {
+			t.Errorf("row answer %d = %+v, want %+v without evidence", i, answer, want)
+		}
+	}
+	if experience := fromRow[3]; experience.Name != "Experience" || experience.Verdict != jobfit.VerdictNo {
+		t.Errorf("Experience = %+v, want no", experience)
+	}
+	if unread := indexFlatFacts(nil); len(unread) != 0 {
+		t.Errorf("unread facts = %+v", unread)
 	}
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -24,15 +25,10 @@ type screenOutAnswer struct {
 
 // buildScreenOutAnswers answers whether they hire from Brazil, the level and
 // the timezone from the fit, the years of experience against the owner's,
-// and the contract and languages from the facts, each with the posting's
-// words the facts rest on. experienceMonths is the owner's, 0 when unknown.
-func buildScreenOutAnswers(details store.JobDetails, fit jobfit.Fit, experienceMonths int) []screenOutAnswer {
-	facts := map[string]store.JobFactEntry{}
-	if details.Facts != nil {
-		for _, entry := range details.Facts.Entries {
-			facts[entry.Key] = entry
-		}
-	}
+// and the contract and languages from the facts, by key, each with the
+// posting's words the facts rest on when they carry them. experienceMonths
+// is the owner's, 0 when unknown.
+func buildScreenOutAnswers(facts map[string]store.JobFactEntry, fit jobfit.Fit, experienceMonths int) []screenOutAnswer {
 	answerFromCheck := func(checkName, answerName string, factKeys ...string) screenOutAnswer {
 		answer := screenOutAnswer{Name: answerName, Verdict: jobfit.VerdictUnclear, Answer: "the posting doesn't say"}
 		for _, check := range fit.Checks {
@@ -51,6 +47,43 @@ func buildScreenOutAnswers(details store.JobDetails, fit jobfit.Fit, experienceM
 		{Name: "Contract", Answer: describeContract(facts), Evidence: getFirstEvidence(facts, "contract", "contract_type")},
 		{Name: "Languages", Answer: describeLanguages(facts), Evidence: getFirstEvidence(facts, "languages")},
 	}
+}
+
+// indexLabelledFacts are a job's details' facts by key, with their evidence.
+func indexLabelledFacts(details store.JobDetails) map[string]store.JobFactEntry {
+	facts := map[string]store.JobFactEntry{}
+	if details.Facts != nil {
+		for _, entry := range details.Facts.Entries {
+			facts[entry.Key] = entry
+		}
+	}
+	return facts
+}
+
+// indexFlatFacts are a jobs list row's facts, flattened by key (see
+// store.FlattenJobFacts), by key. The row carries no evidence, so neither do
+// the facts; their answers' verdicts are the details' all the same.
+func indexFlatFacts(flat json.RawMessage) map[string]store.JobFactEntry {
+	var values map[string]json.RawMessage
+	if len(flat) == 0 || json.Unmarshal(flat, &values) != nil {
+		return map[string]store.JobFactEntry{}
+	}
+	facts := make(map[string]store.JobFactEntry, len(values))
+	for key, value := range values {
+		facts[key] = store.JobFactEntry{Key: key, Value: value}
+	}
+	return facts
+}
+
+// readExperienceMonths is how many months the owner's confirmed roles span
+// up to now (see countExperienceMonths).
+func readExperienceMonths(ctx context.Context, hub *store.Store) (int, error) {
+	confirmed := true
+	roles, err := hub.ListProfileEntries(ctx, store.ProfileEntryFilter{Kind: store.ProfileEntryRole, Confirmed: &confirmed})
+	if err != nil {
+		return 0, err
+	}
+	return countExperienceMonths(roles, time.Now()), nil
 }
 
 // answerExperience compares the years the posting asks for with the owner's:
