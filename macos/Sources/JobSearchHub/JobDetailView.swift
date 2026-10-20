@@ -613,7 +613,7 @@ struct JobDetailView: View {
     /// what speaks for you and against, side by side, each with what backs
     /// it; one over the other on a page's rail.
     private func whyItFits(_ brief: JobBrief?) -> some View {
-        HubCard("Why it fits", meta: brief.map(describeAuthor)) {
+        HubCard("Why it fits", meta: brief.map { Self.describeAuthor(isFull: $0.isFull, writtenAt: $0.writtenAt) }) {
             if let brief {
                 Text(brief.reason).hubReading().textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if !brief.strengths.isEmpty || !brief.weaknesses.isEmpty {
@@ -645,9 +645,10 @@ struct JobDetailView: View {
         }
     }
 
-    /// "local model · 2 days ago".
-    private func describeAuthor(_ brief: JobBrief) -> String {
-        "\(brief.isFull ? "Claude" : "local model") · \(brief.writtenAt.formatted(.relative(presentation: .named)))"
+    /// "local model · 2 days ago", "local model · 5 min ago": short units
+    /// keep it whole beside Write full brief on a page's rail.
+    static func describeAuthor(isFull: Bool, writtenAt: Date) -> String {
+        "\(isFull ? "Claude" : "local model") · \(writtenAt.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))"
     }
 
     /// For you or Against: a line per point, with what backs it as a tag
