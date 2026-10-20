@@ -111,6 +111,17 @@ The build signs the bundle and every command in it with the Apple Development id
 
 The app works from the keyboard. **⌘K** (Go › Jump to…) finds a job, company, person or page, and runs the rare actions kept out of the toolbars: add a company or a job by URL, generate missing CVs, pause or resume the local models. A job, company or person opens in the inspector over the page you're on. In Decide, and in Today's Decide card, ↑↓ move through the jobs, Return opens one, and **P**, **L** and **S** pursue it, leave it for later or skip it, then bring up the next. ⌘N is the page's Add, and ⌘[ and ⌘] go back and forward in the inspector.
 
+### QA dev server
+
+Symphony's QA pass runs the real hub in its QA VM, from the pull request's own source, so the Mac app it tests has a made-up job search on its Jobs, Pipeline and Companies pages:
+
+```bash
+server/scripts/dev-server.sh build   # hub-server and the seed into server/bin/dev-server/; the Postgres engine too, when none is on the PATH
+server/scripts/dev-server.sh start   # runs until TERM or Ctrl-C
+```
+
+`start` creates a Postgres cluster on a Unix socket in `$TMPDIR/hub-dev-server/<pid>/`, migrates and seeds it, and runs `hub-server` on `127.0.0.1:8090` (`SYMPHONY_VERIFICATION_PORT` changes the port), the Mac app's default hub URL. The owner token is `qa-dev-server-owner-token-not-a-secret`: a QA value, not a secret, for Settings › Connection. Its home is in that folder, so it never reads your `server.env`; the pollers, the models, Claude, CV printing and backups are off. On exit it stops the cluster and deletes the folder, and a start clears what a killed run left. Every company, person and link in the seed is invented, on `.example` domains. The engine is `initdb`, `pg_ctl` and `postgres` 18 from the PATH, or else the one in `server/postgres-engine.lock`, which `build` downloads and checks against its SHA-256. CI's `server-test` job starts it and checks its board.
+
 ## Prompts
 
 Agent prompts are versioned records, not code. Read one with `get_agent_prompt` and save a new version with `update_agent_prompt`. Each run records the version it used. At the start of a run the server fills three placeholders: `{{company}}`, `{{owner_profile}}` and `{{company_dossier}}` (whatever the hub already stores about the company, fenced as data).
