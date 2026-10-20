@@ -50,7 +50,7 @@ public enum CompanyFilter: String, CaseIterable, Sendable {
 
     public func keeps(_ summary: CompanySummary) -> Bool {
         switch self {
-        case .knowSomeone: summary.connectionCount > 0
+        case .knowSomeone: summary.peopleYouKnow > 0
         case .onPipeline: !(summary.applicationPhase ?? "").isEmpty
         case .noBoard: summary.jobBoards.isEmpty
         case .unseenUpdates: summary.unseenUpdates > 0

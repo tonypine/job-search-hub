@@ -241,7 +241,7 @@ struct CompaniesPage: View {
             .customizationID("openJobs")
             TableColumn("People you know") { row in
                 switch row {
-                case let .company(summary): KnownPeopleCell(names: summary.knownPeople ?? [], count: summary.connectionCount)
+                case let .company(summary): KnownPeopleCell(names: summary.knownPeople ?? [], count: summary.peopleYouKnow)
                 case let .suggestion(suggestion): KnownPeopleCell(names: [], count: suggestion.connectionCount)
                 case .research: EmptyView()
                 }
