@@ -173,12 +173,13 @@ struct MatchCell: View {
     }
 }
 
-/// The screen: ✓ Passes, ? 2 unclear, or ✗ and the check that fails.
+/// The screen, as the job's page counts it: ✓ Passes, ? 2 unclear, or ✗
+/// and the check that fails.
 struct ScreenCell: View {
-    let fit: JobFit
+    let screen: ScreenBreakdown
 
     var body: some View {
-        let summary = ScreenSummary(fit)
+        let summary = ScreenSummary(screen)
         HStack(spacing: Space.xs) {
             Image(systemName: summary.verdict.symbolName).imageScale(.small).foregroundStyle(summary.verdict.tone.color)
                 .accessibilityHidden(true)
@@ -193,8 +194,8 @@ struct ScreenCell: View {
 
     /// The checks that don't pass, with why.
     private var details: String {
-        let doubts = fit.checks.filter { $0.verdict != .yes }.map { "\($0.name): \($0.reason)" }
-        return doubts.isEmpty ? fit.level.label : doubts.joined(separator: "\n")
+        let doubts = screen.exceptions.map { "\($0.name): \($0.reason)" }
+        return doubts.isEmpty ? screen.overallLevel.label : doubts.joined(separator: "\n")
     }
 }
 

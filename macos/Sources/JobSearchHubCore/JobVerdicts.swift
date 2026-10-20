@@ -101,6 +101,15 @@ public struct ScreenBreakdown: Equatable, Sendable {
     public var failing: Int { exceptions.count(where: { $0.verdict == .no }) }
     public var unclear: Int { exceptions.count(where: { $0.verdict == .unclear }) }
 
+    /// The screen as one level, as the strip's cell reads it: poor when a
+    /// check fails, else unclear when one is, else good when one passes, and
+    /// the hub's own reading with nothing judged.
+    public var overallLevel: FitLevel {
+        if failing > 0 { return .poor }
+        if unclear > 0 { return .unclear }
+        return passes.isEmpty ? level : .good
+    }
+
     /// The card's meta: "Passes" when every check passes, else "4 of 6
     /// pass"; nil with nothing judged.
     public var title: String? {

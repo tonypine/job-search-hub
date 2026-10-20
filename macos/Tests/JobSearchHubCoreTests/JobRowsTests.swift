@@ -8,25 +8,67 @@ private func makeItem(_ title: String, firstSeen: Date = Date(timeIntervalSince1
 }
 
 @Test func theScreenSaysPassesTheCountUnclearOrTheCheckThatFails() {
-    let passes = ScreenSummary(JobFit(level: .good, checks: [FitCheck(name: "Role", verdict: .yes, reason: "")]))
-    let unclear = ScreenSummary(JobFit(level: .unclear, checks: [
-        FitCheck(name: "Timezone", verdict: .unclear, reason: ""), FitCheck(name: "Level", verdict: .unclear, reason: ""),
-        FitCheck(name: "Role", verdict: .yes, reason: ""),
-    ]))
-    let fails = ScreenSummary(JobFit(level: .poor, checks: [
-        FitCheck(name: "Role", verdict: .yes, reason: ""), FitCheck(name: "Where they hire", verdict: .no, reason: "names only \"US\""),
-    ]))
-    let failsTwice = ScreenSummary(JobFit(level: .poor, checks: [
-        FitCheck(name: "Pay", verdict: .no, reason: ""), FitCheck(name: "Stack", verdict: .no, reason: ""),
-    ]))
+    func summarize(_ level: FitLevel, _ rows: [(String, FitVerdict?)]) -> ScreenSummary {
+        ScreenSummary(ScreenBreakdown(rows.map { ScreenRow(name: $0.0, verdict: $0.1, reason: "") }, level: level))
+    }
+    let passes = summarize(.good, [("Role", .yes), ("Contract", nil)])
+    let unclear = summarize(.unclear, [("Timezone", .unclear), ("Level", .unclear), ("Role", .yes)])
+    let fails = summarize(.poor, [("Role", .yes), ("Hires from Brazil", .no)])
+    let failsTwice = summarize(.poor, [("Pay", .no), ("Stack", .no), ("Level", .unclear)])
 
     #expect(passes.text == "Passes" && passes.verdict == .yes)
     #expect(unclear.text == "2 unclear" && unclear.verdict == .unclear)
     #expect(unclear.accessibilityLabel == "Screen unclear on Timezone and Level")
     #expect(fails.text == "Where" && fails.verdict == .no)
-    #expect(fails.accessibilityLabel == "Fails the screen on Where they hire")
+    #expect(fails.accessibilityLabel == "Fails the screen on Hires from Brazil")
     #expect(failsTwice.text == "Pay +1")
-    #expect(ScreenSummary(JobFit(level: .poor, checks: [])).text == "Fails")
+    #expect(summarize(.poor, []).text == "Fails")
+    #expect(summarize(.unclear, []).text == "1 unclear")
+    #expect(summarize(.good, [("Contract", nil)]).text == "Passes")
+}
+
+private let jobJSON = #"""
+{"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Senior iOS Engineer","url":"https://acme.com/1",
+        "first_seen_at":"2026-09-28T13:57:13Z","last_seen_at":"2026-09-28T13:57:13Z"},
+ "fit":{"level":"good","checks":[{"name":"Role","verdict":"yes","reason":"names iOS"},
+                                 {"name":"Where they hire","verdict":"yes","reason":"open to someone in Brazil"}]},
+ "unseen_updates":0,
+ "screen_out":[{"name":"Hires from Brazil","verdict":"yes","answer":"open to someone in Brazil"},
+               {"name":"Timezone","verdict":"%TIMEZONE%","answer":"the posting doesn't say"},
+               {"name":"Experience","verdict":"%EXPERIENCE%","answer":"asks for 12 years; you have 8 years"},
+               {"name":"Contract","answer":"the posting doesn't say"}]}
+"""#
+
+/// The same job as a row of the jobs list and as its page, with the
+/// Timezone and Experience answers given.
+private func decodeJob(timezone: String, experience: String) throws -> (row: JobListItem, details: JobDetails) {
+    let json = jobJSON.replacingOccurrences(of: "%TIMEZONE%", with: timezone).replacingOccurrences(of: "%EXPERIENCE%", with: experience)
+    let row = try HubJSON.makeDecoder().decode(JobsResponse.self, from: Data(#"{"jobs":[\#(json)],"total":1}"#.utf8)).jobs[0]
+    let details = try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(json.utf8))
+    return (row, details)
+}
+
+@Test func aRowsScreenReadsAsItsPagesVerdictStrip() throws {
+    for (timezone, experience, word, level) in [
+        ("yes", "no", "Experience", FitLevel.poor), ("unclear", "unclear", "2 unclear", .unclear), ("yes", "yes", "Passes", .good),
+    ] {
+        let (row, details) = try decodeJob(timezone: timezone, experience: experience)
+        let strip = try #require(details.getVerdicts(people: []).first(where: { $0.kind == .screen }))
+        let summary = ScreenSummary(row.screen)
+
+        #expect(row.fit.level == .good)
+        #expect(row.screenRows == details.screenRows)
+        #expect(summary.text == word && row.screenLevel == level)
+        #expect(summary.verdict.tone == strip.tone && summary.verdict.symbolName == strip.symbolName)
+    }
+}
+
+@Test func aRowFromAHubWithoutScreenOutAnswersReadsItsFit() {
+    let item = makeItem("job", level: .unclear, checks: [FitCheck(name: "Stack", verdict: .unclear, reason: "no stack named")])
+
+    #expect(item.screenOut == nil)
+    #expect(item.screenRows == [ScreenRow(name: "Stack", verdict: .unclear, reason: "no stack named")])
+    #expect(ScreenSummary(item.screen).text == "1 unclear" && item.screenLevel == .unclear)
 }
 
 @Test func theTakeHomeIsReadFromThePayChecksReason() {

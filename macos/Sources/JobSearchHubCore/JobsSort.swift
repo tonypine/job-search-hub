@@ -70,7 +70,7 @@ public struct JobsSortComparator: SortComparator, Codable, Hashable, Sendable {
     private static func getSortValue(of item: JobListItem, by column: JobsSortColumn) -> SortValue? {
         let job = item.job
         switch column {
-        case .fit: return .rank(item.fit.level.rank)
+        case .fit: return .rank(item.screenLevel.rank)
         case .title: return .text(job.title)
         case .company: return getTextValue(item.companyName)
         case .location: return getTextValue(job.location)

@@ -288,7 +288,7 @@ struct JobsPage: View {
     /// How many jobs show out of all, and how many of those pass the screen.
     private func describeCounts() -> String {
         let shownItems = model.getMatchingItems(filter.wrappedValue)
-        let passCount = shownItems.count { $0.fit.level == .good }
+        let passCount = shownItems.count { $0.screenLevel == .good }
         let jobCount = model.total == shownItems.count ? "\(model.total) jobs" : "\(shownItems.count) of \(model.total) jobs"
         return "\(jobCount) · " + (passCount == 1 ? "1 passes the screen" : "\(passCount) pass the screen")
     }
@@ -363,7 +363,7 @@ struct JobsPage: View {
             .width(JobRowLayout.matchWidth)
             .customizationID("match")
             TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in
-                ScreenCell(fit: item.fit).jobRowCell(item.id, hover: hover)
+                ScreenCell(screen: item.screen).jobRowCell(item.id, hover: hover)
             }
             .width(JobRowLayout.screenWidth)
             .customizationID("screen")

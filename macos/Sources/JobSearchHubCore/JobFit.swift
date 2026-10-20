@@ -56,11 +56,13 @@ public enum FitVerdict: String, Codable, Sendable {
 public enum JobsOrder {
     /// Passes the screen first, then newest first.
     public static func sort(_ items: [JobListItem]) -> [JobListItem] {
-        items.sorted { left, right in
-            if left.fit.level != right.fit.level {
-                return left.fit.level < right.fit.level
+        items.map { (item: $0, level: $0.screenLevel) }
+            .sorted { left, right in
+                if left.level != right.level {
+                    return left.level < right.level
+                }
+                return left.item.job.firstSeenAt > right.item.job.firstSeenAt
             }
-            return left.job.firstSeenAt > right.job.firstSeenAt
-        }
+            .map(\.item)
     }
 }

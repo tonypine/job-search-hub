@@ -349,7 +349,7 @@ struct CompanyJobRows: View {
     var body: some View {
         ForEach(jobs) { item in
             InspectorLinkRow(item.job.title, detail: describe(item.job)) {
-                ToneChip(screen: item.fit.level)
+                ToneChip(screen: item.screenLevel)
             } open: {
                 inspector.open(.job(item.job.id))
             }
