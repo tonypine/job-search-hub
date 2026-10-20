@@ -108,11 +108,9 @@ extension JobDetailModel {
 
     /// Counts a follow-up on the job's application, then shows the job as it
     /// now stands.
-    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, with client: HubClient) async {
+    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send(
-                "POST", "v1/applications/\(applicationID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self
-            )
+            _ = try await changes.recordFollowUp(applicationID, note: note, with: client)
             await load(jobID, with: client)
         } catch {
             actionError = HubFailure("Couldn't record the follow-up", error)
@@ -174,6 +172,7 @@ struct JobDetailView: View {
     var decide: (@MainActor (JobDecisionKind) async -> Void)?
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(DetailsInspector.self) private var inspector
     @State private var model = JobDetailModel()
     @State private var isAskingToSkip = false
@@ -256,7 +255,7 @@ struct JobDetailView: View {
             Button("Record") {
                 guard let applicationID = followingUpApplicationID else { return }
                 let note = followUpNote
-                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, with: client) }
+                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
