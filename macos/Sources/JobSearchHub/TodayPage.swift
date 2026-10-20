@@ -60,9 +60,9 @@ final class TodayModel {
 
     /// Records a follow-up, then reads again, so the card leaves Follow up
     /// with its new due date.
-    func recordFollowUp(_ card: PipelineCard, note: String, with client: HubClient) async {
+    func recordFollowUp(_ card: PipelineCard, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send("POST", "v1/applications/\(card.id.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            _ = try await changes.recordFollowUp(card.id, note: note, with: client)
             toast = ToastMessage(text: "Recorded the follow-up on \(card.title)")
             await load(with: client)
         } catch {
@@ -115,6 +115,7 @@ struct TodayPage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(RecruiterReplyDraft.self) private var replyDraft
     @Environment(PageRequests.self) private var requests
     @State private var model = TodayModel()
@@ -228,7 +229,7 @@ struct TodayPage: View {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
                 guard let card = followingUp else { return }
-                Task { await model.recordFollowUp(card, note: followUpNote, with: client) }
+                Task { await model.recordFollowUp(card, note: followUpNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -63,9 +63,9 @@ final class PipelineModel {
     }
 
     /// Records a follow-up, then reads the board again for its new due date.
-    func recordFollowUp(_ cardID: UUID, note: String, with client: HubClient) async {
+    func recordFollowUp(_ cardID: UUID, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send("POST", "v1/applications/\(cardID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self)
+            _ = try await changes.recordFollowUp(cardID, note: note, with: client)
             draftedTo[cardID] = nil
             await load(with: client)
         } catch {
@@ -75,9 +75,9 @@ final class PipelineModel {
 
     /// Skips the card, taking it off the board without closing it, then reads
     /// the board again.
-    func skip(_ cardID: UUID, note: String, with client: HubClient) async {
+    func skip(_ cardID: UUID, note: String, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.dismissApplication(cardID, note: note)
+            _ = try await changes.dismiss(cardID, note: note, with: client)
             await load(with: client)
         } catch {
             actionError = HubFailure("Couldn't skip the card", error)
@@ -85,9 +85,9 @@ final class PipelineModel {
     }
 
     /// Puts the card back in the phase it left, then reads the skipped cards again.
-    func restore(_ cardID: UUID, with client: HubClient) async {
+    func restore(_ cardID: UUID, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.restoreApplication(cardID)
+            _ = try await changes.restore(cardID, with: client)
             await load(with: client)
         } catch {
             actionError = HubFailure("Couldn't restore the card", error)
@@ -176,19 +176,16 @@ final class PipelineModel {
 
     /// Saves the move, then places the card from the server's answer. A move
     /// the server refuses leaves the card where it was.
-    func move(_ cardID: UUID, to phase: PipelinePhase, closedReason: String?, with client: HubClient) async {
+    func move(_ cardID: UUID, to phase: PipelinePhase, closedReason: String?, through changes: ApplicationChanges, with client: HubClient) async {
         guard movingCardID == nil, let card = board.cards.first(where: { $0.id == cardID }), card.application.phaseID != phase.id else { return }
         movingCardID = cardID
         defer { movingCardID = nil }
         do {
-            let response = try await client.send(
-                "PATCH", "v1/applications/\(cardID.uuidString)",
-                body: MoveApplicationRequest(phaseID: phase.id, closedReason: closedReason), as: ApplicationResponse.self
-            )
+            let application = try await changes.move(cardID, to: phase.id, closedReason: closedReason, with: client)
             if scope == .skipped {
-                skippedBoard.replaceApplication(response.application)
+                skippedBoard.replaceApplication(application)
             } else {
-                activeBoard.replaceApplication(response.application)
+                activeBoard.replaceApplication(application)
             }
         } catch {
             actionError = HubFailure("Couldn't move the card", error)
@@ -213,6 +210,7 @@ struct PipelinePage: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(DetailsInspector.self) private var details
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(CompanyResearch.self) private var research
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
@@ -310,7 +308,7 @@ struct PipelinePage: View {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
                 guard let cardID = followUpCardID else { return }
-                Task { await model.recordFollowUp(cardID, note: followUpNote, with: client) }
+                Task { await model.recordFollowUp(cardID, note: followUpNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -332,7 +330,7 @@ struct PipelinePage: View {
             TextField("Reason (optional)", text: $skipNote)
             Button("Skip") {
                 guard let cardID = skippingCardID else { return }
-                Task { await model.skip(cardID, note: skipNote, with: client) }
+                Task { await model.skip(cardID, note: skipNote, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -343,7 +341,7 @@ struct PipelinePage: View {
             Button("Close") {
                 guard let pendingClose else { return }
                 let reason = closedReason.trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await model.move(pendingClose.cardID, to: pendingClose.phase, closedReason: reason.isEmpty ? nil : reason, with: client) }
+                Task { await model.move(pendingClose.cardID, to: pendingClose.phase, closedReason: reason.isEmpty ? nil : reason, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -365,7 +363,7 @@ struct PipelinePage: View {
                 skipNote = ""
                 skippingCardID = cardID
             },
-            onRestore: { cardID in Task { await model.restore(cardID, with: client) } },
+            onRestore: { cardID in Task { await model.restore(cardID, through: changes, with: client) } },
             onMove: { cardID, target in requestMove(cardID, to: target, with: client) }
         )
     }
@@ -515,7 +513,7 @@ struct PipelinePage: View {
             closedReason = ""
             pendingClose = PendingClose(cardID: cardID, phase: phase)
         } else {
-            Task { await model.move(cardID, to: phase, closedReason: nil, with: client) }
+            Task { await model.move(cardID, to: phase, closedReason: nil, through: changes, with: client) }
         }
     }
 }
