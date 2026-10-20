@@ -42,6 +42,9 @@ type fakeHub struct {
 	appQuitsAfter int
 	// appOpens says a reopened app writes its launched mark.
 	appOpens bool
+	// launches are the reopened apps still to write their mark, which the
+	// test waits out so none writes while its folder is being removed.
+	launches sync.WaitGroup
 
 	stopFails    bool
 	restoreFails bool
@@ -70,6 +73,8 @@ func newFakeHub(t *testing.T) *fakeHub {
 			t.Fatal(err)
 		}
 	}
+	// Cleanups run last first, so this one runs before t.TempDir's.
+	t.Cleanup(hub.launches.Wait)
 	hub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hub.mutex.Lock()
 		answering := hub.answering
@@ -213,10 +218,10 @@ func (hub *fakeHub) OpenApp(_ context.Context, app string) error {
 	opens := hub.appOpens
 	hub.mutex.Unlock()
 	if opens {
-		go func() {
+		hub.launches.Go(func() {
 			time.Sleep(20 * time.Millisecond)
 			_ = os.WriteFile(filepath.Join(hub.updates, LaunchedMark), []byte(version+"\n"), 0o600)
-		}()
+		})
 	}
 	return nil
 }
