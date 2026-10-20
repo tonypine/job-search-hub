@@ -478,9 +478,9 @@ struct PipelinePage: View {
     private func getEmptyText(for phase: PipelinePhase) -> String {
         if model.isSearching { return "Nothing matches" }
         switch model.scope {
-        case .due: "Nothing due"
-        case .skipped: "Nothing skipped"
-        case .active, .closed: phase.emptyHint
+        case .due: return "Nothing due"
+        case .skipped: return "Nothing skipped"
+        case .active, .closed: return phase.emptyHint
         }
     }
 
