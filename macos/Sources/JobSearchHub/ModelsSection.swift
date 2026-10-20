@@ -6,6 +6,7 @@ import SwiftUI
 /// with a fallback.
 struct ModelsSection: View {
     let client: HubClient
+    @Environment(HubEventStream.self) private var events
     @State private var providers: [ModelProvider] = []
     @State private var routes: [String: TaskRoute] = [:]
     @State private var failure: HubFailure?
@@ -54,6 +55,7 @@ struct ModelsSection: View {
             ForEach(RoutedTaskKind.allCases) { kind in
                 TaskRouteRow(kind: kind, providers: providers, route: routes[kind.rawValue], client: client) { saved in
                     routes[saved.kind] = saved
+                    events.requestRefresh()
                 }
             }
             if let failure {
@@ -61,7 +63,7 @@ struct ModelsSection: View {
             }
         }
         .task { await load() }
-        .sheet(item: $editedProvider, onDismiss: { Task { await load() } }) { target in
+        .sheet(item: $editedProvider, onDismiss: { Task { await loadAfterSheet() } }) { target in
             if case .addOpenRouter = target {
                 OpenRouterSheet(client: client)
             } else {
@@ -78,6 +80,17 @@ struct ModelsSection: View {
         if provider.hasKey { parts.append("key set") }
         parts.append(provider.enforcesSchema ? "enforces schemas" : "answers are checked")
         return parts.joined(separator: " · ")
+    }
+
+    /// Reads the providers again once a sheet closes. When one came, went
+    /// or changed, every page reads again, as the hub sends no update for
+    /// it: Activity's rows and model menus then name and offer its models.
+    private func loadAfterSheet() async {
+        let before = providers
+        await load()
+        if providers != before {
+            events.requestRefresh()
+        }
     }
 
     private func load() async {

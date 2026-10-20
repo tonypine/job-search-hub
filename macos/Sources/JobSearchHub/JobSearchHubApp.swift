@@ -107,6 +107,7 @@ struct JobSearchHubApp: App {
         Settings {
             SettingsWindow()
                 .environment(connection)
+                .environment(events)
                 .environment(newVersions)
                 .tint(.hubAccent)
         }
