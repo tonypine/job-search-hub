@@ -14,18 +14,26 @@ enum JobRowLayout {
     /// The cells' height; the table's own padding makes the row 44 pt.
     static let cellHeight: CGFloat = 36
 
+    /// The room the table leaves between the cells of neighboring columns,
+    /// in place of AppKit's 17 pt. The design's columns sit side by side with
+    /// their margins in their widths; at 17 pt, the four word and number
+    /// columns took 68 pt more than it gives them, and beside the inspector
+    /// that came off the titles (TP-1123).
+    static let cellSpacing: CGFloat = 8
+
     /// The word and number columns keep one width, enough for their header
-    /// and their usual values (Posted's header with the sort indicator, as
-    /// the table opens sorted by it), so the Job column is the one that
-    /// takes or gives up the room as the window and the inspector change.
-    /// When every column could be resized, AppKit scaled them all alike, and
-    /// beside the inspector the titles were cut while Match and Take-home
-    /// kept room they didn't use (TP-1123). The table adds its own spacing
-    /// between columns to these widths.
+    /// and their usual values, so the Job column is the one that takes or
+    /// gives up the room as the window and the inspector change. When every
+    /// column could be resized, AppKit scaled them all alike, and beside the
+    /// inspector the titles were cut while Match and Take-home kept room they
+    /// didn't use (TP-1123). The table adds `cellSpacing` to each. Take-home
+    /// and Posted are as wide as their headers need with the margins AppKit
+    /// gives a header at its own 17 pt spacing, Posted's with the sort
+    /// indicator, as the table opens sorted by it.
     static let matchWidth: CGFloat = 76
     static let screenWidth: CGFloat = 88
-    static let takeHomeWidth: CGFloat = 72
-    static let postedWidth: CGFloat = 64
+    static let takeHomeWidth: CGFloat = 73
+    static let postedWidth: CGFloat = 66
     /// The Job column's narrowest; the table scrolls sideways below it.
     static let jobMinWidth: CGFloat = 240
 
@@ -59,9 +67,9 @@ extension View {
 }
 
 /// The job: its company's monogram, the title in semibold with its marks,
-/// and the company and location under it. Hovered or selected, it ends in
-/// the row's actions, and its chips shrink to their symbols so the title
-/// keeps the room beside them.
+/// and the company and location under it, which take all the room the
+/// column has. Hovered or selected, it ends in the row's actions, and its
+/// chips shrink to their symbols so the title keeps the room beside them.
 struct JobCell: View {
     let item: JobListItem
     let isSelected: Bool
@@ -73,8 +81,9 @@ struct JobCell: View {
 
     var body: some View {
         let showsActions = isSelected || hover.id == item.id
-        HStack(spacing: Space.m) {
+        HStack(spacing: 0) {
             Monogram(item.companyName ?? item.job.title)
+                .padding(.trailing, Space.m)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(item.job.title).fontWeight(.semibold).lineLimit(1).help(item.job.title)
@@ -94,9 +103,10 @@ struct JobCell: View {
                 }
                 Text(context).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1).help(context)
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if showsActions {
                 JobRowActions(isSkipped: isSkipped, onDecide: onDecide, onRestore: onRestore)
+                    .padding(.leading, Space.s)
             }
         }
         .jobRowCell(item.id, hover: hover)
@@ -129,8 +139,7 @@ struct JobRowActions: View {
                 action("Skip", symbol: SetAside.skipped.symbolName, key: "S") { onDecide(.skip) }
             }
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.rowAction)
         .labelStyle(.iconOnly)
     }
 

@@ -420,7 +420,7 @@ struct JobsPage: View {
         .hubTableSelection(revision: JobsTableRevision(
             selection: model.selectedIDs,
             rows: groups.map { $0.map { $0.items.map(\.id) } } ?? [shownItems.map(\.id)]
-        ))
+        ), cellSpacing: JobRowLayout.cellSpacing)
         .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
