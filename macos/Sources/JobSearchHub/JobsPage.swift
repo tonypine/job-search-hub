@@ -564,13 +564,22 @@ private struct JobsTableRevision: Hashable {
     let rows: [[UUID]]
 }
 
+/// Adds a job by its posting's URL. The Pipeline page's Add also puts it on
+/// the board in `onAdded`, whose failure the sheet shows under its title.
 struct AddJobSheet: View {
     let client: HubClient
-    let onAdded: (Job) -> Void
+    let failureTitle: String
+    let onAdded: @MainActor (Job) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var title = ""
     @State private var failure: HubFailure?
+
+    init(client: HubClient, failureTitle: String = "Couldn't add the job", onAdded: @escaping @MainActor (Job) async throws -> Void) {
+        self.client = client
+        self.failureTitle = failureTitle
+        self.onAdded = onAdded
+    }
 
     var body: some View {
         Form {
@@ -595,10 +604,10 @@ struct AddJobSheet: View {
     private func add() async {
         do {
             let response = try await client.send("POST", "v1/jobs", body: AddJobRequest(url: url, title: title), as: AddJobResponse.self)
-            onAdded(response.job)
+            try await onAdded(response.job)
             dismiss()
         } catch {
-            failure = HubFailure("Couldn't add the job", error)
+            failure = HubFailure(failureTitle, error)
         }
     }
 }

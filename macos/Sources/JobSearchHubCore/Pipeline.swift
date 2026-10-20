@@ -100,6 +100,14 @@ public struct PipelineCard: Codable, Equatable, Identifiable, Sendable {
     /// The job's title, or the company's name for an application with no job.
     public var title: String { jobTitle ?? companyName ?? "Untitled" }
 
+    /// Whether the job's title or the company's name holds the search; every
+    /// card matches an empty one.
+    public func matches(_ search: String) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        return [jobTitle, companyName].contains { $0?.localizedStandardContains(query) == true }
+    }
+
     public func getDaysInPhase(now: Date) -> Int {
         Calendar.current.dateComponents([.day], from: application.phaseEnteredAt, to: now).day ?? 0
     }
