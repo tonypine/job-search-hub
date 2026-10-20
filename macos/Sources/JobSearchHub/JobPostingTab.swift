@@ -87,6 +87,12 @@ struct JobPostingTab<Rail: View>: View {
                         .padding(.trailing, Space.xl)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
+                    // No scroller, as in the design: one lands over the
+                    // rail's cards, hiding their right edge and trailing
+                    // links, whatever gutter they leave it (TP-1129). The
+                    // wheel and the trackpad still scroll, and the outline
+                    // marks where you are.
+                    .scrollIndicators(.never)
                     .task(id: scrollTarget) { await scrollToTarget(proxy) }
                 }
                 .padding(.leading, Space.xl)
