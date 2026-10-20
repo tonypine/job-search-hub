@@ -452,7 +452,7 @@ struct JobDetailView: View {
     }
 
     private func verdictStrip(_ details: JobDetails) -> some View {
-        VerdictStrip(cells: details.getVerdicts(peopleYouKnow: getPeople(details).count(where: JobOutreach.isKnown))) { open($0) }
+        VerdictStrip(cells: details.getVerdicts(people: getPeople(details))) { open($0) }
     }
 
     /// "Northwind · Developer tools · 51-200 people", the name opening the
@@ -731,10 +731,9 @@ struct JobDetailView: View {
     private func people(_ details: JobDetails) -> some View {
         let everyone = getPeople(details)
         let shown = Array(everyone.prefix(JobOutreach.shownLimit))
-        let known = everyone.count(where: JobOutreach.isKnown)
         let companyName = details.companyName ?? "the company"
         let total = model.people?.count ?? everyone.count
-        return HubCard("People", meta: known > 0 ? "\(known) you know at \(companyName)" : nil) {
+        return HubCard("People", meta: JobOutreach.describe(everyone).map { "\($0) at \(companyName)" }) {
             if shown.isEmpty {
                 Text("No one you know at \(companyName) yet.").foregroundStyle(.secondary)
             }

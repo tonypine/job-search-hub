@@ -13,6 +13,16 @@ private func makeDetails(fit: String, brief: String = "", pay: String = "") thro
     return try HubJSON.makeDecoder().decode(JobDetails.self, from: Data(json.utf8))
 }
 
+/// Someone at Northwind the People card lists, known to the owner or not.
+private func makePerson(_ relation: PersonRelation, named name: String) throws -> RelatedPerson {
+    let id = UUID().uuidString.lowercased()
+    let json = """
+    {"key":"\(relation.rawValue):\(id)","relation":"\(relation.rawValue)","id":"\(id)","name":"\(name)",
+     "company_id":"\(companyID.uuidString.lowercased())","is_agency":false,"open_jobs":0,"fitting_jobs":0}
+    """
+    return try HubJSON.makeDecoder().decode(RelatedPerson.self, from: Data(json.utf8))
+}
+
 private let unclearFit = #"""
 {"level":"unclear","checks":[{"name":"Role","verdict":"yes","reason":"product engineer"},
                              {"name":"Years","verdict":"unclear","reason":"asks 6+, you have 5"},
@@ -28,7 +38,8 @@ private let strongBrief = #"""
 """#
 
 @Test func theStripReadsTheMatchTheScreenTheTakeHomeAndThePeople() throws {
-    let cells = try makeDetails(fit: unclearFit, brief: strongBrief).getVerdicts(peopleYouKnow: 2)
+    let people = try [makePerson(.connection, named: "Alex Example"), makePerson(.introducer, named: "Riley Example"), makePerson(.contact, named: "Eli Example")]
+    let cells = try makeDetails(fit: unclearFit, brief: strongBrief).getVerdicts(people: people)
 
     #expect(cells.map(\.kind) == [.match, .screen, .takeHome, .people])
     #expect(cells.map(\.word) == ["Strong", "2 unclear", "≈ BRL 31k/mo", "2 you know"])
@@ -39,14 +50,32 @@ private let strongBrief = #"""
 }
 
 @Test func theStripSaysWhatIsMissingInWords() throws {
-    let unpublished = try makeDetails(fit: #"{"level":"good","checks":[]}"#).getVerdicts(peopleYouKnow: 0)
+    let unpublished = try makeDetails(fit: #"{"level":"good","checks":[]}"#).getVerdicts(people: [])
     #expect(unpublished.map(\.word) == ["Not briefed", "Passes", "Not published", "No one yet"])
     #expect(unpublished.map(\.tone) == [.neutral, .positive, .neutral, .neutral])
 
     let unjudgedPay = try makeDetails(
         fit: #"{"level":"good","checks":[]}"#, pay: #""pay":{"ranges":[{"min":100000,"max":120000,"currency":"USD","interval":"year"}]},"#
     )
-    #expect(unjudgedPay.getVerdicts(peopleYouKnow: 0)[2].word == "Not judged")
+    #expect(unjudgedPay.getVerdicts(people: [])[2].word == "Not judged")
+}
+
+@Test func theStripsPeopleCellSaysWhatThePeopleCardSays() throws {
+    let contacts = try ["Dana Example", "Tomas Example", "Priya Example"].map { try makePerson(.contact, named: $0) }
+    let details = try makeDetails(fit: #"{"level":"good","checks":[]}"#)
+
+    let onlyContacts = details.getVerdicts(people: contacts)[3]
+    #expect(onlyContacts.word == "3 contacts" && onlyContacts.tone == .neutral && onlyContacts.symbolName == "person.2")
+    #expect(JobOutreach.describe(contacts) == "3 contacts")
+    #expect(JobOutreach.describe(Array(contacts.prefix(1))) == "1 contact")
+
+    let withConnection = try contacts + [makePerson(.connection, named: "Alex Example")]
+    let known = details.getVerdicts(people: withConnection)[3]
+    #expect(known.word == "1 you know" && known.tone == .accent && known.symbolName == "person.2.fill")
+    #expect(JobOutreach.describe(withConnection) == "1 you know")
+
+    #expect(details.getVerdicts(people: [])[3].word == "No one yet")
+    #expect(JobOutreach.describe([]) == nil)
 }
 
 @Test func theScreenPutsFailingThenUnclearChecksFirstAndFoldsThePasses() {
@@ -88,10 +117,10 @@ private let strongBrief = #"""
 
 @Test func anHourlyOrUnconvertedPayCheckFallsBackToAWord() throws {
     let hourly = try makeDetails(fit: #"{"level":"poor","checks":[{"name":"Pay","verdict":"no","reason":"paid by the hour"}]}"#)
-    #expect(hourly.getVerdicts(peopleYouKnow: 0)[2].word == "Hourly")
+    #expect(hourly.getVerdicts(people: [])[2].word == "Hourly")
 
     let noRate = try makeDetails(fit: #"{"level":"unclear","checks":[{"name":"Pay","verdict":"unclear","reason":"no exchange rate from EUR to BRL"}]}"#)
-    let cell = noRate.getVerdicts(peopleYouKnow: 0)[2]
+    let cell = noRate.getVerdicts(people: [])[2]
     #expect(cell.word == "Unclear" && cell.detail == "no exchange rate from EUR to BRL")
 }
 
