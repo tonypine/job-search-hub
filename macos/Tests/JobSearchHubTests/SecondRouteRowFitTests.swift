@@ -15,9 +15,9 @@ import Testing
 /// The board in a 1400 pt window: what the sidebar, 248 pt with its inset,
 /// leaves.
 private let boardWidth: CGFloat = 1400 - 248
-/// The same with the inspector open at its ideal 480 pt, where the columns
+/// The same with the inspector open at its ideal width, where the columns
 /// keep their minimum and the board scrolls.
-private let boardWidthBesideInspector: CGFloat = boardWidth - 480
+private let boardWidthBesideInspector: CGFloat = boardWidth - InspectorWidth.ideal
 
 /// The width a card's lines get on a board that wide: Saved, Applied, In
 /// contact, Interviewing and Offer, with the Closed drawer.

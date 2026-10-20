@@ -12,8 +12,8 @@ import Testing
 // this checks the room, not the drawing.
 
 /// The content column in a 1400 pt window: the sidebar as the window draws
-/// it, 248 pt with its inset, and the inspector at its ideal 480 pt.
-private let contentColumn: CGFloat = 1400 - 248 - 480
+/// it, 248 pt with its inset, and the inspector at its ideal width.
+private let contentColumn: CGFloat = 1400 - 248 - InspectorWidth.ideal
 
 @MainActor
 private func measureWidth(_ view: some View) -> CGFloat {

@@ -354,29 +354,29 @@ struct JobsPage: View {
                     onRestore: { Task { await model.restore(getTargets(of: item.id), through: decisions, with: client) } }
                 )
             }
-            .width(min: 240, ideal: 380)
+            .width(min: JobRowLayout.jobMinWidth, ideal: 380)
             .customizationID("job")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Match", sortUsing: JobsSortComparator(.match)) { item in
                 MatchCell(match: item.match).jobRowCell(item.id, hover: hover)
             }
-            .width(min: 80, ideal: 96)
+            .width(JobRowLayout.matchWidth)
             .customizationID("match")
             TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in
                 ScreenCell(fit: item.fit).jobRowCell(item.id, hover: hover)
             }
-            .width(min: 84, ideal: 110)
+            .width(JobRowLayout.screenWidth)
             .customizationID("screen")
             TableColumn("Take-home", sortUsing: JobsSortComparator(.takeHome)) { item in
                 TakeHomeCell(check: item.getFitCheck("Pay")).jobRowCell(item.id, hover: hover, alignment: .trailing)
             }
-            .width(min: 64, ideal: 84)
+            .width(JobRowLayout.takeHomeWidth)
             .alignment(.trailing)
             .customizationID("takeHome")
             TableColumn("Posted", sortUsing: JobsSortComparator(.posted)) { item in
                 PostedCell(job: item.job).jobRowCell(item.id, hover: hover, alignment: .trailing)
             }
-            .width(min: 48, ideal: 60)
+            .width(JobRowLayout.postedWidth)
             .alignment(.trailing)
             .customizationID("posted")
             TableColumnForEach(JobsColumns.jobDetails + JobsColumns.boardFacts) { column in

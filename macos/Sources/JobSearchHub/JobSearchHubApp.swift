@@ -307,10 +307,10 @@ struct ContentView: View {
                 // constraints on every pass, and a window whose constraint
                 // updates never settle is stopped by AppKit.
                 .frame(
-                    minWidth: 0, idealWidth: 480, maxWidth: .infinity,
+                    minWidth: 0, idealWidth: InspectorWidth.ideal, maxWidth: .infinity,
                     minHeight: 0, idealHeight: 600, maxHeight: .infinity, alignment: .top
                 )
-                .inspectorColumnWidth(min: 360, ideal: 480, max: 720)
+                .inspectorColumnWidth(min: InspectorWidth.min, ideal: InspectorWidth.ideal, max: InspectorWidth.max)
             }
         }
         .overlay(alignment: .top) {
