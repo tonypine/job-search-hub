@@ -269,6 +269,41 @@ jobs:
           jq -e --arg want "$want" --arg commit "$(git rev-parse HEAD)" \
             '.version == $want and .commit == $commit and .newest_migration > 0' "$RUNNER_TEMP/version.json"
 
+      # Symphony's QA pass runs the hub this way (WORKFLOW.md,
+      # verification.dev_server): it comes up healthy, with an overdue card
+      # whose company has three people to write to, and once stopped leaves
+      # no cluster or folder behind.
+      - name: The QA dev server starts seeded and stops clean
+        env:
+          HUB_DEV_SERVER_POSTGRES_ENGINE: /usr/lib/postgresql/18
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          scripts/dev-server.sh build
+          scripts/dev-server.sh start > "$RUNNER_TEMP/dev-server.log" 2>&1 &
+          dev_server=$!
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:18190/v1/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          owner="Authorization: Bearer qa-dev-server-owner-token-not-a-secret"
+          curl -fsS --header "$owner" http://127.0.0.1:18190/v1/pipeline > "$RUNNER_TEMP/pipeline.json" &&
+            curl -fsS --header "$owner" http://127.0.0.1:18190/v1/people > "$RUNNER_TEMP/people.json" ||
+            { cat "$RUNNER_TEMP/dev-server.log"; exit 1; }
+          jq -e '[.cards[] | select(.company_name == "Globex" and .follow_up_due_at != null and .application.contacted_at == null)] | length == 1' \
+            "$RUNNER_TEMP/pipeline.json"
+          jq -e '[.people[] | select(.company_name == "Globex")] | length == 3' "$RUNNER_TEMP/people.json"
+          kill -TERM "$dev_server"
+          wait "$dev_server" || true
+          if curl -fsS http://127.0.0.1:18190/v1/health > /dev/null 2>&1; then
+            echo "::error::the dev server still answers after TERM"
+            exit 1
+          fi
+          if [ -n "$(ls -A "$RUNNER_TEMP/hub-dev-server")" ] || pgrep -f "$RUNNER_TEMP/hub-dev-server" > /dev/null; then
+            echo "::error::the dev server left its cluster behind"
+            ls -la "$RUNNER_TEMP/hub-dev-server"
+            exit 1
+          fi
+
   # Runs only when macos/ changes: the Swift tests run against StubHub, not
   # the server, and macOS minutes cost 10x Linux ones. Scripts/make-app.sh
   # runs signed ad hoc, as CI has no Keychain identity, to check the version
