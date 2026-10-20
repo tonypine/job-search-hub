@@ -26,6 +26,54 @@ public enum CompanyScope: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// A filter of the Companies page, under its header's *+ Filter*: each keeps
+/// the rows that answer one of the row's questions, and a filter that is on
+/// shows as a chip. Filters that are on all apply.
+public enum CompanyFilter: String, CaseIterable, Sendable {
+    /// Someone you know works there.
+    case knowSomeone
+    /// An application of yours is on the pipeline.
+    case onPipeline
+    /// The hub found no board to read its jobs from.
+    case noBoard
+    /// Updates you haven't seen yet.
+    case unseenUpdates
+
+    public var title: String {
+        switch self {
+        case .knowSomeone: "You know someone"
+        case .onPipeline: "On the pipeline"
+        case .noBoard: "No board"
+        case .unseenUpdates: "New updates"
+        }
+    }
+
+    public func keeps(_ summary: CompanySummary) -> Bool {
+        switch self {
+        case .knowSomeone: summary.connectionCount > 0
+        case .onPipeline: !(summary.applicationPhase ?? "").isEmpty
+        case .noBoard: summary.jobBoards.isEmpty
+        case .unseenUpdates: summary.unseenUpdates > 0
+        }
+    }
+
+    /// A suggestion has no application, board or updates of its own, so only
+    /// *You know someone* keeps one.
+    public func keeps(_ suggestion: CompanySuggestion) -> Bool {
+        self == .knowSomeone && suggestion.connectionCount > 0
+    }
+}
+
+public extension Set<CompanyFilter> {
+    func keeps(_ summary: CompanySummary) -> Bool {
+        allSatisfy { $0.keeps(summary) }
+    }
+
+    func keeps(_ suggestion: CompanySuggestion) -> Bool {
+        allSatisfy { $0.keeps(suggestion) }
+    }
+}
+
 /// Where the owner stands with a company, in its row's *You* column.
 public enum CompanyStanding: Equatable, Sendable {
     /// The phase of the open application updated last: "Applied".
