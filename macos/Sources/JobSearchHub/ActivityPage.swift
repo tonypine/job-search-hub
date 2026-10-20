@@ -134,10 +134,13 @@ final class ModelWorkModel {
 
 /// What the hub's models and agents are doing: a column of the kinds of run,
 /// each with its state, model and pause, beside the chosen kind's page, its
-/// header and its runs. All kinds, first, has them all.
+/// header, its numbers and charts over a window, and its runs. All kinds,
+/// first, has them all.
 struct ActivityPage: View {
     /// The kind shown, kept when the app reopens; empty for All kinds.
     @AppStorage("activitySelectedKind") private var selectedKindID = ""
+    /// Each page's window, by kind, "" for All kinds.
+    @AppStorage("activityWindows") private var windowChoicesText = ""
     @AppStorage("activityShowsRunKinds") private var showsRunKinds = true
     @AppStorage("activityRunKindsWidth") private var runKindsWidth = 268.0
     @Environment(HubConnection.self) private var connection
@@ -146,6 +149,15 @@ struct ActivityPage: View {
     @State private var kinds = RunKindsModel()
     @State private var modelWork = ModelWorkModel()
     @State private var runs = ActivityRunsModel()
+    @State private var metrics = RunMetricsModel()
+    /// The page's window as read on its last change or hub event: the
+    /// numbers, the charts and the runs are all of it.
+    @State private var window: ResolvedRunWindow?
+    /// The choice the window was read from, which the runs list keeps its
+    /// runs by; it changes with the window, so the list reads once.
+    @State private var windowReadFrom = RunWindowChoice.standard
+    /// The bucket a click on the charts narrowed the runs to.
+    @State private var selectedBucket: DateInterval?
     @State private var showsOnlyFailed = false
     /// The column steps aside while the inspector shows a run's job or
     /// company in a window without room for both, and comes back when it
@@ -214,6 +226,13 @@ struct ActivityPage: View {
                 .onChange(of: isCrowdedByInspector, initial: true) { _, crowded in
                     hidesRunKindsForInspector = crowded
                 }
+                .onChange(of: WindowKey(page: windowPage, choice: windowChoice, revision: events.revision), initial: true) { old, new in
+                    if old.page != new.page || old.choice != new.choice {
+                        selectedBucket = nil
+                    }
+                    window = new.choice.resolve(now: .now, calendar: .current)
+                    windowReadFrom = new.choice
+                }
             }
         }
         .navigationTitle("Activity")
@@ -255,6 +274,32 @@ struct ActivityPage: View {
         Binding(get: { selectedKindID }, set: { selectedKindID = $0 ?? "" })
     }
 
+    /// The page whose window shows: the kind's, or All kinds' while the
+    /// kind isn't one the hub has.
+    private var windowPage: String {
+        selectedKind?.id ?? ""
+    }
+
+    private var windowChoice: RunWindowChoice {
+        RunWindowChoice.decodeChoices(windowChoicesText)[windowPage] ?? .standard
+    }
+
+    private var windowChoiceBinding: Binding<RunWindowChoice> {
+        Binding(get: { windowChoice }, set: { choice in
+            var choices = RunWindowChoice.decodeChoices(windowChoicesText)
+            choices[windowPage] = choice
+            windowChoicesText = RunWindowChoice.encodeChoices(choices)
+        })
+    }
+
+    /// Reads the window again for another page or choice, and on each
+    /// update the hub announces, its runs among them.
+    private struct WindowKey: Equatable {
+        let page: String
+        let choice: RunWindowChoice
+        let revision: Int
+    }
+
     private var header: some View {
         PageHeader {
             Button(isShowingRunKinds ? "Hide run kinds" : "Show run kinds", systemImage: "sidebar.left") {
@@ -281,9 +326,19 @@ struct ActivityPage: View {
             VStack(alignment: .leading, spacing: 0) {
                 RunKindHeader(model: kinds, kind: selectedKind, work: modelWork.work, client: client)
                 Divider()
-                ActivityRunsList(
-                    model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, client: client
-                )
+                if let window {
+                    RunMetricsPanel(
+                        model: metrics, kind: selectedKind,
+                        isOnClaudePlan: selectedKind.flatMap { kinds.getModel(for: $0) }?.providerKind == RunKindModel.claudeProviderKind,
+                        choice: windowChoiceBinding, window: window, selectedBucket: $selectedBucket,
+                        getTitle: { kinds.getKind($0)?.title ?? RunsSummary.getKindTitle($0) }, client: client
+                    )
+                    Divider()
+                    ActivityRunsList(
+                        model: runs, kind: selectedKind, showsOnlyFailed: showsOnlyFailed, windowChoice: windowReadFrom,
+                        window: window, bucket: selectedBucket, client: client
+                    )
+                }
             }
             .onAppear {
                 if selectedKind == nil { selectedKindID = "" }

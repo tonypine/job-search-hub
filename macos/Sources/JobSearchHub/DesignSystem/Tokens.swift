@@ -55,6 +55,28 @@ extension Tone {
     private static let neutralColor = Color(light: 0x6E6E73, dark: 0x98989D)
 }
 
+/// The charts' colors. A kind of run on All kinds' charts takes one of four
+/// categorical colors, in this fixed order, which hold apart for the common
+/// kinds of color blindness side by side in a stack, light and dark; the
+/// kinds past four share the neutral gray, and failures wear the negative
+/// tone.
+enum ChartColor {
+    static let slots: [Color] = [
+        Color(light: 0x2A78D6, dark: 0x3987E5), // blue
+        Color(light: 0xEB6834, dark: 0xD95926), // orange
+        Color(light: 0x1BAF7A, dark: 0x199E70), // aqua
+        Color(light: 0xEDA100, dark: 0xC98500), // yellow
+    ]
+
+    static func of(_ paint: RunChartPaint) -> Color {
+        switch paint {
+        case let .slot(index): slots[min(max(index, 0), slots.count - 1)]
+        case .other: Tone.neutral.color
+        case .failed: Tone.negative.color
+        }
+    }
+}
+
 /// The spacing scale. Rows within a section are `s` apart, sections `l`, and
 /// pages pad by `xl`.
 enum Space {

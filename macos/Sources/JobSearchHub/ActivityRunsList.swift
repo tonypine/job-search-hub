@@ -9,30 +9,37 @@ final class ActivityRunsModel {
     /// The most runs the hub gives in one page.
     static let largestPage = 200
 
-    /// The runs listed: of one kind, or of every kind without one, and only
-    /// the failed ones, or all.
+    /// The runs listed: of one kind, or of every kind without one, only the
+    /// failed ones or all, over the window chosen or the bucket clicked in
+    /// it. The window is the choice, not its range, which moves with each
+    /// read: a read again for the same choice keeps the runs shown.
     struct Scope: Equatable {
         var kind: String?
         var failedOnly: Bool
+        var window: RunWindowChoice
+        var bucket: DateInterval?
     }
 
     private(set) var runs: [ActivityRun] = []
     private(set) var nextCursor = ""
     /// The scope the runs are of; nil before the first read.
     private(set) var scope: Scope?
+    /// When the runs listed started, from until before.
+    private var range: DateInterval?
     private(set) var isLoadingMore = false
     var failure: HubFailure?
 
     var hasMore: Bool { !nextCursor.isEmpty }
 
-    /// Reads the latest runs of scope again. Read again for the same scope,
-    /// as on a hub event, it keeps as many runs as were shown, up to the
-    /// hub's largest page.
-    func load(_ scope: Scope, with client: HubClient) async {
+    /// Reads the latest runs of scope started in range again. Read again for
+    /// the same scope, as on a hub event, it keeps as many runs as were
+    /// shown, up to the hub's largest page.
+    func load(_ scope: Scope, in range: DateInterval, with client: HubClient) async {
         let limit = self.scope == scope ? min(max(runs.count, Self.pageSize), Self.largestPage) : Self.pageSize
         do {
-            let page = try await client.get("v1/runs", query: makeQuery(scope, limit: limit, cursor: nil), as: ActivityRunsPage.self)
-            (runs, nextCursor, self.scope) = (page.runs, page.nextCursor, scope)
+            let query = makeQuery(scope, in: range, limit: limit, cursor: nil)
+            let page = try await client.get("v1/runs", query: query, as: ActivityRunsPage.self)
+            (runs, nextCursor, self.scope, self.range) = (page.runs, page.nextCursor, scope, range)
             failure = nil
         } catch {
             // A read the page cancelled, for another kind, isn't a failure.
@@ -44,11 +51,12 @@ final class ActivityRunsModel {
 
     /// Reads the page after the last run shown.
     func loadMore(with client: HubClient) async {
-        guard let scope, hasMore, !isLoadingMore else { return }
+        guard let scope, let range, hasMore, !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
         do {
-            let page = try await client.get("v1/runs", query: makeQuery(scope, limit: Self.pageSize, cursor: nextCursor), as: ActivityRunsPage.self)
+            let query = makeQuery(scope, in: range, limit: Self.pageSize, cursor: nextCursor)
+            let page = try await client.get("v1/runs", query: query, as: ActivityRunsPage.self)
             guard scope == self.scope else { return }
             let shown = Set(runs.map(\.id))
             runs += page.runs.filter { !shown.contains($0.id) }
@@ -59,8 +67,12 @@ final class ActivityRunsModel {
         }
     }
 
-    private func makeQuery(_ scope: Scope, limit: Int, cursor: String?) -> [URLQueryItem] {
-        var query = [URLQueryItem(name: "limit", value: String(limit))]
+    private func makeQuery(_ scope: Scope, in range: DateInterval, limit: Int, cursor: String?) -> [URLQueryItem] {
+        var query = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "since", value: RunWindowFormat.formatInstant(range.start)),
+            URLQueryItem(name: "until", value: RunWindowFormat.formatInstant(range.end)),
+        ]
         if let kind = scope.kind {
             query.append(URLQueryItem(name: "kind", value: kind))
         }
@@ -74,7 +86,8 @@ final class ActivityRunsModel {
     }
 }
 
-/// A kind's runs, or every kind's on All kinds, read again on each hub
+/// A kind's runs, or every kind's on All kinds, over the page's window or
+/// the bucket clicked in its charts, read again with the window on each hub
 /// event. A run's job and company open in the inspector; a failed run,
 /// selected, shows its error and what to open under the table.
 struct ActivityRunsList: View {
@@ -82,15 +95,20 @@ struct ActivityRunsList: View {
     /// Nil for All kinds, whose rows name each run's kind.
     let kind: RunKind?
     let showsOnlyFailed: Bool
+    let windowChoice: RunWindowChoice
+    let window: ResolvedRunWindow
+    /// The bucket a click on the charts narrowed the list to.
+    let bucket: DateInterval?
     let client: HubClient
-    @Environment(HubEventStream.self) private var events
     @Environment(DetailsInspector.self) private var details
     @State private var selectedRunID: UUID?
     @State private var promptRun: ActivityRun?
 
     private var scope: ActivityRunsModel.Scope {
-        ActivityRunsModel.Scope(kind: kind?.id, failedOnly: showsOnlyFailed)
+        ActivityRunsModel.Scope(kind: kind?.id, failedOnly: showsOnlyFailed, window: windowChoice, bucket: bucket)
     }
+
+    private var range: DateInterval { bucket ?? window.range }
 
     var body: some View {
         Group {
@@ -103,7 +121,8 @@ struct ActivityRunsList: View {
             } else if model.runs.isEmpty {
                 // It fills the page, so the kind's header stays at the top.
                 ContentUnavailableView(
-                    showsOnlyFailed ? "No failed runs" : "No runs yet", systemImage: showsOnlyFailed ? "checkmark.circle" : "clock",
+                    showsOnlyFailed ? "No failed runs" : (bucket == nil ? "No runs in this window" : "No runs then"),
+                    systemImage: showsOnlyFailed ? "checkmark.circle" : "clock",
                     description: Text(kind.map { "Runs of \($0.title) show here as they start." } ?? "Every run the hub records shows here as it starts.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,13 +132,13 @@ struct ActivityRunsList: View {
         }
         .overlay(alignment: .bottom) {
             if model.failure != nil {
-                HubErrorView(Bindable(model).failure, retry: { Task { await model.load(scope, with: client) } })
+                HubErrorView(Bindable(model).failure, retry: { Task { await model.load(scope, in: range, with: client) } })
                     .frame(maxWidth: 560)
                     .padding(Space.l)
             }
         }
-        .task(id: ReloadKey(scope: scope, revision: events.revision)) {
-            await model.load(scope, with: client)
+        .task(id: ReloadKey(scope: scope, window: window)) {
+            await model.load(scope, in: range, with: client)
         }
         .sheet(item: $promptRun) { run in
             RunPromptSheet(run: run, client: client)
@@ -213,11 +232,11 @@ struct ActivityRunsList: View {
         return run
     }
 
-    /// Keys the read: again for another kind or filter, and on each update
-    /// the hub announces.
+    /// Keys the read: again for another kind, filter or bucket, and with
+    /// the window the page reads again on each update the hub announces.
     private struct ReloadKey: Equatable {
         let scope: ActivityRunsModel.Scope
-        let revision: Int
+        let window: ResolvedRunWindow
     }
 }
 
