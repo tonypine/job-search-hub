@@ -39,6 +39,7 @@ private func measureWidth(_ view: some View) -> CGFloat {
     #expect(scopesWidth <= room, "The scopes need \(scopesWidth) pt; the header leaves them \(room) pt beside \(trailingWidth) pt of controls")
 }
 
+@MainActor
 @Test func theScopesCarryTheirCountsInOrder() {
     let items = PipelinePage.makeScopes(counts: [.active: 7, .due: 3, .closed: 1, .skipped: 0])
 
