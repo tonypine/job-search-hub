@@ -74,8 +74,13 @@ func TestEveryPostingIsMarkdownItsFactsQuote(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			timezone := `"not stated"`
+			if job.timezone != "" {
+				timezone = `"` + job.timezone + `"`
+			}
 			for key, want := range map[string]string{
 				"location_restriction": `"` + job.location + `"`, "seniority": `"` + job.seniority + `"`, "contract_type": `"Full-time"`,
+				"timezone_requirement": timezone,
 			} {
 				if got := string(values[key]); got != want {
 					t.Errorf("%s %s = %s; want %s", job.title, key, got, want)
@@ -84,6 +89,9 @@ func TestEveryPostingIsMarkdownItsFactsQuote(t *testing.T) {
 			quoted := []string{"location_restriction", "seniority", "contract_type", "languages"}
 			if job.yearsAsked > 0 {
 				quoted = append(quoted, "years_of_experience")
+			}
+			if job.timezone != "" {
+				quoted = append(quoted, "timezone_requirement")
 			}
 			words := strings.Join(strings.Fields(textextract.ConvertMarkdownToText(posting)), " ")
 			for _, key := range quoted {
