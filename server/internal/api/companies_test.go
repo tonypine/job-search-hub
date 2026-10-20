@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -40,7 +41,8 @@ func TestTheCompaniesListShowsWatchStatusBoardsAndPeople(t *testing.T) {
 		t.Fatalf("list: %d %s", status, body)
 	}
 	first, second := listed.Companies[0], listed.Companies[1]
-	if first.Company.ID != acme.ID || first.WatchedSince == nil || len(first.JobBoards) != 1 || first.PeopleCount != 2 {
+	if first.Company.ID != acme.ID || first.WatchedSince == nil || len(first.JobBoards) != 1 || first.PeopleCount != 2 ||
+		first.KnownPeopleCount != 2 || !slices.Equal(first.KnownPeople, []string{"Ada", "Grace"}) {
 		t.Fatalf("acme row = %+v", first)
 	}
 	if second.Company.ID != zeta.ID || second.WatchedSince != nil || len(second.JobBoards) != 0 || second.PeopleCount != 0 {

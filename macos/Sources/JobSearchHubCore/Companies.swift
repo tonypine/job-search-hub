@@ -105,8 +105,13 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var peopleCount: Int
     /// How many of the owner's connections work here.
     public var connectionCount: Int
-    /// The closest of those connections, by name, at most three; nil from a
-    /// hub that doesn't send them.
+    /// How many people can get the owner in here, as a job's People card
+    /// counts them: connections, introducers and stored contacts; nil from a
+    /// hub that doesn't send it.
+    public var knownPeopleCount: Int?
+    /// The first of those people, by name, at most three: connections, then
+    /// introducers, then the contacts closest to the hire; nil from a hub
+    /// that doesn't send them.
     public var knownPeople: [String]?
     /// The phase of the owner's open application here updated last.
     public var applicationPhase: String?
@@ -120,6 +125,10 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var unseenUpdates: Int
 
     public var id: UUID { company.id }
+
+    /// How many people the row's *People you know* shows: everyone who can
+    /// get the owner in, or the connections alone from an older hub.
+    public var peopleYouKnow: Int { knownPeopleCount ?? connectionCount }
 }
 
 /// Everything the hub knows about one company.

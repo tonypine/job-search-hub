@@ -79,6 +79,18 @@ private var utc: Calendar {
     #expect(CompanyFilter.allCases.map(\.title) == ["You know someone", "On the pipeline", "No board", "New updates"])
 }
 
+@Test func theContactsStoredAtACompanyAreAmongThePeopleYouKnowThere() throws {
+    var rows = try makeRows()
+    // An older hub sends no count of everyone: its connections stand in.
+    #expect(rows[0].knownPeopleCount == nil && rows[0].peopleYouKnow == 2)
+    // Globex has no connection, but a contact research stored there.
+    rows[1].peopleCount = 1
+    rows[1].knownPeopleCount = 1
+    rows[1].knownPeople = ["Rae Example"]
+    #expect(rows[1].peopleYouKnow == 1)
+    #expect(rows.filter(CompanyFilter.knowSomeone.keeps).map(\.company.name) == ["Northwind", "Globex"])
+}
+
 @Test func onlyYouKnowSomeoneKeepsASuggestion() throws {
     let json = #"{"organization":"Hooli","source":"linkedin","connection_count":2,"open_jobs":3,"fitting_jobs":1}"#
     var suggestion = try HubJSON.makeDecoder().decode(CompanySuggestion.self, from: Data(json.utf8))
