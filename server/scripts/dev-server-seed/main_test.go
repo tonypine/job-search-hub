@@ -15,6 +15,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
+	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/internal/textextract"
@@ -22,16 +25,18 @@ import (
 
 func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	ctx := context.Background()
-	hub := store.New(testdatabase.New(t))
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
 	now := time.Now()
 
-	if seeded, err := seed(ctx, hub, now); err != nil || !seeded {
+	if seeded, err := seed(ctx, pool, now); err != nil || !seeded {
 		t.Fatalf("seed = %v, %v; want it seeded", seeded, err)
 	}
 	checkPipeline(t, hub, now)
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
 	checkScreens(t, hub)
+	checkRuns(t, hub, now)
 
 	profile, err := hub.GetOwnerProfile(ctx)
 	if err != nil || !strings.Contains(profile.Body, "Senior iOS engineer") {
@@ -42,13 +47,14 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	}
 
 	// A second run adds nothing.
-	if seeded, err := seed(ctx, hub, now); err != nil || seeded {
+	if seeded, err := seed(ctx, pool, now); err != nil || seeded {
 		t.Fatalf("second seed = %v, %v; want nothing seeded", seeded, err)
 	}
 	checkPipeline(t, hub, now)
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
 	checkScreens(t, hub)
+	checkRuns(t, hub, now)
 }
 
 // TestEveryPostingIsMarkdownItsFactsQuote checks each seeded posting is
@@ -113,6 +119,73 @@ func TestEveryPostingIsMarkdownItsFactsQuote(t *testing.T) {
 	// than the owner's roles span, so its Experience row fails.
 	if patientApp := seededCompanies[3].jobs[1]; patientApp.title != "Senior iOS Engineer, Patient App" || patientApp.yearsAsked != 12 {
 		t.Errorf("Copperleaf Health's second job = %s asking %d years; want the Patient App asking 12", patientApp.title, patientApp.yearsAsked)
+	}
+}
+
+// TestEverySeededRunIsForASeededJobOrCompany checks each run is for a job
+// or a company the seed holds, as its kind works on, in the last day, which
+// the run kinds column counts failures over. Activity has what QA walks: a
+// run of every kind that works on a job or a company, one running, and
+// failures of both records, one a model call for a job, whose detail opens
+// the job and its company.
+func TestEverySeededRunIsForASeededJobOrCompany(t *testing.T) {
+	ran := map[string]bool{}
+	outcomes := map[string]int{}
+	failedCallForJob, failedAgentRun := false, false
+	for _, run := range seededRuns {
+		kind, found := store.GetRunKind(run.kind)
+		company, seeded := findSeededCompany(run.company)
+		if !found || !seeded {
+			t.Errorf("%s run for %s: want a kind of run and a seeded company", run.kind, run.company)
+			continue
+		}
+		subject := store.RunSubjectCompany
+		if run.job != "" {
+			subject = store.RunSubjectJob
+			if !slices.ContainsFunc(company.jobs, func(job seededJob) bool { return job.slug == run.job }) {
+				t.Errorf("%s run is for %s at %s, which the seed doesn't hold", run.kind, run.job, run.company)
+			}
+		}
+		if kind.SubjectType != subject {
+			t.Errorf("%s run is for a %s; its kind works on a %s", run.kind, subject, kind.SubjectType)
+		}
+		isAgentRun := kind.Engine == store.RunEngineClaudeAgent
+		if isAgentRun == (run.on != seededModel{}) {
+			t.Errorf("%s run for %s is on %+v; want a model for a model call alone", run.kind, run.company, run.on)
+		}
+		switch run.outcome {
+		case store.RunOutcomeRunning:
+			if !isAgentRun || run.took != 0 {
+				t.Errorf("%s run for %s runs for %s; want an agent run, still going", run.kind, run.company, run.took)
+			}
+		case store.RunOutcomeSucceeded:
+			if _, err := answerAgentRun(run, company, uuid.New()); isAgentRun && err != nil {
+				t.Error(err)
+			}
+		default:
+			if run.err == "" {
+				t.Errorf("%s run for %s %s: want its error", run.kind, run.company, run.outcome)
+			}
+		}
+		if run.took <= 0 && run.outcome != store.RunOutcomeRunning || run.ago < run.took || run.ago >= 24*time.Hour {
+			t.Errorf("%s run for %s started %s ago and took %s; want it ended in the last day", run.kind, run.company, run.ago, run.took)
+		}
+		ran[run.kind] = true
+		outcomes[run.outcome]++
+		failed := run.outcome == store.RunOutcomeFailed
+		failedCallForJob = failedCallForJob || failed && !isAgentRun && run.job != ""
+		failedAgentRun = failedAgentRun || failed && isAgentRun
+	}
+	for _, kind := range store.RunKinds {
+		if (kind.Group == store.RunGroupJobs || kind.Group == store.RunGroupCompanies) && !ran[kind.ID] {
+			t.Errorf("no %s run; want one of every kind that works on a job or a company", kind.ID)
+		}
+	}
+	if outcomes[store.RunOutcomeRunning] != 1 || outcomes[store.RunOutcomeSucceeded] == 0 || outcomes[store.RunOutcomeFailed] == 0 {
+		t.Errorf("runs by outcome = %v; want one running, some succeeded and some failed", outcomes)
+	}
+	if !failedCallForJob || !failedAgentRun {
+		t.Errorf("a failed model call for a job: %v, a failed agent run: %v; want both", failedCallForJob, failedAgentRun)
 	}
 }
 
@@ -355,14 +428,7 @@ func checkScreens(t *testing.T, hub *store.Store) {
 	api.RegisterCompanyRoutes(routes, hub, nil, asOwner)
 	get := func(path string, response any) {
 		t.Helper()
-		recorder := httptest.NewRecorder()
-		routes.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("GET %s = %d %s", path, recorder.Code, recorder.Body)
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), response); err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
+		getJSON(t, routes, path, response)
 	}
 
 	var list struct {
@@ -418,6 +484,199 @@ func checkScreens(t *testing.T, hub *store.Store) {
 		if company.FittingJobs > 0 && company.BestMatch == nil {
 			t.Errorf("%s has %d open jobs that pass and no best match", company.Company.Name, company.FittingJobs)
 		}
+	}
+}
+
+// checkRuns reads the runs through the routes Activity reads: every seeded
+// run, for its job and that job's company or for its company, with its
+// outcome, times, model and error; Job briefs' runs, whose job titles step
+// 4 clicks; the failed runs with their errors, and what a failed agent run
+// was asked; the running run, which its kind counts; and the day's failures
+// by kind, which the run kinds column shows.
+func checkRuns(t *testing.T, hub *store.Store, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	routes := http.NewServeMux()
+	asOwner := func(next http.Handler) http.Handler { return next }
+	api.RegisterRunRoutes(routes, hub, asOwner)
+	api.RegisterAgentRunRoutes(routes, hub, nil, asOwner)
+	api.RegisterRunKindRoutes(routes, &modelwork.Controls{Hub: hub, Queue: modelqueue.New(nil, modelqueue.Settings{})}, asOwner)
+
+	summaries, err := hub.ListCompanySummaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	companyIDs := map[string]uuid.UUID{}
+	for _, summary := range summaries {
+		companyIDs[summary.Company.Name] = summary.Company.ID
+	}
+	// A run is told by its kind, its company and what it was for: its job's
+	// title, or its company's name.
+	type runKey struct{ kind, company, subject string }
+	seeded := map[runKey]seededRun{}
+	failedByKind, runningByKind := map[string]int{}, map[string]int{}
+	for _, run := range seededRuns {
+		company, _ := findSeededCompany(run.company)
+		key := runKey{run.kind, run.company, run.company}
+		for _, job := range company.jobs {
+			if job.slug == run.job {
+				key.subject = job.title
+			}
+		}
+		seeded[key] = run
+		switch run.outcome {
+		case store.RunOutcomeFailed:
+			failedByKind[run.kind]++
+		case store.RunOutcomeRunning:
+			runningByKind[run.kind]++
+		}
+	}
+
+	var page store.RunPage
+	getJSON(t, routes, "/v1/runs?limit=200", &page)
+	if len(page.Runs) != len(seededRuns) || page.NextCursor != "" {
+		t.Fatalf("%d runs, next page %q; want the %d seeded, on one page", len(page.Runs), page.NextCursor, len(seededRuns))
+	}
+	byID := map[uuid.UUID]seededRun{}
+	for _, got := range page.Runs {
+		subject := got.Subject
+		if subject == nil || subject.ID == nil || subject.Title == "" {
+			t.Errorf("%s run %s is for %+v; want a seeded job or company", got.Kind, got.ID, subject)
+			continue
+		}
+		key := runKey{got.Kind, subject.Title, subject.Title}
+		switch subject.Type {
+		case store.RunSubjectJob:
+			details, err := hub.GetJobDetails(ctx, *subject.ID)
+			if err != nil || details.Job.CompanyID == nil || subject.CompanyID == nil || *details.Job.CompanyID != *subject.CompanyID ||
+				*subject.CompanyID != companyIDs[subject.CompanyName] {
+				t.Errorf("%s run for %s at %s: want its job, at its company; job %+v, %v", got.Kind, subject.Title, subject.CompanyName, details.Job, err)
+			}
+			key.company = subject.CompanyName
+		case store.RunSubjectCompany:
+			if *subject.ID != companyIDs[subject.Title] {
+				t.Errorf("%s run for %s: want the company's id, %s; got %s", got.Kind, subject.Title, companyIDs[subject.Title], subject.ID)
+			}
+		default:
+			t.Errorf("%s run is for a %s; want a job or a company", got.Kind, subject.Type)
+		}
+		run, found := seeded[key]
+		if !found {
+			t.Errorf("%s run for %+v isn't a seeded one", got.Kind, key)
+			continue
+		}
+		byID[got.ID] = run
+		isAgentRun := got.Record == store.RunRecordAgentRun
+		want := store.Run{Outcome: run.outcome, Error: run.err, StartedByOwner: run.byOwner || isAgentRun, Model: run.on.model, Provider: run.on.provider}
+		if isAgentRun {
+			want.Provider = claudeprint.Provider
+		}
+		if got.Outcome != want.Outcome || got.Error != want.Error || got.StartedByOwner != want.StartedByOwner || got.Model != want.Model ||
+			got.Provider != want.Provider {
+			t.Errorf("%s run for %s = %+v; want %+v", got.Kind, subject.Title, got, want)
+		}
+		if startedAt := now.Add(-run.ago); got.StartedAt.Sub(startedAt).Abs() > time.Millisecond {
+			t.Errorf("%s run for %s started at %s; want %s", got.Kind, subject.Title, got.StartedAt, startedAt)
+		}
+		if took := run.took.Milliseconds(); run.outcome == store.RunOutcomeRunning && got.DurationMS != nil ||
+			run.outcome != store.RunOutcomeRunning && (got.DurationMS == nil || *got.DurationMS != int(took)) {
+			t.Errorf("%s run for %s took %v ms; want %d, none while it runs", got.Kind, subject.Title, got.DurationMS, took)
+		}
+	}
+
+	// Step 4 opens a job from Job briefs' runs.
+	var briefs store.RunPage
+	getJSON(t, routes, "/v1/runs?kind="+store.AgentPromptKindJobBrief, &briefs)
+	jobBriefs := 0
+	for _, run := range seededRuns {
+		if run.kind == store.AgentPromptKindJobBrief {
+			jobBriefs++
+		}
+	}
+	if len(briefs.Runs) != jobBriefs || jobBriefs == 0 {
+		t.Errorf("%d job brief runs; want the %d seeded", len(briefs.Runs), jobBriefs)
+	}
+	for _, run := range briefs.Runs {
+		if run.Kind != store.AgentPromptKindJobBrief || run.Subject == nil || run.Subject.Type != store.RunSubjectJob || run.Subject.CompanyID == nil {
+			t.Errorf("job briefs list %+v; want job brief runs for jobs at companies", run)
+		}
+	}
+
+	// A failed run shows its error, and an agent run what it was asked.
+	var failed store.RunPage
+	getJSON(t, routes, "/v1/runs?outcome="+store.RunOutcomeFailed, &failed)
+	agentRuns := 0
+	for _, run := range failed.Runs {
+		if run.Outcome != store.RunOutcomeFailed || run.Error == "" {
+			t.Errorf("failed runs list %+v; want failed runs with their errors", run)
+		}
+		if run.Record != store.RunRecordAgentRun {
+			continue
+		}
+		agentRuns++
+		var detail struct {
+			AgentRun store.AgentRun `json:"agent_run"`
+		}
+		getJSON(t, routes, "/v1/agent-runs/"+run.ID.String(), &detail)
+		if detail.AgentRun.Input == "" || detail.AgentRun.Error != byID[run.ID].err {
+			t.Errorf("failed agent run %s = %+v; want what it was asked and its error", run.ID, detail.AgentRun)
+		}
+	}
+	if agentRuns == 0 || len(failed.Runs) != sumCounts(failedByKind) {
+		t.Errorf("%d failed runs, %d of them agent runs; want the %d seeded, agent runs among them", len(failed.Runs), agentRuns, sumCounts(failedByKind))
+	}
+
+	// The column shows what runs, and what failed over the last day.
+	var kinds struct {
+		Kinds []modelwork.RunKindState `json:"kinds"`
+	}
+	getJSON(t, routes, "/v1/run-kinds", &kinds)
+	running := map[string]int{}
+	for _, kind := range kinds.Kinds {
+		if kind.Running > 0 {
+			running[kind.ID] = kind.Running
+		}
+	}
+	if !maps.Equal(running, runningByKind) {
+		t.Errorf("runs running by kind = %v; want %v", running, runningByKind)
+	}
+	window := url.Values{
+		"from": {time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)}, "to": {time.Now().UTC().Format(time.RFC3339)}, "bucket": {"day"},
+	}
+	var metrics store.RunMetrics
+	getJSON(t, routes, "/v1/runs/metrics?"+window.Encode(), &metrics)
+	failures := map[string]int{}
+	for _, bucket := range metrics.Buckets {
+		for _, kind := range bucket.Kinds {
+			if kind.Failed > 0 {
+				failures[kind.Kind] += kind.Failed
+			}
+		}
+	}
+	if !maps.Equal(failures, failedByKind) {
+		t.Errorf("the day's failures by kind = %v; want %v", failures, failedByKind)
+	}
+}
+
+func sumCounts(counts map[string]int) int {
+	sum := 0
+	for _, count := range counts {
+		sum += count
+	}
+	return sum
+}
+
+// getJSON asks routes for path, as the app does, and reads the answer into
+// response.
+func getJSON(t *testing.T, routes http.Handler, path string, response any) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	routes.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d %s", path, recorder.Code, recorder.Body)
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), response); err != nil {
+		t.Fatalf("GET %s: %v", path, err)
 	}
 }
 
