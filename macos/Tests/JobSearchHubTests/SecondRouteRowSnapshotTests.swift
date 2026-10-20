@@ -69,12 +69,29 @@ func theWriteToLinkFitsACardAt1400By900() throws {
 
 @MainActor
 @Test
+func aLongerNameKeepsWriteToAndDropsThePaperplane() throws {
+    let name = "Dana Whitfield"
+    let room = SecondRouteRowSnapshots.getRoom(cardWidth: SecondRouteRowSnapshots.cardWidth)
+    let full = try SecondRouteRowSnapshots.render(Label("Write to \(name)", systemImage: "paperplane").fixedSize(), named: "long-full")
+    let words = try SecondRouteRowSnapshots.render(Text("Write to \(name)").fixedSize(), named: "long-words")
+    #expect(SecondRouteRowSnapshots.getInkWidth(full) > room, "the paperplane, Write to and the name don't all fit")
+    #expect(SecondRouteRowSnapshots.getInkWidth(words) < room, "Write to and the name fit")
+
+    // At 1400×900 the link drops the paperplane rather than "Write to": it
+    // draws just as far as the words alone do.
+    let fitted = SecondRouteRow.makeWriteLabel(to: name).frame(width: room, alignment: .leading)
+    let image = try SecondRouteRowSnapshots.render(fitted, named: "long")
+    #expect(abs(SecondRouteRowSnapshots.getInkWidth(image) - SecondRouteRowSnapshots.getInkWidth(words)) <= 1)
+}
+
+@MainActor
+@Test
 func theWriteToLinkKeepsTheNameInTheNarrowestColumn() throws {
-    let name = "Morgan Lee"
+    let name = "Morgan Ellery"
     let room = SecondRouteRowSnapshots.getRoom(cardWidth: SecondRouteRowSnapshots.narrowestCardWidth)
-    let full = try SecondRouteRowSnapshots.render(Label("Write to \(name)", systemImage: "paperplane").fixedSize(), named: "full")
+    let words = try SecondRouteRowSnapshots.render(Text("Write to \(name)").fixedSize(), named: "words")
     let bare = try SecondRouteRowSnapshots.render(Label(name, systemImage: "paperplane").fixedSize(), named: "bare")
-    #expect(SecondRouteRowSnapshots.getInkWidth(full) > room, "Write to and the name don't both fit")
+    #expect(SecondRouteRowSnapshots.getInkWidth(words) > room, "Write to and the name don't both fit")
     #expect(SecondRouteRowSnapshots.getInkWidth(bare) < room, "the name alone fits")
 
     // In that room the link drops "Write to" rather than cutting the name:

@@ -885,11 +885,13 @@ struct SecondRouteRow: View {
         rowWidth - Space.xs - controlWidth - Space.s - controlWidth
     }
 
-    /// "Write to Alex Kim", or just the name beside the paperplane when the
-    /// card is too narrow for both, so it always says who to write to.
+    /// "Write to Alex Kim" beside the paperplane. A longer name drops the
+    /// paperplane first, then "Write to", so the link always says who to
+    /// write to.
     static func makeWriteLabel(to name: String) -> some View {
         ViewThatFits(in: .horizontal) {
             Label("Write to \(name)", systemImage: "paperplane")
+            Text("Write to \(name)")
             Label(name, systemImage: "paperplane")
         }
         .lineLimit(1)
