@@ -222,7 +222,7 @@ struct ActivityPage: View {
 
     static let runKindsWidths = 220.0...400.0
     /// The size the page asks for: less than a 1400 pt window leaves it
-    /// beside the sidebar and the widest inspector, 720 pt.
+    /// beside the sidebar and the widest inspector, `InspectorWidth.max`.
     static let idealSize = CGSize(width: 400, height: 600)
     /// The runs' columns at their ideal widths on All kinds (848 pt), with
     /// about 17 pt of spacing for each and the table's insets.
