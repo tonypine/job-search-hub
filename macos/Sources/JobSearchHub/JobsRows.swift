@@ -68,8 +68,9 @@ extension View {
 
 /// The job: its company's monogram, the title in semibold with its marks,
 /// and the company and location under it, which take all the room the
-/// column has. Hovered or selected, it ends in the row's actions, and its
-/// chips shrink to their symbols so the title keeps the room beside them.
+/// column has. Hovered or selected, it ends in the row's actions. Its chips
+/// keep their words beside them, as color never stands alone: where the
+/// column is short, the title gives up the room, and its tooltip has it whole.
 struct JobCell: View {
     let item: JobListItem
     let isSelected: Bool
@@ -92,11 +93,11 @@ struct JobCell: View {
                         UnseenDot(count: item.unseenUpdates)
                     }
                     if let phase = item.pipelinePhase, !phase.isEmpty {
-                        ToneChip("In \(phase)", tone: .accent, symbol: "rectangle.split.3x1", isCompact: showsActions)
+                        ToneChip("In \(phase)", tone: .accent, symbol: "rectangle.split.3x1")
                             .help("On the pipeline, in \(phase)")
                     }
                     if let reason = item.job.dismissalReason, !reason.isEmpty {
-                        ToneChip(Self.shorten(reason), tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName, isCompact: showsActions)
+                        ToneChip(Self.shorten(reason), tone: SetAside.skipped.tone, symbol: SetAside.skipped.symbolName)
                             .help("Skipped: \(reason)")
                             .accessibilityLabel("Skipped: \(reason)")
                     }

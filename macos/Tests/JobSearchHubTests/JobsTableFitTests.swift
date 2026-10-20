@@ -11,8 +11,10 @@ import Testing
 // beside its actions and its "In Saved" chip (TP-1123). With the inspector at
 // 420 pt, QA still found titles with a chip cut, and the selected row's
 // title and its company and location: AppKit's 17 pt between columns took
-// the room the design gives the titles. These check the Job column's room
-// against what the seeded hub's rows need.
+// the room the design gives the titles. The next review found a hovered
+// row's "In Applied" chip drawn as its symbol alone, even at full width
+// (TP-1135): chips keep their words beside the actions. These check the Job
+// column's room against what the seeded hub's rows need.
 
 /// The content column in a 1400 pt window: the sidebar as the window draws
 /// it, 248 pt with its inset, and the inspector at its ideal width.
@@ -25,6 +27,9 @@ private let tableChrome: CGFloat = 2 * 10 + 5 * JobRowLayout.cellSpacing
 
 /// The Job column's width, the room the fixed columns leave it.
 private let jobColumn = contentColumn - tableChrome - JobRowLayout.fixedColumnsWidth
+
+/// The Job column in a 1400 pt window with the inspector closed.
+private let fullWidthJobColumn = 1400 - 248 - tableChrome - JobRowLayout.fixedColumnsWidth
 
 @MainActor
 private func measureWidth(_ view: some View) -> CGFloat {
@@ -42,8 +47,15 @@ private func makeItem(
 }
 
 @MainActor
-private func makeCell(_ item: JobListItem, isSelected: Bool) -> JobCell {
-    JobCell(item: item, isSelected: isSelected, hover: JobRowHover(), isSkipped: false, onDecide: { _ in }, onRestore: {})
+private func makeCell(_ item: JobListItem, isSelected: Bool, isHovered: Bool = false) -> JobCell {
+    let hover = JobRowHover()
+    if isHovered { hover.id = item.id }
+    return JobCell(item: item, isSelected: isSelected, hover: hover, isSkipped: false, onDecide: { _ in }, onRestore: {})
+}
+
+@MainActor
+private func measureActions() -> CGFloat {
+    measureWidth(JobRowActions(isSkipped: false, onDecide: { _ in }, onRestore: {}))
 }
 
 @MainActor
@@ -123,7 +135,7 @@ private func getTitleRoomWhenSelected(_ title: String, phase: String? = nil) -> 
 @MainActor
 @Test func theSelectedRowShowsItsTitleAndContextInFullBesideItsActions() {
     // Three small keys, as the design draws them.
-    let actions = measureWidth(JobRowActions(isSkipped: false, onDecide: { _ in }, onRestore: {}))
+    let actions = measureActions()
     #expect(actions > 3 * RowActionButtonStyle.size.width)
     #expect(actions <= 3 * RowActionButtonStyle.size.width + 2 * Space.xs + 1, "The row's actions take \(actions) pt")
 
@@ -137,19 +149,53 @@ private func getTitleRoomWhenSelected(_ title: String, phase: String? = nil) -> 
         #expect(width <= jobColumn, "Selected, \(item.job.title) needs \(width) pt; the Job column is \(jobColumn) pt")
     }
 
-    // The chip shrinks to its symbol beside the actions...
-    let patientApp = makeItem("Senior iOS Engineer, Patient App", company: "Copperleaf Health", location: "Remote (Americas)", phase: "Saved")
-    let atRest = measureWidth(makeCell(patientApp, isSelected: false))
-    let selected = measureWidth(makeCell(patientApp, isSelected: true))
-    #expect(selected < atRest + Space.s + actions - 20, "The \"In Saved\" chip keeps its text beside the actions")
-    // ...so at least "Senior iOS Engineer" shows, not "…".
-    let patientAppRoom = getTitleRoomWhenSelected(patientApp.job.title, phase: "Saved")
+    // Beside the actions and the whole "In Saved" chip, at least "Senior iOS
+    // Engineer" shows, not "…".
+    let patientAppRoom = getTitleRoomWhenSelected("Senior iOS Engineer, Patient App", phase: "Saved")
     #expect(patientAppRoom >= measureTitle("Senior iOS Engineer"), "The title gets \(patientAppRoom) pt beside its actions and chip")
 }
 
-/// The widest rows drawn offscreen at the Job column's width, at rest and
-/// Copperleaf's selected, in both appearances. With HUB_SNAPSHOT_DIR set, as
-/// CI's macos job sets it, the PNGs are written there.
+/// A hovered or selected row's chips keep their words beside its actions:
+/// the cell grows by the actions alone. Before TP-1135 the "In Applied" chip
+/// shrank to its symbol, and color stood alone.
+@MainActor
+@Test func aHoveredOrSelectedRowsChipsKeepTheirWords() {
+    let actions = measureActions()
+    let carrierApp = makeItem("Senior iOS Engineer, Carrier App", company: nil, location: nil, phase: "Applied", unseenUpdates: 1)
+    var skipped = makeItem("Senior iOS Engineer, Carrier App", company: nil, location: nil)
+    skipped.job.dismissalReason = "Too far from home"
+    for item in [carrierApp, skipped] {
+        let atRest = measureWidth(makeCell(item, isSelected: false))
+        for (isSelected, isHovered) in [(false, true), (true, false)] {
+            let width = measureWidth(makeCell(item, isSelected: isSelected, isHovered: isHovered))
+            #expect(
+                abs(width - (atRest + Space.s + actions)) < 1,
+                "Hovered \(isHovered), selected \(isSelected): \(width) pt, at rest \(atRest) pt, actions \(actions) pt"
+            )
+        }
+    }
+    // Beside the inspector, the dot and the whole "In Applied" chip still
+    // leave the title at least "Senior iOS Engineer".
+    let cell = makeCell(carrierApp, isSelected: false, isHovered: true)
+    let titleRoom = jobColumn - (measureWidth(cell) - measureTitle(carrierApp.job.title))
+    #expect(titleRoom >= measureTitle("Senior iOS Engineer"), "The title gets \(titleRoom) pt beside its actions and chip")
+}
+
+/// With the inspector closed, the hovered row has the room for its whole
+/// title, its dot, its chip and its actions: nothing is cut.
+@MainActor
+@Test func aHoveredRowShowsInFullAtFullWidth() {
+    for item in makeWidestRows() {
+        let width = measureWidth(makeCell(item, isSelected: false, isHovered: true))
+        #expect(width > measureTitle(item.job.title) + measureActions())
+        #expect(width <= fullWidthJobColumn, "Hovered, \(item.job.title) needs \(width) pt; the Job column is \(fullWidthJobColumn) pt")
+    }
+}
+
+/// The widest rows drawn offscreen at the Job column's width, at rest,
+/// Carrier App's hovered and Copperleaf's selected, in both appearances.
+/// With HUB_SNAPSHOT_DIR set, as CI's macos job sets it, the PNGs are
+/// written there.
 @MainActor
 @Test func theWidestRowsDrawAtTheJobColumnsWidth() throws {
     let rows = makeWidestRows()
@@ -157,7 +203,7 @@ private func getTitleRoomWhenSelected(_ title: String, phase: String? = nil) -> 
         let content = VStack(spacing: Space.s) {
             ForEach(rows) { item in
                 let isSelected = item.id == rows.last?.id
-                makeCell(item, isSelected: isSelected)
+                makeCell(item, isSelected: isSelected, isHovered: item.job.title.hasSuffix("Carrier App"))
                     .background(isSelected ? Color.hubAccent.opacity(0.13) : .clear)
             }
         }
