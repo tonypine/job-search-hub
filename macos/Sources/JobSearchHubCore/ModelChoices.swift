@@ -66,6 +66,43 @@ public struct ModelRunAverages: Equatable, Sendable {
     }
 }
 
+/// What names each kind's model in its row and its header, and what its
+/// model menu ticks: the kinds' routes, with the providers and catalogs the
+/// menus list. The row, the header and the menus read the one list of
+/// providers, so a model chosen on a provider set up since the routes were
+/// read is named as the menu ticks it.
+public struct KindRoutes: Equatable, Sendable {
+    public var routes: [TaskRoute]
+    public var providers: [ModelProvider]
+    public var catalogs: [UUID: [ProviderModel]]
+
+    public init(routes: [TaskRoute] = [], providers: [ModelProvider] = [], catalogs: [UUID: [ProviderModel]] = [:]) {
+        self.routes = routes
+        self.providers = providers
+        self.catalogs = catalogs
+    }
+
+    public func getRoute(for kind: RunKind) -> TaskRoute? {
+        routes.first { $0.kind == kind.id }
+    }
+
+    /// The model the kind's menu ticks; none before it has a route.
+    public func getSelection(for kind: RunKind) -> RoutedModel? {
+        getRoute(for: kind).map { RoutedModel(providerID: $0.providerID, model: $0.model) }
+    }
+
+    /// The model the kind's row and header name.
+    public func getModel(for kind: RunKind) -> RunKindModel? {
+        RunKinds.getModel(for: kind, routes: routes, providers: providers, catalogs: catalogs)
+    }
+
+    /// The line under the header's menu that names the fallback; an agent
+    /// has none.
+    public func getFallbackLine(for kind: RunKind) -> String? {
+        kind.isAgent ? nil : ModelChoices.describeFallback(of: getRoute(for: kind), providers: providers, catalogs: catalogs)
+    }
+}
+
 public enum ModelChoices {
     /// The Claude subscription's models in the menu's order: the strongest
     /// first.

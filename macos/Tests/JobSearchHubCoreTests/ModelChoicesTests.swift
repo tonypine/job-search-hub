@@ -217,3 +217,55 @@ private func getOpenRouter() throws -> ModelChoiceGroup {
     // Before the catalogs are read, the route's id.
     #expect(RunKinds.getModel(for: brief, routes: [route], providers: providers)?.name == "google/gemini-2.5-flash")
 }
+
+@Test func theHeaderNamesTheModelTheMenuTicksOnAProviderSetUpSinceTheColumnRead() throws {
+    let brief = try makeKind("job_brief", engine: "model_call")
+    let providers = try decodeProviders()
+    let catalogs = try decodeCatalogs()
+    // The column read the providers before OpenRouter was set up, and the
+    // kind has no route yet: its header says Choose a model.
+    var kindRoutes = KindRoutes(providers: providers.filter { $0.id != openRouterID })
+    #expect(kindRoutes.getModel(for: brief) == nil && kindRoutes.getSelection(for: brief) == nil)
+
+    // The menu, as it opens, reads the providers into the same list, with
+    // OpenRouter; the owner chooses Gemini 2.5 Flash, and the hub answers
+    // with the route saved.
+    kindRoutes.providers = providers
+    kindRoutes.catalogs = catalogs
+    let openRouter = try #require(ModelChoices.group(providers: kindRoutes.providers, catalogs: kindRoutes.catalogs).first { $0.place == .openRouter })
+    let flash = try #require(openRouter.choices.first { $0.routed.model == "google/gemini-2.5-flash" })
+    let local = RoutedModel(providerID: runtimeID, model: "Qwen3.8-27B-Q4_K_M.gguf")
+    kindRoutes.routes = [makeRoute("job_brief", on: flash.routed.providerID, flash.routed.model, fallback: local)]
+
+    #expect(kindRoutes.getSelection(for: brief) == flash.routed)
+    let named = try #require(kindRoutes.getModel(for: brief))
+    #expect(named.name == flash.title && named.markSymbol == "arrow.triangle.branch")
+    #expect(named.runsOnText == "Runs on Google: Gemini 2.5 Flash from OpenRouter")
+    #expect(kindRoutes.getFallbackLine(for: brief) == "Falls back to Qwen3.8-27B-Q4_K_M on this Mac")
+
+    // An agent's header has no fallback line, whatever its route says.
+    let research = try makeKind("company_triage", engine: "claude_agent")
+    kindRoutes.routes.append(makeRoute("company_triage", on: claudeID, "opus", fallback: local))
+    #expect(kindRoutes.getModel(for: research)?.name == "Claude Opus")
+    #expect(kindRoutes.getFallbackLine(for: research) == nil)
+}
+
+@Test func aRouteOnAProviderTheListHasntReadYetIsStillNamed() throws {
+    let brief = try makeKind("job_brief", engine: "model_call")
+    let research = try makeKind("company_triage", engine: "claude_agent")
+    // The routes read, and the providers not yet, or not since one was set
+    // up.
+    let kindRoutes = KindRoutes(routes: [
+        makeRoute("job_brief", on: openRouterID, "google/gemini-2.5-flash", fallback: RoutedModel(providerID: runtimeID, model: "q.gguf")),
+        makeRoute("company_triage", on: claudeID, "opus"),
+    ])
+
+    let named = try #require(kindRoutes.getModel(for: brief))
+    #expect(named.name == "google/gemini-2.5-flash" && named.providerName.isEmpty && named.markSymbol == "cube")
+    #expect(named.runsOnText == "Runs on google/gemini-2.5-flash")
+    #expect(kindRoutes.getSelection(for: brief) == RoutedModel(providerID: openRouterID, model: "google/gemini-2.5-flash"))
+    // A Claude kind's route names its model, not Claude alone.
+    #expect(kindRoutes.getModel(for: research)?.name == "opus")
+    // The fallback's line waits for its provider, which says where it runs.
+    #expect(kindRoutes.getFallbackLine(for: brief) == nil)
+}

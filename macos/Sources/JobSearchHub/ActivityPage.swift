@@ -11,7 +11,6 @@ final class RunKindsModel {
     /// Each kind's failed runs over the last day.
     private(set) var failedCounts: [String: Int] = [:]
     private(set) var routes: [TaskRoute] = []
-    private(set) var providers: [ModelProvider] = []
     private(set) var hasLoaded = false
     /// Why the last read failed; the next read that works clears it.
     var failure: HubFailure?
@@ -20,8 +19,12 @@ final class RunKindsModel {
     var pauseFailure: HubFailure?
     /// Why the last change of a kind's model failed. Reads leave it too.
     var routeFailure: HubFailure?
-    /// The models the kinds' menus offer, whose names the rows show.
+    /// The models the kinds' menus offer, whose providers and names the
+    /// rows and the header show.
     let choices = ModelChoicesModel()
+    /// Counts the routes saved, so a read of the routes that began before a
+    /// save doesn't put back the route it replaced.
+    @ObservationIgnored private var routeSaves = 0
 
     var sections: [RunKindSection] { RunKinds.group(kinds, in: groups) }
     var all: AllRunKinds { AllRunKinds(kinds, failedCounts: failedCounts) }
@@ -30,17 +33,23 @@ final class RunKindsModel {
         kinds.first { $0.id == id }
     }
 
+    /// What names each kind's model and what its menu ticks: the routes,
+    /// with the menus' own providers and catalogs.
+    var kindRoutes: KindRoutes {
+        KindRoutes(routes: routes, providers: choices.providers, catalogs: choices.catalogs)
+    }
+
     func getModel(for kind: RunKind) -> RunKindModel? {
-        RunKinds.getModel(for: kind, routes: routes, providers: providers, catalogs: choices.catalogs)
+        kindRoutes.getModel(for: kind)
     }
 
     func getRoute(for kind: RunKind) -> TaskRoute? {
-        routes.first { $0.kind == kind.id }
+        kindRoutes.getRoute(for: kind)
     }
 
     /// The line under the kind's model menu that names its fallback.
     func getFallbackLine(for kind: RunKind) -> String? {
-        kind.isAgent ? nil : ModelChoices.describeFallback(of: getRoute(for: kind), providers: providers, catalogs: choices.catalogs)
+        kindRoutes.getFallbackLine(for: kind)
     }
 
     func getFailedCount(_ kind: RunKind) -> Int {
@@ -66,13 +75,18 @@ final class RunKindsModel {
         }
     }
 
-    /// Reads the routes and providers that name each kind's model. Without
-    /// them the rows show no model.
+    /// Reads the routes and providers that name each kind's model, each
+    /// kept as it was when its read fails. The providers go to the menus'
+    /// list, which the rows and the header read too.
     func loadModels(with client: HubClient) async {
+        let saves = routeSaves
         async let loadedRoutes = client.get("v1/task-routes", as: TaskRoutesResponse.self)
         async let loadedProviders = client.get("v1/model-providers", as: ModelProvidersResponse.self)
-        if let routes = try? await loadedRoutes.routes, let providers = try? await loadedProviders.providers {
-            (self.routes, self.providers) = (routes, providers)
+        if let routes = try? await loadedRoutes.routes, saves == routeSaves {
+            self.routes = routes
+        }
+        if let providers = try? await loadedProviders.providers {
+            choices.setProviders(providers)
         }
     }
 
@@ -105,6 +119,7 @@ final class RunKindsModel {
         routeFailure = nil
         do {
             let saved = try await client.send("PUT", "v1/task-routes/\(kind.id)", body: input, as: TaskRoute.self)
+            routeSaves += 1
             routes.removeAll { $0.kind == saved.kind }
             routes.append(saved)
         } catch {
@@ -236,10 +251,11 @@ struct ActivityPage: View {
                     await kinds.loadModels(with: client)
                 }
                 .task { await kinds.watch(with: client) }
-                // The right-click menus' models, read again when a provider
-                // comes or goes; the model menu reads them as it opens.
-                .task(id: kinds.providers) {
-                    if !kinds.providers.isEmpty { await kinds.choices.load(with: client) }
+                // The providers' models, which name the rows' models and fill
+                // the right-click menus, read again when a provider comes or
+                // goes; the model menu reads them as it opens.
+                .task(id: kinds.choices.providers) {
+                    if !kinds.choices.providers.isEmpty { await kinds.choices.loadModels(with: client) }
                 }
                 .task { await modelWork.watch(with: client, every: .seconds(3)) }
                 .onChange(of: isCrowdedByInspector, initial: true) { _, crowded in
@@ -460,7 +476,7 @@ private struct KindModelButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .help(kindModel.map { "Runs on \($0.name) from \($0.providerName). Choose another model" } ?? "Choose the model \(kind.title) runs on")
+        .help(kindModel.map { "\($0.runsOnText). Choose another model" } ?? "Choose the model \(kind.title) runs on")
         .accessibilityLabel("Model")
         .accessibilityValue(kindModel?.name ?? "None")
         .popover(isPresented: $isPicking, arrowEdge: .bottom) {
@@ -480,7 +496,7 @@ private struct KindModelPicker: View {
     var body: some View {
         let choices = model.choices
         let route = model.getRoute(for: kind)
-        let current = route.map { RoutedModel(providerID: $0.providerID, model: $0.model) }
+        let current = model.kindRoutes.getSelection(for: kind)
         ModelPicker(
             groups: choices.getGroups(claudeOnly: kind.isAgent, keeping: current), selection: current,
             isLoading: !choices.hasLoaded, unlistedProviders: choices.unlistedProviders

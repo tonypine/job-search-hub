@@ -188,6 +188,12 @@ public struct RunKindModel: Equatable, Sendable {
     public var markSymbol: String {
         RunKinds.getProviderMark(providerKind)
     }
+
+    /// What its row and header say of it: "Runs on Claude Sonnet from
+    /// Claude", without the provider until its name is read.
+    public var runsOnText: String {
+        providerName.isEmpty ? "Runs on \(name)" : "Runs on \(name) from \(providerName)"
+    }
 }
 
 public enum RunKinds {
@@ -209,13 +215,16 @@ public enum RunKinds {
 
     /// The model kind runs on: its route's, by the name its provider's
     /// catalog gives it when that is read, or Claude for a kind that runs on
-    /// Claude without one; nil when nothing routes it.
+    /// Claude without one; nil when nothing routes it. A route on a provider
+    /// the list doesn't have yet, one set up since it was read, is named
+    /// all the same, without its provider.
     public static func getModel(
         for kind: RunKind, routes: [TaskRoute], providers: [ModelProvider], catalogs: [UUID: [ProviderModel]] = [:]
     ) -> RunKindModel? {
-        if let route = routes.first(where: { $0.kind == kind.id }), let provider = providers.first(where: { $0.id == route.providerID }) {
-            let name = ModelChoices.getModelName(RoutedModel(providerID: provider.id, model: route.model), catalogs: catalogs)
-            return RunKindModel(name: name, providerName: provider.name, providerKind: provider.kind)
+        if let route = routes.first(where: { $0.kind == kind.id }) {
+            let name = ModelChoices.getModelName(RoutedModel(providerID: route.providerID, model: route.model), catalogs: catalogs)
+            let provider = providers.first { $0.id == route.providerID }
+            return RunKindModel(name: name, providerName: provider?.name ?? "", providerKind: provider?.kind ?? "")
         }
         if kind.runsOnClaude {
             return RunKindModel(name: "Claude", providerName: "Claude", providerKind: RunKindModel.claudeProviderKind)

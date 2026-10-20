@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The models the hub can run on: its providers, each provider's models,
 /// and how long the latest runs on each model took, read when a model menu
-/// opens.
+/// opens. Activity's column reads the providers with the routes, into the
+/// same list, which names the kinds' models.
 @MainActor
 @Observable
 final class ModelChoicesModel {
@@ -20,20 +21,34 @@ final class ModelChoicesModel {
         ModelChoices.group(providers: providers, catalogs: catalogs, averages: averages, claudeOnly: claudeOnly, keeping: current)
     }
 
-    /// Reads the providers, then every provider's models and the latest
-    /// runs that worked at once. A provider whose models can't be listed
-    /// keeps the ones read before.
+    /// Reads the providers, then their models.
     func load(with client: HubClient) async {
         do {
-            providers = try await client.get("v1/model-providers", as: ModelProvidersResponse.self).providers
+            setProviders(try await client.get("v1/model-providers", as: ModelProvidersResponse.self).providers)
             failure = nil
         } catch {
             failure = HubFailure("Couldn't read the model providers", error)
             hasLoaded = true
             return
         }
+        await loadModels(with: client)
+    }
+
+    /// The providers as another read found them. A provider gone takes its
+    /// models with it.
+    func setProviders(_ providers: [ModelProvider]) {
+        self.providers = providers
+        let ids = Set(providers.map(\.id))
+        catalogs = catalogs.filter { ids.contains($0.key) }
+    }
+
+    /// Reads every provider's models and the latest runs that worked at
+    /// once. A provider whose models can't be listed keeps the ones read
+    /// before.
+    func loadModels(with client: HubClient) async {
+        let read = providers
         let listed = await withTaskGroup(of: (UUID, [ProviderModel]?).self) { group in
-            for provider in providers {
+            for provider in read {
                 group.addTask {
                     let models = try? await client.get("v1/model-providers/\(provider.id.uuidString)/models", as: ProviderModelsResponse.self)
                     return (provider.id, models?.entries)
@@ -45,12 +60,13 @@ final class ModelChoicesModel {
             }
             return listed
         }
+        // The providers now, which a read since may have changed.
         var catalogs: [UUID: [ProviderModel]] = [:]
         for provider in providers {
             catalogs[provider.id] = listed[provider.id].flatMap { $0 } ?? self.catalogs[provider.id]
         }
         self.catalogs = catalogs
-        unlistedProviders = providers.filter { listed[$0.id].flatMap { $0 } == nil }.map(\.name)
+        unlistedProviders = read.filter { listed[$0.id].flatMap { $0 } == nil }.map(\.name)
         let latest = [URLQueryItem(name: "outcome", value: "succeeded"), URLQueryItem(name: "limit", value: "200")]
         if let page = try? await client.get("v1/runs", query: latest, as: ActivityRunsPage.self) {
             averages = ModelRunAverages(page.runs)

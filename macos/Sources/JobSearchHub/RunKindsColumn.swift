@@ -118,7 +118,7 @@ struct RunKindsColumn: View {
     /// an agent, then what it falls back to, and the providers' settings.
     private func modelMenu(_ kind: RunKind) -> some View {
         let route = model.getRoute(for: kind)
-        let current = route.map { RoutedModel(providerID: $0.providerID, model: $0.model) }
+        let current = model.kindRoutes.getSelection(for: kind)
         return Menu("Model", systemImage: "cpu") {
             ModelChoiceMenuItems(groups: model.choices.getGroups(claudeOnly: kind.isAgent, keeping: current), selection: current) { choice in
                 Task { await model.saveRoute(ModelChoices.makeRoute(choosing: choice.routed, for: kind, route: route), for: kind, with: client) }
@@ -208,7 +208,7 @@ private struct RunKindRow: View {
                         .font(.hubCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
+                        .help(kindModel.runsOnText)
                 }
             }
         }
