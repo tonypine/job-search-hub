@@ -281,6 +281,8 @@ private struct RunBarChart: View {
     /// The width of the value labels, the same in both charts, so their
     /// plots start at the same x and share the time axis.
     private static let valueLabelWidth: CGFloat = 40
+    /// The room between a value label and the plot.
+    private static let valueLabelSpacing: CGFloat = 6
 
     var body: some View {
         let plotted = Chart {
@@ -311,7 +313,7 @@ private struct RunBarChart: View {
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine()
-                AxisValueLabel {
+                AxisValueLabel(horizontalSpacing: Self.valueLabelSpacing) {
                     if let number = value.as(Double.self) {
                         Text(RunWindowFormat.formatCompact(number))
                             .frame(width: Self.valueLabelWidth, alignment: .trailing)
@@ -339,11 +341,19 @@ private struct RunBarChart: View {
         .accessibilityLabel(isTokens ? "Tokens per \(window.bucket.noun)" : "Runs per \(window.bucket.noun)")
 
         if isTokens {
-            plotted.chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                    AxisGridLine()
-                    AxisTick()
-                    AxisValueLabel(format: axisFormat)
+            // As many labels as the plot's width reads in full, none past
+            // its end.
+            GeometryReader { geometry in
+                let ticks = RunTimeAxis.getTicks(
+                    from: window.from, to: window.to,
+                    width: geometry.size.width - Self.valueLabelWidth - Self.valueLabelSpacing, calendar: .current
+                )
+                plotted.chartXAxis {
+                    AxisMarks(values: ticks.map(\.date)) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(ticks.indices.contains(value.index) ? ticks[value.index].title : "")
+                    }
                 }
             }
         } else {
@@ -353,12 +363,6 @@ private struct RunBarChart: View {
 
     private var hovered: RunMetrics.Bucket? {
         hoveredStart.flatMap { start in metrics.buckets.first { $0.start == start } }
-    }
-
-    /// Hours on a window of a day or two, days on a longer one.
-    private var axisFormat: Date.FormatStyle {
-        window.bucket == .hour && window.range.duration <= 2 * RunBucketSize.day.length
-            ? .dateTime.hour() : .dateTime.month(.abbreviated).day()
     }
 
     /// A bar a little narrower than its bucket, so bars stand apart.
