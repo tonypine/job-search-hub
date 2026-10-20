@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/tonypine/job-search-hub/server/internal/api"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
 	"github.com/tonypine/job-search-hub/server/internal/textextract"
@@ -26,6 +31,7 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkPipeline(t, hub, now)
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
+	checkScreens(t, hub)
 
 	profile, err := hub.GetOwnerProfile(ctx)
 	if err != nil || !strings.Contains(profile.Body, "Senior iOS engineer") {
@@ -42,6 +48,7 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkPipeline(t, hub, now)
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
+	checkScreens(t, hub)
 }
 
 // TestEveryPostingIsMarkdownItsFactsQuote checks each seeded posting is
@@ -268,6 +275,141 @@ func checkCompanies(t *testing.T, hub *store.Store) {
 	follows, err := hub.ListCompanyFollowsNotInHub(ctx)
 	if err != nil || len(follows) != len(seededFollows) {
 		t.Errorf("suggestions = %+v, %v; want %v", follows, err, seededFollows)
+	}
+}
+
+// screenedJob is a job as the app reads it from a jobs list row or from its
+// page: the fit's checks and the answers that could screen the owner out.
+type screenedJob struct {
+	Job struct {
+		ID    uuid.UUID `json:"id"`
+		Title string    `json:"title"`
+	} `json:"job"`
+	CompanyName string `json:"company_name"`
+	Fit         struct {
+		Checks []struct {
+			Name    string `json:"name"`
+			Verdict string `json:"verdict"`
+		} `json:"checks"`
+	} `json:"fit"`
+	ScreenOut []struct {
+		Name    string `json:"name"`
+		Verdict string `json:"verdict"`
+	} `json:"screen_out"`
+}
+
+// screen is the job's screen as its page's verdict strip reads it: "fails"
+// when an answer or a check says no, else "unclear" when one isn't sure,
+// else "passes". An answer without a verdict judges nothing.
+func (job screenedJob) screen() string {
+	var verdicts []string
+	for _, answer := range job.ScreenOut {
+		verdicts = append(verdicts, answer.Verdict)
+	}
+	for _, check := range job.Fit.Checks {
+		verdicts = append(verdicts, check.Verdict)
+	}
+	switch {
+	case slices.Contains(verdicts, "no"):
+		return "fails"
+	case slices.Contains(verdicts, "unclear"):
+		return "unclear"
+	}
+	return "passes"
+}
+
+// failing names the answers and checks that say no.
+func (job screenedJob) failing() []string {
+	var names []string
+	for _, answer := range job.ScreenOut {
+		if answer.Verdict == "no" {
+			names = append(names, answer.Name)
+		}
+	}
+	for _, check := range job.Fit.Checks {
+		if check.Verdict == "no" {
+			names = append(names, check.Name)
+		}
+	}
+	return names
+}
+
+// checkScreens reads the open jobs through the API as the app does: at least
+// two at different companies pass the whole screen, on their rows and their
+// pages alike, at least one is unclear, and the Patient App fails on
+// Experience alone. Each company's count of open jobs that pass is the
+// number of its open rows that do, as its inspector lists them.
+func checkScreens(t *testing.T, hub *store.Store) {
+	t.Helper()
+	routes := http.NewServeMux()
+	asOwner := func(next http.Handler) http.Handler { return next }
+	api.RegisterJobRoutes(routes, hub, nil, nil, asOwner)
+	api.RegisterCompanyRoutes(routes, hub, nil, asOwner)
+	get := func(path string, response any) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		routes.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", path, recorder.Code, recorder.Body)
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), response); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+	}
+
+	var list struct {
+		Jobs []screenedJob `json:"jobs"`
+	}
+	get("/v1/jobs?status=open&limit=500", &list)
+	byScreen := map[string][]string{}
+	passingAt := map[string]int{}
+	for _, row := range list.Jobs {
+		var page screenedJob
+		get("/v1/jobs/"+row.Job.ID.String(), &page)
+		if row.screen() != page.screen() {
+			t.Errorf("%s row reads %s, its page %s", row.Job.Title, row.screen(), page.screen())
+		}
+		byScreen[page.screen()] = append(byScreen[page.screen()], page.Job.Title)
+		if page.screen() == "passes" {
+			passingAt[row.CompanyName]++
+		}
+		if page.Job.Title == "Senior iOS Engineer, Patient App" && !slices.Equal(page.failing(), []string{"Experience"}) {
+			t.Errorf("the Patient App fails on %v; want Experience alone", page.failing())
+		}
+	}
+	if len(passingAt) < 2 || len(byScreen["unclear"]) == 0 || !slices.Contains(byScreen["fails"], "Senior iOS Engineer, Patient App") {
+		t.Errorf("open jobs by screen = %v; want two or more passing at different companies, one unclear, the Patient App failing", byScreen)
+	}
+
+	var companies struct {
+		Companies []struct {
+			Company struct {
+				ID   uuid.UUID `json:"id"`
+				Name string    `json:"name"`
+			} `json:"company"`
+			FittingJobs int     `json:"fitting_jobs"`
+			BestMatch   *string `json:"best_match"`
+		} `json:"companies"`
+	}
+	get("/v1/companies", &companies)
+	for _, company := range companies.Companies {
+		var inspector struct {
+			Jobs []screenedJob `json:"jobs"`
+		}
+		get("/v1/jobs?status=open&company_id="+company.Company.ID.String(), &inspector)
+		passing := 0
+		for _, row := range inspector.Jobs {
+			if row.screen() == "passes" {
+				passing++
+			}
+		}
+		if company.FittingJobs != passing || passing != passingAt[company.Company.Name] {
+			t.Errorf("%s counts %d open jobs that pass; its inspector lists %d, the jobs list %d",
+				company.Company.Name, company.FittingJobs, passing, passingAt[company.Company.Name])
+		}
+		if company.FittingJobs > 0 && company.BestMatch == nil {
+			t.Errorf("%s has %d open jobs that pass and no best match", company.Company.Name, company.FittingJobs)
+		}
 	}
 }
 

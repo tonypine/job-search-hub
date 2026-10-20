@@ -14,9 +14,11 @@
 //
 // Each posting is Markdown, as a board stores it, with headings, a list and
 // bold, and its facts were read with evidence: the screen's rows quote the
-// posting, some quotes across bold, and the reader marks them. The first job
-// in Decide asks for more years than the owner has, so its Experience row
-// fails with a quote to show in the posting.
+// posting, some quotes across bold, and the reader marks them. Two open jobs
+// at different companies state Americas hours and years the owner has, so
+// they pass the whole screen; the first job in Decide asks for more years
+// than the owner has, so its Experience row fails with a quote to show in
+// the posting; the other open jobs state no hours, so they stay unclear.
 //
 // The briefs and facts cite the job_brief and job_facts prompts, which it
 // seeds from HUB_AGENT_PROMPTS_DIR first when that is set, as the server
@@ -104,11 +106,12 @@ type seededJob struct {
 	heardBack bool
 	payMin    float64
 	payMax    float64
-	// technologies, seniority and yearsAsked are its facts; 0 years is
-	// not stated.
+	// technologies, seniority, yearsAsked and timezone are its facts; 0
+	// years and no timezone are not stated.
 	technologies []string
 	seniority    string
 	yearsAsked   int
+	timezone     string
 	// match, reason, strength and weakness are its brief.
 	match, reason, strength, weakness string
 }
@@ -136,7 +139,7 @@ var seededCompanies = []seededCompany{
 		jobs: []seededJob{
 			{slug: "senior-ios-engineer", title: "Senior iOS Engineer", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
 				phase: "Applied", daysInPhase: 12, payMin: 120000, payMax: 150000, technologies: []string{"Swift", "SwiftUI", "XCTest"}, seniority: "Senior",
-				yearsAsked: 5, match: "strong", reason: "Seven years of shipping Swift apps, and the dashboard work is the same kind of product.",
+				yearsAsked: 5, timezone: "Americas time zones", match: "strong", reason: "Seven years of shipping Swift apps, and the dashboard work is the same kind of product.",
 				strength: "Led a SwiftUI rewrite of a consumer app", weakness: "No public SDK work"},
 			{slug: "engineering-manager-ios", title: "Engineering Manager, iOS", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
 				technologies: []string{"Swift"}, seniority: "Manager",
@@ -184,10 +187,10 @@ var seededCompanies = []seededCompany{
 		jobs: []seededJob{
 			{slug: "senior-mobile-engineer", title: "Senior Mobile Engineer (iOS)", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
 				phase: "Applied", daysInPhase: 2, payMin: 110000, payMax: 140000, technologies: []string{"Swift", "SwiftUI", "HealthKit"}, seniority: "Senior",
-				match: "strong", reason: "SwiftUI and HealthKit, both in the last role.",
+				yearsAsked: 6, timezone: "Americas time zones", match: "strong", reason: "SwiftUI and HealthKit, both in the last role.",
 				strength: "Built a HealthKit sleep tracker", weakness: "No HIPAA experience"},
 			{slug: "senior-ios-engineer-patient-app", title: "Senior iOS Engineer, Patient App", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
-				technologies: []string{"Swift", "SwiftUI"}, seniority: "Senior", yearsAsked: 12,
+				technologies: []string{"Swift", "SwiftUI"}, seniority: "Senior", yearsAsked: 12, timezone: "Americas time zones",
 				match: "strong", reason: "The same stack as the role already applied for.",
 				strength: "Seven years of Swift", weakness: "No clinical workflows"},
 			{slug: "android-engineer", title: "Android Engineer", location: "Remote (US only)", workplace: "Remote", status: jobSkipped,
@@ -292,6 +295,8 @@ var seededCriteria = store.JobCriteria{
 	HomeCountry:             "Brazil",
 	EligibleLocationTerms:   []string{"LATAM", "Americas", "worldwide"},
 	IneligibleLocationTerms: []string{"US only"},
+	WorkableTimezoneTerms:   []string{"Americas", "LATAM"},
+	UnworkableTimezoneTerms: []string{"APAC"},
 }
 
 // seed puts the made-up search in an empty hub as of now, and reports
@@ -478,6 +483,10 @@ func describeJob(company seededCompany, job seededJob) string {
 	if job.yearsAsked > 0 {
 		years = fmt.Sprintf("<li><strong>%d+ years</strong> building and shipping iOS apps</li>", job.yearsAsked)
 	}
+	hours := ""
+	if job.timezone != "" {
+		hours = fmt.Sprintf("<li>Working hours overlapping <strong>%s</strong></li>", job.timezone)
+	}
 	return textextract.ConvertHTMLToMarkdown(fmt.Sprintf(`<h2>About %s</h2>
 <p>%s %s</p>
 <h2>The role</h2>
@@ -485,6 +494,7 @@ func describeJob(company seededCompany, job seededJob) string {
 <h2>What we're looking for</h2>
 <ul>
 <li>%s</li>
+%s
 %s
 <li>Care for performance, accessibility and testing</li>
 <li>Clear writing, in English</li>
@@ -495,12 +505,12 @@ func describeJob(company seededCompany, job seededJob) string {
 </ul>
 <p>This posting is made up, for testing the hub.</p>`,
 		company.name, company.name, company.summary, job.title, job.location, strings.Join(job.technologies, ", "),
-		quoteSeniority(job), years))
+		quoteSeniority(job), years, hours))
 }
 
 // The posting's words its facts rest on, as the job_facts prompt quotes
 // them: plain words, though some run across the posting's bold, as the
-// location, the years and the contract do.
+// location, the years, the hours and the contract do.
 const (
 	quotedLanguages = "Clear writing, in English"
 	quotedContract  = "Full-time, as an employee"
@@ -518,6 +528,10 @@ func quoteYears(job seededJob) string {
 	return fmt.Sprintf("%d+ years building and shipping iOS apps", job.yearsAsked)
 }
 
+func quoteTimezone(job seededJob) string {
+	return "Working hours overlapping " + job.timezone
+}
+
 // readJobFacts is the job's facts as the job_facts prompt with evidence
 // reads them: each fact the posting states is its value with the posting's
 // words behind it, and flattens to the value alone, so the fit judges it
@@ -527,13 +541,17 @@ func readJobFacts(job seededJob) map[string]any {
 	if job.yearsAsked > 0 {
 		years = map[string]any{"value": job.yearsAsked, "evidence": quoteYears(job)}
 	}
+	var timezone any = "not stated"
+	if job.timezone != "" {
+		timezone = map[string]any{"value": job.timezone, "evidence": quoteTimezone(job)}
+	}
 	return map[string]any{
 		"summary":              job.reason,
 		"technologies":         job.technologies,
 		"seniority":            map[string]any{"as_written": job.seniority, "evidence": quoteSeniority(job)},
 		"years_of_experience":  years,
 		"location_restriction": map[string]any{"restriction": job.location, "evidence": quoteLocation(job)},
-		"timezone_requirement": "not stated",
+		"timezone_requirement": timezone,
 		"visa_sponsorship":     "not stated",
 		"contract_type":        map[string]any{"as_written": "Full-time", "evidence": quotedContract},
 		"pay_in_text":          "not stated",
