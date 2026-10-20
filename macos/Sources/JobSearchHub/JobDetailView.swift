@@ -360,6 +360,8 @@ struct JobDetailView: View {
                         .padding(Space.xl)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                // No scroller, as on Posting (TP-1146).
+                .scrollIndicators(.never)
             default:
                 if model.factsError != nil {
                     HubErrorView($model.factsError)

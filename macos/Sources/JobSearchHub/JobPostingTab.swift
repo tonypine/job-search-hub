@@ -20,7 +20,7 @@ enum JobPostingLayout: Equatable {
 /// every fact behind its ⋯; then where the text came from, the posting's
 /// outline and the marks' legend with Find (⌘F); then the posting to read,
 /// with the phrases the screen quoted marked. On a page it scrolls itself,
-/// beside or over a rail of cards.
+/// beside or over a rail of cards, and draws no scroller.
 struct JobPostingTab<Rail: View>: View {
     let jobID: UUID
     let details: JobDetails
@@ -106,6 +106,11 @@ struct JobPostingTab<Rail: View>: View {
                     .padding(Space.xl)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                // No scroller here either, as in the design (Decide's page
+                // is this layout): one that AppKit didn't place again after
+                // the column widened stayed in the middle of the page, over
+                // the key facts and the posting (TP-1146).
+                .scrollIndicators(.never)
                 .task(id: scrollTarget) { await scrollToTarget(proxy) }
             }
         }
