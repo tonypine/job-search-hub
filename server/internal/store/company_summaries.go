@@ -13,6 +13,11 @@ import (
 // its row names, as faces.
 const knownPeopleShown = 3
 
+// contactRelevanceOrder ranks a company's stored contacts as a job's People
+// card does: the closest to the hire first, any other relevance after.
+const contactRelevanceOrder = `CASE relevance WHEN 'hiring_manager' THEN 0 WHEN 'recruiter' THEN 1
+	WHEN 'engineering_lead' THEN 2 WHEN 'founder' THEN 3 WHEN 'engineer' THEN 4 ELSE 5 END`
+
 // CompanySummary is one row of the companies list: a company with its watch
 // status, job boards and how many people are stored for it.
 type CompanySummary struct {
@@ -22,7 +27,13 @@ type CompanySummary struct {
 	PeopleCount  int        `json:"people_count"`
 	// ConnectionCount is how many of the owner's connections work here.
 	ConnectionCount int `json:"connection_count"`
-	// KnownPeople names the closest of those connections, at most three.
+	// KnownPeopleCount is how many people can get the owner in here, as a
+	// job's People card counts them: the connections who work here, the
+	// people who can introduce the owner, and the stored contacts.
+	KnownPeopleCount int `json:"known_people_count"`
+	// KnownPeople names the first of those people, at most three:
+	// connections, the closest first, then introducers, then the contacts
+	// closest to the hire.
 	KnownPeople []string `json:"known_people"`
 	// ApplicationPhase is the phase of the owner's open application here
 	// updated last; absent when none is open.
@@ -89,14 +100,18 @@ func (s *Store) ListCompanySummaries(ctx context.Context) ([]CompanySummary, err
 			summaries[index].JobBoards = companyBoards
 		}
 		if names, found := knownPeople[id]; found {
-			summaries[index].KnownPeople = names
+			summaries[index].KnownPeopleCount = len(names)
+			summaries[index].KnownPeople = names[:min(len(names), knownPeopleShown)]
 		}
 	}
 	return summaries, nil
 }
 
-// listKnownPeopleByCompany names the closest connections at each company,
-// as ListCompanyConnections ranks them, up to knownPeopleShown.
+// listKnownPeopleByCompany names everyone who can get the owner in at each
+// company, in the order a job's People card lists them: the connections who
+// work there, as ListCompanyConnections ranks them, the people who can
+// introduce the owner, by name, then the stored contacts, the closest to the
+// hire first.
 func (s *Store) listKnownPeopleByCompany(ctx context.Context) (map[uuid.UUID][]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+connectionColumns+` FROM connections WHERE company_id IS NOT NULL
@@ -115,9 +130,36 @@ func (s *Store) listKnownPeopleByCompany(ctx context.Context) (map[uuid.UUID][]s
 	now := time.Now()
 	names := map[uuid.UUID][]string{}
 	for companyID, atCompany := range byCompany {
-		for _, connection := range rankByCloseness(atCompany, now)[:min(len(atCompany), knownPeopleShown)] {
+		for _, connection := range rankByCloseness(atCompany, now) {
 			names[companyID] = append(names[companyID], strings.TrimSpace(connection.FirstName+" "+connection.LastName))
 		}
+	}
+
+	rows, err = s.pool.Query(ctx, `
+		SELECT company_id, name FROM (
+			SELECT links.company_id, contacts.name, 0 AS kind, 0 AS relevance_rank
+			FROM network_contact_companies AS links JOIN network_contacts AS contacts ON contacts.id = links.contact_id
+			UNION ALL
+			SELECT company_id, name, 1, `+contactRelevanceOrder+` FROM people
+		) AS reachable
+		ORDER BY kind, relevance_rank, lower(name), name`)
+	if err != nil {
+		return nil, err
+	}
+	type reachablePerson struct {
+		companyID uuid.UUID
+		name      string
+	}
+	others, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (reachablePerson, error) {
+		var person reachablePerson
+		err := row.Scan(&person.companyID, &person.name)
+		return person, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, person := range others {
+		names[person.companyID] = append(names[person.companyID], strings.TrimSpace(person.name))
 	}
 	return names, nil
 }
