@@ -20,6 +20,12 @@
 // than the owner has, so its Experience row fails with a quote to show in
 // the posting; the other open jobs state no hours, so they stay unclear.
 //
+// Activity has runs of every kind that works on a job or a company, each
+// for a seeded job and its company, or a company, over the last few hours:
+// model calls that succeeded, failed or answered invalidly, one the owner
+// started, and Claude agent runs, one failed with what it was asked and
+// one still running.
+//
 // The briefs and facts cite the job_brief and job_facts prompts, which it
 // seeds from HUB_AGENT_PROMPTS_DIR first when that is set, as the server
 // does.
@@ -36,8 +42,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tonypine/job-search-hub/server/agents/companytriage"
+	"github.com/tonypine/job-search-hub/server/agents/jobfinder"
+	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
+	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
+	"github.com/tonypine/job-search-hub/server/internal/openrouter"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/textextract"
+	"github.com/tonypine/job-search-hub/server/internal/tokens"
 )
 
 func main() {
@@ -67,7 +79,7 @@ func run(ctx context.Context, url, promptsDir string) error {
 			return fmt.Errorf("seed the agent prompts from %s: %w", promptsDir, err)
 		}
 	}
-	seeded, err := seed(ctx, hub, time.Now())
+	seeded, err := seed(ctx, pool, time.Now())
 	if err != nil {
 		return err
 	}
@@ -299,9 +311,92 @@ var seededCriteria = store.JobCriteria{
 	UnworkableTimezoneTerms: []string{"APAC"},
 }
 
+// seededModel is a model the seeded calls ran on: its provider, as the
+// owner named it, the provider's server, and the model.
+type seededModel struct {
+	provider, baseURL, model string
+}
+
+var (
+	localModel      = seededModel{provider: "This Mac", baseURL: modelrouter.HubRuntimeAddress, model: "qwen3-8b-q4_k_m.gguf"}
+	openRouterModel = seededModel{provider: "OpenRouter", baseURL: openrouter.BaseURL, model: "google/gemini-2.5-flash"}
+	claudeModel     = seededModel{provider: claudeprint.Provider, baseURL: claudeprint.BaseURL, model: "sonnet"}
+)
+
+// seededRun is a run the hub recorded for the job with slug job at a seeded
+// company, or for the company when job is empty: a model call on its model,
+// or a Claude agent run when its kind is one, which leaves the model to
+// Claude Code. It started ago before the seed ran and took took; a running
+// agent run is still going.
+type seededRun struct {
+	kind         string
+	company, job string
+	outcome      string
+	ago, took    time.Duration
+	on           seededModel
+	// tokensIn and tokensOut are a model call's; cost is what the provider
+	// charged, or what Claude reckons the run would cost on its API.
+	tokensIn, tokensOut int
+	cost                string
+	err                 string
+	byOwner             bool
+	// summary is a finished agent run's answer.
+	summary string
+}
+
+// seededRuns are Activity's runs, by kind in the column's order.
+var seededRuns = []seededRun{
+	{kind: store.AgentPromptKindJobFacts, company: "Brightwater Labs", job: "senior-ios-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 5*time.Hour + 10*time.Minute, took: 6400 * time.Millisecond, on: localModel, tokensIn: 2140, tokensOut: 386},
+	{kind: store.AgentPromptKindJobFacts, company: "Copperleaf Health", job: "senior-ios-engineer-patient-app", outcome: store.RunOutcomeSucceeded,
+		ago: 5*time.Hour + 8*time.Minute, took: 5900 * time.Millisecond, on: localModel, tokensIn: 1984, tokensOut: 402},
+	{kind: store.AgentPromptKindJobFacts, company: "Tidewell Robotics", job: "firmware-engineer", outcome: store.RunOutcomeInvalid,
+		ago: 5*time.Hour + 5*time.Minute, took: 31200 * time.Millisecond, on: localModel, tokensIn: 1876, tokensOut: 1024,
+		err: "the model's answer is invalid: it was cut off at the token limit"},
+	{kind: store.AgentPromptKindJobBrief, company: "Copperleaf Health", job: "senior-mobile-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 80 * time.Minute, took: 10200 * time.Millisecond, on: localModel, tokensIn: 3010, tokensOut: 498, byOwner: true},
+	{kind: store.AgentPromptKindJobBrief, company: "Brightwater Labs", job: "senior-ios-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 4*time.Hour + 40*time.Minute, took: 12800 * time.Millisecond, on: localModel, tokensIn: 3124, tokensOut: 540},
+	{kind: store.AgentPromptKindJobBrief, company: "Quillfeather Systems", job: "platform-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 4*time.Hour + 35*time.Minute, took: 11600 * time.Millisecond, on: localModel, tokensIn: 3046, tokensOut: 512},
+	{kind: store.AgentPromptKindJobBrief, company: "Tidewell Robotics", job: "swift-engineer-operator-app", outcome: store.RunOutcomeFailed,
+		ago: 4*time.Hour + 30*time.Minute, took: 400 * time.Millisecond, on: localModel,
+		err: `the model server is unreachable: Post "http://127.0.0.1:8091/v1/chat/completions": dial tcp 127.0.0.1:8091: connect: connection refused`},
+	{kind: store.RunKindJobBriefFull, company: "Brightwater Labs", job: "senior-ios-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 3*time.Hour + 55*time.Minute, took: 48300 * time.Millisecond, on: claudeModel, tokensIn: 18420, tokensOut: 2210, cost: "0.1840"},
+	{kind: store.RunKindJobBriefFull, company: "Orchard Mesa Analytics", job: "senior-software-engineer-ios", outcome: store.RunOutcomeSucceeded,
+		ago: 3*time.Hour + 50*time.Minute, took: 52100 * time.Millisecond, on: claudeModel, tokensIn: 17980, tokensOut: 2350, cost: "0.1795"},
+	{kind: store.AgentPromptKindJobCV, company: "Brightwater Labs", job: "senior-ios-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 3*time.Hour + 30*time.Minute, took: 74 * time.Second, on: claudeModel, tokensIn: 21300, tokensOut: 3480, cost: "0.3120"},
+	{kind: store.AgentPromptKindRecruiterScreen, company: "Brightwater Labs", job: "senior-ios-engineer", outcome: store.RunOutcomeSucceeded,
+		ago: 3*time.Hour + 10*time.Minute, took: 18400 * time.Millisecond, on: openRouterModel, tokensIn: 4210, tokensOut: 880, cost: "0.0021"},
+	{kind: store.AgentPromptKindRecruiterScreen, company: "Larkspur Freight", job: "ios-engineer-carrier-app", outcome: store.RunOutcomeFailed,
+		ago: 3*time.Hour + 5*time.Minute, took: 2100 * time.Millisecond, on: openRouterModel,
+		err: "the model server answered 429: Rate limit exceeded: free-models-per-min"},
+	{kind: store.AgentPromptKindInterviewPrep, company: "Orchard Mesa Analytics", job: "senior-software-engineer-ios", outcome: store.RunOutcomeSucceeded,
+		ago: 2*time.Hour + 40*time.Minute, took: 41700 * time.Millisecond, on: openRouterModel, tokensIn: 5120, tokensOut: 2930, cost: "0.0094"},
+	{kind: store.AgentRunKindJobFix, company: "Quillfeather Systems", job: "platform-engineer", outcome: store.RunOutcomeFailed,
+		ago: 2 * time.Hour, took: 3*time.Minute + 40*time.Second, cost: "0.4710",
+		err: "the session ended without a result: error_max_turns Reached the maximum number of turns (40)"},
+	{kind: store.AgentRunKindCompanyTriage, company: "Larkspur Freight", outcome: store.RunOutcomeRunning, ago: 3 * time.Minute},
+	{kind: store.AgentRunKindCompanyTriage, company: "Nimbleforge", outcome: store.RunOutcomeSucceeded,
+		ago: 6 * time.Hour, took: 3*time.Minute + 41*time.Second, cost: "0.9620",
+		summary: "Filled in Nimbleforge's dossier: a puzzle game studio of about 30 people that hires through its own careers page."},
+	{kind: store.AgentRunKindJobFinder, company: "Orchard Mesa Analytics", outcome: store.RunOutcomeSucceeded,
+		ago: 5*time.Hour + 30*time.Minute, took: 2*time.Minute + 18*time.Second, cost: "0.5480",
+		summary: "Read Orchard Mesa Analytics' careers page and recorded its two open roles."},
+	{kind: store.AgentRunKindJobFinder, company: "Copperleaf Health", outcome: store.RunOutcomeFailed,
+		ago: 35 * time.Minute, took: 10 * time.Minute, cost: "0.7130", err: "the session was stopped: context deadline exceeded"},
+}
+
+// runningAgentRunLifetime is how long the running run's token lasts: past a
+// QA pass, so the hub doesn't close it as abandoned.
+const runningAgentRunLifetime = 24 * time.Hour
+
 // seed puts the made-up search in an empty hub as of now, and reports
 // whether it did: a hub that already holds companies gets nothing.
-func seed(ctx context.Context, hub *store.Store, now time.Time) (bool, error) {
+func seed(ctx context.Context, pool *pgxpool.Pool, now time.Time) (bool, error) {
+	hub := store.New(pool)
 	existing, err := hub.ListCompanySummaries(ctx)
 	if err != nil {
 		return false, err
@@ -338,16 +433,18 @@ func seed(ctx context.Context, hub *store.Store, now time.Time) (bool, error) {
 		return false, err
 	}
 
+	ids := map[string]seededIDs{}
 	for index, company := range seededCompanies {
 		// The companies' boards were first read a few weeks back, the first
 		// company's last, so it lists first on the Jobs page.
 		firstSeen := now.AddDate(0, 0, -21-index)
-		jobs, err := seedCompany(ctx, hub, owner, company, firstSeen, now)
+		stored, err := seedCompany(ctx, hub, owner, company, firstSeen, now)
 		if err != nil {
 			return false, err
 		}
+		ids[company.name] = stored
 		for _, job := range company.jobs {
-			jobID := jobs[job.slug]
+			jobID := stored.jobs[job.slug]
 			if err := seedJobReading(ctx, hub, jobID, job, factsPrompt.ID, briefPrompt.ID, knowledgeHash, entryIDs); err != nil {
 				return false, fmt.Errorf("read the %s job at %s: %w", job.title, company.name, err)
 			}
@@ -355,6 +452,9 @@ func seed(ctx context.Context, hub *store.Store, now time.Time) (bool, error) {
 				return false, fmt.Errorf("decide the %s job at %s: %w", job.title, company.name, err)
 			}
 		}
+	}
+	if err := seedRuns(ctx, pool, hub, ids, now); err != nil {
+		return false, err
 	}
 
 	followedAt := now.AddDate(0, -2, 0)
@@ -400,29 +500,35 @@ func seedOwner(ctx context.Context, hub *store.Store, owner store.Actor) ([]uuid
 	return ids, nil
 }
 
+// seededIDs are a seeded company's id and its jobs' ids by slug.
+type seededIDs struct {
+	company uuid.UUID
+	jobs    map[string]uuid.UUID
+}
+
 // seedCompany stores the company, its people and its board with the
-// board's postings, the closed ones already gone from it, and returns the
-// jobs' ids by slug.
-func seedCompany(ctx context.Context, hub *store.Store, owner store.Actor, company seededCompany, firstSeen, now time.Time) (map[string]uuid.UUID, error) {
+// board's postings, the closed ones already gone from it, and returns its
+// id and its jobs'.
+func seedCompany(ctx context.Context, hub *store.Store, owner store.Actor, company seededCompany, firstSeen, now time.Time) (seededIDs, error) {
 	site := "https://" + company.domain
 	stored, _, err := hub.CreateCompany(ctx, owner, store.NewCompany{Name: company.name, Domain: company.domain, WebsiteURL: site, SourceURL: site})
 	if err != nil {
-		return nil, fmt.Errorf("add %s: %w", company.name, err)
+		return seededIDs{}, fmt.Errorf("add %s: %w", company.name, err)
 	}
 	careers := site + "/careers"
 	if _, err := hub.UpdateCompany(ctx, owner, stored.ID, store.CompanyUpdate{
 		CareersURL: &careers, Industry: &company.industry, EmployeeCountRange: &company.size, Summary: &company.summary, SourceURL: site,
 	}); err != nil {
-		return nil, fmt.Errorf("describe %s: %w", company.name, err)
+		return seededIDs{}, fmt.Errorf("describe %s: %w", company.name, err)
 	}
 	if _, _, err := hub.AddToWatchList(ctx, owner, stored.ID); err != nil {
-		return nil, fmt.Errorf("watch %s: %w", company.name, err)
+		return seededIDs{}, fmt.Errorf("watch %s: %w", company.name, err)
 	}
 	for _, person := range company.people {
 		if _, _, err := hub.AddPerson(ctx, owner, store.PersonInput{
 			CompanyID: stored.ID, Name: person.name, RoleTitle: person.role, Relevance: person.relevance, SourceURL: site + "/team",
 		}); err != nil {
-			return nil, fmt.Errorf("add %s at %s: %w", person.name, company.name, err)
+			return seededIDs{}, fmt.Errorf("add %s at %s: %w", person.name, company.name, err)
 		}
 	}
 
@@ -447,30 +553,30 @@ func seedCompany(ctx context.Context, hub *store.Store, owner store.Actor, compa
 		OpenPostingCount: &openCount, SourceURL: careers,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("add the board of %s: %w", company.name, err)
+		return seededIDs{}, fmt.Errorf("add the board of %s: %w", company.name, err)
 	}
 	if _, err := hub.SyncBoardJobs(ctx, owner, board, postings, firstSeen); err != nil {
-		return nil, fmt.Errorf("read the board of %s: %w", company.name, err)
+		return seededIDs{}, fmt.Errorf("read the board of %s: %w", company.name, err)
 	}
 	if len(stillOpen) < len(postings) {
 		if _, err := hub.SyncBoardJobs(ctx, owner, board, stillOpen, now.AddDate(0, 0, -1)); err != nil {
-			return nil, fmt.Errorf("read the board of %s again: %w", company.name, err)
+			return seededIDs{}, fmt.Errorf("read the board of %s again: %w", company.name, err)
 		}
 	}
 
 	listed, _, err := hub.ListJobs(ctx, store.JobFilter{CompanyID: &stored.ID, Status: store.JobStatusAll})
 	if err != nil {
-		return nil, err
+		return seededIDs{}, err
 	}
-	ids := map[string]uuid.UUID{}
+	ids := seededIDs{company: stored.ID, jobs: map[string]uuid.UUID{}}
 	for _, item := range listed {
 		if item.Job.ExternalID != nil {
-			ids[*item.Job.ExternalID] = item.Job.ID
+			ids.jobs[*item.Job.ExternalID] = item.Job.ID
 		}
 	}
 	for _, job := range company.jobs {
-		if _, ok := ids[job.slug]; !ok {
-			return nil, fmt.Errorf("the board of %s has no %s job", company.name, job.title)
+		if _, ok := ids.jobs[job.slug]; !ok {
+			return seededIDs{}, fmt.Errorf("the board of %s has no %s job", company.name, job.title)
 		}
 	}
 	return ids, nil
@@ -623,4 +729,111 @@ func seedJobStatus(ctx context.Context, hub *store.Store, owner store.Actor, job
 		}
 	}
 	return nil
+}
+
+// findSeededCompany returns the seeded company called name, and whether
+// there is one.
+func findSeededCompany(name string) (seededCompany, bool) {
+	for _, company := range seededCompanies {
+		if company.name == name {
+			return company, true
+		}
+	}
+	return seededCompany{}, false
+}
+
+// seedRuns records the runs as the hub does, a model call once it ended and
+// an agent run at its start and its end, each on the latest prompt of its
+// kind; a full brief's is job_brief's.
+func seedRuns(ctx context.Context, pool *pgxpool.Pool, hub *store.Store, ids map[string]seededIDs, now time.Time) error {
+	for _, run := range seededRuns {
+		stored, found := ids[run.company]
+		subjectID := stored.company
+		if run.job != "" {
+			subjectID, found = stored.jobs[run.job]
+		}
+		if !found {
+			return fmt.Errorf("the %s run is for %s %s, which the seed doesn't hold", run.kind, run.company, run.job)
+		}
+		promptKind := run.kind
+		if promptKind == store.RunKindJobBriefFull {
+			promptKind = store.AgentPromptKindJobBrief
+		}
+		prompt, err := hub.GetLatestAgentPrompt(ctx, promptKind)
+		if err != nil {
+			return fmt.Errorf("read the %s prompt: %w", promptKind, err)
+		}
+		startedAt := now.Add(-run.ago)
+		if kind, _ := store.GetRunKind(run.kind); kind.Engine == store.RunEngineClaudeAgent {
+			err = seedAgentRun(ctx, pool, hub, run, subjectID, prompt.Version, startedAt)
+		} else {
+			_, err = hub.RecordTaskRun(ctx, store.NewTaskRun{
+				Kind: run.kind, SubjectID: &subjectID, BaseURL: run.on.baseURL, Provider: run.on.provider, Model: run.on.model,
+				PromptID: &prompt.ID, PromptVersion: prompt.Version, PromptTokens: run.tokensIn, CompletionTokens: run.tokensOut,
+				CostUSD: run.cost, StartedAt: startedAt, Duration: run.took, Outcome: run.outcome, Error: run.err, StartedByOwner: run.byOwner,
+			})
+		}
+		if err != nil {
+			return fmt.Errorf("record the %s run for %s %s: %w", run.kind, run.company, run.job, err)
+		}
+	}
+	return nil
+}
+
+// seedAgentRun starts the agent run for subjectID and, unless it still
+// runs, finishes it; the store records both as of now, so its start and
+// end then move back to when it ran. A company run is asked about the
+// company's domain and a job fix about the job's id, as the hub's CLI asks
+// them. The running run's token outlasts a QA pass.
+func seedAgentRun(ctx context.Context, pool *pgxpool.Pool, hub *store.Store, run seededRun, subjectID uuid.UUID, promptVersion int,
+	startedAt time.Time) error {
+	company, _ := findSeededCompany(run.company)
+	input := company.domain
+	if run.job != "" {
+		input = subjectID.String()
+	}
+	_, tokenHash := tokens.NewAgentRunToken()
+	started, err := hub.StartAgentRun(ctx, nil, run.kind, input, &subjectID, "", promptVersion, tokenHash,
+		startedAt.Add(runningAgentRunLifetime))
+	if err != nil {
+		return err
+	}
+	if run.outcome != store.RunOutcomeRunning {
+		answer, err := answerAgentRun(run, company, subjectID)
+		if err != nil {
+			return err
+		}
+		if _, err := hub.FinishAgentRun(ctx, started.ID, store.AgentRunOutcome{
+			Status: run.outcome, CostUSDEstimate: run.cost, Result: answer, Error: run.err,
+		}); err != nil {
+			return err
+		}
+	}
+	_, err = pool.Exec(ctx, `
+		UPDATE agent_runs SET started_at = $2, finished_at = CASE WHEN finished_at IS NOT NULL THEN $3::timestamptz END
+		WHERE id = $1`, started.ID, startedAt, startedAt.Add(run.took))
+	return err
+}
+
+// answerAgentRun is a finished run's answer for the company with id
+// companyID, in its kind's shape; a failed run has none.
+func answerAgentRun(run seededRun, company seededCompany, companyID uuid.UUID) (json.RawMessage, error) {
+	if run.outcome != store.RunOutcomeSucceeded {
+		return nil, nil
+	}
+	id := companyID.String()
+	careers := "https://" + company.domain + "/careers"
+	switch run.kind {
+	case store.AgentRunKindCompanyTriage:
+		return json.Marshal(companytriage.Result{
+			CompanyID: &id, Domain: company.domain, JobBoard: &companytriage.JobBoard{Provider: "other", BoardToken: company.domain, Verified: true},
+			PeopleAdded: len(company.people), Unresolved: []string{}, Summary: run.summary,
+		})
+	case store.AgentRunKindJobFinder:
+		return json.Marshal(jobfinder.Result{
+			CompanyID: id, CareersURL: &careers, JobBoard: &jobfinder.JobBoard{Provider: "other", BoardToken: company.domain, Verified: true},
+			JobsRecorded: len(company.jobs), Unresolved: []string{}, Summary: run.summary,
+		})
+	}
+	return nil, fmt.Errorf("the seed has no answer for a %s run that succeeded", run.kind)
 }
