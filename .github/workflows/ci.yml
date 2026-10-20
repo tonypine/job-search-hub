@@ -436,9 +436,14 @@ jobs:
             exit 1
           fi
           sed 's/^::error:://' "$RUNNER_TEMP/verify-app"
-          grep -q '^::error::Contents/Helpers/bin/hub-server is signed ad hoc' "$RUNNER_TEMP/verify-app"
-          grep -q '^::error::Contents/MacOS/JobSearchHub is signed ad hoc' "$RUNNER_TEMP/verify-app"
-          if grep -v -e 'is signed ad hoc, not by team' -e 'is not fit to publish' "$RUNNER_TEMP/verify-app"; then
+          grep -q '^::error::Contents/Helpers/bin/hub-server is signed ad hoc' "$RUNNER_TEMP/verify-app" ||
+            { echo "::error::verify-app.sh didn't name Contents/Helpers/bin/hub-server's ad hoc signature."; exit 1; }
+          grep -q '^::error::Contents/MacOS/JobSearchHub is signed ad hoc' "$RUNNER_TEMP/verify-app" ||
+            { echo "::error::verify-app.sh didn't name Contents/MacOS/JobSearchHub's ad hoc signature."; exit 1; }
+          if grep -v -e 'is signed ad hoc, not by team' -e 'is not fit to publish' "$RUNNER_TEMP/verify-app" > "$RUNNER_TEMP/verify-app-more"; then
+            # Each line an annotation of its own: the run's page shows those
+            # without signing in, where its log needs admin rights.
+            sed -e 's/^::error:://' -e 's/^/::error::verify-app.sh: /' "$RUNNER_TEMP/verify-app-more"
             echo "::error::verify-app.sh found more than the ad hoc signatures, above."
             exit 1
           fi
