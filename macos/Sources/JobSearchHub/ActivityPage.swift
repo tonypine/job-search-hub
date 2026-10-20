@@ -11,13 +11,20 @@ final class RunKindsModel {
     /// Each kind's failed runs over the last day.
     private(set) var failedCounts: [String: Int] = [:]
     private(set) var routes: [TaskRoute] = []
-    private(set) var providers: [ModelProvider] = []
     private(set) var hasLoaded = false
     /// Why the last read failed; the next read that works clears it.
     var failure: HubFailure?
     /// Why the last pause or resume failed. Reads leave it, so it stays
     /// until the owner dismisses it or tries again.
     var pauseFailure: HubFailure?
+    /// Why the last change of a kind's model failed. Reads leave it too.
+    var routeFailure: HubFailure?
+    /// The models the kinds' menus offer, whose providers and names the
+    /// rows and the header show.
+    let choices = ModelChoicesModel()
+    /// Counts the routes saved, so a read of the routes that began before a
+    /// save doesn't put back the route it replaced.
+    @ObservationIgnored private var routeSaves = 0
 
     var sections: [RunKindSection] { RunKinds.group(kinds, in: groups) }
     var all: AllRunKinds { AllRunKinds(kinds, failedCounts: failedCounts) }
@@ -26,8 +33,23 @@ final class RunKindsModel {
         kinds.first { $0.id == id }
     }
 
+    /// What names each kind's model and what its menu ticks: the routes,
+    /// with the menus' own providers and catalogs.
+    var kindRoutes: KindRoutes {
+        KindRoutes(routes: routes, providers: choices.providers, catalogs: choices.catalogs)
+    }
+
     func getModel(for kind: RunKind) -> RunKindModel? {
-        RunKinds.getModel(for: kind, routes: routes, providers: providers)
+        kindRoutes.getModel(for: kind)
+    }
+
+    func getRoute(for kind: RunKind) -> TaskRoute? {
+        kindRoutes.getRoute(for: kind)
+    }
+
+    /// The line under the kind's model menu that names its fallback.
+    func getFallbackLine(for kind: RunKind) -> String? {
+        kindRoutes.getFallbackLine(for: kind)
     }
 
     func getFailedCount(_ kind: RunKind) -> Int {
@@ -53,13 +75,18 @@ final class RunKindsModel {
         }
     }
 
-    /// Reads the routes and providers that name each kind's model. Without
-    /// them the rows show no model.
+    /// Reads the routes and providers that name each kind's model, each
+    /// kept as it was when its read fails. The providers go to the menus'
+    /// list, which the rows and the header read too.
     func loadModels(with client: HubClient) async {
+        let saves = routeSaves
         async let loadedRoutes = client.get("v1/task-routes", as: TaskRoutesResponse.self)
         async let loadedProviders = client.get("v1/model-providers", as: ModelProvidersResponse.self)
-        if let routes = try? await loadedRoutes.routes, let providers = try? await loadedProviders.providers {
-            (self.routes, self.providers) = (routes, providers)
+        if let routes = try? await loadedRoutes.routes, saves == routeSaves {
+            self.routes = routes
+        }
+        if let providers = try? await loadedProviders.providers {
+            choices.setProviders(providers)
         }
     }
 
@@ -83,6 +110,20 @@ final class RunKindsModel {
         } catch {
             let subject = kind?.title ?? "every kind"
             pauseFailure = HubFailure(paused ? "Couldn't pause \(subject)" : "Couldn't resume \(subject)", error)
+        }
+    }
+
+    /// Runs kind on the route from its next run on. The hub answers with
+    /// the route saved, which the row and the header then name.
+    func saveRoute(_ input: TaskRouteInput, for kind: RunKind, with client: HubClient) async {
+        routeFailure = nil
+        do {
+            let saved = try await client.send("PUT", "v1/task-routes/\(kind.id)", body: input, as: TaskRoute.self)
+            routeSaves += 1
+            routes.removeAll { $0.kind == saved.kind }
+            routes.append(saved)
+        } catch {
+            routeFailure = HubFailure("Couldn't change \(kind.title)'s model", error)
         }
     }
 
@@ -222,6 +263,12 @@ struct ActivityPage: View {
                     await kinds.loadModels(with: client)
                 }
                 .task { await kinds.watch(with: client) }
+                // The providers' models, which name the rows' models and fill
+                // the right-click menus, read again when a provider comes or
+                // goes; the model menu reads them as it opens.
+                .task(id: kinds.choices.providers) {
+                    if !kinds.choices.providers.isEmpty { await kinds.choices.loadModels(with: client) }
+                }
                 .task { await modelWork.watch(with: client, every: .seconds(3)) }
                 .onChange(of: isCrowdedByInspector, initial: true) { _, crowded in
                     hidesRunKindsForInspector = crowded
@@ -385,12 +432,21 @@ private struct RunKindHeader: View {
                     }
                 }
             }
+            if let kind, let fallbackLine = model.getFallbackLine(for: kind) {
+                Label(fallbackLine, systemImage: "arrow.uturn.down")
+                    .font(.hubCaption)
+                    .foregroundStyle(.secondary)
+                    .help("When the kind's model can't answer, its runs go to this one")
+            }
             Text(kind?.description ?? "Every kind of run the hub records. Pausing holds only what the hub starts by itself; runs you start always go ahead.")
                 .font(.hubSecondary)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if model.pauseFailure != nil {
                 HubErrorView(Bindable(model).pauseFailure)
+            }
+            if model.routeFailure != nil {
+                HubErrorView(Bindable(model).routeFailure)
             }
             if kind == nil {
                 queueStrip
@@ -403,17 +459,13 @@ private struct RunKindHeader: View {
         Text(kind?.title ?? "All kinds").font(.hubEntity)
     }
 
-    /// The state's chip, and a kind's model.
+    /// The state's chip, and a kind's model menu; All kinds has none.
     @ViewBuilder
     private var status: some View {
         let state = kind.map { $0.getStatus(failedCount: model.getFailedCount($0)) } ?? model.all.status
         ToneChip(state.title, tone: state.tone, symbol: state.symbolName)
-        if let kind, let kindModel = model.getModel(for: kind) {
-            Label(kindModel.name, systemImage: kindModel.markSymbol)
-                .font(.hubSecondary)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
+        if let kind {
+            KindModelButton(kind: kind, model: model, client: client)
         }
     }
 
@@ -452,6 +504,85 @@ private struct RunKindHeader: View {
             FactRow("Held by a pause", text: strip.held, help: "The calls of paused kinds that wait for a resume")
         }
         .font(.hubSecondary)
+    }
+}
+
+/// A kind's model in its header, which opens the model menu: the models by
+/// where they run, with the kind's ticked, and below them, for a kind that
+/// isn't an agent, what it falls back to when its model can't answer.
+private struct KindModelButton: View {
+    let kind: RunKind
+    let model: RunKindsModel
+    let client: HubClient
+    @State private var isPicking = false
+
+    var body: some View {
+        let kindModel = model.getModel(for: kind)
+        Button {
+            isPicking = true
+        } label: {
+            HStack(spacing: Space.xs) {
+                Label(kindModel?.name ?? "Choose a model", systemImage: kindModel?.markSymbol ?? "cube")
+                    .lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+            .font(.hubSecondary)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(kindModel.map { "\($0.runsOnText). Choose another model" } ?? "Choose the model \(kind.title) runs on")
+        .accessibilityLabel("Model")
+        .accessibilityValue(kindModel?.name ?? "None")
+        .popover(isPresented: $isPicking, arrowEdge: .bottom) {
+            KindModelPicker(kind: kind, model: model, client: client) { isPicking = false }
+        }
+    }
+}
+
+/// The model menu for a kind: Claude's models alone for an agent, and the
+/// fallback's menu for any other kind that has a model.
+private struct KindModelPicker: View {
+    let kind: RunKind
+    let model: RunKindsModel
+    let client: HubClient
+    let close: () -> Void
+
+    var body: some View {
+        let choices = model.choices
+        let route = model.getRoute(for: kind)
+        let current = model.kindRoutes.getSelection(for: kind)
+        ModelPicker(
+            groups: choices.getGroups(claudeOnly: kind.isAgent, keeping: current), selection: current,
+            isLoading: !choices.hasLoaded, unlistedProviders: choices.unlistedProviders
+        ) { choice in
+            close()
+            guard choice.routed != current else { return }
+            Task { await model.saveRoute(ModelChoices.makeRoute(choosing: choice.routed, for: kind, route: route), for: kind, with: client) }
+        } footer: {
+            if let route, !kind.isAgent {
+                let fallback = route.fallbackProviderID.map { RoutedModel(providerID: $0, model: route.fallbackModel ?? "") }
+                HStack {
+                    Text("If it can't answer")
+                    Spacer(minLength: Space.s)
+                    Menu(fallback.map { ModelChoices.getModelName($0, catalogs: choices.catalogs) } ?? "None") {
+                        FallbackMenuItems(groups: choices.getGroups(keeping: fallback), selection: fallback) { chosen in
+                            Task { await model.saveRoute(ModelChoices.makeRoute(fallingBackTo: chosen, route: route), for: kind, with: client) }
+                        }
+                    }
+                    .fixedSize()
+                    .accessibilityLabel("If it can't answer")
+                }
+            } else if kind.isAgent {
+                Text("\(kind.title) is a Claude Code agent, so it runs on your Claude subscription.")
+                    .font(.hubCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ProviderSettingsButton()
+                .buttonStyle(.link)
+        }
+        .task { await choices.load(with: client) }
     }
 }
 

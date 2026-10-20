@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Activity's column of run kinds: Pause all at its head, All kinds first,
 /// then the kinds by what they work on. Each row shows its state, its word
-/// and its model; hovering it shows its pause, and its menu has Pause and
-/// Show only failed runs.
+/// and its model; hovering it shows its pause, and its menu has Pause, its
+/// Model and Show only failed runs.
 struct RunKindsColumn: View {
     let model: RunKindsModel
     /// The kind's id; empty for All kinds.
@@ -53,6 +53,9 @@ struct RunKindsColumn: View {
             if model.pauseFailure != nil {
                 HubErrorView(Bindable(model).pauseFailure)
                     .padding(Space.s)
+            } else if model.routeFailure != nil {
+                HubErrorView(Bindable(model).routeFailure)
+                    .padding(Space.s)
             } else if model.hasLoaded, let failure = model.failure {
                 // A read that fails after one worked: the rows are the last
                 // ones read.
@@ -92,6 +95,8 @@ struct RunKindsColumn: View {
             pauseButton(kind)
             Divider()
         }
+        modelMenu(kind)
+        Divider()
         showOnlyFailedButton(kind)
     }
 
@@ -106,6 +111,28 @@ struct RunKindsColumn: View {
     private func pauseButton(_ kind: RunKind) -> some View {
         Button(kind.paused ? "Resume" : "Pause", systemImage: kind.paused ? "play" : "pause") {
             Task { await model.setPaused(!kind.paused, kind: kind, with: client) }
+        }
+    }
+
+    /// The kind's model, as its header's menu offers it: Claude's alone for
+    /// an agent, then what it falls back to, and the providers' settings.
+    private func modelMenu(_ kind: RunKind) -> some View {
+        let route = model.getRoute(for: kind)
+        let current = model.kindRoutes.getSelection(for: kind)
+        return Menu("Model", systemImage: "cpu") {
+            ModelChoiceMenuItems(groups: model.choices.getGroups(claudeOnly: kind.isAgent, keeping: current), selection: current) { choice in
+                Task { await model.saveRoute(ModelChoices.makeRoute(choosing: choice.routed, for: kind, route: route), for: kind, with: client) }
+            }
+            Divider()
+            if let route, !kind.isAgent {
+                let fallback = route.fallbackProviderID.map { RoutedModel(providerID: $0, model: route.fallbackModel ?? "") }
+                Menu("If It Can't Answer") {
+                    FallbackMenuItems(groups: model.choices.getGroups(keeping: fallback), selection: fallback) { chosen in
+                        Task { await model.saveRoute(ModelChoices.makeRoute(fallingBackTo: chosen, route: route), for: kind, with: client) }
+                    }
+                }
+            }
+            ProviderSettingsButton()
         }
     }
 
@@ -181,7 +208,7 @@ private struct RunKindRow: View {
                         .font(.hubCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .help("Runs on \(kindModel.name) from \(kindModel.providerName)")
+                        .help(kindModel.runsOnText)
                 }
             }
         }

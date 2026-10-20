@@ -32,6 +32,10 @@ public struct RunKind: Decodable, Equatable, Identifiable, Sendable {
 
     public var runsOnClaude: Bool { engine == "claude_one_shot" || engine == "claude_agent" }
 
+    /// A Claude Code agent, which the hub routes to the Claude subscription
+    /// only, with no fallback.
+    public var isAgent: Bool { engine == "claude_agent" }
+
     /// What the kind is doing, the first that holds: paused, running,
     /// waiting, failed lately, then idle or on demand.
     public func getStatus(failedCount: Int) -> RunKindStatus {
@@ -173,7 +177,7 @@ public struct RunQueueStrip: Equatable, Sendable {
 
 /// The model a kind runs on, and its provider, whose mark shows beside it.
 public struct RunKindModel: Equatable, Sendable {
-    public static let claudeProviderKind = "claude_subscription"
+    public static let claudeProviderKind = ModelProvider.claudeSubscriptionKind
 
     public var name: String
     public var providerName: String
@@ -183,6 +187,12 @@ public struct RunKindModel: Equatable, Sendable {
     /// model server, a branch for OpenRouter, a sparkle for Claude.
     public var markSymbol: String {
         RunKinds.getProviderMark(providerKind)
+    }
+
+    /// What its row and header say of it: "Runs on Claude Sonnet from
+    /// Claude", without the provider until its name is read.
+    public var runsOnText: String {
+        providerName.isEmpty ? "Runs on \(name)" : "Runs on \(name) from \(providerName)"
     }
 }
 
@@ -203,11 +213,18 @@ public enum RunKinds {
         return sections.filter { !$0.kinds.isEmpty }
     }
 
-    /// The model kind runs on: its route's, or Claude for a kind that runs
-    /// on Claude without one; nil when nothing routes it.
-    public static func getModel(for kind: RunKind, routes: [TaskRoute], providers: [ModelProvider]) -> RunKindModel? {
-        if let route = routes.first(where: { $0.kind == kind.id }), let provider = providers.first(where: { $0.id == route.providerID }) {
-            return RunKindModel(name: describeModel(route.model), providerName: provider.name, providerKind: provider.kind)
+    /// The model kind runs on: its route's, by the name its provider's
+    /// catalog gives it when that is read, or Claude for a kind that runs on
+    /// Claude without one; nil when nothing routes it. A route on a provider
+    /// the list doesn't have yet, one set up since it was read, is named
+    /// all the same, without its provider.
+    public static func getModel(
+        for kind: RunKind, routes: [TaskRoute], providers: [ModelProvider], catalogs: [UUID: [ProviderModel]] = [:]
+    ) -> RunKindModel? {
+        if let route = routes.first(where: { $0.kind == kind.id }) {
+            let name = ModelChoices.getModelName(RoutedModel(providerID: route.providerID, model: route.model), catalogs: catalogs)
+            let provider = providers.first { $0.id == route.providerID }
+            return RunKindModel(name: name, providerName: provider?.name ?? "", providerKind: provider?.kind ?? "")
         }
         if kind.runsOnClaude {
             return RunKindModel(name: "Claude", providerName: "Claude", providerKind: RunKindModel.claudeProviderKind)
@@ -219,7 +236,7 @@ public enum RunKinds {
         switch providerKind {
         case ModelProvider.hubRuntimeKind: "cpu"
         case ModelProvider.openAICompatibleKind: "server.rack"
-        case "openrouter": "arrow.triangle.branch"
+        case ModelProvider.openRouterKind: "arrow.triangle.branch"
         case RunKindModel.claudeProviderKind: "sparkle"
         default: "cube"
         }
