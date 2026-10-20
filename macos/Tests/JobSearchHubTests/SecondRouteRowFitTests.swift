@@ -6,15 +6,26 @@ import Testing
 
 // An overdue Pipeline card's second route, measured offscreen in a hosting
 // view that no window holds. In a 1400 pt window, TP-659's epic review found
-// it cut to "Write to Alex…" where the design shows "Write to Alex Kim"
-// (TP-1104): the name sat in a borderless menu's label, which asks about
-// 160 pt for it, and the card has 163 pt for the whole row, ✓ included.
-// This checks the row's own width against the room the card leaves it.
+// it cut to "Write to Alex…" where the design shows "Write to Alex Kim", and
+// QA then found "Write to Dana Whitfi…" beside a chevron (TP-1104): the card
+// has 163 pt for the whole row, ✓ included. These check the row against the
+// room the card leaves it: one line where the name fits, and a second line,
+// not a cut name, where it doesn't.
 
 /// The board in a 1400 pt window: what the sidebar, 248 pt with its inset,
-/// leaves, and with the inspector open at its ideal 480 pt, where the
-/// columns keep their minimum and the board scrolls.
-private let boardWidths: [CGFloat] = [1400 - 248, 1400 - 248 - 480]
+/// leaves.
+private let boardWidth: CGFloat = 1400 - 248
+/// The same with the inspector open at its ideal 480 pt, where the columns
+/// keep their minimum and the board scrolls.
+private let boardWidthBesideInspector: CGFloat = boardWidth - 480
+
+/// The width a card's lines get on a board that wide: Saved, Applied, In
+/// contact, Interviewing and Offer, with the Closed drawer.
+@MainActor
+private func getRoom(boardWidth: CGFloat) -> CGFloat {
+    let columnWidth = PipelinePage.getColumnWidth(availableWidth: boardWidth, columnCount: 5, hasDrawer: true)
+    return PipelineCardView.getContentWidth(columnWidth: columnWidth)
+}
 
 private func makePeople(_ names: [String]) throws -> [RelatedPerson] {
     let people = names.enumerated().map { index, name in
@@ -34,25 +45,40 @@ private func makeRow(_ people: [RelatedPerson]) -> SecondRouteRow {
 }
 
 @MainActor
-private func measureWidth(_ view: some View) -> CGFloat {
-    NSHostingView(rootView: view.fixedSize()).fittingSize.width
+private func measure(_ view: some View) -> CGSize {
+    NSHostingView(rootView: view).fittingSize
 }
 
 @MainActor
-@Test func writeToAlexKimFitsAnOverdueCardOnA1400PointBoard() throws {
-    let name = Label("Write to Alex Kim", systemImage: "paperplane").font(.hubCaption)
-    let nameWidth = measureWidth(name)
-    // Less than this means nothing was measured.
-    #expect(nameWidth > 0)
-
-    for boardWidth in boardWidths {
-        // Saved, Applied, In contact, Interviewing and Offer, with the Closed drawer.
-        let columnWidth = PipelinePage.getColumnWidth(availableWidth: boardWidth, columnCount: 5, hasDrawer: true)
-        let room = PipelineCardView.getContentWidth(columnWidth: columnWidth)
-        for people in [try makePeople(["Alex Kim"]), try makePeople(["Alex Kim", "Riley Example", "Morgan Example"])] {
-            let rowWidth = measureWidth(makeRow(people))
+@Test func theFullNameFitsOneLineOfAnOverdueCardOnA1400PointBoard() throws {
+    let room = getRoom(boardWidth: boardWidth)
+    // The design's name, and the first person at the seeded hub's overdue
+    // companies with one person and with three.
+    for name in ["Alex Kim", "Dana Whitfield", "Ines Marchetti"] {
+        let nameWidth = measure(Label("Write to \(name)", systemImage: "paperplane").font(.hubCaption).fixedSize()).width
+        for people in [try makePeople([name]), try makePeople([name, "Priya Castellanos", "Tomasz Ellery"])] {
+            let rowWidth = measure(makeRow(people).fixedSize()).width
+            // Less than the name means nothing was measured.
             #expect(rowWidth > nameWidth)
-            #expect(rowWidth <= room, "On a \(boardWidth) pt board with \(people.count) people the row needs \(rowWidth) pt; the card leaves it \(room) pt")
+            #expect(rowWidth <= room, "With \(people.count) people the row needs \(rowWidth) pt for \(name); the card leaves it \(room) pt")
         }
+    }
+}
+
+@MainActor
+@Test func aNameTooLongForTheLineWrapsRatherThanBeingCut() throws {
+    let cases: [(board: CGFloat, name: String)] = [
+        (boardWidthBesideInspector, "Dana Whitfield"),
+        (boardWidthBesideInspector, "Ines Marchetti"),
+        (boardWidth, "Maximiliana Featherstonehaugh"),
+    ]
+    for (board, name) in cases {
+        let room = getRoom(boardWidth: board)
+        let row = makeRow(try makePeople([name, "Priya Castellanos"]))
+        let oneLine = measure(row.fixedSize())
+        #expect(oneLine.width > room, "\(name) fits one line of \(room) pt, so this checks nothing")
+        // A cut name would keep the row one line tall.
+        let atRoom = measure(row.frame(width: room))
+        #expect(atRoom.height > oneLine.height * 1.5, "At \(room) pt the row for \(name) is \(atRoom.height) pt tall; one line is \(oneLine.height) pt")
     }
 }

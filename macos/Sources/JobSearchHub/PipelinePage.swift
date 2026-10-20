@@ -671,6 +671,16 @@ struct PipelineCardItem: View {
                 Button("Restore") { actions.onRestore(card.id) }
             } else {
                 Button("Followed up…") { actions.onFollowUp(card.id) }
+                // The second route's choice of who to write to: its link
+                // writes to the first, and the row has no room for more.
+                if let secondRoute, !secondRoute.candidates.isEmpty {
+                    Menu("Write to") {
+                        ForEach(secondRoute.candidates) { person in
+                            Button(SecondRoute.getMenuTitle(for: person)) { secondRoute.onWrite(person) }
+                                .help(person.whatTheyCanDo)
+                        }
+                    }
+                }
                 Menu("Move to") {
                     ForEach(actions.phases.filter { $0.id != card.application.phaseID }) { target in
                         Button(target.name) { actions.onMove(card.id, target) }
@@ -814,9 +824,9 @@ struct SecondRoutes {
     }
 }
 
-/// An overdue card's next route, on one line: write to someone at the
-/// company or someone who can introduce you (the others in the menu beside
-/// it), or find who to write to, then ✓ records the follow-up.
+/// An overdue card's next route, on one line where the name fits: write to
+/// someone at the company or someone who can introduce you (the others in
+/// the card's menu), or find who to write to, then ✓ records the follow-up.
 struct SecondRouteRow: View {
     let candidates: [RelatedPerson]
     let isFindingPeople: Bool
@@ -827,40 +837,24 @@ struct SecondRouteRow: View {
 
     var body: some View {
         // Spaced by xs on each side of the spacer, so the link keeps an s
-        // gap from ✓ and still fits a card in a column at its minimum.
+        // gap from ✓ and the rest of the row.
         HStack(spacing: Space.xs) {
             if let first = candidates.first {
-                // A link and a small menu beside it, not a borderless menu
-                // with the name as its label: that menu asks about 160 pt
-                // for "Write to Alex Kim", more than a card on a 1400 pt
-                // board has, so it read "Write to Alex…" (TP-1104).
-                HStack(spacing: Space.xs) {
-                    Button { onWrite(first) } label: {
-                        Label("Write to \(first.name)", systemImage: "paperplane")
-                            .lineLimit(1)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Draft a message to \(first.name) with the outreach prompt; you send it yourself. \(first.whatTheyCanDo)")
-                    if candidates.count > 1 {
-                        Menu {
-                            ForEach(candidates) { person in
-                                Button(SecondRoute.getMenuTitle(for: person)) { onWrite(person) }
-                                    .help(person.whatTheyCanDo)
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down").imageScale(.small)
-                        }
-                        .menuStyle(.button)
-                        .buttonStyle(.plain)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help("Write to someone else")
-                        .accessibilityLabel("Write to someone else")
-                    }
+                // A link that takes the row, not a borderless menu with the
+                // name as its label (about 160 pt for "Write to Alex Kim")
+                // or a chevron beside it: on a 1400 pt board the card has
+                // 163 pt for the row, ✓ included, so either cut the name
+                // (TP-1104). A name too long for one line wraps to a second
+                // rather than being cut, as in a column at its minimum.
+                Button { onWrite(first) } label: {
+                    Label("Write to \(first.name)", systemImage: "paperplane")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .foregroundStyle(Tone.accent.color)
                 .layoutPriority(1)
+                .help(writeHelp(to: first))
             } else if isFindingPeople {
                 ProgressView().controlSize(.small)
                 Text("Finding people…").foregroundStyle(.secondary).lineLimit(1)
@@ -878,6 +872,11 @@ struct SecondRouteRow: View {
                 .help("Followed up…: record the message you sent; it restarts the count to the next follow-up")
         }
         .font(.hubCaption)
+    }
+
+    private func writeHelp(to person: RelatedPerson) -> String {
+        let others = candidates.count > 1 ? " The card's menu has the others under Write to." : ""
+        return "Draft a message to \(person.name) with the outreach prompt; you send it yourself. \(person.whatTheyCanDo)\(others)"
     }
 
     private var findPeopleHelp: String {
