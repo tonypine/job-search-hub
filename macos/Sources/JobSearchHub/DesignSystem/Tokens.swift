@@ -66,6 +66,14 @@ enum Space {
     static let xxl: CGFloat = 32
 }
 
+/// The inspector column's widths: 420 pt by default, 360 to 560. Anything
+/// that needs more room opens as a page.
+enum InspectorWidth {
+    static let min: CGFloat = 360
+    static let ideal: CGFloat = 420
+    static let max: CGFloat = 560
+}
+
 /// The corner radii. Chips and buttons are capsules.
 enum Radius {
     /// Fields and small buttons.

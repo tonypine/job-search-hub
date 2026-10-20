@@ -7,11 +7,15 @@ struct ToneChip: View {
     let text: String
     let tone: Tone
     var symbol: String?
+    /// Only the symbol, where the row needs the room; the text stays its
+    /// accessibility label.
+    var isCompact = false
 
-    init(_ text: String, tone: Tone, symbol: String? = nil) {
+    init(_ text: String, tone: Tone, symbol: String? = nil, isCompact: Bool = false) {
         self.text = text
         self.tone = tone
         self.symbol = symbol
+        self.isCompact = isCompact
     }
 
     var body: some View {
@@ -19,7 +23,9 @@ struct ToneChip: View {
             if let symbol {
                 Image(systemName: symbol).imageScale(.small)
             }
-            Text(text)
+            if !isCompact || symbol == nil {
+                Text(text)
+            }
         }
         .font(.caption.weight(.semibold))
         .lineLimit(1)
