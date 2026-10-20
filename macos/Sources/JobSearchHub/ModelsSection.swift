@@ -47,6 +47,10 @@ struct ModelsSection: View {
                 }
             }
             Button("Add a provider", systemImage: "plus") { editedProvider = .add }
+            if !providers.contains(where: { $0.kind == ModelProvider.openRouterKind }) {
+                Button("Add OpenRouter", systemImage: "arrow.triangle.branch") { editedProvider = .addOpenRouter }
+                    .help("Run kinds on OpenRouter's models with your OpenRouter key")
+            }
             ForEach(RoutedTaskKind.allCases) { kind in
                 TaskRouteRow(kind: kind, providers: providers, route: routes[kind.rawValue], client: client) { saved in
                     routes[saved.kind] = saved
@@ -58,12 +62,19 @@ struct ModelsSection: View {
         }
         .task { await load() }
         .sheet(item: $editedProvider, onDismiss: { Task { await load() } }) { target in
-            ProviderSheet(target: target, client: client)
+            if case .addOpenRouter = target {
+                OpenRouterSheet(client: client)
+            } else {
+                ProviderSheet(target: target, client: client)
+            }
         }
     }
 
     private func describe(_ provider: ModelProvider) -> String {
-        var parts = [provider.isHubRuntime ? "Runs models on this Mac" : provider.baseURL]
+        var parts = [
+            provider.isHubRuntime ? "Runs models on this Mac"
+                : provider.kind == ModelProvider.claudeSubscriptionKind ? "Runs on your Claude subscription" : provider.baseURL,
+        ]
         if provider.hasKey { parts.append("key set") }
         parts.append(provider.enforcesSchema ? "enforces schemas" : "answers are checked")
         return parts.joined(separator: " · ")
@@ -85,11 +96,14 @@ struct ModelsSection: View {
 
 enum ProviderSheetTarget: Identifiable {
     case add
+    /// OpenRouter, which needs only its key.
+    case addOpenRouter
     case edit(ModelProvider)
 
     var id: String {
         switch self {
         case .add: "add"
+        case .addOpenRouter: "addOpenRouter"
         case let .edit(provider): provider.id.uuidString
         }
     }
@@ -225,14 +239,19 @@ struct ProviderSheet: View {
             Picker("Kind", selection: $kind) {
                 Text("OpenAI-compatible server").tag(ModelProvider.openAICompatibleKind)
                 Text("The hub's own runtime").tag(ModelProvider.hubRuntimeKind)
+                Text("OpenRouter").tag(ModelProvider.openRouterKind)
+                Text("Claude subscription").tag(ModelProvider.claudeSubscriptionKind)
             }
             .accessibilityLabel("Provider kind")
             TextField("Name", text: $name)
                 .accessibilityLabel("Provider name")
             if kind == ModelProvider.openAICompatibleKind {
-                TextField("Address", text: $baseURL, prompt: Text("https://openrouter.ai/api/v1"))
+                TextField("Address", text: $baseURL, prompt: Text("http://localhost:1234/v1"))
                     .accessibilityLabel("Provider address")
-                SecureField("Key", text: $key, prompt: Text(hasSavedKey ? "Set; type a new one to replace it" : "Optional"))
+            }
+            if kind == ModelProvider.openAICompatibleKind || kind == ModelProvider.openRouterKind {
+                let keyPrompt = hasSavedKey ? "Set; type a new one to replace it" : kind == ModelProvider.openRouterKind ? "Required" : "Optional"
+                SecureField("Key", text: $key, prompt: Text(keyPrompt))
                     .accessibilityLabel("Provider key")
             }
             Toggle("Enforces a JSON schema", isOn: $enforcesSchema)
@@ -266,7 +285,7 @@ struct ProviderSheet: View {
         let input = ModelProviderInput(kind: kind, name: name, baseURL: baseURL, apiKey: key.isEmpty ? nil : key, enforcesSchema: enforcesSchema)
         do {
             switch target {
-            case .add:
+            case .add, .addOpenRouter:
                 _ = try await client.send("POST", "v1/model-providers", body: input, as: ModelProvider.self)
             case let .edit(provider):
                 _ = try await client.send("PUT", "v1/model-providers/\(provider.id.uuidString)", body: input, as: ModelProvider.self)
@@ -274,6 +293,55 @@ struct ProviderSheet: View {
             dismiss()
         } catch {
             failure = HubFailure("Couldn't save the provider", error)
+        }
+    }
+}
+
+/// Adds OpenRouter from its key alone: the hub knows its address, and
+/// checks each answer against its schema, as not every model OpenRouter
+/// routes to enforces one.
+struct OpenRouterSheet: View {
+    let client: HubClient
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+    @State private var failure: HubFailure?
+
+    var body: some View {
+        Form {
+            Section {
+                SecureField("OpenRouter key", text: $key, prompt: Text("sk-or-…"))
+                    .accessibilityLabel("OpenRouter key")
+            } header: {
+                Text("Add OpenRouter")
+            } footer: {
+                Text("Its models, with their prices, then appear in each kind's model menu on Activity. The key is kept by the hub and never shown again.")
+                    .font(.hubCaption)
+                    .foregroundStyle(.secondary)
+            }
+            if let failure {
+                HubErrorView(failure)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                AsyncButton("Add", busyTitle: "Adding…") { await save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityLabel("Add OpenRouter")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .padding()
+    }
+
+    private func save() async {
+        let input = ModelProviderInput(kind: ModelProvider.openRouterKind, name: "OpenRouter", baseURL: "", apiKey: key, enforcesSchema: false)
+        do {
+            _ = try await client.send("POST", "v1/model-providers", body: input, as: ModelProvider.self)
+            dismiss()
+        } catch {
+            failure = HubFailure("Couldn't add OpenRouter", error)
         }
     }
 }
