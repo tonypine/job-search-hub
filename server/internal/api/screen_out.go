@@ -49,6 +49,23 @@ func buildScreenOutAnswers(facts map[string]store.JobFactEntry, fit jobfit.Fit, 
 	}
 }
 
+// judgeScreenLevel is a job's screen as one level, as its page's verdict
+// strip reads it from the fit's checks and the screen-out answers: poor when
+// one says no, else unclear when one isn't sure, else good. An answer
+// without a verdict judges nothing.
+func judgeScreenLevel(fit jobfit.Fit, answers []screenOutAnswer) jobfit.Level {
+	level := fit.Level
+	for _, answer := range answers {
+		switch {
+		case answer.Verdict == jobfit.VerdictNo:
+			return jobfit.LevelPoor
+		case answer.Verdict == jobfit.VerdictUnclear && level == jobfit.LevelGood:
+			level = jobfit.LevelUnclear
+		}
+	}
+	return level
+}
+
 // indexLabelledFacts are a job's details' facts by key, with their evidence.
 func indexLabelledFacts(details store.JobDetails) map[string]store.JobFactEntry {
 	facts := map[string]store.JobFactEntry{}

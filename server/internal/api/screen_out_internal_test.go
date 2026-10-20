@@ -120,3 +120,29 @@ func TestAJobsListRowIsAnsweredAsItsDetailsAre(t *testing.T) {
 		t.Errorf("unread facts = %+v", unread)
 	}
 }
+
+func TestAScreensLevelCountsItsScreenOutAnswers(t *testing.T) {
+	good := jobfit.Fit{Level: jobfit.LevelGood, Checks: []jobfit.Check{{Name: "Role", Verdict: jobfit.VerdictYes}}}
+	poor := jobfit.Fit{Level: jobfit.LevelPoor, Checks: []jobfit.Check{{Name: "Role", Verdict: jobfit.VerdictNo}}}
+	yes := screenOutAnswer{Name: "Timezone", Verdict: jobfit.VerdictYes}
+	unclear := screenOutAnswer{Name: "Timezone", Verdict: jobfit.VerdictUnclear}
+	no := screenOutAnswer{Name: "Experience", Verdict: jobfit.VerdictNo}
+	note := screenOutAnswer{Name: "Contract", Answer: "contractor"}
+	for _, test := range []struct {
+		name    string
+		fit     jobfit.Fit
+		answers []screenOutAnswer
+		want    jobfit.Level
+	}{
+		{"every answer passes", good, []screenOutAnswer{yes, note}, jobfit.LevelGood},
+		{"an answer is unclear", good, []screenOutAnswer{yes, unclear, note}, jobfit.LevelUnclear},
+		{"an answer fails", good, []screenOutAnswer{unclear, no}, jobfit.LevelPoor},
+		{"an unclear fit with an answer that fails", jobfit.Fit{Level: jobfit.LevelUnclear}, []screenOutAnswer{no}, jobfit.LevelPoor},
+		{"a failing fit", poor, []screenOutAnswer{yes, unclear}, jobfit.LevelPoor},
+		{"no answers", good, nil, jobfit.LevelGood},
+	} {
+		if level := judgeScreenLevel(test.fit, test.answers); level != test.want {
+			t.Errorf("%s: level = %s, want %s", test.name, level, test.want)
+		}
+	}
+}

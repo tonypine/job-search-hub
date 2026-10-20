@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -52,19 +54,27 @@ func TestTheCompaniesListCountsTheOpenJobsThatPassTheScreenAndTheirBestMatch(t *
 	owner := store.Actor{Kind: store.ActorOwner}
 	if _, err := service.hub.SaveJobCriteria(ctx, owner, store.JobCriteria{
 		Technologies: []string{"Go"}, SeniorityLevels: []string{"Senior"}, EligibleLocationTerms: []string{"Americas"},
+		WorkableTimezoneTerms: []string{"Americas"},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	confirmEightYearsOfRoles(t, service)
 	acme, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.example"})
 	zeta, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.example"})
 	prompt, _ := service.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
 	hash, _ := service.hub.GetKnowledgeHash(ctx)
-	// Two of Acme's jobs pass the screen, briefed possible and strong; the
-	// third fails it, so its strong brief doesn't count.
-	for index, job := range []struct{ title, location, match string }{
-		{"Senior Go Engineer", "Americas", "possible"},
-		{"Senior Go Engineer, Platform", "Americas", "strong"},
-		{"Accountant", "Berlin", "strong"},
+	// Two of Acme's jobs pass the screen, briefed possible and strong. The
+	// third fails the fit, and the fourth passes it but asks for more years
+	// than the owner's eight, so its page fails it on Experience: neither
+	// counts.
+	for index, job := range []struct {
+		title, location, match string
+		years                  int
+	}{
+		{"Senior Go Engineer", "Americas", "possible", 6},
+		{"Senior Go Engineer, Platform", "Americas", "strong", 6},
+		{"Accountant", "Berlin", "strong", 6},
+		{"Senior Go Engineer, Payments", "Americas", "strong", 12},
 	} {
 		added, _, err := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{
 			CompanyID: &acme.ID, Title: job.title, Location: job.location, URL: fmt.Sprintf("https://acme.example/jobs/%d", index),
@@ -73,7 +83,8 @@ func TestTheCompaniesListCountsTheOpenJobsThatPassTheScreenAndTheirBestMatch(t *
 			t.Fatal(err)
 		}
 		if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{
-			JobID: added.ID, PromptID: prompt.ID, Model: "test-model", TextHash: []byte{1}, Facts: json.RawMessage(`{"years_of_experience":6}`),
+			JobID: added.ID, PromptID: prompt.ID, Model: "test-model", TextHash: []byte{1},
+			Facts: json.RawMessage(fmt.Sprintf(`{"years_of_experience":%d,"timezone_requirement":"Americas hours"}`, job.years)),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -103,6 +114,23 @@ func TestTheCompaniesListCountsTheOpenJobsThatPassTheScreenAndTheirBestMatch(t *
 	}
 	if zetaRow.Company.ID != zeta.ID || zetaRow.FittingJobs != 0 || zetaRow.BestMatch != nil || zetaRow.NewestFittingJobSeenAt != nil {
 		t.Fatalf("Zeta = %+v; want nothing open", zetaRow)
+	}
+}
+
+// confirmEightYearsOfRoles gives the owner a confirmed role from 2010 to
+// 2017, so a posting asking for up to eight years passes the screen's
+// Experience.
+func confirmEightYearsOfRoles(t *testing.T, service apiUnderTest) {
+	t.Helper()
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	role, err := service.hub.SaveProfileEntry(ctx, owner, nil, store.ProfileEntryInput{Kind: store.ProfileEntryRole, Title: "Engineer",
+		StartMonth: "2010-01", EndMonth: "2017-12", Source: store.ProfileSourceOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.hub.ConfirmProfileEntries(ctx, owner, []uuid.UUID{role.ID}); err != nil {
+		t.Fatal(err)
 	}
 }
 

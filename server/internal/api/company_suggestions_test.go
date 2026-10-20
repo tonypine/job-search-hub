@@ -27,9 +27,11 @@ func TestGalleryCompaniesAreSuggestedWhenTheirBoardHasAFittingJob(t *testing.T) 
 	system := store.Actor{Kind: store.ActorSystem}
 	if _, err := service.hub.SaveJobCriteria(ctx, owner, store.JobCriteria{
 		Technologies: []string{"Go"}, SeniorityLevels: []string{"Senior"}, EligibleLocationTerms: []string{"Americas"},
+		WorkableTimezoneTerms: []string{"Americas"},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	confirmEightYearsOfRoles(t, service)
 	service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Initech", Domain: "initech.example"})
 	if _, err := service.hub.SaveListedGalleryCompanies(ctx, []store.GalleryCompany{
 		{Slug: "hooli", Name: "Hooli"}, {Slug: "globex", Name: "Globex"}, {Slug: "initech", Name: "Initech"},
@@ -66,7 +68,8 @@ func TestGalleryCompaniesAreSuggestedWhenTheirBoardHasAFittingJob(t *testing.T) 
 	jobs, _, _ := service.hub.ListJobs(ctx, store.JobFilter{Status: store.JobStatusOpen})
 	for _, item := range jobs {
 		if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{
-			JobID: item.Job.ID, PromptID: factsPrompt.ID, Model: "test-model", TextHash: []byte{1}, Facts: json.RawMessage(`{"years_of_experience":6}`),
+			JobID: item.Job.ID, PromptID: factsPrompt.ID, Model: "test-model", TextHash: []byte{1},
+			Facts: json.RawMessage(`{"years_of_experience":6,"timezone_requirement":"Americas hours"}`),
 		}); err != nil {
 			t.Fatal(err)
 		}
