@@ -299,22 +299,21 @@ struct JobsPage: View {
     private var header: some View {
         let choices = JobsFilterChoices(items: model.items)
         return PageHeader(chips: getFilterChips(choices: choices)) {
-            TabStrip(
-                items: JobStatusFilter.allCases.map { status in
-                    TabStripItem(id: status, title: status.title, count: status == .all ? nil : model.scopeCounts[status])
-                },
-                selection: $model.status
-            )
+            TabStrip(items: Self.makeScopes(counts: model.scopeCounts), selection: $model.status)
         } trailing: {
-            PageSearchField(text: $model.search, prompt: "Search jobs")
-                .help("Search titles, locations and companies")
-            ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
-                .labelStyle(.iconOnly)
-                .fixedSize()
-            Button("Add", systemImage: "plus") { isAddingByURL = true }
-                .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
+            JobsHeaderTrailing(search: $model.search, columns: columnCustomization, factColumns: model.factColumns) {
+                isAddingByURL = true
+            }
         } filterMenu: {
             JobsFilterMenu(filter: filter, choices: choices, newCount: model.items.count { $0.isNew(since: model.previousVisit) })
+        }
+    }
+
+    /// The status as scopes, each with how many jobs it holds; All has no
+    /// count.
+    static func makeScopes(counts: [JobStatusFilter: Int]) -> [TabStripItem<JobStatusFilter>] {
+        JobStatusFilter.allCases.map { status in
+            TabStripItem(id: status, title: status.title, count: status == .all ? nil : counts[status])
         }
     }
 
@@ -418,6 +417,10 @@ struct JobsPage: View {
             }
         }
         .alternatingRowBackgrounds(.disabled)
+        .hubTableSelection(revision: JobsTableRevision(
+            selection: model.selectedIDs,
+            rows: groups.map { $0.map { $0.items.map(\.id) } } ?? [shownItems.map(\.id)]
+        ))
         .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -530,6 +533,35 @@ struct JobsPage: View {
             }
         }
     }
+}
+
+/// The Jobs header's search, Columns menu and Add. The search is the
+/// compact one and the menu shows only its symbol, so all five scopes and
+/// their counts fit beside them with the inspector open at 1400 wide
+/// (TP-1099).
+struct JobsHeaderTrailing: View {
+    @Binding var search: String
+    @Binding var columns: TableColumnCustomization<JobListItem>
+    let factColumns: [JobFactColumn]
+    let onAdd: () -> Void
+
+    var body: some View {
+        PageSearchField(text: $search, prompt: "Search jobs", width: PageHeaderMetrics.compactSearchWidth)
+            .help("Search titles, locations and companies")
+        ColumnsMenu(customization: $columns, factColumns: factColumns)
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        Button("Add", systemImage: "plus", action: onAdd)
+            .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
+    }
+}
+
+/// What the Jobs table's selection highlight follows: the selected jobs, and
+/// the rows in their groups, since a group's heading is a row too.
+private struct JobsTableRevision: Hashable {
+    let selection: Set<UUID>
+    let rows: [[UUID]]
 }
 
 struct AddJobSheet: View {
