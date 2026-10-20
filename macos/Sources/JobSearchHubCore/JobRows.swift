@@ -1,7 +1,19 @@
 import Foundation
 
+public extension JobListItem {
+    /// The job's Screen as its page shows it: the screen-out answers, then
+    /// the fit checks they don't answer.
+    var screenRows: [ScreenRow] { ScreenRow.makeRows(screenOut: screenOut, checks: fit.checks) }
+
+    var screen: ScreenBreakdown { ScreenBreakdown(screenRows, level: fit.level) }
+
+    /// The screen as one level, as the job's verdict strip reads it.
+    var screenLevel: FitLevel { screen.overallLevel }
+}
+
 /// The screen as a row of the jobs list says it, in a word or two: "Passes",
-/// "2 unclear", or the name of the check that fails, "Where".
+/// "2 unclear", or the name of the check that fails, "Where". It counts what
+/// the job's verdict strip and Screen card count.
 public struct ScreenSummary: Equatable, Sendable {
     public var text: String
     /// Yes when it passes, unclear, or no when a check fails: the symbol and
@@ -9,10 +21,10 @@ public struct ScreenSummary: Equatable, Sendable {
     public var verdict: FitVerdict
     public var accessibilityLabel: String
 
-    public init(_ fit: JobFit) {
-        let failing = fit.checks.filter { $0.verdict == .no }
-        let unclear = fit.checks.filter { $0.verdict == .unclear }
-        switch fit.level {
+    public init(_ screen: ScreenBreakdown) {
+        let failing = screen.exceptions.filter { $0.verdict == .no }
+        let unclear = screen.exceptions.filter { $0.verdict == .unclear }
+        switch screen.overallLevel {
         case .good:
             text = "Passes"
             verdict = .yes
@@ -34,9 +46,10 @@ public struct ScreenSummary: Equatable, Sendable {
         }
     }
 
-    /// A check's name short enough for a column: "Where they hire" is "Where".
+    /// A check's name short enough for a column: "Where they hire" and
+    /// "Hires from Brazil" are "Where".
     public static func getShortName(_ checkName: String) -> String {
-        checkName == "Where they hire" ? "Where" : checkName
+        checkName == "Where they hire" || checkName == "Hires from Brazil" ? "Where" : checkName
     }
 
     private static func list(_ names: [String]) -> String {

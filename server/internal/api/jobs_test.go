@@ -361,6 +361,20 @@ func TestAJobsDetailsCarryItsBriefAndScreenOutAnswers(t *testing.T) {
 	}
 
 	_, details := readJobDetails(t, service, job.ID.String())
+	_, body := send(t, http.MethodGet, service.url+"/v1/jobs", ownerToken, "")
+	var listed struct {
+		Jobs []struct {
+			ScreenOut []struct{ Name, Verdict, Answer string } `json:"screen_out"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil || len(listed.Jobs) != 1 || len(listed.Jobs[0].ScreenOut) != len(details.ScreenOut) {
+		t.Fatalf("GET /v1/jobs: %s", body)
+	}
+	for i, answer := range listed.Jobs[0].ScreenOut {
+		if want := details.ScreenOut[i]; answer.Name != want.Name || answer.Verdict != want.Verdict || answer.Answer != want.Answer {
+			t.Errorf("the row's %s = %s %q, want the details' %s %q", want.Name, answer.Verdict, answer.Answer, want.Verdict, want.Answer)
+		}
+	}
 	if details.Brief == nil || details.Brief.Match != "strong" || details.Brief.Reason != "React at scale." {
 		t.Fatalf("brief = %+v", details.Brief)
 	}

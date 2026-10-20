@@ -35,19 +35,24 @@ public struct ScreenRow: Equatable, Sendable {
     public var evidence: String?
 }
 
-public extension JobDetails {
-    /// The job's Screen: the screen-out answers, then the fit checks they
+public extension ScreenRow {
+    /// A job's Screen: the screen-out answers, then the fit checks they
     /// don't already answer. The hub answers some screen-out checks from a fit
     /// check under another name, with the check's verdict and reason, so those
     /// show once.
-    var screenRows: [ScreenRow] {
+    static func makeRows(screenOut: [ScreenOutAnswer]?, checks: [FitCheck]) -> [ScreenRow] {
         let answers = screenOut ?? []
         let answerRows = answers.map { ScreenRow(name: $0.name, verdict: $0.verdict, reason: $0.answer, evidence: $0.evidence) }
-        let checkRows = fit.checks
+        let checkRows = checks
             .filter { check in !answers.contains { $0.verdict == check.verdict && $0.answer == check.reason } }
             .map { ScreenRow(name: $0.name, verdict: $0.verdict, reason: $0.reason) }
         return answerRows + checkRows
     }
+}
+
+public extension JobDetails {
+    /// The job's Screen (see `ScreenRow.makeRows`).
+    var screenRows: [ScreenRow] { ScreenRow.makeRows(screenOut: screenOut, checks: fit.checks) }
 }
 
 /// A job's facts in the order and with the labels of the prompt version they
