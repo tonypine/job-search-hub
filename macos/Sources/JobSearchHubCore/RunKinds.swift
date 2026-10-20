@@ -260,20 +260,122 @@ public enum RunKinds {
     }
 }
 
-/// The counts of a window of runs, as `GET /v1/runs/metrics` gives them;
-/// only the failures by kind are read here.
+/// The counts of a window of runs, as `GET /v1/runs/metrics` gives them:
+/// the window's totals, the totals of the window of the same length just
+/// before it, and each bucket of the window, the empty ones included.
 public struct RunMetrics: Decodable, Equatable, Sendable {
-    public struct Bucket: Decodable, Equatable, Sendable {
+    /// The runs of a window, from both of the hub's records.
+    public struct Totals: Decodable, Equatable, Sendable {
+        public var from: Date
+        public var to: Date
+        public var runs: Int
+        public var failed: Int
+        public var invalid: Int
+        public var inputTokens: Int
+        public var outputTokens: Int
+        /// Over the runs that finished; nil when none did.
+        public var averageDurationMS: Int?
+        /// What the runs that report a cost cost, as text so the decimal is
+        /// never rounded.
+        public var costUSD: String
+        /// The model calls on the owner's Claude plan, which cost nothing
+        /// more and count as nothing in the cost.
+        public var claudePlanRuns: Int
+
+        enum CodingKeys: String, CodingKey {
+            case from, to, runs, failed, invalid, inputTokens, outputTokens, claudePlanRuns
+            case averageDurationMS = "averageDurationMs"
+            case costUSD = "costUsd"
+        }
+
+        public init(
+            from: Date, to: Date, runs: Int = 0, failed: Int = 0, invalid: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0,
+            averageDurationMS: Int? = nil, costUSD: String = "0", claudePlanRuns: Int = 0
+        ) {
+            self.from = from
+            self.to = to
+            self.runs = runs
+            self.failed = failed
+            self.invalid = invalid
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.averageDurationMS = averageDurationMS
+            self.costUSD = costUSD
+            self.claudePlanRuns = claudePlanRuns
+        }
+
+        public var tokens: Int { inputTokens + outputTokens }
+    }
+
+    /// The runs started from its start until before its end, in all and by
+    /// kind. The first and last buckets are clipped to the window.
+    public struct Bucket: Decodable, Equatable, Identifiable, Sendable {
+        public var start: Date
+        public var end: Date
+        public var runs: Int
+        public var failed: Int
+        public var inputTokens: Int
+        public var outputTokens: Int
+        /// Only the kinds that ran.
         public var kinds: [KindCount]
+
+        public init(start: Date, end: Date, runs: Int = 0, failed: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0, kinds: [KindCount] = []) {
+            self.start = start
+            self.end = end
+            self.runs = runs
+            self.failed = failed
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.kinds = kinds
+        }
+
+        public var id: Date { start }
+        public var tokens: Int { inputTokens + outputTokens }
+        public var interval: DateInterval { DateInterval(start: start, end: max(start, end)) }
+
+        public func contains(_ date: Date) -> Bool { start <= date && date < end }
     }
 
     public struct KindCount: Decodable, Equatable, Sendable {
         public var kind: String
         public var runs: Int
         public var failed: Int
+        public var inputTokens: Int
+        public var outputTokens: Int
+
+        public init(kind: String, runs: Int, failed: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0) {
+            self.kind = kind
+            self.runs = runs
+            self.failed = failed
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+        }
+
+        public var tokens: Int { inputTokens + outputTokens }
     }
 
+    /// The kind counted; empty for every kind.
+    public var kind: String
+    /// hour, day or week.
+    public var bucket: String
+    public var timeZone: String
+    public var totals: Totals
+    public var previous: Totals
     public var buckets: [Bucket]
+
+    public init(kind: String = "", bucket: String, timeZone: String = "UTC", totals: Totals, previous: Totals, buckets: [Bucket]) {
+        self.kind = kind
+        self.bucket = bucket
+        self.timeZone = timeZone
+        self.totals = totals
+        self.previous = previous
+        self.buckets = buckets
+    }
+
+    /// The bucket a moment falls in; nil outside the window.
+    public func getBucket(at date: Date) -> Bucket? {
+        buckets.first { $0.contains(date) }
+    }
 }
 
 /// What a run was for: a job with its company, a company, a message or a

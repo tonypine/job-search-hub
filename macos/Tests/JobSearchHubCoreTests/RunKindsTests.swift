@@ -114,9 +114,15 @@ private func getKind(_ id: String, in response: RunKindsResponse) throws -> RunK
 
 @Test func failuresAreCountedByKindAcrossTheWindow() throws {
     let json = #"""
-    {"kind":"","bucket":"day","time_zone":"UTC","totals":{},"previous":{},
-     "buckets":[{"start":"2026-10-15T00:00:00Z","kinds":[{"kind":"mail_triage","runs":4,"failed":1},{"kind":"job_facts","runs":9,"failed":0}]},
-                {"start":"2026-10-16T00:00:00Z","kinds":[{"kind":"mail_triage","runs":2,"failed":2}]}]}
+    {"kind":"","bucket":"day","time_zone":"UTC",
+     "totals":{"from":"2026-10-15T00:00:00Z","to":"2026-10-17T00:00:00Z","runs":15,"failed":3,"invalid":0,"input_tokens":0,"output_tokens":0,
+               "average_duration_ms":null,"cost_usd":"0","claude_plan_runs":0},
+     "previous":{"from":"2026-10-13T00:00:00Z","to":"2026-10-15T00:00:00Z","runs":0,"failed":0,"invalid":0,"input_tokens":0,"output_tokens":0,
+               "average_duration_ms":null,"cost_usd":"0","claude_plan_runs":0},
+     "buckets":[{"start":"2026-10-15T00:00:00Z","end":"2026-10-16T00:00:00Z","runs":13,"failed":1,"input_tokens":0,"output_tokens":0,
+                 "kinds":[{"kind":"mail_triage","runs":4,"failed":1,"input_tokens":0,"output_tokens":0},{"kind":"job_facts","runs":9,"failed":0,"input_tokens":0,"output_tokens":0}]},
+                {"start":"2026-10-16T00:00:00Z","end":"2026-10-17T00:00:00Z","runs":2,"failed":2,"input_tokens":0,"output_tokens":0,
+                 "kinds":[{"kind":"mail_triage","runs":2,"failed":2,"input_tokens":0,"output_tokens":0}]}]}
     """#
     let metrics = try HubJSON.makeDecoder().decode(RunMetrics.self, from: Data(json.utf8))
 
