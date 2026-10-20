@@ -70,7 +70,7 @@ struct CompaniesPage: View {
     /// Which columns show, in what order and width, kept across launches.
     /// Renamed when the default widths change, so widths an earlier build
     /// saved don't push the Board column past the inspector.
-    @AppStorage("companiesTableColumns.v2") private var savedColumns = Data()
+    @AppStorage("companiesTableColumns.v3") private var savedColumns = Data()
 
     var body: some View {
         Group {
@@ -194,13 +194,13 @@ struct CompaniesPage: View {
 
     private func table(client: HubClient) -> some View {
         Table(of: CompanyRow.self, selection: selection, columnCustomization: columnCustomization) {
-            // The default columns' ideal widths add up to 660, which fits the
-            // table beside the inspector in a 1400-wide window: the table
-            // doesn't shrink its columns when the inspector opens.
+            // Company is the one default column that resizes; the others
+            // keep one width (CompanyRowLayout). Its ideal width fits the
+            // table beside the inspector in a 1400-wide window.
             TableColumn("Company") { row in
                 CompanyCell(row: row, researchStep: getResearchStep(of: row))
             }
-            .width(min: 170, ideal: 200)
+            .width(min: CompanyRowLayout.companyMinWidth, ideal: CompanyRowLayout.companyIdealWidth)
             .customizationID("company")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Open jobs") { row in
@@ -210,7 +210,7 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 120, ideal: 150)
+            .width(CompanyRowLayout.openJobsWidth)
             .customizationID("openJobs")
             TableColumn("People you know") { row in
                 switch row {
@@ -219,14 +219,14 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 70, ideal: 100)
+            .width(CompanyRowLayout.peopleWidth)
             .customizationID("peopleYouKnow")
             TableColumn("You") { row in
                 if let summary = row.summary {
                     StandingCell(standing: summary.getStanding(now: .now))
                 }
             }
-            .width(min: 80, ideal: 100)
+            .width(CompanyRowLayout.youWidth)
             .customizationID("you")
             TableColumn("Board") { row in
                 switch row {
@@ -239,7 +239,7 @@ struct CompaniesPage: View {
                 case .research: EmptyView()
                 }
             }
-            .width(min: 90, ideal: 110)
+            .width(CompanyRowLayout.boardWidth)
             .customizationID("board")
             TableColumn("Domain") { row in
                 optionalCell(row.summary?.company.domain)
@@ -269,7 +269,7 @@ struct CompaniesPage: View {
             ForEach(rows) { row in TableRow(row) }
         }
         .alternatingRowBackgrounds(.disabled)
-        .hubTableSelection(revision: [model.selectedID?.uuidString ?? ""] + rows.map(\.id))
+        .hubTableSelection(revision: [model.selectedID?.uuidString ?? ""] + rows.map(\.id), cellSpacing: CompanyRowLayout.cellSpacing)
         .overlay { emptyState(client: client) }
     }
 

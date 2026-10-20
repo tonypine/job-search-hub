@@ -39,6 +39,35 @@ enum CompanyRow: Identifiable {
     }
 }
 
+/// The Companies table's columns beside the inspector. Open jobs, People you
+/// know, You and Board keep one width, enough for their header and their
+/// usual values, so the Company column is the one that takes or gives up the
+/// room as the window and the inspector change. When every column could be
+/// resized, AppKit scaled them all alike, and beside the inspector names and
+/// their context were cut while Open jobs, You and Board kept room they didn't
+/// use (TP-1131, as TP-1123 found on Jobs). The table leaves the Jobs table's
+/// spacing between columns and adds it to each.
+enum CompanyRowLayout {
+    static let cellSpacing = JobRowLayout.cellSpacing
+    /// "2 open" and a "Best: Possible" chip.
+    static let openJobsWidth: CGFloat = 134
+    /// The "People you know" header, with AppKit's header margins.
+    static let peopleWidth: CGFloat = 104
+    /// "Interviewing" with its symbol, and "New job today".
+    static let youWidth: CGFloat = 96
+    /// "Greenhouse", or "Find board" with its caution symbol.
+    static let boardWidth: CGFloat = 90
+    /// The Company column's widest by default: what the fixed columns leave
+    /// it beside the inspector in a 1400 pt window.
+    static let companyIdealWidth: CGFloat = 248
+    /// The Company column's narrowest; the table scrolls sideways below it.
+    static let companyMinWidth: CGFloat = 200
+
+    static var fixedColumnsWidth: CGFloat {
+        openJobsWidth + peopleWidth + youWidth + boardWidth
+    }
+}
+
 /// The cells of the Companies table's two-line rows. Each keeps one height
 /// whatever the column's width, and every line is truncated: rows whose
 /// height follows the table's width can loop the window's layout as the
@@ -50,15 +79,17 @@ extension View {
 }
 
 /// The company: its monogram, its name in semibold, and under it where and
-/// how big it is, why it's suggested, or the step its research is on.
+/// how big it is, why it's suggested, or the step its research is on, which
+/// take all the room the column has.
 struct CompanyCell: View {
     let row: CompanyRow
     /// The research's step when this row's company is being researched.
     let researchStep: ResearchStep?
 
     var body: some View {
-        HStack(spacing: Space.m) {
+        HStack(spacing: 0) {
             Monogram(row.name)
+                .padding(.trailing, Space.m)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(row.name).fontWeight(.semibold).lineLimit(1).help(row.name)
@@ -77,7 +108,9 @@ struct CompanyCell: View {
                     Text(context).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1).help(context)
                 }
             }
-            Spacer(minLength: 0)
+            // No trailing Spacer: the stack's spacing before it cost the
+            // text 12 pt (TP-1123).
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .companyRowCell()
     }
