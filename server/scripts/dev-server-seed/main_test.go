@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/url"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
@@ -40,6 +42,63 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkPipeline(t, hub, now)
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
+}
+
+// TestEveryPostingIsMarkdownItsFactsQuote checks each seeded posting is
+// Markdown with headings, items and bold, as a board stores it, and its
+// facts were read with evidence the hub keeps: each quote is in the
+// posting's words, and some run across its bold. The values flatten as the
+// flat facts were, so the fit judges them alike.
+func TestEveryPostingIsMarkdownItsFactsQuote(t *testing.T) {
+	acrossBold := 0
+	for _, company := range seededCompanies {
+		for _, job := range company.jobs {
+			posting := describeJob(company, job)
+			for _, marker := range []string{"\n### ", "\n- ", "**"} {
+				if !strings.Contains(posting, marker) {
+					t.Errorf("%s posting has no %q:\n%s", job.title, marker, posting)
+				}
+			}
+			raw, err := json.Marshal(readJobFacts(job))
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, evidence, err := store.FlattenJobFacts(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{
+				"location_restriction": `"` + job.location + `"`, "seniority": `"` + job.seniority + `"`, "contract_type": `"Full-time"`,
+			} {
+				if got := string(values[key]); got != want {
+					t.Errorf("%s %s = %s; want %s", job.title, key, got, want)
+				}
+			}
+			quoted := []string{"location_restriction", "seniority", "contract_type", "languages"}
+			if job.yearsAsked > 0 {
+				quoted = append(quoted, "years_of_experience")
+			}
+			words := strings.Join(strings.Fields(textextract.ConvertMarkdownToText(posting)), " ")
+			for _, key := range quoted {
+				quote := evidence[key]
+				if quote == "" || !strings.Contains(words, quote) {
+					t.Errorf("%s %s quotes %q; want words of its posting:\n%s", job.title, key, quote, words)
+				}
+				if !strings.Contains(posting, quote) {
+					acrossBold++
+				}
+			}
+		}
+	}
+	if acrossBold == 0 {
+		t.Error("no quote runs across bold")
+	}
+
+	// The first job in Decide asks for years, quoted across bold: 12, more
+	// than the owner's roles span, so its Experience row fails.
+	if patientApp := seededCompanies[3].jobs[1]; patientApp.title != "Senior iOS Engineer, Patient App" || patientApp.yearsAsked != 12 {
+		t.Errorf("Copperleaf Health's second job = %s asking %d years; want the Patient App asking 12", patientApp.title, patientApp.yearsAsked)
+	}
 }
 
 // checkPipeline checks the board: three overdue Applied cards nobody
@@ -143,6 +202,7 @@ func checkJobs(t *testing.T, hub *store.Store) {
 			if host := getHost(t, item.Job.URL); !strings.HasSuffix(host, ".example") {
 				t.Errorf("%s links to %s; want an .example domain", item.Job.Title, host)
 			}
+			checkPostingQuotes(t, hub, item.Job)
 		}
 	}
 	want := map[string]int{
@@ -153,6 +213,33 @@ func checkJobs(t *testing.T, hub *store.Store) {
 	}
 	if every := counts[store.JobStatusAll] + counts[store.JobStatusDismissed]; every < 12 {
 		t.Errorf("%d jobs; want at least 12", every)
+	}
+}
+
+// checkPostingQuotes checks the job's posting is stored as Markdown and the
+// screen's facts quote its words: where they hire, the level, the contract
+// and the languages.
+func checkPostingQuotes(t *testing.T, hub *store.Store, job store.Job) {
+	t.Helper()
+	details, err := hub.GetJobDetails(context.Background(), job.ID)
+	if err != nil || details.Facts == nil {
+		t.Fatalf("details of %s = %+v, %v; want its facts", job.Title, details, err)
+	}
+	posting := details.Job.Description
+	if !strings.Contains(posting, "\n### ") || !strings.Contains(posting, "**") {
+		t.Errorf("%s posting = %q; want Markdown with headings and bold", job.Title, posting)
+	}
+	words := strings.Join(strings.Fields(textextract.ConvertMarkdownToText(posting)), " ")
+	quoted := map[string]bool{}
+	for _, entry := range details.Facts.Entries {
+		if entry.Evidence != "" && strings.Contains(words, entry.Evidence) {
+			quoted[entry.Key] = true
+		}
+	}
+	for _, key := range []string{"location_restriction", "seniority", "contract_type", "languages"} {
+		if !quoted[key] {
+			t.Errorf("%s %s has no quote from its posting; facts %+v", job.Title, key, details.Facts.Entries)
+		}
 	}
 }
 

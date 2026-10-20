@@ -12,6 +12,12 @@
 // suggestions; the owner's profile, knowledge base and criteria are filled
 // in. A database that already holds companies is left as it is.
 //
+// Each posting is Markdown, as a board stores it, with headings, a list and
+// bold, and its facts were read with evidence: the screen's rows quote the
+// posting, some quotes across bold, and the reader marks them. The first job
+// in Decide asks for more years than the owner has, so its Experience row
+// fails with a quote to show in the posting.
+//
 // The briefs and facts cite the job_brief and job_facts prompts, which it
 // seeds from HUB_AGENT_PROMPTS_DIR first when that is set, as the server
 // does.
@@ -29,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
+	"github.com/tonypine/job-search-hub/server/internal/textextract"
 )
 
 func main() {
@@ -97,9 +104,11 @@ type seededJob struct {
 	heardBack bool
 	payMin    float64
 	payMax    float64
-	// technologies and seniority are its facts.
+	// technologies, seniority and yearsAsked are its facts; 0 years is
+	// not stated.
 	technologies []string
 	seniority    string
+	yearsAsked   int
 	// match, reason, strength and weakness are its brief.
 	match, reason, strength, weakness string
 }
@@ -127,7 +136,7 @@ var seededCompanies = []seededCompany{
 		jobs: []seededJob{
 			{slug: "senior-ios-engineer", title: "Senior iOS Engineer", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
 				phase: "Applied", daysInPhase: 12, payMin: 120000, payMax: 150000, technologies: []string{"Swift", "SwiftUI", "XCTest"}, seniority: "Senior",
-				match: "strong", reason: "Seven years of shipping Swift apps, and the dashboard work is the same kind of product.",
+				yearsAsked: 5, match: "strong", reason: "Seven years of shipping Swift apps, and the dashboard work is the same kind of product.",
 				strength: "Led a SwiftUI rewrite of a consumer app", weakness: "No public SDK work"},
 			{slug: "engineering-manager-ios", title: "Engineering Manager, iOS", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
 				technologies: []string{"Swift"}, seniority: "Manager",
@@ -178,7 +187,7 @@ var seededCompanies = []seededCompany{
 				match: "strong", reason: "SwiftUI and HealthKit, both in the last role.",
 				strength: "Built a HealthKit sleep tracker", weakness: "No HIPAA experience"},
 			{slug: "senior-ios-engineer-patient-app", title: "Senior iOS Engineer, Patient App", location: "Remote (Americas)", workplace: "Remote", status: jobOpen,
-				technologies: []string{"Swift", "SwiftUI"}, seniority: "Senior",
+				technologies: []string{"Swift", "SwiftUI"}, seniority: "Senior", yearsAsked: 12,
 				match: "strong", reason: "The same stack as the role already applied for.",
 				strength: "Seven years of Swift", weakness: "No clinical workflows"},
 			{slug: "android-engineer", title: "Android Engineer", location: "Remote (US only)", workplace: "Remote", status: jobSkipped,
@@ -462,25 +471,74 @@ func seedCompany(ctx context.Context, hub *store.Store, owner store.Actor, compa
 	return ids, nil
 }
 
-// describeJob writes the posting's text.
+// describeJob writes the posting's text as a board stores it: its HTML read
+// into Markdown, with "### " headings, "- " items and bold.
 func describeJob(company seededCompany, job seededJob) string {
-	return fmt.Sprintf(`About %s
-
-%s %s
-
-The role
-
-We're hiring a %s (%s). You'll work with %s, and own features from design to release.
-
-What we're looking for
-
-- %s experience at %s level
-- Care for performance, accessibility and testing
-- Clear writing, in English
-
-This posting is made up, for testing the hub.`,
+	years := ""
+	if job.yearsAsked > 0 {
+		years = fmt.Sprintf("<li><strong>%d+ years</strong> building and shipping iOS apps</li>", job.yearsAsked)
+	}
+	return textextract.ConvertHTMLToMarkdown(fmt.Sprintf(`<h2>About %s</h2>
+<p>%s %s</p>
+<h2>The role</h2>
+<p>We're hiring a %s. This role is <strong>%s</strong>. You'll work with %s, and own features from design to release.</p>
+<h2>What we're looking for</h2>
+<ul>
+<li>%s</li>
+%s
+<li>Care for performance, accessibility and testing</li>
+<li>Clear writing, in English</li>
+</ul>
+<h2>The offer</h2>
+<ul>
+<li><strong>Full-time</strong>, as an employee</li>
+</ul>
+<p>This posting is made up, for testing the hub.</p>`,
 		company.name, company.name, company.summary, job.title, job.location, strings.Join(job.technologies, ", "),
-		strings.Join(job.technologies, ", "), strings.ToLower(job.seniority))
+		quoteSeniority(job), years))
+}
+
+// The posting's words its facts rest on, as the job_facts prompt quotes
+// them: plain words, though some run across the posting's bold, as the
+// location, the years and the contract do.
+const (
+	quotedLanguages = "Clear writing, in English"
+	quotedContract  = "Full-time, as an employee"
+)
+
+func quoteLocation(job seededJob) string {
+	return "This role is " + job.location
+}
+
+func quoteSeniority(job seededJob) string {
+	return fmt.Sprintf("%s experience at %s level", strings.Join(job.technologies, ", "), strings.ToLower(job.seniority))
+}
+
+func quoteYears(job seededJob) string {
+	return fmt.Sprintf("%d+ years building and shipping iOS apps", job.yearsAsked)
+}
+
+// readJobFacts is the job's facts as the job_facts prompt with evidence
+// reads them: each fact the posting states is its value with the posting's
+// words behind it, and flattens to the value alone, so the fit judges it
+// as it would a flat fact.
+func readJobFacts(job seededJob) map[string]any {
+	var years any
+	if job.yearsAsked > 0 {
+		years = map[string]any{"value": job.yearsAsked, "evidence": quoteYears(job)}
+	}
+	return map[string]any{
+		"summary":              job.reason,
+		"technologies":         job.technologies,
+		"seniority":            map[string]any{"as_written": job.seniority, "evidence": quoteSeniority(job)},
+		"years_of_experience":  years,
+		"location_restriction": map[string]any{"restriction": job.location, "evidence": quoteLocation(job)},
+		"timezone_requirement": "not stated",
+		"visa_sponsorship":     "not stated",
+		"contract_type":        map[string]any{"as_written": "Full-time", "evidence": quotedContract},
+		"pay_in_text":          "not stated",
+		"languages":            map[string]any{"value": []string{"English"}, "evidence": quotedLanguages},
+	}
 }
 
 // seedJobReading saves the job's facts and its brief, as the models would
@@ -491,11 +549,7 @@ func seedJobReading(ctx context.Context, hub *store.Store, jobID uuid.UUID, job 
 	if err != nil {
 		return err
 	}
-	facts, err := json.Marshal(map[string]any{
-		"summary": job.reason, "technologies": job.technologies, "seniority": job.seniority, "years_of_experience": nil,
-		"location_restriction": job.location, "timezone_requirement": "not stated", "visa_sponsorship": "not stated",
-		"contract_type": "Full-time", "pay_in_text": "not stated", "languages": []string{"English"},
-	})
+	facts, err := json.Marshal(readJobFacts(job))
 	if err != nil {
 		return err
 	}
