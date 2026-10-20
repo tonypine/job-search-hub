@@ -11,8 +11,11 @@ hooks:
 # Postgres cluster with a made-up job search (see README, "QA dev server").
 # It listens on 127.0.0.1:8090, the app's default hub URL, and the app takes
 # the dev server's owner token, a documented QA value, from HUB_OWNER_TOKEN.
+# enabled stays false: that switch starts the dev server on the Symphony host
+# inside every agent run's sandbox, where Postgres can't run. The QA VM's hub
+# needs only the dev_server command below and dev_server: true on the playbook.
 verification:
-  enabled: true
+  enabled: false
   dev_server:
     build_cmd: server/scripts/dev-server.sh build
     start_cmd: server/scripts/dev-server.sh start
