@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,6 +329,101 @@ func TestAPausedFullBriefStartedOnAnOpenRouterModelRunsAheadOfBackgroundWorkOnTh
 			return update.Kind == modelwork.RunFinishedUpdate && update.JobID != nil && *update.JobID == job.ID && strings.HasPrefix(update.Title, "Full brief written")
 		})
 	})
+}
+
+// startRetriedChatServer answers its first request with no JSON, so a
+// provider that doesn't enforce the schema asks again, and holds the retry
+// until proceed closes or the test ends.
+func startRetriedChatServer(t *testing.T, retried chan<- struct{}, proceed <-chan struct{}) string {
+	t.Helper()
+	var requests atomic.Int32
+	ended := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		content := "I can't brief this one."
+		if requests.Add(1) > 1 {
+			retried <- struct{}{}
+			select {
+			case <-proceed:
+			case <-ended:
+			}
+			content = `{"match":"possible","reason":"Close.","strengths":[],"weaknesses":[]}`
+		}
+		completion, _ := json.Marshal(map[string]any{
+			"model":   body["model"],
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": content}}},
+			"usage":   map[string]any{"prompt_tokens": 900, "completion_tokens": 120},
+		})
+		w.Write(completion)
+	}))
+	t.Cleanup(server.Close)
+	// Cleanups run last first, so a failed test frees the retry before the
+	// server waits for it.
+	t.Cleanup(func() { close(ended) })
+	return server.URL + "/v1"
+}
+
+func TestAStartedRunIsListedRunningThroughItsRetryUntilItsBriefIsSaved(t *testing.T) {
+	service := startRunStartAPI(t)
+	ctx := context.Background()
+	if _, err := service.hub.SaveAgentPrompt(ctx, ownerActor, store.NewAgentPrompt{Kind: store.AgentPromptKindJobBrief, Body: "Brief it.",
+		ResultSchema: json.RawMessage(`{"type":"object"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	job := addJob(t, service.hub, "Staff Engineer")
+	retried, proceed := make(chan struct{}, 1), make(chan struct{})
+	thisMac, err := service.hub.SaveModelProvider(ctx, ownerActor, nil, store.ModelProviderInput{Name: "This Mac",
+		BaseURL: startRetriedChatServer(t, retried, proceed)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kindsURL := service.url + "/v1/jobs/" + job.ID.String() + "/runnable-kinds"
+	getFullBrief := func() modelwork.RunnableKind {
+		kinds := listRunnableKinds(t, kindsURL)
+		return kinds[slices.IndexFunc(kinds, func(kind modelwork.RunnableKind) bool { return kind.ID == store.RunKindJobBriefFull })]
+	}
+	if before := getFullBrief(); before.RunningStarts == nil || len(before.RunningStarts) != 0 {
+		t.Fatalf("running starts before any = %#v, want none", before.RunningStarts)
+	}
+
+	status, started, answer := startRun(t, service, fmt.Sprintf(`{"kind":"job_brief_full","subject_id":%q,"provider_id":%q,"model":"qwen3.8-27b"}`,
+		job.ID, thisMac.ID))
+	if status != http.StatusAccepted || started.TaskID != nil {
+		t.Fatalf("start: %d %s", status, answer)
+	}
+	select {
+	case <-retried:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hub never asked again after an answer with no JSON")
+	}
+
+	// The first answer's record, under the started id, has ended; the run
+	// goes on with its retry, so the kind still lists it.
+	during := getFullBrief()
+	if during.LastRun == nil || during.LastRun.ID != started.ID || during.LastRun.Outcome != store.RunOutcomeInvalid {
+		t.Fatalf("the brief's last run during the retry = %+v, want %s invalid", during.LastRun, started.ID)
+	}
+	if !slices.Equal(during.RunningStarts, []uuid.UUID{started.ID}) {
+		t.Fatalf("running starts during the retry = %v, want %s", during.RunningStarts, started.ID)
+	}
+	if brief, _ := service.hub.GetJobBrief(ctx, job.ID); brief != nil {
+		t.Fatalf("a brief before the retry answered: %+v", brief)
+	}
+
+	close(proceed)
+	var after modelwork.RunnableKind
+	waitFor(t, "the started run to end", func() bool {
+		after = getFullBrief()
+		return len(after.RunningStarts) == 0
+	})
+	// By then the brief is saved, and the retry has its own record.
+	if brief, _ := service.hub.GetJobBrief(ctx, job.ID); brief == nil || brief.Tier != store.JobBriefTierFull {
+		t.Fatalf("the job's brief once the run ended = %+v", brief)
+	}
+	if after.LastRun == nil || after.LastRun.ID == started.ID || after.LastRun.Outcome != store.RunOutcomeSucceeded {
+		t.Fatalf("the brief's last run once it ended = %+v, want the retry's", after.LastRun)
+	}
 }
 
 func TestAKindThatCantRunYetSaysWhyAndStartsNothing(t *testing.T) {

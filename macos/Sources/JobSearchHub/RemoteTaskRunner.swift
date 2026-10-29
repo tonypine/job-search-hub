@@ -19,6 +19,10 @@ final class RemoteTaskRunner {
     /// While an install waits for running work, no queued task is claimed:
     /// it waits for the new version.
     var isPaused = false
+    /// The tasks this Mac is claiming or running, and who waits for each to
+    /// end: true once it ran here.
+    @ObservationIgnored private var claimedTaskIDs: Set<UUID> = []
+    @ObservationIgnored private var endWaiters: [UUID: [CheckedContinuation<Bool, Never>]] = [:]
 
     init(jobFinder: CompanyJobFinder) {
         self.jobFinder = jobFinder
@@ -28,11 +32,18 @@ final class RemoteTaskRunner {
         guard !isChecking, !isPaused else { return }
         isChecking = true
         defer { isChecking = false }
+        // The work runs in a task of its own: the view's task that asked is
+        // cancelled on the next update, and a cancelled task can't tell the
+        // hub how its work ended.
+        await Task { await claimQueued(with: client) }.value
+    }
+
+    private func claimQueued(with client: HubClient) async {
         guard let queued = try? await client.get("v1/tasks", query: [URLQueryItem(name: "status", value: "queued")], as: TasksResponse.self).tasks else {
             return
         }
         for task in queued where !isPaused {
-            await claimAndRun(task, with: client)
+            await claimAndRun(task.id, with: client)
         }
     }
 
@@ -43,12 +54,40 @@ final class RemoteTaskRunner {
         Task { await runAndFinish(task, with: client) }
     }
 
-    /// Runs the task unless another runner claimed it first.
-    private func claimAndRun(_ task: TaskRequest, with client: HubClient) async {
-        guard (try? await client.send("POST", "v1/tasks/\(task.id)/claim", body: [String: String](), as: TaskRequest.self)) != nil else {
-            return
+    /// Runs a task the owner just started from this Mac here at once, as a
+    /// fix asked for here always did, without waiting for a check, in a
+    /// task of its own that no update cancels. A check here may have taken
+    /// it first, on the update that said it was queued: then it waits for
+    /// that run. Returns once the task has ended, true when it ran here;
+    /// false at once when another runner has it, or while an install waits.
+    @discardableResult
+    func runStarted(_ taskID: UUID, with client: HubClient) async -> Bool {
+        guard !isPaused else { return false }
+        return await Task {
+            if await claimAndRun(taskID, with: client) {
+                return true
+            }
+            guard claimedTaskIDs.contains(taskID) else { return false }
+            return await withCheckedContinuation { endWaiters[taskID, default: []].append($0) }
+        }.value
+    }
+
+    /// Runs the task unless this Mac already has it or another runner
+    /// claimed it first.
+    @discardableResult
+    private func claimAndRun(_ taskID: UUID, with client: HubClient) async -> Bool {
+        guard claimedTaskIDs.insert(taskID).inserted else { return false }
+        var ran = false
+        defer {
+            claimedTaskIDs.remove(taskID)
+            endWaiters.removeValue(forKey: taskID)?.forEach { $0.resume(returning: ran) }
+        }
+        guard let task = try? await client.send("POST", "v1/tasks/\(taskID)/claim", body: [String: String](), as: TaskRequest.self) else {
+            return false
         }
         await runAndFinish(task, with: client)
+        ran = true
+        return true
     }
 
     private func runAndFinish(_ task: TaskRequest, with client: HubClient) async {
