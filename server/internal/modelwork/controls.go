@@ -51,6 +51,10 @@ type Controls struct {
 
 	// pausing keeps the saved pauses and the queue's in the same order.
 	pausing sync.Mutex
+	// starts are the runs the owner started that the hub is still running,
+	// by kind and subject; starting guards them.
+	starting sync.Mutex
+	starts   map[startKey][]uuid.UUID
 }
 
 // Status is the queue's state with the runtime's, and how many jobs wait
