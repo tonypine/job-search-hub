@@ -11,11 +11,13 @@ private let jobID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000001")!
 private let firstRunID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000002")!
 private let secondRunID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000003")!
 private let taskID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000004")!
+private let retryRunID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000005")!
 private let kindsPath = "/v1/jobs/\(jobID.uuidString)/runnable-kinds"
 private let briefKind = "job_brief_full"
 
-/// The full brief's kind for the job, with its last run when it has one.
-private func briefJSON(lastRun: UUID?, outcome: String) -> String {
+/// The full brief's kind for the job, with its last run when it has one,
+/// and the started runs the hub is still running.
+private func briefJSON(lastRun: UUID?, outcome: String, running: [UUID]) -> String {
     let run = lastRun.map { id in
         #"""
         ,"last_run":{"id":"\#(id.uuidString)","record":"model_call","kind":"job_brief_full",
@@ -23,22 +25,24 @@ private func briefJSON(lastRun: UUID?, outcome: String) -> String {
          "started_at":"2020-10-29T14:14:00Z","outcome":"\#(outcome)","prompt_tokens":0,"completion_tokens":0,"started_by_owner":true}
         """#
     } ?? ""
+    let runningIDs = running.map { "\"\($0.uuidString)\"" }.joined(separator: ",")
     return #"""
     {"id":"job_brief_full","title":"Full briefs","description":"Claude writes a full brief.","group":"jobs","subject_type":"job",
-     "engine":"claude_one_shot","automatic":true,"paused":true,"can_run":true,"needs_note":false\#(run)}
+     "engine":"claude_one_shot","automatic":true,"paused":true,"can_run":true,"needs_note":false,
+     "running_starts":[\#(runningIDs)]\#(run)}
     """#
 }
 
 /// The job's kinds as the hub lists them: the full brief, its last run
-/// `lastRun` with `outcome`.
-private func kinds(lastRun: UUID?, outcome: String = "succeeded") -> StubHub.Answer {
-    StubHub.Answer(status: 200, body: #"{"kinds":[\#(briefJSON(lastRun: lastRun, outcome: outcome))]}"#)
+/// `lastRun` with `outcome`, and the started runs still `running`.
+private func kinds(lastRun: UUID?, outcome: String = "succeeded", running: [UUID] = []) -> StubHub.Answer {
+    StubHub.Answer(status: 200, body: #"{"kinds":[\#(briefJSON(lastRun: lastRun, outcome: outcome, running: running))]}"#)
 }
 
 /// The full brief as the popover read it, with an earlier run that landed
 /// long before the starts here.
 private func makeBrief() throws -> RunnableKind {
-    try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(briefJSON(lastRun: UUID(), outcome: "succeeded").utf8))
+    try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(briefJSON(lastRun: UUID(), outcome: "succeeded", running: []).utf8))
 }
 
 /// What a start answers: the run's id, and the Mac's task for an agent.
@@ -50,13 +54,23 @@ private func started(_ runID: UUID, taskID: UUID? = nil) -> StubHub.Answer {
     """#)
 }
 
-/// A hub that starts the first run, whose record says it is running.
+/// A hub that starts the first run and runs it, with no record yet.
 private func makeHub() -> (HubClient, StubHub.Recording) {
     let (session, recording) = StubHub.makeSession(answers: [
         "/v1/runs": started(firstRunID),
-        kindsPath: kinds(lastRun: firstRunID, outcome: "running"),
+        kindsPath: kinds(lastRun: nil, running: [firstRunID]),
     ])
     return (HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session), recording)
+}
+
+/// Waits, for up to five seconds, until the hub has had `count` requests:
+/// a follow asks again only once it has read the answer before.
+@MainActor
+private func waitForRequests(_ count: Int, on recording: StubHub.Recording) async {
+    let deadline = Date.now.addingTimeInterval(5)
+    while recording.requestCount < count, Date.now < deadline {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 /// The tasks a run's start handed the Mac.
@@ -82,6 +96,30 @@ private final class TaskLog {
     #expect(starts.revision == 1)
 }
 
+@MainActor @Test func aRowSaysRunningThroughTheRetryOfAnInvalidFirstAnswer() async throws {
+    let (client, recording) = makeHub()
+    let starts = JobRunStarts(pollInterval: .milliseconds(10))
+    let follow = try await starts.start(try makeBrief(), for: jobID, with: client)
+
+    // The first answer's record, under the started id, says invalid; the
+    // hub asks again, so it still runs the start.
+    recording.setAnswer(kinds(lastRun: firstRunID, outcome: "invalid", running: [firstRunID]), for: kindsPath)
+    let asked = recording.requestCount
+    await waitForRequests(asked + 2, on: recording)
+
+    #expect(recording.requestCount >= asked + 2)
+    #expect(starts.getRunning(briefKind, of: jobID)?.runID == firstRunID)
+    #expect(starts.isBusy(briefKind, of: jobID))
+    #expect(starts.revision == 0)
+
+    // The retry, under its own id, answered, and the brief is saved.
+    recording.setAnswer(kinds(lastRun: retryRunID, running: []), for: kindsPath)
+    await follow.value
+
+    #expect(starts.getRunning(briefKind, of: jobID) == nil)
+    #expect(starts.revision == 1)
+}
+
 @MainActor @Test func aStartTheHubRefusesLeavesNoRunningRow() async throws {
     let (client, recording) = makeHub()
     recording.setAnswer(StubHub.Answer(status: 409, body: #"{"error":"needs the tailored CV first"}"#), for: "/v1/runs")
@@ -99,10 +137,11 @@ private final class TaskLog {
     let (client, recording) = makeHub()
     let starts = JobRunStarts(pollInterval: .milliseconds(10))
     let firstFollow = try await starts.start(try makeBrief(), for: jobID, with: client)
+    recording.setAnswer(kinds(lastRun: nil, running: [firstRunID, secondRunID]), for: kindsPath)
     recording.setAnswer(started(secondRunID), for: "/v1/runs")
     let secondFollow = try await starts.start(try makeBrief(), for: jobID, with: client)
 
-    recording.setAnswer(kinds(lastRun: firstRunID), for: kindsPath)
+    recording.setAnswer(kinds(lastRun: firstRunID, running: [secondRunID]), for: kindsPath)
     await firstFollow.value
 
     #expect(starts.getRunning(briefKind, of: jobID)?.runID == secondRunID)
@@ -113,21 +152,6 @@ private final class TaskLog {
 
     #expect(starts.getRunning(briefKind, of: jobID) == nil)
     #expect(starts.revision == 2)
-}
-
-@MainActor @Test func aRunThatLandedBeforeTheStartDoesntEndItsRow() async throws {
-    let (client, recording) = makeHub()
-    // Another run of the kind, finished since the popover read the kinds.
-    recording.setAnswer(kinds(lastRun: secondRunID), for: kindsPath)
-    let starts = JobRunStarts(pollInterval: .milliseconds(10), followLimit: { _ in 1 })
-
-    let follow = try await starts.start(try makeBrief(), for: jobID, with: client)
-    await follow.value
-
-    // The start and more than one read of the runs: the first read, which
-    // found the other run, didn't end the row; the follow limit did.
-    #expect(recording.requestCount > 2)
-    #expect(starts.getRunning(briefKind, of: jobID) == nil)
 }
 
 @MainActor @Test func aRowStopsSayingRunningOnceTheRunCouldNoLongerBeGoing() async throws {
@@ -163,10 +187,17 @@ private final class TaskLog {
 @MainActor @Test func anAgentsTaskAnotherRunnerTookIsFollowedOnTheHub() async throws {
     let (client, recording) = makeHub()
     recording.setAnswer(started(firstRunID, taskID: taskID), for: "/v1/runs")
-    recording.setAnswer(kinds(lastRun: firstRunID), for: kindsPath)
+    // The hub lists no agent run as running: the agent's record says so.
+    recording.setAnswer(kinds(lastRun: firstRunID, outcome: "running"), for: kindsPath)
     let starts = JobRunStarts(pollInterval: .milliseconds(10), runTask: { _, _ in false })
 
     let follow = try await starts.start(try makeBrief(), for: jobID, with: client)
+    let asked = recording.requestCount
+    await waitForRequests(asked + 2, on: recording)
+
+    #expect(starts.getRunning(briefKind, of: jobID)?.runID == firstRunID)
+
+    recording.setAnswer(kinds(lastRun: firstRunID), for: kindsPath)
     await follow.value
 
     #expect(starts.getRunning(briefKind, of: jobID) == nil)

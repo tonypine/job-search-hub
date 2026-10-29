@@ -7,6 +7,7 @@ private let hubURL = URL(string: "http://localhost:8090")!
 private let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
 private let providerID = UUID(uuidString: "5f1b1c7e-3e0a-4a51-9f0e-6c1d2b7a8e90")!
 private let lastFactsRunID = UUID(uuidString: "0aa55565-58d2-4247-ba01-cba65060a316")!
+private let runningBriefID = UUID(uuidString: "0aa55565-58d2-4247-ba01-cba65060a317")!
 
 /// A job's runnable kinds as the hub answers them, in its catalog's order.
 private let kindsJSON = #"""
@@ -16,13 +17,14 @@ private let kindsJSON = #"""
   "last_run":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","record":"model_call","kind":"job_facts","subject":{"type":"job","id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","title":"Staff engineer"},
    "model":"qwen3-8b.gguf","provider":"This Mac","started_at":"2026-10-29T13:12:05Z","duration_ms":4200,"outcome":"invalid","prompt_tokens":900,"completion_tokens":80,
    "cost_usd_estimate":"0.0012","started_by_owner":false},
-  "can_run":true,"needs_note":false},
+  "can_run":true,"needs_note":false,"running_starts":[]},
  {"id":"job_brief_full","title":"Full briefs","description":"Claude writes a full brief.","group":"jobs","subject_type":"job","engine":"claude_one_shot","automatic":true,
-  "paused":true,"route":{"provider_id":"5f1b1c7e-3e0a-4a51-9f0e-6c1d2b7a8e91","provider":"Claude","model":"claude-sonnet"},"can_run":true,"needs_note":false},
+  "paused":true,"route":{"provider_id":"5f1b1c7e-3e0a-4a51-9f0e-6c1d2b7a8e91","provider":"Claude","model":"claude-sonnet"},"can_run":true,"needs_note":false,
+  "running_starts":["0aa55565-58d2-4247-ba01-cba65060a317"]},
  {"id":"recruiter_screen","title":"Recruiter screens","description":"Reads the CV as a recruiter.","group":"jobs","subject_type":"job","engine":"model_call","automatic":true,
-  "paused":false,"can_run":false,"reason":"needs the tailored CV first","needs_note":false},
+  "paused":false,"can_run":false,"reason":"needs the tailored CV first","needs_note":false,"running_starts":[]},
  {"id":"job_fix","title":"Job fixes","description":"An agent fixes a job's details.","group":"jobs","subject_type":"job","engine":"claude_agent","automatic":false,
-  "paused":false,"can_run":true,"needs_note":true}
+  "paused":false,"can_run":true,"needs_note":true,"running_starts":[]}
 ]}
 """#
 
@@ -51,7 +53,8 @@ private let english = Locale(identifier: "en_US")
     #expect(facts.route == RunnableKindRoute(providerID: providerID, provider: "This Mac", model: "qwen3-8b.gguf"))
     #expect(facts.lastRun?.id == lastFactsRunID && facts.lastRun?.outcome == "invalid")
     #expect(facts.canRun && !facts.paused && !facts.needsNote)
-    #expect(kinds[1].paused && kinds[1].lastRun == nil)
+    #expect(kinds[1].paused && kinds[1].lastRun == nil && kinds[1].runningStarts == [runningBriefID])
+    #expect(facts.runningStarts.isEmpty)
     #expect(!kinds[2].canRun && kinds[2].reason == "needs the tailored CV first" && kinds[2].route == nil)
     #expect(kinds[3].needsNote && kinds[3].isAgent)
 }
@@ -132,33 +135,46 @@ private let english = Locale(identifier: "en_US")
     }
 }
 
-@Test func aStartedRunLandsOnceItOrALaterRunOfItsKindFinishes() throws {
+@Test func aStartedModelRunLandsOnceTheHubNoLongerRunsIt() throws {
     var facts = try getKind("job_facts")
-    let started = UUID()
-    let since = try #require(facts.lastRun?.startedAt).addingTimeInterval(60)
+    let started = StartedRun(id: UUID(), kind: "job_facts", subjectID: jobID, startedByOwner: true)
+    facts.runningStarts = [UUID(), started.id]
+    #expect(!JobRuns.hasLanded(started, of: facts))
 
-    // The run before the start, finished, isn't it.
-    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
+    // Its first answer's record, under its id, says invalid while the hub
+    // asks again; another start of the kind ends meanwhile.
+    facts.lastRun?.id = started.id
+    facts.lastRun?.outcome = "invalid"
+    facts.runningStarts = [started.id]
+    #expect(!JobRuns.hasLanded(started, of: facts))
 
-    facts.lastRun?.id = started
-    facts.lastRun?.outcome = "running"
-    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
-
-    facts.lastRun?.outcome = "succeeded"
-    #expect(JobRuns.hasLanded(started, since: since, of: facts))
-
-    // A retry is recorded under its own id, after the start.
+    // The retry is recorded under its own id, and the run ends.
     facts.lastRun?.id = UUID()
-    facts.lastRun?.outcome = "failed"
-    facts.lastRun?.startedAt = since.addingTimeInterval(30)
-    #expect(JobRuns.hasLanded(started, since: since, of: facts))
+    facts.lastRun?.outcome = "succeeded"
+    facts.runningStarts = []
+    #expect(JobRuns.hasLanded(started, of: facts))
 
-    // A run that began before the start and finished after it isn't it.
-    facts.lastRun?.startedAt = since.addingTimeInterval(-30)
-    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
-
+    // One that gave up before asking a model has no record.
     facts.lastRun = nil
-    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
+    #expect(JobRuns.hasLanded(started, of: facts))
+}
+
+@Test func anAgentsStartedRunLandsOnceItsRecordFinishes() throws {
+    var fix = try getKind("job_fix")
+    let started = StartedRun(id: UUID(), kind: JobRuns.fixKind, subjectID: jobID, startedByOwner: true, taskID: UUID())
+    #expect(!JobRuns.hasLanded(started, of: fix))
+
+    // An earlier run of the kind isn't it.
+    fix.lastRun = try getKind("job_facts").lastRun
+    fix.lastRun?.outcome = "succeeded"
+    #expect(!JobRuns.hasLanded(started, of: fix))
+
+    fix.lastRun?.id = started.id
+    fix.lastRun?.outcome = "running"
+    #expect(!JobRuns.hasLanded(started, of: fix))
+
+    fix.lastRun?.outcome = "failed"
+    #expect(JobRuns.hasLanded(started, of: fix))
 }
 
 @Test func anAgentIsFollowedLongerThanAModelRun() throws {

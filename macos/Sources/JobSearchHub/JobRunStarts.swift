@@ -60,14 +60,13 @@ final class JobRunStarts {
         defer { starting.remove(key) }
         let started = try await client.startRun(StartRunRequest(kind: kind.id, subjectType: JobRuns.jobSubject, subjectID: jobID, note: note))
         running[key] = Running(runID: started.id, startedAt: requestedAt)
-        return Task { await follow(started, since: requestedAt, of: kind, key: key, with: client) }
+        return Task { await follow(started, of: kind, key: key, with: client) }
     }
 
     /// Runs an agent's task here when this Mac gets it, and has landed once
-    /// it ends. Otherwise reads the job's runs every few seconds until the
-    /// run started, or a later one of its kind, has finished, or for as long
-    /// as such a run can take.
-    private func follow(_ started: StartedRun, since: Date, of kind: RunnableKind, key: Key, with client: HubClient) async {
+    /// it ends. Otherwise reads the job's kinds every few seconds until the
+    /// run started has ended, or for as long as such a run can take.
+    private func follow(_ started: StartedRun, of kind: RunnableKind, key: Key, with client: HubClient) async {
         defer {
             if running[key]?.runID == started.id {
                 running[key] = nil
@@ -81,7 +80,7 @@ final class JobRunStarts {
         while Date.now < deadline {
             try? await Task.sleep(for: pollInterval)
             guard let kinds = try? await client.listRunnableKinds(forJob: key.jobID) else { continue }
-            if let current = kinds.first(where: { $0.id == kind.id }), JobRuns.hasLanded(started.id, since: since, of: current) {
+            if let current = kinds.first(where: { $0.id == kind.id }), JobRuns.hasLanded(started, of: current) {
                 return
             }
         }

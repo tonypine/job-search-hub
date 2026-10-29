@@ -34,6 +34,10 @@ public struct RunnableKind: Decodable, Equatable, Identifiable, Sendable {
     public var reason: String?
     /// A start takes the owner's note on what to fix.
     public var needsNote: Bool
+    /// The runs of the kind the owner started for the subject that the hub
+    /// is still running, retries and fallbacks included. An agent's, which
+    /// the Mac runs, aren't here.
+    public var runningStarts: [UUID]
 
     public var isAgent: Bool { engine == "claude_agent" }
 }
@@ -193,17 +197,16 @@ public enum JobRuns {
         return nil
     }
 
-    /// Whether the run started at `since` has landed: its record, or a
-    /// later one of the kind for the job, such as a retry the hub records
-    /// under its own id, has finished. A run that began before the start,
-    /// even one that finished after it, isn't it.
-    public static func hasLanded(_ started: UUID, since: Date, of kind: RunnableKind) -> Bool {
-        guard let last = kind.lastRun, last.outcome != "running" else { return false }
-        return last.id == started || last.startedAt >= since.addingTimeInterval(-clockSlack)
+    /// Whether the run started has landed. One the hub runs has once the
+    /// kind no longer lists it running: its first record may say "invalid"
+    /// while the hub asks again or falls back to another model, and the job
+    /// changes after its last. An agent's, which the Mac's task runs, has
+    /// once its record, under the started id, finished.
+    public static func hasLanded(_ started: StartedRun, of kind: RunnableKind) -> Bool {
+        guard started.taskID != nil else { return !kind.runningStarts.contains(started.id) }
+        guard let last = kind.lastRun else { return false }
+        return last.id == started.id && last.outcome != "running"
     }
-
-    /// How far the hub's clock may run behind the Mac's for a run's start.
-    static let clockSlack: TimeInterval = 2
 
     /// How long a started run is followed before the row stops saying it
     /// runs: the hub gives a model run ten minutes, an agent takes longer.
