@@ -124,9 +124,8 @@ func TestRunsFilterByKindSubjectOutcomeAndTime(t *testing.T) {
 	sorting := recordTaskRunAt(t, hub, store.AgentPromptKindMailTriage, &message.ID, store.RunOutcomeFailed, base.Add(time.Hour))
 	thread := recordTaskRunAt(t, hub, store.AgentPromptKindHiringThread, nil, store.RunOutcomeInvalid, base.Add(2*time.Hour))
 	research := startAgentRunAt(t, pool, hub, store.AgentRunKindCompanyTriage, "acme.com", &company.ID, base.Add(3*time.Hour))
-	if _, err := hub.FinishAgentRun(ctx, research.ID, store.AgentRunOutcome{Status: store.AgentRunSucceeded, CostUSDEstimate: "0.42"}); err != nil {
-		t.Fatal(err)
-	}
+	// Thirty days are more milliseconds than an integer holds.
+	finishAgentRunAfter(t, pool, hub, research.ID, 30*24*time.Hour, "0.42")
 	seed := startAgentRunAt(t, pool, hub, store.AgentRunKindProfileSeed, "owner profile", nil, base.Add(4*time.Hour))
 
 	list := func(filter store.RunFilter) []store.Run {
@@ -175,7 +174,8 @@ func TestRunsFilterByKindSubjectOutcomeAndTime(t *testing.T) {
 	}
 	if run := forCompany[0]; run.Subject == nil || run.Subject.Type != store.RunSubjectCompany || run.Subject.Title != "Acme" ||
 		run.Subject.CompanyID != nil || run.Record != store.RunRecordAgentRun || run.Provider != "Claude" || !run.StartedByOwner ||
-		run.Outcome != store.RunOutcomeSucceeded || run.CostUSDEstimate == nil || *run.CostUSDEstimate != "0.42" || run.DurationMS == nil {
+		run.Outcome != store.RunOutcomeSucceeded || run.CostUSDEstimate == nil || *run.CostUSDEstimate != "0.42" ||
+		run.DurationMS == nil || *run.DurationMS != 30*24*60*60*1000 {
 		t.Errorf("the research run = %+v", run)
 	}
 	if runs := list(store.RunFilter{SubjectType: store.RunSubjectJob, SubjectID: &company.ID}); len(runs) != 0 {
