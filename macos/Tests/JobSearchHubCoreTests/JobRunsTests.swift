@@ -119,11 +119,11 @@ private let english = Locale(identifier: "en_US")
 @Test func aRowsModelCarriesItsProvidersMark() throws {
     let providers = [ModelProvider(id: providerID, kind: ModelProvider.hubRuntimeKind, name: "This Mac", baseURL: "", hasKey: false, enforcesSchema: true)]
 
-    let facts = try #require(JobRuns.getModel(of: try getKind("job_facts"), providers: providers))
+    let facts = try #require(RunModelSelection(kind: try getKind("job_facts")).getLabel(providers: providers, catalogs: [:]))
     #expect(facts.name == "qwen3-8b" && facts.markSymbol == "cpu" && facts.runsOnText == "Runs on qwen3-8b from This Mac")
-    let fix = try #require(JobRuns.getModel(of: try getKind("job_fix"), providers: providers))
+    let fix = try #require(RunModelSelection(kind: try getKind("job_fix")).getLabel(providers: providers, catalogs: [:]))
     #expect(fix.name == "Claude" && fix.markSymbol == "sparkle")
-    #expect(JobRuns.getModel(of: try getKind("recruiter_screen"), providers: providers) == nil)
+    #expect(RunModelSelection(kind: try getKind("recruiter_screen")).getLabel(providers: providers, catalogs: [:]) == nil)
 }
 
 @Test func theRowShowsNoPriceOrTokens() throws {
@@ -191,6 +191,17 @@ private let english = Locale(identifier: "en_US")
     let fix = StartRunRequest(kind: JobRuns.fixKind, subjectType: JobRuns.jobSubject, subjectID: jobID, note: "the title has the city in it")
     let fixEncoded = try #require(String(data: HubJSON.makeEncoder().encode(fix), encoding: .utf8))
     #expect(fixEncoded.contains(#""note":"the title has the city in it""#))
+    // On the kind's model, the start names none.
+    #expect(!encoded.contains("provider_id") && !encoded.contains("model") && !fixEncoded.contains("model"))
+}
+
+@Test func aStartOnAModelChosenForTheRunNamesItsProviderAndModel() throws {
+    let flash = RoutedModel(providerID: providerID, model: "google/gemini-2.5-flash")
+    let start = StartRunRequest(kind: JobRuns.cvKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: flash)
+    let sent = try #require(try JSONSerialization.jsonObject(with: HubJSON.makeEncoder().encode(start)) as? [String: Any])
+
+    #expect(sent["kind"] as? String == "job_cv" && sent["subject_id"] as? String == jobID.uuidString)
+    #expect(sent["provider_id"] as? String == providerID.uuidString && sent["model"] as? String == "google/gemini-2.5-flash")
 }
 
 @Test func theClientListsAJobsKindsAndStartsOne() async throws {

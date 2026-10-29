@@ -269,3 +269,83 @@ private func getOpenRouter() throws -> ModelChoiceGroup {
     // The fallback's line waits for its provider, which says where it runs.
     #expect(kindRoutes.getFallbackLine(for: brief) == nil)
 }
+
+/// A job's kind as its Run popover lists it, routed to `route` when given.
+private func makeRunnableKind(_ id: String, engine: String, route: RoutedModel? = nil, provider: String = "") throws -> RunnableKind {
+    let routeJSON = route.map { #","route":{"provider_id":"\#($0.providerID.uuidString)","provider":"\#(provider)","model":"\#($0.model)"}"# } ?? ""
+    let json = #"""
+    {"id":"\#(id)","title":"\#(id)","description":"","subject_type":"job","engine":"\#(engine)","automatic":true,"paused":false,
+     "can_run":true,"needs_note":false,"running_starts":[]\#(routeJSON)}
+    """#
+    return try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(json.utf8))
+}
+
+@Test func aRunsSelectStartsOnItsKindsModelAndOnlyAnotherModelGoesWithTheStart() throws {
+    let local = RoutedModel(providerID: runtimeID, model: "Qwen3.8-27B-Q4_K_M.gguf")
+    let flash = RoutedModel(providerID: openRouterID, model: "google/gemini-2.5-flash")
+    var selection = RunModelSelection(kind: try makeRunnableKind("job_cv", engine: "claude_one_shot", route: local, provider: "This Mac"))
+
+    #expect(selection.kindModel == local && selection.selected == local && selection.chosen == nil)
+
+    selection.pick(flash)
+    #expect(selection.selected == flash && selection.chosen == flash)
+    // The kind's model stays the route's.
+    #expect(selection.kindModel == local)
+
+    // Picking the kind's own model again leaves the start to the kind.
+    selection.pick(local)
+    #expect(selection.selected == local && selection.chosen == nil)
+}
+
+@Test func aRunsSelectNamesTheModelWithItsProvidersMark() throws {
+    let providers = try decodeProviders()
+    let catalogs = try decodeCatalogs()
+    let local = RoutedModel(providerID: runtimeID, model: "Qwen3.8-27B-Q4_K_M.gguf")
+    var selection = RunModelSelection(kind: try makeRunnableKind("job_cv", engine: "claude_one_shot", route: local, provider: "This Mac"))
+
+    let own = try #require(selection.getLabel(providers: providers, catalogs: catalogs))
+    #expect(own.name == "Qwen3.8-27B-Q4_K_M" && own.markSymbol == "cpu" && own.runsOnText == "Runs on Qwen3.8-27B-Q4_K_M from This Mac")
+    // Before the providers are read, the route names its provider.
+    #expect(selection.getLabel(providers: [], catalogs: [:])?.runsOnText == "Runs on Qwen3.8-27B-Q4_K_M from This Mac")
+
+    selection.pick(RoutedModel(providerID: openRouterID, model: "google/gemini-2.5-flash"))
+    let picked = try #require(selection.getLabel(providers: providers, catalogs: catalogs))
+    #expect(picked.name == "Google: Gemini 2.5 Flash" && picked.providerName == "OpenRouter" && picked.markSymbol == "arrow.triangle.branch")
+
+    // A kind nothing routes names no model.
+    #expect(RunModelSelection(kind: try makeRunnableKind("job_facts", engine: "model_call")).getLabel(providers: providers, catalogs: catalogs) == nil)
+}
+
+@Test func aRunsSelectListsNamesWithNoPriceOrTime() throws {
+    let selection = RunModelSelection(kind: try makeRunnableKind("job_cv", engine: "claude_one_shot"))
+    let groups = selection.getGroups(providers: try decodeProviders(), catalogs: try decodeCatalogs())
+
+    #expect(groups.map(\.title) == ["Claude subscription", "On this Mac", "OpenRouter", "Lab box"])
+    let choices = groups.flatMap(\.choices)
+    #expect(choices.contains { $0.routed.model == "google/gemini-2.5-flash" && $0.title == "Google: Gemini 2.5 Flash" })
+    #expect(choices.allSatisfy { $0.detail == nil })
+    for choice in choices {
+        #expect(!choice.title.contains("$") && !choice.title.contains("token") && !choice.title.contains("a run"))
+    }
+    // The full menu has them; the compact form drops them.
+    let full = try getGroups().flatMap(\.choices)
+    #expect(full.contains { $0.detail?.contains("per M tokens") == true } && full.contains { $0.detail?.hasSuffix("a run") == true })
+    #expect(ModelChoices.makeCompact(try getGroups()).flatMap(\.choices).allSatisfy { $0.detail == nil })
+}
+
+@Test func anAgentsSelectListsClaudeModelsOnly() throws {
+    let providers = try decodeProviders()
+    let catalogs = try decodeCatalogs()
+    var fix = RunModelSelection(kind: try makeRunnableKind("job_fix", engine: "claude_agent"))
+
+    let groups = fix.getGroups(providers: providers, catalogs: catalogs)
+    #expect(groups.map(\.title) == ["Claude subscription"])
+    #expect(groups[0].choices.map(\.routed.model) == ["opus", "sonnet", "haiku"])
+    #expect(groups[0].choices.allSatisfy { $0.detail == nil })
+    // With no route it runs on the model Claude Code picks: Claude.
+    #expect(fix.selected == nil && fix.getLabel(providers: providers, catalogs: catalogs)?.name == "Claude")
+
+    fix.pick(RoutedModel(providerID: claudeID, model: "sonnet"))
+    #expect(fix.chosen == RoutedModel(providerID: claudeID, model: "sonnet"))
+    #expect(fix.getLabel(providers: providers, catalogs: catalogs)?.name == "Claude Sonnet")
+}
