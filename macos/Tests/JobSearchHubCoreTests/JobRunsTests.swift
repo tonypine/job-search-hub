@@ -195,6 +195,13 @@ private let english = Locale(identifier: "en_US")
     #expect(!encoded.contains("provider_id") && !encoded.contains("model") && !fixEncoded.contains("model"))
 }
 
+@Test func theSectionsStartTheKindsTheHubRunsThemAs() {
+    // A job's facts, full brief and tailored CV, as the hub names their kinds.
+    #expect(JobRuns.factsKind == "job_facts")
+    #expect(JobRuns.fullBriefKind == "job_brief_full")
+    #expect(JobRuns.cvKind == "job_cv")
+}
+
 @Test func aStartOnAModelChosenForTheRunNamesItsProviderAndModel() throws {
     let flash = RoutedModel(providerID: providerID, model: "google/gemini-2.5-flash")
     let start = StartRunRequest(kind: JobRuns.cvKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: flash)
