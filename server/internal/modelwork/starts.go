@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -223,6 +224,12 @@ type RunnableKind struct {
 	Reason string `json:"reason,omitempty"`
 	// NeedsNote says a start takes a note: the owner's word on what to fix.
 	NeedsNote bool `json:"needs_note"`
+	// RunningStarts are the ids of the kind's runs the owner started for the
+	// subject that the hub is still running, oldest first. A run stays here
+	// through its retries and fallbacks, whose records come after its first,
+	// until what it makes for the subject is saved. An agent run, which the
+	// Mac runs, isn't here.
+	RunningStarts []uuid.UUID `json:"running_starts"`
 }
 
 // ListRunnableKinds is every kind the owner can start for the job or the
@@ -249,7 +256,7 @@ func (controls *Controls) ListRunnableKinds(ctx context.Context, subjectType str
 		}
 		runnable := RunnableKind{
 			RunKind: kind, Paused: kind.Automatic && controls.Queue.IsPaused(kind.ID), Route: route,
-			NeedsNote: kind.ID == store.AgentRunKindJobFix,
+			NeedsNote: kind.ID == store.AgentRunKindJobFix, RunningStarts: controls.listRunningStarts(startKey{kind: kind.ID, subjectID: subjectID}),
 		}
 		if len(page.Runs) > 0 {
 			runnable.LastRun = &page.Runs[0]
@@ -343,8 +350,9 @@ type StartedRun struct {
 
 // StartRun starts the kind's run for the subject now, ahead of background
 // work and whatever the kind's pause, and returns once it is queued. A model
-// run's records and the job change as it ends; an agent run waits for the
-// Mac. A kind that can't run yet is a CannotRunError and starts nothing.
+// run's records and the job change as it goes, and its kind lists it among
+// its running starts until it ends; an agent run waits for the Mac. A kind
+// that can't run yet is a CannotRunError and starts nothing.
 func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, request StartRequest) (StartedRun, error) {
 	kind, found := store.GetRunKind(request.Kind)
 	starter, startable := starters[request.Kind]
@@ -390,16 +398,56 @@ func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, reque
 	if chosen != nil {
 		runCtx = modelrouter.WithModel(runCtx, kind.ID, chosen.ProviderID, chosen.Model)
 	}
+	key := startKey{kind: kind.ID, subjectID: request.SubjectID}
+	controls.beginStart(key, started.ID)
 	go func() {
 		runCtx, cancel := context.WithTimeout(runCtx, startedRunTimeout)
 		defer cancel()
 		err := starter.run(runCtx, controls, request.SubjectID)
+		controls.endStart(key, started.ID)
 		if err != nil {
 			slog.Warn("a started run failed", "kind", kind.ID, "subject", request.SubjectID, "run", started.ID, "error", err)
 		}
 		controls.recordRunEnded(context.WithoutCancel(ctx), kind, starter, subject, request.SubjectID, err)
 	}()
 	return started, nil
+}
+
+// startKey is a kind's runs for one subject.
+type startKey struct {
+	kind      string
+	subjectID uuid.UUID
+}
+
+// beginStart lists the started run as running until endStart.
+func (controls *Controls) beginStart(key startKey, runID uuid.UUID) {
+	controls.starting.Lock()
+	defer controls.starting.Unlock()
+	if controls.starts == nil {
+		controls.starts = map[startKey][]uuid.UUID{}
+	}
+	controls.starts[key] = append(controls.starts[key], runID)
+}
+
+// endStart says the started run ended: it made what it makes for its
+// subject, or gave up.
+func (controls *Controls) endStart(key startKey, runID uuid.UUID) {
+	controls.starting.Lock()
+	defer controls.starting.Unlock()
+	running := slices.DeleteFunc(controls.starts[key], func(id uuid.UUID) bool { return id == runID })
+	if len(running) == 0 {
+		delete(controls.starts, key)
+		return
+	}
+	controls.starts[key] = running
+}
+
+// listRunningStarts are the kind's started runs for the subject that the
+// hub is still running, oldest first.
+func (controls *Controls) listRunningStarts(key startKey) []uuid.UUID {
+	controls.starting.Lock()
+	defer controls.starting.Unlock()
+	return append([]uuid.UUID{}, controls.starts[key]...)
 }
 
 // readChosenModel is the provider and model the start chose for this run,

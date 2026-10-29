@@ -174,9 +174,9 @@ struct JobDetailView: View {
     @Environment(JobDecisions.self) private var decisions
     @Environment(ApplicationChanges.self) private var changes
     @Environment(DetailsInspector.self) private var inspector
+    @Environment(JobRunStarts.self) private var runStarts
     @State private var model = JobDetailModel()
     @State private var isAskingToSkip = false
-    @State private var isAskingForFix = false
     @State private var followingUpApplicationID: UUID?
     @State private var followUpNote = ""
     /// The card or section to scroll to, once its tab shows.
@@ -249,7 +249,7 @@ struct JobDetailView: View {
             }
         }
         .onChange(of: model.details?.job.title, initial: true) { showTitle(model.details?.job.title) }
-        .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
+        .onChange(of: [decisions.revision, taskRunner.fixRevision, runStarts.revision]) { Task { await model.load(jobID, with: client) } }
         .alert("Followed up", isPresented: Binding(get: { followingUpApplicationID != nil }, set: { if !$0 { followingUpApplicationID = nil } })) {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
@@ -260,16 +260,6 @@ struct JobDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Restarts the count to the next follow-up.")
-        }
-        .sheet(isPresented: $isAskingForFix) {
-            FixJobSheet(jobTitle: model.details?.job.title ?? "this job") { note in
-                do {
-                    try await taskRunner.fixJob(jobID, note: note, with: client)
-                    return nil
-                } catch {
-                    return HubFailure("Couldn't ask for the fix", error)
-                }
-            }
         }
         .sheet(isPresented: $isAskingToSkip) {
             SkipJobsSheet(jobCount: 1) { reason in
@@ -508,9 +498,10 @@ struct JobDetailView: View {
     }
 
     /// The decision to make: Pursue, the one primary action, then Later and
-    /// Skip, each with its key, the posting as an icon and Fix in the
-    /// overflow. A skipped job's next step is Restore, one in an open phase
-    /// of the pipeline is Followed up…, and a closed one's is its posting.
+    /// Skip, each with its key, Run ▾, the only way the header starts a run,
+    /// fixing the job's details included, and the posting as an icon. A
+    /// skipped job's next step is Restore, one in an open phase of the
+    /// pipeline is Followed up…, and a closed one's is its posting.
     private func actionBar(_ details: JobDetails) -> some View {
         let isFollowingUp = details.application != nil && details.phase?.isClosed == false
         let isPostingNext = details.job.dismissedAt == nil && details.phase != nil && !isFollowingUp
@@ -544,10 +535,9 @@ struct JobDetailView: View {
                         ? "Take it out as not for you, with a reason (S on Decide, Today and a job's page)"
                         : "Take it out as not for you, with Undo and a reason from the note that says so (S)")
             }
+            JobRunButton(jobID: jobID, jobTitle: details.job.title, client: client)
         } overflow: {
-            Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
-                .disabled(taskRunner.fixingJobIDs.contains(jobID))
-                .help("Say what's wrong with its details, and an agent corrects them")
+            EmptyView()
         } accessory: {
             if !isPostingNext {
                 openPostingButton(details)
