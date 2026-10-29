@@ -216,7 +216,8 @@ private final class TaskLog {
 
     // Only the start went to the hub, with the model and the note.
     #expect(recording.requestCount == 1)
-    let sent = try #require(try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any])
+    let body = try #require(recording.lastBody)
+    let sent = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
     #expect(sent["provider_id"] as? String == sonnet.providerID.uuidString && sent["model"] as? String == "sonnet")
     #expect(sent["note"] as? String == "the title has the city in it" && sent["kind"] as? String == briefKind)
 }
