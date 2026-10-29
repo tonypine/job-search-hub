@@ -162,6 +162,45 @@ func TestAddCompanyRecordsTheRunAndWatchesTheCompany(t *testing.T) {
 	}
 }
 
+func TestAnAgentStartsOnItsKindsRoutedModelUnlessAnotherIsAsked(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	company, _, err := hub.store.CreateCompany(ctx, store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, err := hub.store.EnsureClaudeTaskRoutes(ctx, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.store.SaveTaskRoute(ctx, store.Actor{Kind: store.ActorOwner}, store.AgentRunKindCompanyTriage,
+		store.TaskRouteInput{ProviderID: claude.ID, Model: "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ asked, want string }{{"", "opus"}, {"haiku", "haiku"}} {
+		argumentsPath := installFakeClaude(t, initLine(""), resultLine(company.ID.String()))
+		var out bytes.Buffer
+		if err := addCompany(ctx, hub.config, "acme.com", triageOptions{model: test.asked}, &out); err != nil {
+			t.Fatalf("add company: %v\n%s", err, out.String())
+		}
+		recorded, _ := os.ReadFile(argumentsPath)
+		arguments := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+		if index := slices.Index(arguments, "--model"); index < 0 || arguments[index+1] != test.want {
+			t.Errorf("asked for %q: claude started with %v; want --model %s", test.asked, arguments, test.want)
+		}
+	}
+	var models []string
+	rows, _ := hub.pool.Query(ctx, `SELECT model FROM agent_runs ORDER BY started_at`)
+	for rows.Next() {
+		var model string
+		rows.Scan(&model)
+		models = append(models, model)
+	}
+	if strings.Join(models, ",") != "opus,haiku" {
+		t.Errorf("the runs' models = %v", models)
+	}
+}
+
 func TestAnUnisolatedSessionFailsTheRunAndWatchesNothing(t *testing.T) {
 	hub := startHub(t)
 	company, _, _ := hub.store.CreateCompany(context.Background(), store.Actor{Kind: store.ActorOwner}, store.NewCompany{Name: "Acme", Domain: "acme.com"})

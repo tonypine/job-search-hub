@@ -71,7 +71,7 @@ func TestATaskIsRoutedToAProviderThatThenCannotBeDeleted(t *testing.T) {
 	} {
 		kind := "job_facts"
 		if name == "an unknown task" {
-			kind = "company_triage"
+			kind = "no_such_kind"
 		}
 		if status, answer := send(t, http.MethodPut, service.url+"/v1/task-routes/"+kind, ownerToken, body); status != http.StatusBadRequest {
 			t.Errorf("%s: %d %s", name, status, answer)
@@ -100,7 +100,7 @@ func TestAProvidersModelsAreListed(t *testing.T) {
 	var runtime store.ModelProvider
 	json.Unmarshal(answer, &runtime)
 	status, answer := send(t, http.MethodGet, service.url+"/v1/model-providers/"+runtime.ID.String()+"/models", ownerToken, "")
-	if status != http.StatusOK || string(answer) != `{"models":["Big-Q4.gguf","Small-Q4.gguf"]}`+"\n" {
+	if status != http.StatusOK || string(answer) != `{"models":["Big-Q4.gguf","Small-Q4.gguf"],"catalog":[{"id":"Big-Q4.gguf"},{"id":"Small-Q4.gguf"}]}`+"\n" {
 		t.Fatalf("runtime models: %d %s", status, answer)
 	}
 
@@ -125,5 +125,134 @@ func TestAProvidersModelsAreListed(t *testing.T) {
 	json.Unmarshal(answer, &down)
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/model-providers/"+down.ID.String()+"/models", ownerToken, ""); status != http.StatusBadGateway {
 		t.Errorf("a provider that doesn't answer: %d", status)
+	}
+}
+
+// startOpenRouter is a fake OpenRouter catalogue, which serves only requests
+// with key and the hub's attribution.
+func startOpenRouter(t *testing.T, key string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/models" || r.Header.Get("Authorization") != "Bearer "+key || r.Header.Get("X-Title") == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":{"code":401,"message":"No auth credentials found"}}`))
+			return
+		}
+		w.Write([]byte(`{"data":[
+			{"id":"openrouter/auto","name":"Auto Router","context_length":2000000,"pricing":{"prompt":"-1","completion":"-1"}},
+			{"id":"anthropic/claude-sonnet-4.5","name":"Anthropic: Claude Sonnet 4.5","context_length":1000000,"pricing":{"prompt":"0.000003","completion":"0.000015"}},
+			{"id":"qwen/qwen3-coder:free","name":"Qwen3 Coder (free)","context_length":262000,"pricing":{"prompt":"0","completion":"0"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/api/v1"
+}
+
+func TestOpenRouterIsAddedWithAKeyAndItsModelsComeWithTheirPrices(t *testing.T) {
+	service := startAPI(t)
+	if status, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"kind":"openrouter","name":"OpenRouter"}`); status != http.StatusBadRequest ||
+		!strings.Contains(string(answer), "OpenRouter needs a key") {
+		t.Fatalf("OpenRouter with no key: %d %s", status, answer)
+	}
+	status, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"kind":"openrouter","name":"Preset","api_key":"sk-or-preset"}`)
+	var preset store.ModelProvider
+	if json.Unmarshal(answer, &preset); status != http.StatusCreated || preset.BaseURL != "https://openrouter.ai/api/v1" || preset.Type != store.ModelProviderTypeOpenAICompatible {
+		t.Fatalf("the preset: %d %s", status, answer)
+	}
+
+	status, answer = send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken,
+		fmt.Sprintf(`{"kind":"openrouter","name":"OpenRouter","base_url":%q,"api_key":"sk-or-secret"}`, startOpenRouter(t, "sk-or-secret")))
+	var provider store.ModelProvider
+	if json.Unmarshal(answer, &provider); status != http.StatusCreated || !provider.HasKey || provider.Kind != store.ModelProviderKindOpenRouter {
+		t.Fatalf("created: %d %s", status, answer)
+	}
+	_, listed := send(t, http.MethodGet, service.url+"/v1/model-providers", ownerToken, "")
+	if strings.Contains(string(answer)+string(listed), "sk-or-secret") {
+		t.Fatalf("the key came back: %s %s", answer, listed)
+	}
+
+	status, answer = send(t, http.MethodGet, service.url+"/v1/model-providers/"+provider.ID.String()+"/models", ownerToken, "")
+	var models struct {
+		Models  []string `json:"models"`
+		Catalog []struct {
+			ID                  string  `json:"id"`
+			Name                string  `json:"name"`
+			InputUSDPerMillion  *string `json:"input_usd_per_million"`
+			OutputUSDPerMillion *string `json:"output_usd_per_million"`
+			ContextLength       int     `json:"context_length"`
+		} `json:"catalog"`
+	}
+	if json.Unmarshal(answer, &models); status != http.StatusOK || len(models.Catalog) != 3 ||
+		strings.Join(models.Models, ",") != "anthropic/claude-sonnet-4.5,openrouter/auto,qwen/qwen3-coder:free" {
+		t.Fatalf("models: %d %s", status, answer)
+	}
+	sonnet, auto, free := models.Catalog[0], models.Catalog[1], models.Catalog[2]
+	if sonnet.Name != "Anthropic: Claude Sonnet 4.5" || sonnet.InputUSDPerMillion == nil || *sonnet.InputUSDPerMillion != "3" ||
+		sonnet.OutputUSDPerMillion == nil || *sonnet.OutputUSDPerMillion != "15" || sonnet.ContextLength != 1000000 {
+		t.Errorf("a priced model: %+v", sonnet)
+	}
+	if auto.InputUSDPerMillion != nil || auto.OutputUSDPerMillion != nil {
+		t.Errorf("a routed model has no price of its own: %+v", auto)
+	}
+	if free.InputUSDPerMillion == nil || *free.InputUSDPerMillion != "0" {
+		t.Errorf("a free model: %+v", free)
+	}
+
+	// A key OpenRouter refuses says so.
+	if status, answer = send(t, http.MethodPut, service.url+"/v1/model-providers/"+provider.ID.String(), ownerToken,
+		fmt.Sprintf(`{"kind":"openrouter","name":"OpenRouter","base_url":%q,"api_key":"sk-or-wrong"}`, provider.BaseURL)); status != http.StatusOK {
+		t.Fatalf("changing the key: %d %s", status, answer)
+	}
+	if status, answer = send(t, http.MethodGet, service.url+"/v1/model-providers/"+provider.ID.String()+"/models", ownerToken, ""); status != http.StatusBadGateway ||
+		!strings.Contains(string(answer), "OpenRouter refused the key") {
+		t.Errorf("a refused key: %d %s", status, answer)
+	}
+}
+
+func TestAnAgentKindIsRoutedOnlyToClaude(t *testing.T) {
+	service := startAPI(t)
+	_, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"kind":"openrouter","name":"OpenRouter","api_key":"sk-or"}`)
+	var openRouter store.ModelProvider
+	json.Unmarshal(answer, &openRouter)
+	status, answer := send(t, http.MethodPost, service.url+"/v1/model-providers", ownerToken, `{"kind":"claude_subscription","name":"Claude","base_url":"http://ignored"}`)
+	var claude store.ModelProvider
+	if json.Unmarshal(answer, &claude); status != http.StatusCreated || claude.Type != store.ModelProviderTypeClaudeSubscription || claude.BaseURL != "" {
+		t.Fatalf("the Claude provider: %d %s", status, answer)
+	}
+	status, answer = send(t, http.MethodGet, service.url+"/v1/model-providers/"+claude.ID.String()+"/models", ownerToken, "")
+	if status != http.StatusOK || !strings.Contains(string(answer), `"models":["haiku","opus","sonnet"]`) {
+		t.Fatalf("Claude's models: %d %s", status, answer)
+	}
+
+	status, answer = send(t, http.MethodPut, service.url+"/v1/task-routes/company_triage", ownerToken,
+		fmt.Sprintf(`{"provider_id":%q,"model":"anthropic/claude-sonnet-4.5"}`, openRouter.ID))
+	if status != http.StatusBadRequest || !strings.Contains(string(answer), "agents run on Claude") {
+		t.Fatalf("company research on OpenRouter: %d %s", status, answer)
+	}
+	status, answer = send(t, http.MethodPut, service.url+"/v1/task-routes/company_triage", ownerToken,
+		fmt.Sprintf(`{"provider_id":%q,"model":"opus","fallback_provider_id":%q,"fallback_model":"sonnet"}`, claude.ID, claude.ID))
+	if status != http.StatusBadRequest || !strings.Contains(string(answer), "no fallback") {
+		t.Fatalf("an agent with a fallback: %d %s", status, answer)
+	}
+	if status, answer = send(t, http.MethodPut, service.url+"/v1/task-routes/company_triage", ownerToken,
+		fmt.Sprintf(`{"provider_id":%q,"model":"opus"}`, claude.ID)); status != http.StatusOK {
+		t.Fatalf("company research on Claude: %d %s", status, answer)
+	}
+
+	// The next run starts Claude Code on the route's model, unless the runner
+	// names another.
+	status, answer = send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, `{"kind":"company_triage","input":"stripe.com"}`)
+	var started startedRun
+	if json.Unmarshal(answer, &started); status != http.StatusCreated || started.AgentRun.Model != "opus" {
+		t.Fatalf("started on the route: %d %s", status, answer)
+	}
+	_, answer = send(t, http.MethodPost, service.url+"/v1/agent-runs", ownerToken, `{"kind":"company_triage","input":"clio.com","model":"haiku"}`)
+	if json.Unmarshal(answer, &started); started.AgentRun.Model != "haiku" {
+		t.Fatalf("started on the runner's model: %s", answer)
+	}
+
+	// Full briefs, a one-shot Claude kind, run on any provider.
+	if status, answer = send(t, http.MethodPut, service.url+"/v1/task-routes/job_brief_full", ownerToken,
+		fmt.Sprintf(`{"provider_id":%q,"model":"anthropic/claude-sonnet-4.5","fallback_provider_id":%q,"fallback_model":"sonnet"}`, openRouter.ID, claude.ID)); status != http.StatusOK {
+		t.Fatalf("full briefs on OpenRouter: %d %s", status, answer)
 	}
 }

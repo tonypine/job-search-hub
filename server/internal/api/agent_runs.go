@@ -1,6 +1,8 @@
 package api
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -49,10 +51,14 @@ type startAgentRunRequest struct {
 	Input string `json:"input"`
 	// Note is the owner's word on what to fix, for a job_fix run.
 	Note string `json:"note"`
+	// Model is the Claude model the runner starts Claude Code with when it
+	// was told one; empty, the run takes its kind's route.
+	Model string `json:"model"`
 }
 
 // startAgentRunResponse hands the runner everything a run needs: its token,
-// the rendered prompt, and the schema its result must match.
+// the rendered prompt, and the schema its result must match. The run's model
+// is the one to start Claude Code with, empty to leave it to Claude Code.
 type startAgentRunResponse struct {
 	AgentRun     store.AgentRun  `json:"agent_run"`
 	Token        string          `json:"token"`
@@ -98,6 +104,7 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 		}
 
 		var rendered prompts.Rendered
+		var subjectID *uuid.UUID
 		var err error
 		switch {
 		case isProfileSeed:
@@ -114,15 +121,39 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: "no such job"})
 				return
 			}
+			subjectID = &jobID
 		default:
 			rendered, err = prompts.RenderCompanyPrompt(r.Context(), hub, request.Kind, request.Input)
+			if err == nil {
+				subjectID, err = findCompanyID(r.Context(), hub, request.Input)
+			}
 		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "render the prompt: " + err.Error()})
 			return
 		}
+		// A run the owner started from the hub is recorded under the id its
+		// start answered with, on the model chosen for it.
+		var runID *uuid.UUID
+		if subjectID != nil {
+			started, found, err := hub.FindStartedAgentRun(r.Context(), request.Kind, *subjectID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "read the started run: " + err.Error()})
+				return
+			}
+			if found {
+				runID = &started.ID
+				request.Model = cmp.Or(strings.TrimSpace(request.Model), started.Model)
+			}
+		}
+		model, err := getAgentRunModel(r.Context(), hub, request.Kind, request.Model)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "read the route: " + err.Error()})
+			return
+		}
 		token, tokenHash := tokens.NewAgentRunToken()
-		run, err := hub.StartAgentRun(r.Context(), request.Kind, request.Input, rendered.Version, tokenHash, time.Now().Add(agentRunTokenLifetime))
+		run, err := hub.StartAgentRun(r.Context(), runID, request.Kind, request.Input, subjectID, model, rendered.Version, tokenHash,
+			time.Now().Add(agentRunTokenLifetime))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
@@ -194,4 +225,28 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 			writeJSON(w, http.StatusOK, agentRunResponse{AgentRun: run})
 		}
 	})))
+}
+
+// getAgentRunModel is the model a run of kind starts on: the runner's when
+// it names one, else its kind's route's, else none. A route change applies
+// from the next run on.
+func getAgentRunModel(ctx context.Context, hub *store.Store, kind, requested string) (string, error) {
+	if model := strings.TrimSpace(requested); model != "" {
+		return model, nil
+	}
+	route, err := hub.GetTaskRoute(ctx, kind)
+	if errors.Is(err, store.ErrTaskRouteNotFound) {
+		return "", nil
+	}
+	return route.Model, err
+}
+
+// findCompanyID is the id of the company a company run's input names, nil
+// when the hub doesn't know it yet, as before its first research.
+func findCompanyID(ctx context.Context, hub *store.Store, input string) (*uuid.UUID, error) {
+	company, found, err := prompts.FindStoredCompany(ctx, hub, input)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &company.ID, nil
 }

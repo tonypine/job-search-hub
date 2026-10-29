@@ -34,10 +34,10 @@ public struct VerdictCell: Equatable, Identifiable, Sendable {
 
 public extension JobDetails {
     /// The verdicts a decision rests on, in the strip's order: the brief's
-    /// match, the screen, the take-home the Pay check estimates, and how many
-    /// people the owner knows at the company.
-    func getVerdicts(peopleYouKnow: Int) -> [VerdictCell] {
-        [matchVerdict, ScreenBreakdown(screenRows, level: fit.level).verdict, takeHomeVerdict, Self.makePeopleVerdict(knowing: peopleYouKnow)]
+    /// match, the screen, the take-home the Pay check estimates, and the
+    /// people the People card lists, counted as its meta counts them.
+    func getVerdicts(people: [RelatedPerson]) -> [VerdictCell] {
+        [matchVerdict, ScreenBreakdown(screenRows, level: fit.level).verdict, takeHomeVerdict, Self.makePeopleVerdict(people)]
     }
 
     private var matchVerdict: VerdictCell {
@@ -63,11 +63,15 @@ public extension JobDetails {
         return VerdictCell(kind: .takeHome, word: word, symbolName: check.verdict.symbolName, tone: check.verdict.tone, detail: check.reason)
     }
 
-    private static func makePeopleVerdict(knowing count: Int) -> VerdictCell {
-        guard count > 0 else {
+    /// "2 you know" in the accent, "3 contacts" or "No one yet" in neutral.
+    private static func makePeopleVerdict(_ people: [RelatedPerson]) -> VerdictCell {
+        guard let word = JobOutreach.describe(people) else {
             return VerdictCell(kind: .people, word: "No one yet", symbolName: "person.2", tone: .neutral)
         }
-        return VerdictCell(kind: .people, word: "\(count) you know", symbolName: "person.2.fill", tone: .accent)
+        guard people.contains(where: JobOutreach.isKnown) else {
+            return VerdictCell(kind: .people, word: word, symbolName: "person.2", tone: .neutral)
+        }
+        return VerdictCell(kind: .people, word: word, symbolName: "person.2.fill", tone: .accent)
     }
 }
 
@@ -96,6 +100,15 @@ public struct ScreenBreakdown: Equatable, Sendable {
 
     public var failing: Int { exceptions.count(where: { $0.verdict == .no }) }
     public var unclear: Int { exceptions.count(where: { $0.verdict == .unclear }) }
+
+    /// The screen as one level, as the strip's cell reads it: poor when a
+    /// check fails, else unclear when one is, else good when one passes, and
+    /// the hub's own reading with nothing judged.
+    public var overallLevel: FitLevel {
+        if failing > 0 { return .poor }
+        if unclear > 0 { return .unclear }
+        return passes.isEmpty ? level : .good
+    }
 
     /// The card's meta: "Passes" when every check passes, else "4 of 6
     /// pass"; nil with nothing judged.

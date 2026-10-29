@@ -45,10 +45,36 @@ extension Tone {
     /// The tone behind a chip or a banner, under solid text.
     var fill: Color { color.opacity(0.13) }
 
+    /// The tone behind words marked in text to read, such as a posting's
+    /// phrases a screen check quoted.
+    var mark: Color { color.opacity(0.24) }
+
     private static let positiveColor = Color(light: 0x1E8E50, dark: 0x3CC97F)
     private static let cautionColor = Color(light: 0xB86E00, dark: 0xF2A33A)
     private static let negativeColor = Color(light: 0xD13438, dark: 0xFF6B6B)
     private static let neutralColor = Color(light: 0x6E6E73, dark: 0x98989D)
+}
+
+/// The charts' colors. A kind of run on All kinds' charts takes one of four
+/// categorical colors, in this fixed order, which hold apart for the common
+/// kinds of color blindness side by side in a stack, light and dark; the
+/// kinds past four share the neutral gray, and failures wear the negative
+/// tone.
+enum ChartColor {
+    static let slots: [Color] = [
+        Color(light: 0x2A78D6, dark: 0x3987E5), // blue
+        Color(light: 0xEB6834, dark: 0xD95926), // orange
+        Color(light: 0x1BAF7A, dark: 0x199E70), // aqua
+        Color(light: 0xEDA100, dark: 0xC98500), // yellow
+    ]
+
+    static func of(_ paint: RunChartPaint) -> Color {
+        switch paint {
+        case let .slot(index): slots[min(max(index, 0), slots.count - 1)]
+        case .other: Tone.neutral.color
+        case .failed: Tone.negative.color
+        }
+    }
 }
 
 /// The spacing scale. Rows within a section are `s` apart, sections `l`, and
@@ -60,6 +86,14 @@ enum Space {
     static let l: CGFloat = 16
     static let xl: CGFloat = 24
     static let xxl: CGFloat = 32
+}
+
+/// The inspector column's widths: 420 pt by default, 360 to 560. Anything
+/// that needs more room opens as a page.
+enum InspectorWidth {
+    static let min: CGFloat = 360
+    static let ideal: CGFloat = 420
+    static let max: CGFloat = 560
 }
 
 /// The corner radii. Chips and buttons are capsules.
@@ -82,6 +116,10 @@ extension Font {
     static let hubBody = Font.body
     /// Text read at length, such as a brief's verdict: a size up from body.
     static let hubReading = Font.system(size: 14)
+    /// A posting read in the inspector (P3 Reader): 13 pt.
+    static let hubPosting = Font.system(size: 13)
+    /// A posting read on a job's page, at a 600–640 pt measure: 14 pt.
+    static let hubPostingOnPage = Font.system(size: 14)
     /// Company, location, reasons; shown in `.secondary`.
     static let hubSecondary = Font.callout
     /// Who wrote it and when.

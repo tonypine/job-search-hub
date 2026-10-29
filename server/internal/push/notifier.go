@@ -10,8 +10,8 @@ import (
 )
 
 // unpushedKinds are updates the phone already knows about, because it made
-// them.
-var unpushedKinds = map[string]bool{"task_queued": true}
+// them, and the end of a run the owner started, which they are watching.
+var unpushedKinds = map[string]bool{"task_queued": true, "run_finished": true}
 
 type messageSender interface {
 	Send(ctx context.Context, pushToken string, message Message) error

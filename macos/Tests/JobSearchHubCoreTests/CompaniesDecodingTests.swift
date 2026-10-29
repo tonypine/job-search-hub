@@ -8,13 +8,14 @@ private let companiesJSON = ##"""
 {"companies":[
   {"company":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Acme","domain":"acme.com",
               "website_url":"https://www.acme.com","careers_url":"https://acme.com/careers",
-              "headquarters_country":"Canada","employee_count_range":"51-200","summary":"Makes anvils.",
+              "headquarters_country":"Canada","employee_count_range":"51-200","industry":"Anvils","summary":"Makes anvils.",
               "found_via":"Referral: a former colleague","created_at":"2026-09-28T12:00:00.5Z","updated_at":"2026-09-28T12:05:00Z"},
    "watched_since":"2026-09-28T12:10:00.123456Z",
    "job_boards":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
                   "provider":"ashby","board_token":"acme","board_url":"https://jobs.ashbyhq.com/acme",
                   "verified_at":"2026-09-28T12:01:00Z","open_posting_count":42}],
-   "people_count":4,"connection_count":2,"unseen_updates":3},
+   "people_count":4,"connection_count":2,"known_people_count":6,"known_people":["Ada Example","Grace Example"],"application_phase":"Applied",
+   "fitting_jobs":3,"best_match":"strong","newest_fitting_job_seen_at":"2026-09-30T09:00:00Z","unseen_updates":3},
   {"company":{"id":"1bb55565-58d2-4247-ba01-cba65060a316","name":"Zeta","domain":"zeta.com",
               "created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
    "job_boards":[],"people_count":0,"connection_count":0,"unseen_updates":0}
@@ -23,6 +24,7 @@ private let companiesJSON = ##"""
 
 private let dossierJSON = ##"""
 {"company":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","name":"Acme","domain":"acme.com",
+            "industry":"Developer tools","employee_count_range":"51-200",
             "created_at":"2026-09-28T12:00:00Z","updated_at":"2026-09-28T12:00:00Z"},
  "job_boards":[{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","company_id":"0aa55565-58d2-4247-ba01-cba65060a316",
                 "provider":"ashby","board_token":"acme","board_url":"https://jobs.ashbyhq.com/acme",
@@ -44,19 +46,27 @@ private let dossierJSON = ##"""
     #expect(acme.company.websiteURL == "https://www.acme.com")
     #expect(acme.company.careersURL == "https://acme.com/careers")
     #expect(acme.company.foundVia == "Referral: a former colleague")
+    #expect(acme.company.industry == "Anvils")
     #expect(acme.watchedSince != nil)
     #expect(acme.jobBoards.first?.summaryLine == "ashby/acme · 42 open")
     #expect(acme.peopleCount == 4 && acme.unseenUpdates == 3 && acme.connectionCount == 2)
+    #expect(acme.knownPeople == ["Ada Example", "Grace Example"] && acme.applicationPhase == "Applied")
+    #expect(acme.knownPeopleCount == 6 && acme.peopleYouKnow == 6)
+    #expect(acme.fittingJobs == 3 && acme.bestMatch == .strong && acme.newestFittingJobSeenAt != nil)
 
     let zeta = listed[1]
-    #expect(zeta.company.websiteURL == nil)
+    #expect(zeta.company.websiteURL == nil && zeta.company.industry == nil)
     #expect(zeta.watchedSince == nil)
     #expect(zeta.jobBoards.isEmpty)
+    #expect(zeta.knownPeople == nil && zeta.fittingJobs == nil && zeta.bestMatch == nil)
+    #expect(zeta.knownPeopleCount == nil && zeta.peopleYouKnow == 0)
 }
 
 @Test func aDossierDecodesWithPeopleAndAnUncountedBoard() throws {
     let dossier = try HubJSON.makeDecoder().decode(CompanyDossier.self, from: Data(dossierJSON.utf8))
 
+    #expect(dossier.company.industry == "Developer tools")
+    #expect(dossier.company.industryAndSize == "Developer tools · 51-200 people")
     #expect(dossier.jobBoards.first?.summaryLine == "ashby/acme · open postings unknown")
     #expect(dossier.people.first?.sourceURL == "https://acme.com/team")
     #expect(dossier.people.first?.roleTitle == "Engineering Manager")
@@ -112,4 +122,15 @@ private let companyPageJSON = ##"""
 
     #expect(dossier.applications == nil && dossier.mail == nil && dossier.foldedMailLine == nil)
     #expect(dossier.applicationsOpenFirst.isEmpty)
+}
+
+@Test func aCompanyWithoutAnIndustryShowsOnlyItsSize() throws {
+    let listed = try HubJSON.makeDecoder().decode(CompaniesResponse.self, from: Data(companiesJSON.utf8)).companies
+
+    var withoutIndustry = listed[0].company
+    withoutIndustry.industry = nil
+
+    #expect(listed[0].company.industryAndSize == "Anvils · 51-200 people")
+    #expect(withoutIndustry.industryAndSize == "51-200 people")
+    #expect(listed[1].company.industryAndSize == nil)
 }

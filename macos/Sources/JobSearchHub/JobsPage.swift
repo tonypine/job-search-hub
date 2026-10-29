@@ -198,6 +198,8 @@ struct JobsPage: View {
     @State private var isAddingByURL = false
     @State private var fix: JobFixTarget?
     @State private var hover = JobRowHover()
+    /// The table has the keyboard, as when a job's page goes back to it.
+    @FocusState private var isTableFocused: Bool
     @Environment(RemoteTaskRunner.self) private var taskRunner
     /// Which columns show, in what order and width, kept across launches.
     @AppStorage("jobsTableColumns") private var savedColumns = Data()
@@ -241,7 +243,13 @@ struct JobsPage: View {
                 .onChange(of: details.getEntry(on: .jobs)) {
                     // Closing the details of one job deselects it; several selected jobs show no details at all.
                     if details.getEntry(on: .jobs) == nil && model.selectedID != nil { model.selectedIDs = [] }
+                    // ↑ and ↓ on a job's page select the job it moves to, so going back finds it.
+                    if details.getExpandedJob(on: .jobs) != nil, case let .job(jobID)? = details.getEntry(on: .jobs)?.subject, model.selectedID != jobID {
+                        model.selectedIDs = [jobID]
+                    }
                 }
+                // A job's page goes through the rows as they show.
+                .onChange(of: getRowOrder().map(\.id), initial: true) { _, order in details.setJobOrder(order, on: .jobs) }
                 .sheet(item: $model.reasonTarget) { target in
                     SkipReasonSheet(jobCount: target.jobIDs.count) { reason in
                         await model.addSkipReason(reason, to: target.jobIDs, through: decisions, with: client)
@@ -265,7 +273,11 @@ struct JobsPage: View {
                 }
                 .focusedSceneValue(\.pageAdd, PageAddAction(title: "Add Job by URL…") { isAddingByURL = true })
                 .onPageRequest(.jobs) { request in
-                    if request == .addJobByURL { isAddingByURL = true }
+                    switch request {
+                    case .addJobByURL: isAddingByURL = true
+                    case .focusList: isTableFocused = true
+                    default: break
+                    }
                 }
             }
         }
@@ -276,7 +288,7 @@ struct JobsPage: View {
     /// How many jobs show out of all, and how many of those pass the screen.
     private func describeCounts() -> String {
         let shownItems = model.getMatchingItems(filter.wrappedValue)
-        let passCount = shownItems.count { $0.fit.level == .good }
+        let passCount = shownItems.count { $0.screenLevel == .good }
         let jobCount = model.total == shownItems.count ? "\(model.total) jobs" : "\(shownItems.count) of \(model.total) jobs"
         return "\(jobCount) · " + (passCount == 1 ? "1 passes the screen" : "\(passCount) pass the screen")
     }
@@ -287,22 +299,21 @@ struct JobsPage: View {
     private var header: some View {
         let choices = JobsFilterChoices(items: model.items)
         return PageHeader(chips: getFilterChips(choices: choices)) {
-            TabStrip(
-                items: JobStatusFilter.allCases.map { status in
-                    TabStripItem(id: status, title: status.title, count: status == .all ? nil : model.scopeCounts[status])
-                },
-                selection: $model.status
-            )
+            TabStrip(items: Self.makeScopes(counts: model.scopeCounts), selection: $model.status)
         } trailing: {
-            PageSearchField(text: $model.search, prompt: "Search jobs")
-                .help("Search titles, locations and companies")
-            ColumnsMenu(customization: columnCustomization, factColumns: model.factColumns)
-                .labelStyle(.iconOnly)
-                .fixedSize()
-            Button("Add", systemImage: "plus") { isAddingByURL = true }
-                .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
+            JobsHeaderTrailing(search: $model.search, columns: columnCustomization, factColumns: model.factColumns) {
+                isAddingByURL = true
+            }
         } filterMenu: {
             JobsFilterMenu(filter: filter, choices: choices, newCount: model.items.count { $0.isNew(since: model.previousVisit) })
+        }
+    }
+
+    /// The status as scopes, each with how many jobs it holds; All has no
+    /// count.
+    static func makeScopes(counts: [JobStatusFilter: Int]) -> [TabStripItem<JobStatusFilter>] {
+        JobStatusFilter.allCases.map { status in
+            TabStripItem(id: status, title: status.title, count: status == .all ? nil : counts[status])
         }
     }
 
@@ -315,13 +326,26 @@ struct JobsPage: View {
         }
     }
 
-    private func table(client: HubClient) -> some View {
+    /// The rows the filters keep, in their order: grouped by when the hub
+    /// first saw them when sorted by Posted, else as sorted.
+    private func getRowGroups() -> (items: [JobListItem], groups: [JobGroup]?) {
         let sort = sortOrder.wrappedValue
         let shownItems = model.getShownItems(filteredBy: filter.wrappedValue, sortedBy: sort)
         // Sorted by Posted, the rows group by when the hub first saw them.
         let groups = sort.first?.column == .posted
             ? JobGroups.make(shownItems, newestFirst: sort.first?.order == .reverse, now: .now)
             : nil
+        return (shownItems, groups)
+    }
+
+    /// The rows as the table shows them, top to bottom.
+    private func getRowOrder() -> [JobListItem] {
+        let rows = getRowGroups()
+        return rows.groups.map { $0.flatMap(\.items) } ?? rows.items
+    }
+
+    private func table(client: HubClient) -> some View {
+        let (shownItems, groups) = getRowGroups()
         return Table(of: JobListItem.self, selection: $model.selectedIDs, sortOrder: sortOrder, columnCustomization: columnCustomization) {
             TableColumn("Job", sortUsing: JobsSortComparator(.title)) { item in
                 JobCell(
@@ -330,29 +354,29 @@ struct JobsPage: View {
                     onRestore: { Task { await model.restore(getTargets(of: item.id), through: decisions, with: client) } }
                 )
             }
-            .width(min: 240, ideal: 380)
+            .width(min: JobRowLayout.jobMinWidth, ideal: 380)
             .customizationID("job")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Match", sortUsing: JobsSortComparator(.match)) { item in
                 MatchCell(match: item.match).jobRowCell(item.id, hover: hover)
             }
-            .width(min: 80, ideal: 96)
+            .width(JobRowLayout.matchWidth)
             .customizationID("match")
             TableColumn("Screen", sortUsing: JobsSortComparator(.fit)) { item in
-                ScreenCell(fit: item.fit).jobRowCell(item.id, hover: hover)
+                ScreenCell(screen: item.screen).jobRowCell(item.id, hover: hover)
             }
-            .width(min: 84, ideal: 110)
+            .width(JobRowLayout.screenWidth)
             .customizationID("screen")
             TableColumn("Take-home", sortUsing: JobsSortComparator(.takeHome)) { item in
                 TakeHomeCell(check: item.getFitCheck("Pay")).jobRowCell(item.id, hover: hover, alignment: .trailing)
             }
-            .width(min: 64, ideal: 84)
+            .width(JobRowLayout.takeHomeWidth)
             .alignment(.trailing)
             .customizationID("takeHome")
             TableColumn("Posted", sortUsing: JobsSortComparator(.posted)) { item in
                 PostedCell(job: item.job).jobRowCell(item.id, hover: hover, alignment: .trailing)
             }
-            .width(min: 48, ideal: 60)
+            .width(JobRowLayout.postedWidth)
             .alignment(.trailing)
             .customizationID("posted")
             TableColumnForEach(JobsColumns.jobDetails + JobsColumns.boardFacts) { column in
@@ -393,6 +417,10 @@ struct JobsPage: View {
             }
         }
         .alternatingRowBackgrounds(.disabled)
+        .hubTableSelection(revision: JobsTableRevision(
+            selection: model.selectedIDs,
+            rows: groups.map { $0.map { $0.items.map(\.id) } } ?? [shownItems.map(\.id)]
+        ), cellSpacing: JobRowLayout.cellSpacing)
         .environment(\.defaultMinListRowHeight, JobRowLayout.rowHeight)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Open posting") { open(ids) }
@@ -415,8 +443,9 @@ struct JobsPage: View {
                     .disabled(ids.isEmpty)
             }
         } primaryAction: { ids in
-            open(ids)
+            openPage(ids)
         }
+        .focused($isTableFocused)
         .onKeyPress(characters: .letters, phases: .down) { press in
             // P, L and S decide the selected rows; Skip leaves skipped jobs alone.
             guard press.modifiers.isDisjoint(with: [.command, .control, .option]),
@@ -489,6 +518,14 @@ struct JobsPage: View {
         Task { await model.decide(ids, decision, through: decisions, with: client) }
     }
 
+    /// Return or a double-click on a job opens it as a page in the list's
+    /// place; the posting is in the row's menu.
+    private func openPage(_ ids: Set<UUID>) {
+        guard ids.count == 1, let jobID = ids.first else { return }
+        details.show(.job(jobID), from: .jobs)
+        details.expand(on: .jobs)
+    }
+
     private func open(_ ids: Set<UUID>) {
         for item in model.items where ids.contains(item.id) {
             if let url = URL(string: item.job.url) {
@@ -498,13 +535,51 @@ struct JobsPage: View {
     }
 }
 
+/// The Jobs header's search, Columns menu and Add. The search is the
+/// compact one and the menu shows only its symbol, so all five scopes and
+/// their counts fit beside them with the inspector open at 1400 wide
+/// (TP-1099).
+struct JobsHeaderTrailing: View {
+    @Binding var search: String
+    @Binding var columns: TableColumnCustomization<JobListItem>
+    let factColumns: [JobFactColumn]
+    let onAdd: () -> Void
+
+    var body: some View {
+        PageSearchField(text: $search, prompt: "Search jobs", width: PageHeaderMetrics.compactSearchWidth)
+            .help("Search titles, locations and companies")
+        ColumnsMenu(customization: $columns, factColumns: factColumns)
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        Button("Add", systemImage: "plus", action: onAdd)
+            .help("Add a job by URL (⌘N). Generate missing CVs is in Jump to (⌘K).")
+    }
+}
+
+/// What the Jobs table's selection highlight follows: the selected jobs, and
+/// the rows in their groups, since a group's heading is a row too.
+private struct JobsTableRevision: Hashable {
+    let selection: Set<UUID>
+    let rows: [[UUID]]
+}
+
+/// Adds a job by its posting's URL. The Pipeline page's Add also puts it on
+/// the board in `onAdded`, whose failure the sheet shows under its title.
 struct AddJobSheet: View {
     let client: HubClient
-    let onAdded: (Job) -> Void
+    let failureTitle: String
+    let onAdded: @MainActor (Job) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var title = ""
     @State private var failure: HubFailure?
+
+    init(client: HubClient, failureTitle: String = "Couldn't add the job", onAdded: @escaping @MainActor (Job) async throws -> Void) {
+        self.client = client
+        self.failureTitle = failureTitle
+        self.onAdded = onAdded
+    }
 
     var body: some View {
         Form {
@@ -529,10 +604,10 @@ struct AddJobSheet: View {
     private func add() async {
         do {
             let response = try await client.send("POST", "v1/jobs", body: AddJobRequest(url: url, title: title), as: AddJobResponse.self)
-            onAdded(response.job)
+            try await onAdded(response.job)
             dismiss()
         } catch {
-            failure = HubFailure("Couldn't add the job", error)
+            failure = HubFailure(failureTitle, error)
         }
     }
 }

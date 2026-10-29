@@ -57,7 +57,7 @@ extension JobDetailModel {
 
 extension JobDetailModel {
     /// Reads the job's company and the people there, once per job: the
-    /// header shows its size, the People card who to write to.
+    /// header shows its industry and size, the People card who to write to.
     func loadCompany(_ companyID: UUID, with client: HubClient) async {
         async let people = try? client.get("v1/people", query: PeopleQuery.make(companyID: companyID), as: PeopleResponse.self).people
         async let dossier = try? client.get("v1/companies/\(companyID.uuidString)", as: CompanyDossier.self)
@@ -108,11 +108,9 @@ extension JobDetailModel {
 
     /// Counts a follow-up on the job's application, then shows the job as it
     /// now stands.
-    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, with client: HubClient) async {
+    func recordFollowUp(_ applicationID: UUID, note: String, of jobID: UUID, through changes: ApplicationChanges, with client: HubClient) async {
         do {
-            _ = try await client.send(
-                "POST", "v1/applications/\(applicationID.uuidString)/follow-ups", body: FollowUpRequest(note: note), as: ApplicationResponse.self
-            )
+            _ = try await changes.recordFollowUp(applicationID, note: note, with: client)
             await load(jobID, with: client)
         } catch {
             actionError = HubFailure("Couldn't record the follow-up", error)
@@ -141,16 +139,40 @@ extension JobDetailModel {
     }
 }
 
+/// Where a job shows: in the inspector beside a list, or as a page in the
+/// list's place (P2).
+enum JobDetailLayout {
+    case inspector, page
+
+    /// Under it, a page hides the posting's outline, puts its rail under the
+    /// posting and its actions under the title.
+    static var wideWidth: CGFloat { 1100 }
+}
+
 /// One job in the inspector: its header with the verdict strip and its
 /// actions, then Overview (why it fits, the screen, the people), Prep once
-/// pursued (the CV and the interview pack), Posting (the board's facts, the
-/// facts read, the posting) and its Session.
+/// pursued (the CV and the interview pack), Posting (the key facts, then the
+/// posting to read) and its Session. As a page, the header runs across the
+/// top with the actions on its right, and the tabs are Posting, with the
+/// Overview's cards on a rail beside the posting, Prep and Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
     @Binding var tab: InspectorTab
+    var layout = JobDetailLayout.inspector
+    /// Told the job's title once it's read, for a page's top bar.
+    var showTitle: (String?) -> Void = { _ in }
+    /// A page shows the posting's outline beside it when wide; Decide's
+    /// page, beside its queue, leaves it out.
+    var showsOutline = true
+    /// Makes Pursue, Later and Skip, from the action bar or P, L and S, when
+    /// the page around the job decides them, as Decide does: it brings up the
+    /// next job and offers Undo, so Skip asks nothing first. Nil records them
+    /// here, and Skip asks why.
+    var decide: (@MainActor (JobDecisionKind) async -> Void)?
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(JobDecisions.self) private var decisions
+    @Environment(ApplicationChanges.self) private var changes
     @Environment(DetailsInspector.self) private var inspector
     @State private var model = JobDetailModel()
     @State private var isAskingToSkip = false
@@ -159,6 +181,8 @@ struct JobDetailView: View {
     @State private var followUpNote = ""
     /// The card or section to scroll to, once its tab shows.
     @State private var scrollTarget: String?
+    /// The page is at least the wide width.
+    @State private var isWide = true
     @Environment(RemoteTaskRunner.self) private var taskRunner
 
     /// The ids the strip and the screen scroll to.
@@ -180,7 +204,9 @@ struct JobDetailView: View {
 
     var body: some View {
         Group {
-            if let details = model.details, details.job.id == jobID {
+            if let details = model.details, details.job.id == jobID, layout == .page {
+                page(details)
+            } else if let details = model.details, details.job.id == jobID {
                 EntityInspector(
                     subject: .job(jobID), tabs: InspectorTab.getTabs(for: .job(jobID), hasPrep: hasPrep(details)), tab: $tab,
                     scrollTarget: $scrollTarget
@@ -193,17 +219,13 @@ struct JobDetailView: View {
                     }
                     switch tab {
                     case .prep:
-                        JobCVSection(jobID: jobID, details: details, client: client)
-                        if details.decision?.decision == .pursue {
-                            InterviewPackSection(jobID: jobID, client: client)
-                        }
+                        prep(details)
                     case .posting:
                         if model.factsError != nil {
                             HubErrorView($model.factsError)
                         }
-                        boardFacts(details.job)
-                        readFacts(details.facts)
-                        posting(details.job).id(Anchor.posting)
+                        JobPostingTab(jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting)
+                            .id(jobID)
                     case .session:
                         InspectorSessionTab(subject: .job(jobID), client: client)
                     default:
@@ -218,13 +240,22 @@ struct JobDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background {
+            if layout == .page {
+                JobPageKeys { key in
+                    guard case let .letter(letter) = key else { return false }
+                    return decide(byKey: letter)
+                }
+            }
+        }
+        .onChange(of: model.details?.job.title, initial: true) { showTitle(model.details?.job.title) }
         .onChange(of: [decisions.revision, taskRunner.fixRevision]) { Task { await model.load(jobID, with: client) } }
         .alert("Followed up", isPresented: Binding(get: { followingUpApplicationID != nil }, set: { if !$0 { followingUpApplicationID = nil } })) {
             TextField("What you did", text: $followUpNote)
             Button("Record") {
                 guard let applicationID = followingUpApplicationID else { return }
                 let note = followUpNote
-                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, with: client) }
+                Task { await model.recordFollowUp(applicationID, note: note, of: jobID, through: changes, with: client) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -266,10 +297,134 @@ struct JobDetailView: View {
         details.decision?.decision == .pursue || details.cvID != nil
     }
 
-    /// Shows a verdict's card on Overview.
+    /// The CV, and the interview pack once pursued.
+    @ViewBuilder
+    private func prep(_ details: JobDetails) -> some View {
+        JobCVSection(jobID: jobID, details: details, client: client)
+        if details.decision?.decision == .pursue {
+            InterviewPackSection(jobID: jobID, client: client)
+        }
+    }
+
+    /// Shows a verdict's card: on Overview, or on a page's rail beside the
+    /// posting.
     private func open(_ kind: VerdictCell.Kind) {
-        tab = .overview
+        tab = layout == .page ? .posting : .overview
         scrollTarget = Anchor.getCard(of: kind)
+    }
+
+    // MARK: Page
+
+    /// The job as a page: the header across the top, with the actions on
+    /// its right on a wide page, then the verdict strip and the tabs; on
+    /// Posting, the outline, the posting and a rail with the Overview's
+    /// cards.
+    private func page(_ details: JobDetails) -> some View {
+        let tabs: [InspectorTab] = hasPrep(details) ? [.posting, .prep, .session] : [.posting, .session]
+        let shown = InspectorTab.resolve(tab, among: tabs)
+        let wideWidth = showsOutline ? JobDetailLayout.wideWidth : JobDetailLayout.wideWidth - JobPostingTab<EmptyView>.outlineWidth - Space.xl
+        return VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: Space.m) {
+                if isWide {
+                    HStack(alignment: .top, spacing: Space.l) {
+                        VStack(alignment: .leading, spacing: Space.s) {
+                            titleBlock(details)
+                            actionNotes(details)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        actionBar(details)
+                            .fixedSize()
+                    }
+                } else {
+                    titleBlock(details)
+                    actionBar(details)
+                    actionNotes(details)
+                }
+                verdictStrip(details)
+                TabStrip(items: tabs.map(makePageTab), selection: Binding(get: { shown }, set: { tab = $0 }), showsRule: true)
+            }
+            .padding(.horizontal, Space.xl)
+            .padding(.top, Space.l)
+            if model.actionError != nil {
+                HubErrorView($model.actionError)
+                    .padding(.horizontal, Space.xl)
+                    .padding(.top, Space.m)
+            }
+            switch shown {
+            case .session:
+                InspectorSessionTab(subject: .job(jobID), client: client)
+            case .prep:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Space.l) { prep(details) }
+                        .frame(minWidth: 0, maxWidth: JobPostingTab<EmptyView>.measure + JobPostingTab<EmptyView>.railWidth, alignment: .topLeading)
+                        .padding(Space.xl)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                // No scroller, as on Posting (TP-1146).
+                .scrollIndicators(.never)
+            default:
+                if model.factsError != nil {
+                    HubErrorView($model.factsError)
+                        .padding(.horizontal, Space.xl)
+                        .padding(.top, Space.m)
+                }
+                JobPostingTab(
+                    jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting, layout: isWide ? .wide(showsOutline: showsOutline) : .narrow,
+                    scrollTarget: $scrollTarget
+                ) {
+                    whyItFits(details.brief).id(Anchor.whyItFits)
+                    screen(details).id(Anchor.screen)
+                    people(details).id(Anchor.people)
+                }
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+        // The column's width decides the layout; the layout asks for no
+        // width of its own (see JobPageView), so this never feeds back.
+        .onGeometryChange(for: Bool.self) { proxy in proxy.size.width >= wideWidth } action: { isWide = $0 }
+    }
+
+    /// A page's tab, with a dot on Session while the job's session waits
+    /// for you.
+    private func makePageTab(_ tab: InspectorTab) -> TabStripItem<InspectorTab> {
+        let isWaiting = tab == .session && ClaudeSessionHost.shared.getActivity(about: .job(jobID)) == .blocked
+        return TabStripItem(id: tab, title: tab.title, dot: isWaiting ? .caution : nil)
+    }
+
+    /// P pursues, L leaves for later and S asks to skip, when the page's
+    /// actions offer it. Typing in a field or a session never decides.
+    private func decide(byKey key: Character) -> Bool {
+        guard let details = model.details, details.job.id == jobID, let decision = KeyboardDecision.getDecision(for: key) else { return false }
+        let isOpen = details.job.dismissedAt == nil && details.phase == nil
+        switch decision {
+        case .pursue where isOpen:
+            Task { await record(.pursue) }
+        case .later where isOpen && details.decision?.decision != .later:
+            Task { await record(.later) }
+        case .skip where details.job.dismissedAt == nil:
+            skip()
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// Records the decision through the page that decides it, or here.
+    private func record(_ decision: JobDecisionKind) async {
+        if let decide {
+            await decide(decision)
+        } else {
+            await model.decide(jobID, decision, through: decisions, with: client)
+        }
+    }
+
+    /// Skips the job at once where the page offers Undo, or asks why first.
+    private func skip() {
+        if decide != nil {
+            Task { await record(.skip) }
+        } else {
+            isAskingToSkip = true
+        }
     }
 
     // MARK: Header
@@ -278,21 +433,32 @@ struct JobDetailView: View {
     /// and where the job stands, then the verdict strip.
     private func header(_ details: JobDetails) -> some View {
         VStack(alignment: .leading, spacing: Space.m) {
-            HStack(alignment: .top, spacing: Space.m) {
-                Monogram(details.companyName ?? details.job.title, size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    companyLine(details)
-                    Text(details.job.title).font(.hubEntity).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    Text(describeFacts(details.job)).font(.hubSecondary).foregroundStyle(.secondary)
-                    standing(details)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            VerdictStrip(cells: details.getVerdicts(peopleYouKnow: getPeople(details).count(where: JobOutreach.isKnown))) { open($0) }
+            titleBlock(details)
+            verdictStrip(details)
         }
     }
 
-    /// "Northwind · 51-200 people", the name opening the company.
+    /// The monogram beside the company, the title, one line of facts and
+    /// where the job stands.
+    private func titleBlock(_ details: JobDetails) -> some View {
+        HStack(alignment: .top, spacing: Space.m) {
+            Monogram(details.companyName ?? details.job.title, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                companyLine(details)
+                Text(details.job.title).font(.hubEntity).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(describeFacts(details.job)).font(.hubSecondary).foregroundStyle(.secondary)
+                standing(details)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func verdictStrip(_ details: JobDetails) -> some View {
+        VerdictStrip(cells: details.getVerdicts(people: getPeople(details))) { open($0) }
+    }
+
+    /// "Northwind · Developer tools · 51-200 people", the name opening the
+    /// company.
     private func companyLine(_ details: JobDetails) -> some View {
         HStack(spacing: Space.xs) {
             if let name = details.companyName, !name.isEmpty {
@@ -306,8 +472,8 @@ struct JobDetailView: View {
             } else {
                 Text("Job").foregroundStyle(.secondary)
             }
-            if let size = model.company?.employeeCountRange, !size.isEmpty {
-                Text("· \(size) people").foregroundStyle(.secondary)
+            if let facts = model.company?.industryAndSize {
+                Text("· \(facts)").foregroundStyle(.secondary)
             }
         }
         .font(.hubSecondary)
@@ -333,69 +499,82 @@ struct JobDetailView: View {
         }
     }
 
+    /// The decision to make, then what was decided and why.
+    private func actions(_ details: JobDetails) -> some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            actionBar(details)
+            actionNotes(details)
+        }
+    }
+
     /// The decision to make: Pursue, the one primary action, then Later and
     /// Skip, each with its key, the posting as an icon and Fix in the
     /// overflow. A skipped job's next step is Restore, one in an open phase
     /// of the pipeline is Followed up…, and a closed one's is its posting.
-    private func actions(_ details: JobDetails) -> some View {
+    private func actionBar(_ details: JobDetails) -> some View {
         let isFollowingUp = details.application != nil && details.phase?.isClosed == false
         let isPostingNext = details.job.dismissedAt == nil && details.phase != nil && !isFollowingUp
-        return VStack(alignment: .leading, spacing: Space.s) {
-            ActionBar {
-                if details.job.dismissedAt != nil {
-                    restoreButton
-                } else if isFollowingUp, let application = details.application {
-                    Button("Followed up…", systemImage: "arrowshape.turn.up.right") {
-                        followUpNote = ""
-                        followingUpApplicationID = application.id
-                    }
-                    .help("Restarts the count to the next follow-up")
-                } else if isPostingNext {
-                    openPostingButton(details)
-                } else {
-                    AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward", key: "P") {
-                        await model.decide(jobID, .pursue, through: decisions, with: client)
-                    }
-                    .help("Put it on the pipeline (P on Decide and Today)")
+        return ActionBar {
+            if details.job.dismissedAt != nil {
+                restoreButton
+            } else if isFollowingUp, let application = details.application {
+                Button("Followed up…", systemImage: "arrowshape.turn.up.right") {
+                    followUpNote = ""
+                    followingUpApplicationID = application.id
                 }
-            } secondary: {
-                if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
-                    AsyncButton("Later", busyTitle: "Later", key: "L") {
-                        await model.decide(jobID, .later, through: decisions, with: client)
-                    }
-                    .help("Leave it for another day (L on Decide and Today)")
+                .help("Restarts the count to the next follow-up")
+            } else if isPostingNext {
+                openPostingButton(details)
+            } else {
+                AsyncButton("Pursue", busyTitle: "Pursuing…", systemImage: "arrow.up.forward", key: "P") {
+                    await record(.pursue)
                 }
-                if details.job.dismissedAt == nil {
-                    Button { isAskingToSkip = true } label: { KeyLabel(title: "Skip…", key: "S") }
-                        .help("Take it out as not for you, with a reason (S on Decide and Today)")
+                .help("Put it on the pipeline (P on Decide, Today and a job's page)")
+            }
+        } secondary: {
+            if details.decision?.decision != .later && details.phase == nil && details.job.dismissedAt == nil {
+                AsyncButton("Later", busyTitle: "Later", key: "L") {
+                    await record(.later)
                 }
-            } overflow: {
-                Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
-                    .disabled(taskRunner.fixingJobIDs.contains(jobID))
-                    .help("Say what's wrong with its details, and an agent corrects them")
-            } accessory: {
-                if !isPostingNext {
-                    openPostingButton(details)
-                        .help("Open the posting on its board")
-                }
+                .help("Leave it for another day (L on Decide, Today and a job's page)")
             }
-            if let decision = details.decision {
-                Text(describeDecision(decision)).font(.hubCaption).foregroundStyle(.secondary)
+            if details.job.dismissedAt == nil {
+                Button(action: skip) { KeyLabel(title: decide == nil ? "Skip…" : "Skip", key: "S") }
+                    .help(decide == nil
+                        ? "Take it out as not for you, with a reason (S on Decide, Today and a job's page)"
+                        : "Take it out as not for you, with Undo and a reason from the note that says so (S)")
             }
-            // What the pipeline card keeps off its face.
-            if details.phase?.isClosed == true, let closedReason = details.application?.closedReason, !closedReason.isEmpty {
-                Label("Closed: \(closedReason)", systemImage: SetAside.closed.symbolName).font(.hubCaption).foregroundStyle(.secondary)
+        } overflow: {
+            Button("Fix…", systemImage: "wrench.adjustable") { isAskingForFix = true }
+                .disabled(taskRunner.fixingJobIDs.contains(jobID))
+                .help("Say what's wrong with its details, and an agent corrects them")
+        } accessory: {
+            if !isPostingNext {
+                openPostingButton(details)
+                    .help("Open the posting on its board")
             }
-            if details.job.dismissedAt != nil, let dismissalReason = details.job.dismissalReason, !dismissalReason.isEmpty,
-               details.decision?.reason != dismissalReason {
-                Label("Skipped: \(dismissalReason)", systemImage: SetAside.skipped.symbolName).font(.hubCaption).foregroundStyle(.secondary)
-            }
-            if let notes = details.application?.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-                Label(notes, systemImage: "note.text").font(.hubCaption).foregroundStyle(.secondary)
-            }
-            if taskRunner.fixingJobIDs.contains(jobID) {
-                Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
-            }
+        }
+    }
+
+    /// What was decided and when, and what the pipeline card keeps off its
+    /// face: why it closed or was skipped, its notes, a fix under way.
+    @ViewBuilder
+    private func actionNotes(_ details: JobDetails) -> some View {
+        if let decision = details.decision {
+            Text(describeDecision(decision)).font(.hubCaption).foregroundStyle(.secondary)
+        }
+        if details.phase?.isClosed == true, let closedReason = details.application?.closedReason, !closedReason.isEmpty {
+            Label("Closed: \(closedReason)", systemImage: SetAside.closed.symbolName).font(.hubCaption).foregroundStyle(.secondary)
+        }
+        if details.job.dismissedAt != nil, let dismissalReason = details.job.dismissalReason, !dismissalReason.isEmpty,
+           details.decision?.reason != dismissalReason {
+            Label("Skipped: \(dismissalReason)", systemImage: SetAside.skipped.symbolName).font(.hubCaption).foregroundStyle(.secondary)
+        }
+        if let notes = details.application?.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+            Label(notes, systemImage: "note.text").font(.hubCaption).foregroundStyle(.secondary)
+        }
+        if taskRunner.fixingJobIDs.contains(jobID) {
+            Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
         }
     }
 
@@ -434,13 +613,16 @@ struct JobDetailView: View {
 
     /// The brief the decision rests on: its verdict at reading size, then
     /// what speaks for you and against, side by side, each with what backs
-    /// it.
+    /// it; one over the other on a page's rail.
     private func whyItFits(_ brief: JobBrief?) -> some View {
-        HubCard("Why it fits", meta: brief.map(describeAuthor)) {
+        HubCard("Why it fits", meta: brief.map { Self.describeAuthor(isFull: $0.isFull, writtenAt: $0.writtenAt) }) {
             if let brief {
                 Text(brief.reason).hubReading().textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if !brief.strengths.isEmpty || !brief.weaknesses.isEmpty {
-                    HStack(alignment: .top, spacing: Space.l) {
+                    let points = layout == .page
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.l))
+                        : AnyLayout(HStackLayout(alignment: .top, spacing: Space.l))
+                    points {
                         briefPoints("For you", brief.strengths, in: brief, isWeakness: false)
                         briefPoints("Against", brief.weaknesses, in: brief, isWeakness: true)
                     }
@@ -465,9 +647,10 @@ struct JobDetailView: View {
         }
     }
 
-    /// "local model · 2 days ago".
-    private func describeAuthor(_ brief: JobBrief) -> String {
-        "\(brief.isFull ? "Claude" : "local model") · \(brief.writtenAt.formatted(.relative(presentation: .named)))"
+    /// "local model · 2 days ago", "local model · 5 min ago": short units
+    /// keep it whole beside Write full brief on a page's rail.
+    static func describeAuthor(isFull: Bool, writtenAt: Date) -> String {
+        "\(isFull ? "Claude" : "local model") · \(writtenAt.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))"
     }
 
     /// For you or Against: a line per point, with what backs it as a tag
@@ -551,10 +734,9 @@ struct JobDetailView: View {
     private func people(_ details: JobDetails) -> some View {
         let everyone = getPeople(details)
         let shown = Array(everyone.prefix(JobOutreach.shownLimit))
-        let known = everyone.count(where: JobOutreach.isKnown)
         let companyName = details.companyName ?? "the company"
         let total = model.people?.count ?? everyone.count
-        return HubCard("People", meta: known > 0 ? "\(known) you know at \(companyName)" : nil) {
+        return HubCard("People", meta: JobOutreach.describe(everyone).map { "\($0) at \(companyName)" }) {
             if shown.isEmpty {
                 Text("No one you know at \(companyName) yet.").foregroundStyle(.secondary)
             }
@@ -619,92 +801,5 @@ struct JobDetailView: View {
                 Button("Email \(email)") { NSWorkspace.shared.open(mail) }
             }
         }
-    }
-
-    // MARK: Posting
-
-    @ViewBuilder
-    private func posting(_ job: Job) -> some View {
-        if let description = job.description, !description.isEmpty {
-            HubSection("Posting") {
-                MarkdownDocument(description)
-            } trailing: {
-                if let url = URL(string: job.url) {
-                    Link("Open", destination: url)
-                }
-            }
-        }
-    }
-
-    private func boardFacts(_ job: Job) -> some View {
-        HubSection("From the board") {
-            FactGrid {
-                FactRow("Pay") {
-                    if let pay = job.pay {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(pay.ranges.enumerated()), id: \.offset) { _, range in
-                                Text([range.label, range.format()].compactMap { $0 }.joined(separator: ": "))
-                            }
-                            if let summary = pay.summary {
-                                Text(summary).foregroundStyle(.secondary)
-                            }
-                        }
-                    } else {
-                        Text("Not published").foregroundStyle(.secondary)
-                    }
-                }
-                FactRow("Workplace", text: job.workplaceType)
-                FactRow("Employment", text: job.employmentType)
-                FactRow("Department", text: job.department)
-                FactRow("Also hiring in", text: job.otherLocations?.joined(separator: ", "))
-                FactRow("Published", text: job.publishedAt?.formatted(date: .abbreviated, time: .omitted))
-                FactRow("First seen", text: job.firstSeenAt.formatted(date: .abbreviated, time: .omitted))
-            }
-        }
-    }
-
-    private func readFacts(_ facts: LabelledJobFacts?) -> some View {
-        HubSection("Read from the posting") {
-            if let facts {
-                FactGrid {
-                    ForEach(facts.entries) { entry in
-                        FactRow(entry.title, help: entry.description) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                switch entry.display {
-                                case let .text(text): Text(text)
-                                case let .list(items): Text(items.joined(separator: ", "))
-                                case .notStated: Text("Not stated").foregroundStyle(.secondary)
-                                }
-                                if let evidence = entry.evidence {
-                                    Evidence(text: evidence)
-                                }
-                            }
-                        }
-                    }
-                }
-                Text("Read by \(facts.model) with prompt version \(facts.promptVersion), \(facts.extractedAt.formatted(date: .abbreviated, time: .shortened)).")
-                    .font(.hubCaption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text("Not read yet. The hub reads new postings as they arrive, unless its model work is paused.")
-                    .foregroundStyle(.secondary)
-            }
-            readFactsNowRow
-        }
-    }
-
-    /// The "Read facts now" button, and where its run stands.
-    private var readFactsNowRow: some View {
-        HStack(spacing: Space.s) {
-            AsyncButton("Read facts now", busyTitle: "Reading…", systemImage: "arrow.clockwise", isBusy: model.isReadingFacts) {
-                await model.readFactsNow(jobID, with: client)
-            }
-            switch model.factsReadState {
-            case .queued: Text("Waiting for its turn").foregroundStyle(.secondary)
-            case .running: Text("Reading now").foregroundStyle(.secondary)
-            case .notQueued: EmptyView()
-            }
-        }
-        .padding(.top, Space.xs)
     }
 }

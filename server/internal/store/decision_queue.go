@@ -20,6 +20,8 @@ type DecisionQueueItem struct {
 	BriefTier string
 	// Decision is set when the job was left for later.
 	Decision *JobDecision
+	// UnseenUpdates counts the updates about the job the owner hasn't seen.
+	UnseenUpdates int
 }
 
 // ListDecisionQueue returns the briefed jobs to decide, open, undismissed and
@@ -28,7 +30,7 @@ type DecisionQueueItem struct {
 func (s *Store) ListDecisionQueue(ctx context.Context, laterBefore time.Time) ([]DecisionQueueItem, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixedJobColumns+`, COALESCE(companies.name, NULLIF(jobs.company_name, '')), job_facts.facts,
-		       best.match, best.reason, best.tier, decided.decision, decided.reason, decided.decided_at
+		       best.match, best.reason, best.tier, decided.decision, decided.reason, decided.decided_at, `+jobUnseenUpdates+`
 		FROM jobs
 		JOIN LATERAL (SELECT match, reason, tier FROM job_briefs WHERE job_briefs.job_id = jobs.id ORDER BY tier = 'full' DESC LIMIT 1) best ON true
 		LEFT JOIN job_facts ON job_facts.job_id = jobs.id
@@ -47,7 +49,7 @@ func (s *Store) ListDecisionQueue(ctx context.Context, laterBefore time.Time) ([
 		var item DecisionQueueItem
 		var decision, decisionReason *string
 		var decidedAt *time.Time
-		job, err := scanJob(row, &item.CompanyName, &item.Facts, &item.Match, &item.Reason, &item.BriefTier, &decision, &decisionReason, &decidedAt)
+		job, err := scanJob(row, &item.CompanyName, &item.Facts, &item.Match, &item.Reason, &item.BriefTier, &decision, &decisionReason, &decidedAt, &item.UnseenUpdates)
 		item.Job = job
 		if decision != nil && decidedAt != nil {
 			item.Decision = &JobDecision{JobID: job.ID, Decision: *decision, DecidedAt: *decidedAt}

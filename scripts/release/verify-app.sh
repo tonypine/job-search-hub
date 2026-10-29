@@ -38,7 +38,13 @@ check_signature() {
 		problem "$2 is not signed."
 		return
 	fi
-	if printf '%s\n' "$details" | grep -qx 'Signature=adhoc'; then
+	# grep -q reads from a here-document, not a pipe: it stops at its first
+	# match, and a printf still writing into the pipe would fail on EPIPE and
+	# print "Broken pipe" among the problems.
+	if grep -qx 'Signature=adhoc' <<EOF
+$details
+EOF
+	then
 		problem "$2 is signed ad hoc, not by team $team."
 		return
 	fi
@@ -46,7 +52,10 @@ check_signature() {
 	if [ "$signer" != "$team" ]; then
 		problem "$2 is signed by team ${signer:-(none)}, not $team."
 	fi
-	if ! printf '%s\n' "$details" | grep -q '^CodeDirectory .*flags=0x[0-9a-f]*([^)]*runtime'; then
+	if ! grep -q '^CodeDirectory .*flags=0x[0-9a-f]*([^)]*runtime' <<EOF
+$details
+EOF
+	then
 		problem "$2 lacks the hardened runtime."
 	fi
 }

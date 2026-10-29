@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
@@ -38,11 +41,98 @@ func TestTheCompaniesListShowsWatchStatusBoardsAndPeople(t *testing.T) {
 		t.Fatalf("list: %d %s", status, body)
 	}
 	first, second := listed.Companies[0], listed.Companies[1]
-	if first.Company.ID != acme.ID || first.WatchedSince == nil || len(first.JobBoards) != 1 || first.PeopleCount != 2 {
+	if first.Company.ID != acme.ID || first.WatchedSince == nil || len(first.JobBoards) != 1 || first.PeopleCount != 2 ||
+		first.KnownPeopleCount != 2 || !slices.Equal(first.KnownPeople, []string{"Ada", "Grace"}) {
 		t.Fatalf("acme row = %+v", first)
 	}
 	if second.Company.ID != zeta.ID || second.WatchedSince != nil || len(second.JobBoards) != 0 || second.PeopleCount != 0 {
 		t.Fatalf("zeta row = %+v", second)
+	}
+}
+
+func TestTheCompaniesListCountsTheOpenJobsThatPassTheScreenAndTheirBestMatch(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	if _, err := service.hub.SaveJobCriteria(ctx, owner, store.JobCriteria{
+		Technologies: []string{"Go"}, SeniorityLevels: []string{"Senior"}, EligibleLocationTerms: []string{"Americas"},
+		WorkableTimezoneTerms: []string{"Americas"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	confirmEightYearsOfRoles(t, service)
+	acme, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.example"})
+	zeta, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.example"})
+	prompt, _ := service.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
+	hash, _ := service.hub.GetKnowledgeHash(ctx)
+	// Two of Acme's jobs pass the screen, briefed possible and strong. The
+	// third fails the fit, and the fourth passes it but asks for more years
+	// than the owner's eight, so its page fails it on Experience: neither
+	// counts.
+	for index, job := range []struct {
+		title, location, match string
+		years                  int
+	}{
+		{"Senior Go Engineer", "Americas", "possible", 6},
+		{"Senior Go Engineer, Platform", "Americas", "strong", 6},
+		{"Accountant", "Berlin", "strong", 6},
+		{"Senior Go Engineer, Payments", "Americas", "strong", 12},
+	} {
+		added, _, err := service.hub.AddManualJob(ctx, owner, store.ManualJobInput{
+			CompanyID: &acme.ID, Title: job.title, Location: job.location, URL: fmt.Sprintf("https://acme.example/jobs/%d", index),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.hub.SaveJobFacts(ctx, store.NewJobFacts{
+			JobID: added.ID, PromptID: prompt.ID, Model: "test-model", TextHash: []byte{1},
+			Facts: json.RawMessage(fmt.Sprintf(`{"years_of_experience":%d,"timezone_requirement":"Americas hours"}`, job.years)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.hub.SaveJobBrief(ctx, store.JobBrief{JobID: added.ID, Tier: store.JobBriefTierPre, PromptID: prompt.ID, Model: "local",
+			Match: job.match, Reason: "Go.", KnowledgeHash: hash}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/companies", ownerToken, "")
+	var listed struct {
+		Companies []struct {
+			Company                store.Company `json:"company"`
+			FittingJobs            int           `json:"fitting_jobs"`
+			BestMatch              *string       `json:"best_match"`
+			NewestFittingJobSeenAt *time.Time    `json:"newest_fitting_job_seen_at"`
+			KnownPeople            []string      `json:"known_people"`
+		} `json:"companies"`
+	}
+	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Companies) != 2 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	acmeRow, zetaRow := listed.Companies[0], listed.Companies[1]
+	if acmeRow.Company.ID != acme.ID || acmeRow.FittingJobs != 2 || acmeRow.BestMatch == nil || *acmeRow.BestMatch != "strong" ||
+		acmeRow.NewestFittingJobSeenAt == nil || acmeRow.KnownPeople == nil {
+		t.Fatalf("Acme = %+v; want 2 jobs that pass, the best strong, seen now", acmeRow)
+	}
+	if zetaRow.Company.ID != zeta.ID || zetaRow.FittingJobs != 0 || zetaRow.BestMatch != nil || zetaRow.NewestFittingJobSeenAt != nil {
+		t.Fatalf("Zeta = %+v; want nothing open", zetaRow)
+	}
+}
+
+// confirmEightYearsOfRoles gives the owner a confirmed role from 2010 to
+// 2017, so a posting asking for up to eight years passes the screen's
+// Experience.
+func confirmEightYearsOfRoles(t *testing.T, service apiUnderTest) {
+	t.Helper()
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	role, err := service.hub.SaveProfileEntry(ctx, owner, nil, store.ProfileEntryInput{Kind: store.ProfileEntryRole, Title: "Engineer",
+		StartMonth: "2010-01", EndMonth: "2017-12", Source: store.ProfileSourceOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.hub.ConfirmProfileEntries(ctx, owner, []uuid.UUID{role.ID}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -64,6 +154,52 @@ func TestACompanysDossierIsServedByID(t *testing.T) {
 	}
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/companies/7c9e6679-7425-40de-944b-e07fc1f90ae7", ownerToken, ""); status != http.StatusNotFound {
 		t.Fatalf("unknown company: %d, want 404", status)
+	}
+}
+
+func TestTheCompaniesListAndADossierCarryTheIndustry(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+	owner := store.Actor{Kind: store.ActorOwner}
+	acme, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Acme", Domain: "acme.com"})
+	zeta, _, _ := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Zeta", Domain: "zeta.com"})
+	industry := "Payments"
+	if _, err := service.hub.UpdateCompany(ctx, owner, acme.ID, store.CompanyUpdate{Industry: &industry}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := send(t, http.MethodGet, service.url+"/v1/companies", ownerToken, "")
+	var listed struct {
+		Companies []struct {
+			Company map[string]any `json:"company"`
+		} `json:"companies"`
+	}
+	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Companies) != 2 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	if got := listed.Companies[0].Company["industry"]; got != industry {
+		t.Fatalf("acme's industry = %v, want %q: %s", got, industry, body)
+	}
+	if _, sent := listed.Companies[1].Company["industry"]; sent {
+		t.Fatalf("zeta has no industry stored but the list sent one: %s", body)
+	}
+
+	status, body = send(t, http.MethodGet, service.url+"/v1/companies/"+acme.ID.String(), ownerToken, "")
+	var dossier struct {
+		Company map[string]any `json:"company"`
+	}
+	if err := json.Unmarshal(body, &dossier); status != http.StatusOK || err != nil || dossier.Company["industry"] != industry {
+		t.Fatalf("dossier: %d %s", status, body)
+	}
+	status, body = send(t, http.MethodGet, service.url+"/v1/companies/"+zeta.ID.String(), ownerToken, "")
+	var zetaDossier struct {
+		Company map[string]any `json:"company"`
+	}
+	if err := json.Unmarshal(body, &zetaDossier); status != http.StatusOK || err != nil {
+		t.Fatalf("zeta's dossier: %d %s", status, body)
+	}
+	if _, sent := zetaDossier.Company["industry"]; sent {
+		t.Fatalf("zeta has no industry stored but its dossier sent one: %s", body)
 	}
 }
 

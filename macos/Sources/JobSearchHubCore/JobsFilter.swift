@@ -23,7 +23,7 @@ public struct JobsFilter: Codable, Equatable, Sendable {
 
     public func matches(_ item: JobListItem, previousVisit: Date?) -> Bool {
         let job = item.job
-        if hiddenFitLevels.contains(item.fit.level) { return false }
+        if hiddenFitLevels.contains(item.screenLevel) { return false }
         if item.fit.checks.contains(where: { $0.verdict == .no && hiddenCheckFailures.contains($0.name) }) { return false }
         if hiddenSources.contains(job.source) { return false }
         if hiddenWorkplaces.contains(job.workplaceName) { return false }
@@ -82,7 +82,7 @@ public struct JobsFilterChoices: Equatable, Sendable {
     public var withPayCount: Int
 
     public init(items: [JobListItem]) {
-        fitLevelCounts = items.reduce(into: [:]) { counts, item in counts[item.fit.level, default: 0] += 1 }
+        fitLevelCounts = items.reduce(into: [:]) { counts, item in counts[item.screenLevel, default: 0] += 1 }
         checkFailureCounts = items.reduce(into: [:]) { counts, item in
             for check in item.fit.checks where check.verdict == .no { counts[check.name, default: 0] += 1 }
         }

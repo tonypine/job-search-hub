@@ -10,6 +10,9 @@ public struct DecisionQueueItem: Decodable, Equatable, Identifiable, Sendable {
     public var fit: JobFit
     /// Set when the job was left for later.
     public var decision: JobDecision?
+    /// Updates about the job the owner hasn't seen; nil from a hub that
+    /// doesn't count them.
+    public var unseenUpdates: Int?
 
     public var id: UUID { job.id }
 }
@@ -40,6 +43,17 @@ public struct DecisionSignals: Decodable, Equatable, Sendable {
         }
         parts.append("\(goodOrUnclearDecided) of \(goodOrUnclearSeen) jobs that don't fail the screen decided")
         return parts.joined(separator: " · ")
+    }
+
+    /// How many decisions were made in the period, of every kind.
+    public var decidedCount: Int { decisions.values.reduce(0, +) }
+
+    /// The Decide page's subtitle: "7 to decide · 12 decided this week", or
+    /// the queue alone until the signals are read.
+    public static func makeSubtitle(toDecide: Int, signals: DecisionSignals?) -> String {
+        let queue = "\(toDecide) to decide"
+        guard let signals else { return queue }
+        return "\(queue) · \(signals.decidedCount) decided this week"
     }
 
     /// A wait in hours as people say it: "40 minutes", "5 hours", "1.5 days".

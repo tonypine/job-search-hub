@@ -123,6 +123,10 @@ func runTriageSession(ctx context.Context, hubURL string, started startedRun, op
 	if claudeBinary == "" {
 		claudeBinary = "claude"
 	}
+	// The run's model is the one asked for, else its kind's route's.
+	if started.AgentRun.Model != "" {
+		options.model = started.AgentRun.Model
+	}
 	command := exec.CommandContext(sessionCtx, claudeBinary,
 		buildClaudeArguments(started.Prompt, string(started.ResultSchema), mcpConfigPath, options)...)
 	command.Dir = workingDirectory

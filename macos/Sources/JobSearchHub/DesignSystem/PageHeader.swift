@@ -52,6 +52,7 @@ struct PageHeader<Leading: View, Trailing: View, FilterMenu: View>: View {
                 leading
                     .lineLimit(1)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .clipped()
                 HStack(spacing: Space.s) { trailing }
                     .fixedSize()
             }
@@ -101,16 +102,21 @@ enum PageHeaderMetrics {
     static let chipRowHeight: CGFloat = 26
     /// The search field's width.
     static let searchWidth: CGFloat = 200
+    /// The search field's width on a page whose scopes need the room beside
+    /// the inspector at 1400 wide: Companies, and Jobs with its five.
+    static let compactSearchWidth: CGFloat = 150
 }
 
-/// The search field in a page header, at the same width on every page.
+/// The search field in a page header, at the same width on every page
+/// unless the page asks for the compact one.
 struct PageSearchField: View {
     @Binding var text: String
     let prompt: String
+    var width = PageHeaderMetrics.searchWidth
 
     var body: some View {
         SearchField(text: $text, prompt: prompt)
-            .frame(width: PageHeaderMetrics.searchWidth)
+            .frame(width: width)
     }
 }
 

@@ -27,6 +27,11 @@ final class NewVersionChecker {
     /// What the install that brought the running version changed, for
     /// *What's new* after it.
     private(set) var installedChanges: InstalledChanges?
+    /// In QA mode, the releases' URL as Settings › Version shows it: at
+    /// first the stub feed the build or the launch named, or empty for
+    /// GitHub's; then the one QA types once it knows its port. A check reads
+    /// it when it holds an http(s) URL, and GitHub's releases otherwise.
+    var qaFeedText: String
 
     @ObservationIgnored let updates: UpdatesFolder
     /// Each check that finds the running version withdrawn calls it: the
@@ -47,11 +52,13 @@ final class NewVersionChecker {
         self.updates = updates
         self.inspector = inspector
         self.feed = feed
+        qaFeedText = feed.isQAMode && feed.url != GitHubRepository.releasesAPIURL ? feed.url.absoluteString : ""
         let defaults = UserDefaults.standard
         facts = NewVersionFacts(
             running: running,
             lastCheckedAt: defaults.object(forKey: Self.lastCheckedKey) as? Date,
-            failingSince: defaults.object(forKey: Self.failingSinceKey) as? Date
+            failingSince: defaults.object(forKey: Self.failingSinceKey) as? Date,
+            isQAMode: feed.isQAMode
         )
         installedAt = try? Bundle.main.bundleURL.resourceValues(forKeys: [.creationDateKey]).creationDate
         readLocalState()
@@ -59,6 +66,16 @@ final class NewVersionChecker {
 
     var status: NewVersionStatus {
         NewVersionStatus.make(facts, now: .now)
+    }
+
+    /// A QA build, or launched with `--qa-mode`: Settings › Version shows
+    /// the release feed.
+    var isQAMode: Bool { feed.isQAMode }
+
+    /// The feed a check reads: in QA mode, the one Settings › Version shows.
+    private var currentFeed: ReleaseFeed {
+        guard feed.isQAMode else { return feed }
+        return feed.reading(ReleaseFeed.feedURL(qaFeedText) ?? GitHubRepository.releasesAPIURL)
     }
 
     /// Checks at launch, then every hour, until the app quits.
@@ -99,7 +116,7 @@ final class NewVersionChecker {
 
         let releases: [GitHubRelease]
         do {
-            releases = try await feed.fetch()
+            releases = try await currentFeed.fetch()
         } catch {
             facts.failingSince = facts.failingSince ?? .now
             UserDefaults.standard.set(facts.failingSince, forKey: Self.failingSinceKey)
@@ -145,6 +162,7 @@ final class NewVersionChecker {
         // A version refused once isn't downloaded again until the next
         // launch, unless only the download failed.
         if let failed = facts.failed, failed.version == newest.version, !failed.problem.isDownloadFailure {
+            facts.failed?.whatsNew = whatsNew
             return
         }
 
@@ -156,7 +174,7 @@ final class NewVersionChecker {
                 checked = try await download(newest)
             } catch {
                 updates.removeFolder(for: newest.version)
-                facts.failed = FailedVersion(version: newest.version, problem: error)
+                facts.failed = FailedVersion(version: newest.version, problem: error, whatsNew: whatsNew)
                 updates.log("\(newest.version) \(error.title): \(error.explanation)", at: .now)
                 return
             }

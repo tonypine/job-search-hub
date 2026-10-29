@@ -17,7 +17,7 @@ import (
 // saying what it built and what needs the owner.
 func seedProfile(ctx context.Context, config cliConfig, options triageOptions, out io.Writer) error {
 	var started startedRun
-	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindProfileSeed}, &started); err != nil {
+	if err := postJSON(ctx, config, "/v1/agent-runs", map[string]string{"kind": store.AgentRunKindProfileSeed, "model": options.model}, &started); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Building the knowledge base from your CV and LinkedIn (agent run %s, prompt version %d)\n",

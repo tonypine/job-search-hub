@@ -1,11 +1,13 @@
 import Foundation
 
 /// A model server the hub can call: an OpenAI-compatible one at an address,
-/// or the hub's own runtime. Its key is never served back; `hasKey` says
-/// whether one is set.
+/// the hub's own runtime, OpenRouter, or the owner's Claude subscription.
+/// Its key is never served back; `hasKey` says whether one is set.
 public struct ModelProvider: Decodable, Equatable, Identifiable, Hashable, Sendable {
     public static let hubRuntimeKind = "hub_runtime"
     public static let openAICompatibleKind = "openai_compatible"
+    public static let openRouterKind = "openrouter"
+    public static let claudeSubscriptionKind = "claude_subscription"
 
     public var id: UUID
     public var kind: String
@@ -88,8 +90,40 @@ public struct TaskRoutesResponse: Decodable, Sendable {
     public var routes: [TaskRoute]
 }
 
+/// A provider's models: their ids, and, from a hub that describes them,
+/// each with its name and OpenRouter's prices.
 public struct ProviderModelsResponse: Decodable, Sendable {
     public var models: [String]
+    public var catalog: [ProviderModel]?
+
+    /// The models described, or, from a hub that only names them, their
+    /// ids alone.
+    public var entries: [ProviderModel] {
+        catalog ?? models.map { ProviderModel(id: $0) }
+    }
+}
+
+/// A model a provider runs: the id a route names, its name when the
+/// provider gives one, and what OpenRouter charges per million tokens, in
+/// US dollars, as text so the decimal is never rounded.
+public struct ProviderModel: Decodable, Equatable, Sendable {
+    public var id: String
+    public var name: String?
+    public var inputUSDPerMillion: String?
+    public var outputUSDPerMillion: String?
+
+    public init(id: String, name: String? = nil, inputUSDPerMillion: String? = nil, outputUSDPerMillion: String? = nil) {
+        self.id = id
+        self.name = name
+        self.inputUSDPerMillion = inputUSDPerMillion
+        self.outputUSDPerMillion = outputUSDPerMillion
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case inputUSDPerMillion = "inputUsdPerMillion"
+        case outputUSDPerMillion = "outputUsdPerMillion"
+    }
 }
 
 /// The kinds of background task that run on a routed model, in the order

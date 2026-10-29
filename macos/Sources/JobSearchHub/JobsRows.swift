@@ -13,6 +13,33 @@ enum JobRowLayout {
     static let rowHeight: CGFloat = 44
     /// The cells' height; the table's own padding makes the row 44 pt.
     static let cellHeight: CGFloat = 36
+
+    /// The room the table leaves between the cells of neighboring columns,
+    /// in place of AppKit's 17 pt. The design's columns sit side by side with
+    /// their margins in their widths; at 17 pt, the four word and number
+    /// columns took 68 pt more than it gives them, and beside the inspector
+    /// that came off the titles (TP-1123).
+    static let cellSpacing: CGFloat = 8
+
+    /// The word and number columns keep one width, enough for their header
+    /// and their usual values, so the Job column is the one that takes or
+    /// gives up the room as the window and the inspector change. When every
+    /// column could be resized, AppKit scaled them all alike, and beside the
+    /// inspector the titles were cut while Match and Take-home kept room they
+    /// didn't use (TP-1123). The table adds `cellSpacing` to each. Take-home
+    /// and Posted are as wide as their headers need with the margins AppKit
+    /// gives a header at its own 17 pt spacing, Posted's with the sort
+    /// indicator, as the table opens sorted by it.
+    static let matchWidth: CGFloat = 76
+    static let screenWidth: CGFloat = 88
+    static let takeHomeWidth: CGFloat = 73
+    static let postedWidth: CGFloat = 66
+    /// The Job column's narrowest; the table scrolls sideways below it.
+    static let jobMinWidth: CGFloat = 240
+
+    static var fixedColumnsWidth: CGFloat {
+        matchWidth + screenWidth + takeHomeWidth + postedWidth
+    }
 }
 
 /// The row the pointer is over, whose actions show. Only the job cell reads
@@ -40,8 +67,10 @@ extension View {
 }
 
 /// The job: its company's monogram, the title in semibold with its marks,
-/// and the company and location under it. Hovered or selected, it ends in
-/// the row's actions.
+/// and the company and location under it, which take all the room the
+/// column has. Hovered or selected, it ends in the row's actions. Its chips
+/// keep their words beside them, as color never stands alone: where the
+/// column is short, the title gives up the room, and its tooltip has it whole.
 struct JobCell: View {
     let item: JobListItem
     let isSelected: Bool
@@ -52,11 +81,14 @@ struct JobCell: View {
     let onRestore: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.m) {
+        let showsActions = isSelected || hover.id == item.id
+        HStack(spacing: 0) {
             Monogram(item.companyName ?? item.job.title)
+                .padding(.trailing, Space.m)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(item.job.title).fontWeight(.semibold).lineLimit(1).help(item.job.title)
+                        .layoutPriority(1)
                     if item.unseenUpdates > 0 {
                         UnseenDot(count: item.unseenUpdates)
                     }
@@ -72,9 +104,10 @@ struct JobCell: View {
                 }
                 Text(context).font(.hubSecondary).foregroundStyle(.secondary).lineLimit(1).help(context)
             }
-            Spacer(minLength: 0)
-            if isSelected || hover.id == item.id {
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if showsActions {
                 JobRowActions(isSkipped: isSkipped, onDecide: onDecide, onRestore: onRestore)
+                    .padding(.leading, Space.s)
             }
         }
         .jobRowCell(item.id, hover: hover)
@@ -107,8 +140,7 @@ struct JobRowActions: View {
                 action("Skip", symbol: SetAside.skipped.symbolName, key: "S") { onDecide(.skip) }
             }
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.rowAction)
         .labelStyle(.iconOnly)
     }
 
@@ -141,12 +173,13 @@ struct MatchCell: View {
     }
 }
 
-/// The screen: ✓ Passes, ? 2 unclear, or ✗ and the check that fails.
+/// The screen, as the job's page counts it: ✓ Passes, ? 2 unclear, or ✗
+/// and the check that fails.
 struct ScreenCell: View {
-    let fit: JobFit
+    let screen: ScreenBreakdown
 
     var body: some View {
-        let summary = ScreenSummary(fit)
+        let summary = ScreenSummary(screen)
         HStack(spacing: Space.xs) {
             Image(systemName: summary.verdict.symbolName).imageScale(.small).foregroundStyle(summary.verdict.tone.color)
                 .accessibilityHidden(true)
@@ -161,8 +194,8 @@ struct ScreenCell: View {
 
     /// The checks that don't pass, with why.
     private var details: String {
-        let doubts = fit.checks.filter { $0.verdict != .yes }.map { "\($0.name): \($0.reason)" }
-        return doubts.isEmpty ? fit.level.label : doubts.joined(separator: "\n")
+        let doubts = screen.exceptions.map { "\($0.name): \($0.reason)" }
+        return doubts.isEmpty ? screen.overallLevel.label : doubts.joined(separator: "\n")
     }
 }
 

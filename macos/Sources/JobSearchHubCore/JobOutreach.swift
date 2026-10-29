@@ -18,6 +18,21 @@ public enum JobOutreach {
         person.relation == .connection || person.relation == .introducer
     }
 
+    /// How many of them the People card lists, as its meta and the verdict
+    /// strip both say it: "2 you know" when the owner knows any of them,
+    /// else "3 contacts"; nil with no one to write to.
+    public static func describe(_ people: [RelatedPerson]) -> String? {
+        let known = people.count(where: isKnown)
+        if known > 0 {
+            return "\(known) you know"
+        }
+        return switch people.count {
+        case 0: nil
+        case 1: "1 contact"
+        default: "\(people.count) contacts"
+        }
+    }
+
     /// The action that fits them: "Ask for intro" for an introducer, else
     /// "Message".
     public static func getActionTitle(for person: RelatedPerson) -> String {

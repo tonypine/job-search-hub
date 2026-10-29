@@ -12,15 +12,42 @@ public struct Company: Codable, Equatable, Identifiable, Sendable {
     public var careersURL: String?
     public var headquartersCountry: String?
     public var employeeCountRange: String?
+    /// What the company does in one to three words: "Payments".
+    public var industry: String?
     public var summary: String?
     public var foundVia: String?
     public var createdAt: Date
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, name, domain, headquartersCountry, employeeCountRange, summary, foundVia, createdAt, updatedAt
+        case id, name, domain, headquartersCountry, employeeCountRange, industry, summary, foundVia, createdAt, updatedAt
         case websiteURL = "websiteUrl"
         case careersURL = "careersUrl"
+    }
+}
+
+public extension Company {
+    /// What a company's row says under its name: "Payments · 51-200 people".
+    /// The headquarters country stands in for an industry the hub doesn't
+    /// know, and the domain for a line that would be empty.
+    var contextLine: String {
+        var parts: [String] = []
+        if let industry, !industry.isEmpty {
+            parts.append(industry)
+        } else if let country = headquartersCountry, !country.isEmpty {
+            parts.append(country)
+        }
+        if let size = employeeCountRange, !size.isEmpty {
+            parts.append("\(size) people")
+        }
+        return parts.isEmpty ? domain : parts.joined(separator: " · ")
+    }
+
+    /// "Developer tools · 51-200 people", what follows the company's name in
+    /// a job's header; nil when the hub knows neither.
+    var industryAndSize: String? {
+        let facts = [industry, employeeCountRange.map { "\($0) people" }].compactMap { $0 }.filter { !$0.isEmpty }
+        return facts.isEmpty ? nil : facts.joined(separator: " · ")
     }
 }
 
@@ -78,10 +105,30 @@ public struct CompanySummary: Codable, Equatable, Identifiable, Sendable {
     public var peopleCount: Int
     /// How many of the owner's connections work here.
     public var connectionCount: Int
+    /// How many people can get the owner in here, as a job's People card
+    /// counts them: connections, introducers and stored contacts; nil from a
+    /// hub that doesn't send it.
+    public var knownPeopleCount: Int?
+    /// The first of those people, by name, at most three: connections, then
+    /// introducers, then the contacts closest to the hire; nil from a hub
+    /// that doesn't send them.
+    public var knownPeople: [String]?
+    /// The phase of the owner's open application here updated last.
+    public var applicationPhase: String?
+    /// How many of its open jobs pass the screen.
+    public var fittingJobs: Int?
+    /// The best match the briefs of those jobs found.
+    public var bestMatch: JobMatch?
+    /// When the hub first saw the newest of those jobs.
+    public var newestFittingJobSeenAt: Date?
     /// Updates about the company or its jobs the owner hasn't seen yet.
     public var unseenUpdates: Int
 
     public var id: UUID { company.id }
+
+    /// How many people the row's *People you know* shows: everyone who can
+    /// get the owner in, or the connections alone from an older hub.
+    public var peopleYouKnow: Int { knownPeopleCount ?? connectionCount }
 }
 
 /// Everything the hub knows about one company.

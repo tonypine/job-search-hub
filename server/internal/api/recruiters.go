@@ -118,8 +118,8 @@ type conversationMessagesResponse struct {
 	Messages []store.LinkedInMessage `json:"messages"`
 }
 
-// pickOpeningsForDraft keeps the roles a draft may name: good fits first,
-// then unclear ones, never poor ones.
+// pickOpeningsForDraft keeps the roles a draft may name: the ones that pass
+// the screen first, then unclear ones, never ones that fail it.
 func pickOpeningsForDraft(jobs []opening) []opening {
 	picked := []opening{}
 	for _, level := range []jobfit.Level{jobfit.LevelGood, jobfit.LevelUnclear} {

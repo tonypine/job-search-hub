@@ -20,6 +20,9 @@ type decisionQueueItem struct {
 	BriefTier   string             `json:"brief_tier"`
 	Fit         jobfit.Fit         `json:"fit"`
 	Decision    *store.JobDecision `json:"decision,omitempty"`
+	// UnseenUpdates counts the updates about the job the owner hasn't seen,
+	// for the queue row's dot.
+	UnseenUpdates int `json:"unseen_updates"`
 }
 
 type decisionQueueResponse struct {
@@ -28,8 +31,8 @@ type decisionQueueResponse struct {
 }
 
 // decisionSignals say how deciding goes: the decisions made in the period by
-// kind, how long jobs waited for them, and how many of the good and unclear
-// jobs seen in the period are decided.
+// kind, how long jobs waited for them, and how many of the jobs seen in the
+// period that don't fail the screen, as their pages read it, are decided.
 type decisionSignals struct {
 	Since     time.Time      `json:"since"`
 	Decisions map[string]int `json:"decisions"`
@@ -60,7 +63,7 @@ func RegisterDecisionRoutes(routes *http.ServeMux, hub *store.Store, rateSource 
 		for _, queuedItem := range queued {
 			items = append(items, decisionQueueItem{
 				Job: queuedItem.Job, CompanyName: queuedItem.CompanyName, Match: queuedItem.Match, Reason: queuedItem.Reason, BriefTier: queuedItem.BriefTier,
-				Fit: jobfit.Judge(queuedItem.Job, queuedItem.Facts, criteria, rates), Decision: queuedItem.Decision,
+				Fit: jobfit.Judge(queuedItem.Job, queuedItem.Facts, criteria, rates), Decision: queuedItem.Decision, UnseenUpdates: queuedItem.UnseenUpdates,
 			})
 		}
 		writeJSON(w, http.StatusOK, decisionQueueResponse{Items: items, Total: len(items)})
@@ -110,8 +113,14 @@ func getDecisionSignals(r *http.Request, hub *store.Store, rateSource exchangeRa
 	if err != nil {
 		return decisionSignals{}, err
 	}
+	experienceMonths, err := readExperienceMonths(r.Context(), hub)
+	if err != nil {
+		return decisionSignals{}, err
+	}
 	for _, job := range seen {
-		if jobfit.Judge(job.Job, job.Facts, criteria, rates).Level == jobfit.LevelPoor {
+		fit := jobfit.Judge(job.Job, job.Facts, criteria, rates)
+		screenOut := buildScreenOutAnswers(indexFlatFacts(store.FlattenJobFactsToJSON(job.Facts)), fit, experienceMonths)
+		if judgeScreenLevel(fit, screenOut) == jobfit.LevelPoor {
 			continue
 		}
 		signals.GoodOrUnclearSeen++
