@@ -64,16 +64,20 @@ public struct StartRunRequest: Encodable, Equatable, Sendable {
 }
 
 /// A run the owner started, as its start answers: the id it is recorded
-/// under once it runs.
+/// under once it runs, and for an agent the Mac's task it waits in.
 public struct StartedRun: Decodable, Equatable, Sendable {
     public var id: UUID
     public var kind: String
     public var subjectID: UUID
     public var startedByOwner: Bool
+    /// The task the Mac runs an agent kind through; nil for a model run,
+    /// which the hub runs itself.
+    public var taskID: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, startedByOwner
         case subjectID = "subjectId"
+        case taskID = "taskId"
     }
 }
 
@@ -198,7 +202,7 @@ public enum JobRuns {
     }
 
     /// How long a started run is followed before the row stops saying it
-    /// runs: a model run gives up after ten minutes, an agent takes longer.
+    /// runs: the hub gives a model run ten minutes, an agent takes longer.
     public static func getFollowLimit(of kind: RunnableKind) -> TimeInterval {
         kind.isAgent ? 30 * 60 : 12 * 60
     }

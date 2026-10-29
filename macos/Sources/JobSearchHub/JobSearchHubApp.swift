@@ -15,7 +15,7 @@ struct JobSearchHubApp: App {
     @State private var profileSeed = ProfileSeed()
     @State private var jobDecisions = JobDecisions()
     @State private var applicationChanges = ApplicationChanges()
-    @State private var jobRunStarts = JobRunStarts()
+    @State private var jobRunStarts: JobRunStarts
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
@@ -26,6 +26,8 @@ struct JobSearchHubApp: App {
         _research = State(initialValue: CompanyResearch(jobFinder: jobFinder))
         let taskRunner = RemoteTaskRunner(jobFinder: jobFinder)
         _taskRunner = State(initialValue: taskRunner)
+        // An agent started from a job's Run popover, as its fix, runs here at once.
+        _jobRunStarts = State(initialValue: JobRunStarts(runTask: { taskID, client in await taskRunner.runStarted(taskID, with: client) }))
         // The installer pauses the tasks while an install waits, lists them,
         // and asks the hub through the app's connection.
         Installer.shared.taskRunner = taskRunner

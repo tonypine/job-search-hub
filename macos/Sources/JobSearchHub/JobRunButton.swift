@@ -1,60 +1,6 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The runs started from a job's Run popover, for as long as the app runs:
-/// each row says "Running" until its run lands, on the job's page, in the
-/// inspector or on Decide alike.
-@MainActor
-@Observable
-final class JobRunStarts {
-    struct Key: Hashable {
-        let jobID: UUID
-        let kind: String
-    }
-
-    struct Running {
-        let runID: UUID
-        let startedAt: Date
-    }
-
-    private(set) var running: [Key: Running] = [:]
-    /// Bumps as a started run lands, so the job and its runs read again.
-    private(set) var revision = 0
-
-    func getRunning(_ kind: String, of jobID: UUID) -> Running? {
-        running[Key(jobID: jobID, kind: kind)]
-    }
-
-    /// Starts the kind for the job now, on its kind's model and whatever its
-    /// pause, then follows it until it lands.
-    func start(_ kind: RunnableKind, for jobID: UUID, note: String? = nil, with client: HubClient) async throws {
-        let started = try await client.startRun(StartRunRequest(kind: kind.id, subjectType: JobRuns.jobSubject, subjectID: jobID, note: note))
-        let key = Key(jobID: jobID, kind: kind.id)
-        running[key] = Running(runID: started.id, startedAt: .now)
-        Task { await follow(started.id, of: kind, key: key, before: kind.lastRun?.id, with: client) }
-    }
-
-    /// Reads the job's runs every few seconds until the run started, or a
-    /// later one of its kind, has finished, or for as long as such a run
-    /// can take.
-    private func follow(_ runID: UUID, of kind: RunnableKind, key: Key, before: UUID?, with client: HubClient) async {
-        defer {
-            if running[key]?.runID == runID {
-                running[key] = nil
-            }
-            revision += 1
-        }
-        let deadline = Date.now.addingTimeInterval(JobRuns.getFollowLimit(of: kind))
-        while Date.now < deadline {
-            try? await Task.sleep(for: .seconds(3))
-            guard let kinds = try? await client.listRunnableKinds(forJob: key.jobID) else { continue }
-            if let current = kinds.first(where: { $0.id == kind.id }), JobRuns.hasLanded(runID, of: current, before: before) {
-                return
-            }
-        }
-    }
-}
-
 /// Run ▾ in a job's action bar: a popover with a row for each kind of run
 /// the hub can start for the job, each started with its ▶.
 struct JobRunButton: View {

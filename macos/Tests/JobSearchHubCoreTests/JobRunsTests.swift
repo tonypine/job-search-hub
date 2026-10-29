@@ -186,8 +186,21 @@ private let english = Locale(identifier: "en_US")
     #expect(recording.lastRequest?.httpMethod == "GET")
 
     let started = try await client.startRun(StartRunRequest(kind: "job_brief_full", subjectType: JobRuns.jobSubject, subjectID: jobID))
-    #expect(started.id == runID && started.subjectID == jobID && started.startedByOwner)
+    #expect(started.id == runID && started.subjectID == jobID && started.startedByOwner && started.taskID == nil)
     #expect(recording.lastRequest?.httpMethod == "POST" && recording.lastRequest?.url?.path() == "/v1/runs")
     let body = try #require(recording.lastBody.flatMap { String(data: $0, encoding: .utf8) })
     #expect(body.contains(#""kind":"job_brief_full""#))
+}
+
+@Test func anAgentsStartNamesTheMacsTaskItWaitsIn() throws {
+    let runID = UUID()
+    let taskID = UUID()
+    let body = #"""
+    {"queued":true,"run":{"id":"\#(runID.uuidString)","kind":"job_fix","subject_type":"job","subject_id":"\#(jobID.uuidString)",
+     "provider":"","model":"","chosen_model":false,"started_by_owner":true,"task_id":"\#(taskID.uuidString)"}}
+    """#
+
+    let started = try HubJSON.makeDecoder().decode(StartedRunResponse.self, from: Data(body.utf8)).run
+
+    #expect(started.id == runID && started.kind == JobRuns.fixKind && started.taskID == taskID)
 }
