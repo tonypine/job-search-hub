@@ -193,13 +193,17 @@ public enum JobRuns {
         return nil
     }
 
-    /// Whether the run started has landed: its record, or a later one of
-    /// the kind for the job, has finished. `before` is the kind's last run
-    /// when it started.
-    public static func hasLanded(_ started: UUID, of kind: RunnableKind, before: UUID?) -> Bool {
+    /// Whether the run started at `since` has landed: its record, or a
+    /// later one of the kind for the job, such as a retry the hub records
+    /// under its own id, has finished. A run that began before the start,
+    /// even one that finished after it, isn't it.
+    public static func hasLanded(_ started: UUID, since: Date, of kind: RunnableKind) -> Bool {
         guard let last = kind.lastRun, last.outcome != "running" else { return false }
-        return last.id == started || last.id != before
+        return last.id == started || last.startedAt >= since.addingTimeInterval(-clockSlack)
     }
+
+    /// How far the hub's clock may run behind the Mac's for a run's start.
+    static let clockSlack: TimeInterval = 2
 
     /// How long a started run is followed before the row stops saying it
     /// runs: the hub gives a model run ten minutes, an agent takes longer.

@@ -135,23 +135,30 @@ private let english = Locale(identifier: "en_US")
 @Test func aStartedRunLandsOnceItOrALaterRunOfItsKindFinishes() throws {
     var facts = try getKind("job_facts")
     let started = UUID()
+    let since = try #require(facts.lastRun?.startedAt).addingTimeInterval(60)
 
-    #expect(!JobRuns.hasLanded(started, of: facts, before: lastFactsRunID))
+    // The run before the start, finished, isn't it.
+    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
 
     facts.lastRun?.id = started
     facts.lastRun?.outcome = "running"
-    #expect(!JobRuns.hasLanded(started, of: facts, before: lastFactsRunID))
+    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
 
     facts.lastRun?.outcome = "succeeded"
-    #expect(JobRuns.hasLanded(started, of: facts, before: lastFactsRunID))
+    #expect(JobRuns.hasLanded(started, since: since, of: facts))
 
-    // A retry is recorded under its own id.
+    // A retry is recorded under its own id, after the start.
     facts.lastRun?.id = UUID()
     facts.lastRun?.outcome = "failed"
-    #expect(JobRuns.hasLanded(started, of: facts, before: lastFactsRunID))
+    facts.lastRun?.startedAt = since.addingTimeInterval(30)
+    #expect(JobRuns.hasLanded(started, since: since, of: facts))
+
+    // A run that began before the start and finished after it isn't it.
+    facts.lastRun?.startedAt = since.addingTimeInterval(-30)
+    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
 
     facts.lastRun = nil
-    #expect(!JobRuns.hasLanded(started, of: facts, before: nil))
+    #expect(!JobRuns.hasLanded(started, since: since, of: facts))
 }
 
 @Test func anAgentIsFollowedLongerThanAModelRun() throws {

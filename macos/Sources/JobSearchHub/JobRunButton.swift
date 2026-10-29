@@ -11,6 +11,11 @@ struct JobRunButton: View {
     @State private var isShowingRuns = false
     /// The kind whose note the Fix sheet asks for.
     @State private var askingNoteFor: RunnableKind?
+    /// The kind whose note is asked for once the popover has closed.
+    @State private var noteNext: RunnableKind?
+    /// Why the last start failed, kept here so it still shows once the
+    /// popover closes and opens again.
+    @State private var startFailure: HubFailure?
 
     var body: some View {
         Button {
@@ -25,8 +30,16 @@ struct JobRunButton: View {
         .tint(.hubAccent)
         .help("Start any of the job's runs now, whatever their pause")
         .popover(isPresented: $isShowingRuns, arrowEdge: .bottom) {
-            JobRunPopover(jobID: jobID, client: client, starts: starts) { kind in
+            JobRunPopover(jobID: jobID, client: client, starts: starts, startFailure: $startFailure) { kind in
+                noteNext = kind
                 isShowingRuns = false
+            }
+        }
+        // The note's sheet opens once the popover has gone: the window shows
+        // one of them at a time.
+        .onChange(of: isShowingRuns) {
+            if !isShowingRuns, let kind = noteNext {
+                noteNext = nil
                 askingNoteFor = kind
             }
         }
@@ -52,12 +65,12 @@ struct JobRunPopover: View {
     /// Handed over rather than read from the environment, which a popover's
     /// own window may not carry.
     let starts: JobRunStarts
+    @Binding var startFailure: HubFailure?
     /// Asks for the note a kind needs before it runs.
     let askForNote: (RunnableKind) -> Void
     @State private var kinds: [RunnableKind]?
     @State private var providers: [ModelProvider] = []
-    @State private var starting: Set<String> = []
-    @State private var failure: HubFailure?
+    @State private var loadFailure: HubFailure?
 
     private static let modelWidth: CGFloat = 150
 
@@ -73,11 +86,16 @@ struct JobRunPopover: View {
                 if kinds.isEmpty {
                     Text("No runs to start for this job.").foregroundStyle(.secondary).padding(Space.s)
                 }
-            } else if failure == nil {
+                if loadFailure != nil {
+                    HubErrorView($loadFailure).padding(.top, Space.s)
+                }
+            } else if let loadFailure {
+                HubErrorView(loadFailure, retry: { Task { await load() } })
+            } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(Space.l)
             }
-            if failure != nil {
-                HubErrorView($failure).padding(.top, Space.s)
+            if startFailure != nil {
+                HubErrorView($startFailure).padding(.top, Space.s)
             }
         }
         .padding(Space.s)
@@ -90,9 +108,9 @@ struct JobRunPopover: View {
         async let readProviders = try? client.get("v1/model-providers", as: ModelProvidersResponse.self).providers
         do {
             kinds = try await listed
-            failure = nil
+            loadFailure = nil
         } catch {
-            failure = HubFailure("Couldn't read the job's runs", error)
+            loadFailure = HubFailure("Couldn't read the job's runs", error)
         }
         if let read = await readProviders {
             providers = read
@@ -129,7 +147,7 @@ struct JobRunPopover: View {
             .buttonStyle(.bordered)
             .buttonBorderShape(.circle)
             .tint(.hubAccent)
-            .disabled(!kind.canRun || running != nil || starting.contains(kind.id))
+            .disabled(!kind.canRun || starts.isBusy(kind.id, of: jobID))
             .help(JobRuns.describeStart(of: kind))
             .accessibilityLabel("Start \(title)")
         }
@@ -162,13 +180,12 @@ struct JobRunPopover: View {
             askForNote(kind)
             return
         }
-        starting.insert(kind.id)
+        startFailure = nil
         Task {
-            defer { starting.remove(kind.id) }
             do {
                 try await starts.start(kind, for: jobID, with: client)
             } catch {
-                failure = HubFailure("Couldn't start \(JobRuns.getTitle(of: kind))", error)
+                startFailure = HubFailure("Couldn't start \(JobRuns.getTitle(of: kind))", error)
             }
         }
     }

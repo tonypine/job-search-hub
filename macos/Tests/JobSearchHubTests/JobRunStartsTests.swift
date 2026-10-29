@@ -20,7 +20,7 @@ private func briefJSON(lastRun: UUID?, outcome: String) -> String {
         #"""
         ,"last_run":{"id":"\#(id.uuidString)","record":"model_call","kind":"job_brief_full",
          "subject":{"type":"job","id":"\#(jobID.uuidString)","title":"Staff engineer"},"model":"claude-sonnet","provider":"Claude",
-         "started_at":"2026-10-29T14:14:00Z","outcome":"\#(outcome)","prompt_tokens":0,"completion_tokens":0,"started_by_owner":true}
+         "started_at":"2020-10-29T14:14:00Z","outcome":"\#(outcome)","prompt_tokens":0,"completion_tokens":0,"started_by_owner":true}
         """#
     } ?? ""
     return #"""
@@ -35,8 +35,10 @@ private func kinds(lastRun: UUID?, outcome: String = "succeeded") -> StubHub.Ans
     StubHub.Answer(status: 200, body: #"{"kinds":[\#(briefJSON(lastRun: lastRun, outcome: outcome))]}"#)
 }
 
-private func makeBrief(lastRun: UUID? = nil) throws -> RunnableKind {
-    try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(briefJSON(lastRun: lastRun, outcome: "succeeded").utf8))
+/// The full brief as the popover read it, with an earlier run that landed
+/// long before the starts here.
+private func makeBrief() throws -> RunnableKind {
+    try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(briefJSON(lastRun: UUID(), outcome: "succeeded").utf8))
 }
 
 /// What a start answers: the run's id, and the Mac's task for an agent.
@@ -70,6 +72,7 @@ private final class TaskLog {
     let follow = try await starts.start(try makeBrief(), for: jobID, with: client)
 
     #expect(starts.getRunning(briefKind, of: jobID)?.runID == firstRunID)
+    #expect(starts.isBusy(briefKind, of: jobID))
     #expect(starts.revision == 0)
 
     recording.setAnswer(kinds(lastRun: firstRunID), for: kindsPath)
@@ -88,6 +91,7 @@ private final class TaskLog {
 
     #expect(follow == nil)
     #expect(starts.getRunning(briefKind, of: jobID) == nil)
+    #expect(!starts.isBusy(briefKind, of: jobID))
     #expect(starts.revision == 0)
 }
 
@@ -96,7 +100,7 @@ private final class TaskLog {
     let starts = JobRunStarts(pollInterval: .milliseconds(10))
     let firstFollow = try await starts.start(try makeBrief(), for: jobID, with: client)
     recording.setAnswer(started(secondRunID), for: "/v1/runs")
-    let secondFollow = try await starts.start(try makeBrief(lastRun: firstRunID), for: jobID, with: client)
+    let secondFollow = try await starts.start(try makeBrief(), for: jobID, with: client)
 
     recording.setAnswer(kinds(lastRun: firstRunID), for: kindsPath)
     await firstFollow.value
@@ -109,6 +113,21 @@ private final class TaskLog {
 
     #expect(starts.getRunning(briefKind, of: jobID) == nil)
     #expect(starts.revision == 2)
+}
+
+@MainActor @Test func aRunThatLandedBeforeTheStartDoesntEndItsRow() async throws {
+    let (client, recording) = makeHub()
+    // Another run of the kind, finished since the popover read the kinds.
+    recording.setAnswer(kinds(lastRun: secondRunID), for: kindsPath)
+    let starts = JobRunStarts(pollInterval: .milliseconds(10), followLimit: { _ in 1 })
+
+    let follow = try await starts.start(try makeBrief(), for: jobID, with: client)
+    await follow.value
+
+    // The start and more than one read of the runs: the first read, which
+    // found the other run, didn't end the row; the follow limit did.
+    #expect(recording.requestCount > 2)
+    #expect(starts.getRunning(briefKind, of: jobID) == nil)
 }
 
 @MainActor @Test func aRowStopsSayingRunningOnceTheRunCouldNoLongerBeGoing() async throws {

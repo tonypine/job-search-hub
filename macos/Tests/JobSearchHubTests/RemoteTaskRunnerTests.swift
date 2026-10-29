@@ -39,6 +39,20 @@ private func makeHub() -> (HubClient, StubHub.Recording) {
     #expect(finish.contains(#""succeeded":false"#) && finish.contains("named no job"))
 }
 
+@MainActor @Test func aStartedTaskThisMacAlreadyHoldsRunsOnceAndEndsWithThatRun() async throws {
+    let (client, recording) = makeHub()
+    let runner = RemoteTaskRunner(jobFinder: CompanyJobFinder())
+
+    let first = Task { await runner.runStarted(taskID, with: client) }
+    let second = Task { await runner.runStarted(taskID, with: client) }
+
+    #expect(await first.value)
+    #expect(await second.value)
+    // One claim and one finish: the second waited for the first's run.
+    #expect(recording.requestCount == 2)
+    #expect(recording.lastRequest?.url?.path() == finishPath)
+}
+
 @MainActor @Test func aStartedTaskAnotherRunnerClaimedIsLeftToIt() async throws {
     let (client, recording) = makeHub()
     recording.setAnswer(StubHub.Answer(status: 409, body: #"{"error":"the task isn't queued"}"#), for: claimPath)
