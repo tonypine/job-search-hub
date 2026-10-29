@@ -2,8 +2,9 @@
 # Runs the real hub-server with a made-up job search in it, for Symphony's QA
 # pass, which runs it in the QA VM beside the Mac app.
 #
-#   server/scripts/dev-server.sh build   builds hub-server and dev-server-seed into server/bin/dev-server/,
-#                                        and fetches the Postgres engine when none is on the PATH
+#   server/scripts/dev-server.sh build   builds hub-server, dev-server-seed and qa-model-stub into
+#                                        server/bin/dev-server/, and fetches the Postgres engine when
+#                                        none is on the PATH
 #   server/scripts/dev-server.sh start   runs the hub in the foreground until TERM or Ctrl-C
 #
 # start creates a Postgres cluster in $TMPDIR/hub-dev-server/<pid>/ and
@@ -14,8 +15,14 @@
 # a later start clears what a killed run left there.
 #
 # hub-server runs with HOME in that folder, so it never reads the owner's
-# server.env, and with the pollers, the model work, Claude, CV printing and
-# backups off. Its prompts are the made-up ones the tests use.
+# server.env, and with the pollers, Claude, CV printing and backups off. Its
+# prompts are the made-up ones the tests use.
+#
+# Every kind that runs on a model is routed to a stand-in, qa-model-stub on
+# a free port of 127.0.0.1, which answers each request with a made-up answer
+# that fits its schema after $HUB_QA_MODEL_DELAY (3s), so a run started from
+# the app shows as running and then lands. The kinds' own runs stay paused,
+# as on a new hub; the Claude agents, such as a job's fix, don't run.
 #
 # The Postgres engine is the one on the PATH (initdb, pg_ctl and postgres, of
 # the major version server/postgres-engine.lock pins), or else the one build
@@ -27,6 +34,7 @@ set -eu
 server=$(cd "$(dirname "$0")/.." && pwd)
 out=$server/bin/dev-server
 port=${SYMPHONY_VERIFICATION_PORT:-8090}
+model_delay=${HUB_QA_MODEL_DELAY:-3s}
 address=127.0.0.1:$port
 token=qa-dev-server-owner-token-not-a-secret
 
@@ -86,8 +94,8 @@ build() {
 	GOCACHE=${TMPDIR:-/tmp}
 	GOCACHE=${GOCACHE%/}/hub-dev-server-go-build
 	export GOCACHE
-	(cd "$server" && "$go" build -o "$out/" ./cmd/hub-server ./scripts/dev-server-seed)
-	echo "Built hub-server and dev-server-seed in $out"
+	(cd "$server" && "$go" build -o "$out/" ./cmd/hub-server ./scripts/dev-server-seed ./scripts/qa-model-stub)
+	echo "Built hub-server, dev-server-seed and qa-model-stub in $out"
 
 	if bin=$(path_engine); then
 		echo "Postgres engine on the PATH: $bin"
@@ -129,9 +137,23 @@ stop_cluster() {
 		"$engine/pg_ctl" -D "$data" -m immediate -w -t 30 stop >/dev/null 2>&1 || true
 }
 
-# clear_stale stops what a killed run left in its folder, the hub-server and
-# the cluster, and deletes the folder. A folder whose run is still going is
-# left alone: it is named after that run's process.
+# stop_process stops the process whose id the file holds, when that process
+# is still the command named, and waits for it to let go of its port.
+stop_process() {
+	pid=$(cat "$1" 2>/dev/null || true)
+	[ -n "$pid" ] && [ "$(ps -o comm= -p "$pid" 2>/dev/null | xargs basename 2>/dev/null)" = "$2" ] || return 0
+	kill -TERM "$pid" 2>/dev/null || true
+	waited=0
+	while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 30 ]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	kill -KILL "$pid" 2>/dev/null || true
+}
+
+# clear_stale stops what a killed run left in its folder, the hub-server, the
+# stand-in model and the cluster, and deletes the folder. A folder whose run
+# is still going is left alone: it is named after that run's process.
 clear_stale() {
 	for stale in "$parent"/*; do
 		[ -d "$stale" ] || continue
@@ -139,17 +161,8 @@ clear_stale() {
 		if [ "$run" != "$$" ] && kill -0 "$run" 2>/dev/null; then
 			continue
 		fi
-		hub_pid=$(cat "$stale/hub-server.pid" 2>/dev/null || true)
-		if [ -n "$hub_pid" ] && [ "$(ps -o comm= -p "$hub_pid" 2>/dev/null | xargs basename 2>/dev/null)" = hub-server ]; then
-			# It lets go of the port once it has stopped.
-			kill -TERM "$hub_pid" 2>/dev/null || true
-			waited=0
-			while kill -0 "$hub_pid" 2>/dev/null && [ "$waited" -lt 30 ]; do
-				sleep 1
-				waited=$((waited + 1))
-			done
-			kill -KILL "$hub_pid" 2>/dev/null || true
-		fi
+		stop_process "$stale/hub-server.pid" hub-server
+		stop_process "$stale/qa-model-stub.pid" qa-model-stub
 		stop_cluster "$stale/data"
 		rm -rf "$stale"
 		echo "Cleared $stale, which a killed run left."
@@ -157,7 +170,7 @@ clear_stale() {
 }
 
 start() {
-	for command in hub-server dev-server-seed; do
+	for command in hub-server dev-server-seed qa-model-stub; do
 		[ -x "$out/$command" ] || fail "No $out/$command: run $0 build first."
 	done
 	engine=$(find_engine) || fail "No Postgres $engine_major engine on the PATH or in $out/engine: run $0 build first."
@@ -176,12 +189,17 @@ start() {
 	mkdir -m 700 "$root"
 	data=$root/data
 	server_pid=
+	stub_pid=
 
 	cleanup() {
 		trap - EXIT HUP INT TERM
 		if [ -n "$server_pid" ]; then
 			kill -TERM "$server_pid" 2>/dev/null || true
 			wait "$server_pid" 2>/dev/null || true
+		fi
+		if [ -n "$stub_pid" ]; then
+			kill -TERM "$stub_pid" 2>/dev/null || true
+			wait "$stub_pid" 2>/dev/null || true
 		fi
 		stop_cluster "$data"
 		rm -rf "$root"
@@ -205,12 +223,28 @@ start() {
 			fail "Postgres didn't start."
 		}
 
+	# The stand-in model every model kind is routed to; it writes its
+	# address once it listens.
+	"$out/qa-model-stub" -listen 127.0.0.1:0 -url-file "$root/qa-model-stub.url" -delay "$model_delay" >"$root/qa-model-stub.log" 2>&1 &
+	stub_pid=$!
+	echo "$stub_pid" >"$root/qa-model-stub.pid"
+	waited=0
+	while [ ! -s "$root/qa-model-stub.url" ]; do
+		if ! kill -0 "$stub_pid" 2>/dev/null || [ "$waited" -ge 100 ]; then
+			cat "$root/qa-model-stub.log" >&2
+			fail "The stand-in model didn't start."
+		fi
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+	model_url=$(cat "$root/qa-model-stub.url")
+
 	# The socket's folder goes in the URL's host, percent-encoded where it
 	# could break the query string.
 	host=$(printf '%s' "$root" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/&/%26/g' -e 's/#/%23/g' -e 's/+/%2B/g')
 	database_url="postgres:///postgres?host=$host&user=hub"
 	prompts=$server/internal/testdatabase/agentprompts
-	HUB_DATABASE_URL=$database_url HUB_AGENT_PROMPTS_DIR=$prompts "$out/dev-server-seed"
+	HUB_DATABASE_URL=$database_url HUB_AGENT_PROMPTS_DIR=$prompts HUB_QA_MODEL_URL=$model_url "$out/dev-server-seed"
 
 	mkdir "$root/home"
 	env HOME="$root/home" \
@@ -234,7 +268,7 @@ start() {
 		"$out/hub-server" &
 	server_pid=$!
 	echo "$server_pid" >"$root/hub-server.pid"
-	echo "Hub dev server at http://$address, owner token $token, Postgres $("$engine/postgres" --version | awk '{print $NF}') in $root"
+	echo "Hub dev server at http://$address, owner token $token, Postgres $("$engine/postgres" --version | awk '{print $NF}') in $root, every model kind on the stand-in model at $model_url"
 	status=0
 	wait "$server_pid" || status=$?
 	server_pid=

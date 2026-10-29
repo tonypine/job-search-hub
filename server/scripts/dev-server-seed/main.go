@@ -29,6 +29,10 @@
 // The briefs and facts cite the job_brief and job_facts prompts, which it
 // seeds from HUB_AGENT_PROMPTS_DIR first when that is set, as the server
 // does.
+//
+// With HUB_QA_MODEL_URL set to the base URL of qa-model-stub, it routes every
+// kind that runs on a model to that stand-in, so the hub dev-server.sh
+// starts has a worker for each, and a run started from the app runs.
 package main
 
 import (
@@ -36,6 +40,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,13 +63,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "dev-server-seed: set HUB_DATABASE_URL to the dev server's database")
 		os.Exit(1)
 	}
-	if err := run(context.Background(), url, os.Getenv("HUB_AGENT_PROMPTS_DIR")); err != nil {
+	if err := run(context.Background(), url, os.Getenv("HUB_AGENT_PROMPTS_DIR"), os.Getenv("HUB_QA_MODEL_URL")); err != nil {
 		fmt.Fprintln(os.Stderr, "dev-server-seed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, url, promptsDir string) error {
+func run(ctx context.Context, url, promptsDir, qaModelURL string) error {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
 		return err
@@ -87,6 +92,47 @@ func run(ctx context.Context, url, promptsDir string) error {
 		fmt.Println("Seeded a made-up job search.")
 	} else {
 		fmt.Println("The hub already holds companies; seeded nothing.")
+	}
+	if qaModelURL != "" {
+		if err := routeToStandInModel(ctx, hub, qaModelURL); err != nil {
+			return fmt.Errorf("route the model kinds to the stand-in model: %w", err)
+		}
+		fmt.Printf("Routed every model kind to %s at %s.\n", standInModel, qaModelURL)
+	}
+	return nil
+}
+
+// standInProviderName and standInModel are the provider and model the QA
+// dev server routes each model kind to: qa-model-stub.
+const (
+	standInProviderName = "QA stand-in model"
+	standInModel        = "qa-stand-in"
+)
+
+// routeToStandInModel adds qa-model-stub at baseURL as a provider, once, and
+// routes every kind that runs on a model to it: the kinds the hub's model
+// server seeds, and full briefs and tailored CVs, which only the Claude CLI
+// seeds otherwise.
+func routeToStandInModel(ctx context.Context, hub *store.Store, baseURL string) error {
+	system := store.Actor{Kind: store.ActorSystem}
+	providers, err := hub.ListModelProviders(ctx)
+	if err != nil {
+		return err
+	}
+	var providerID *uuid.UUID
+	for _, provider := range providers {
+		if provider.Name == standInProviderName {
+			providerID = &provider.ID
+		}
+	}
+	provider, err := hub.SaveModelProvider(ctx, system, providerID, store.ModelProviderInput{Name: standInProviderName, BaseURL: baseURL, EnforcesSchema: true})
+	if err != nil {
+		return err
+	}
+	for _, kind := range slices.Concat(store.RoutedTaskKinds, store.ClaudeTaskKinds) {
+		if _, err := hub.SaveTaskRoute(ctx, system, kind, store.TaskRouteInput{ProviderID: provider.ID, Model: standInModel}); err != nil {
+			return fmt.Errorf("route %s: %w", kind, err)
+		}
 	}
 	return nil
 }

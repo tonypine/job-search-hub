@@ -57,6 +57,69 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkRuns(t, hub, now)
 }
 
+// TestTheQAModelRoutesEveryModelKindToTheStandIn checks that with the stub's
+// address the seed routes each kind a job's Run popover offers on a model,
+// full briefs and tailored CVs among them, to the stand-in, and that a
+// second run keeps one provider.
+func TestTheQAModelRoutesEveryModelKindToTheStandIn(t *testing.T) {
+	ctx := context.Background()
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	if _, err := seed(ctx, pool, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := routeToStandInModel(ctx, hub, "http://127.0.0.1:1/v1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providers, err := hub.ListModelProviders(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 1 || providers[0].Name != standInProviderName || providers[0].BaseURL != "http://127.0.0.1:1/v1" {
+		t.Fatalf("providers = %+v, want the stand-in alone", providers)
+	}
+	routes, err := hub.ListTaskRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routed := map[string]string{}
+	for _, route := range routes {
+		if route.ProviderID == providers[0].ID {
+			routed[route.Kind] = route.Model
+		}
+	}
+	for _, kind := range slices.Concat(store.RoutedTaskKinds, store.ClaudeTaskKinds) {
+		if routed[kind] != standInModel {
+			t.Errorf("%s routed to %q, want %s", kind, routed[kind], standInModel)
+		}
+	}
+
+	items, _, err := hub.ListJobs(ctx, store.JobFilter{Status: store.JobStatusOpen, Limit: 1})
+	if err != nil || len(items) == 0 {
+		t.Fatalf("no open job: %v", err)
+	}
+	controls := &modelwork.Controls{Hub: hub, Queue: modelqueue.New(nil, modelqueue.Settings{})}
+	kinds, err := controls.ListRunnableKinds(ctx, store.RunSubjectJob, items[0].Job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onModels := 0
+	for _, kind := range kinds {
+		if kind.Engine == store.RunEngineClaudeAgent {
+			continue
+		}
+		onModels++
+		if kind.Route == nil || kind.Route.Model != standInModel || kind.Route.Provider != standInProviderName {
+			t.Errorf("%s runs on %+v, want %s on %s", kind.ID, kind.Route, standInModel, standInProviderName)
+		}
+	}
+	if onModels != 6 {
+		t.Errorf("%d kinds on a model in the Run popover, want job facts, brief, full brief, tailored CV, recruiter screen and interview pack", onModels)
+	}
+}
+
 // TestEveryPostingIsMarkdownItsFactsQuote checks each seeded posting is
 // Markdown with headings, items and bold, as a board stores it, and its
 // facts were read with evidence the hub keeps: each quote is in the
