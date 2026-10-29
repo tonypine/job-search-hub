@@ -49,16 +49,20 @@ final class JobRunStarts {
         return starting.contains(key) || running[key] != nil
     }
 
-    /// Starts the kind for the job now, on its kind's model and whatever its
-    /// pause, then follows it until it lands. Returns the follow, which ends
-    /// once the row no longer says "Running".
+    /// Starts the kind for the job now, whatever its pause, on the model
+    /// chosen for this run, else on its kind's, then follows it until it
+    /// lands. Returns the follow, which ends once the row no longer says
+    /// "Running".
     @discardableResult
-    func start(_ kind: RunnableKind, for jobID: UUID, note: String? = nil, with client: HubClient) async throws -> Task<Void, Never> {
+    func start(
+        _ kind: RunnableKind, for jobID: UUID, note: String? = nil, model: RoutedModel? = nil, with client: HubClient
+    ) async throws -> Task<Void, Never> {
         let key = Key(jobID: jobID, kind: kind.id)
         let requestedAt = Date.now
         starting.insert(key)
         defer { starting.remove(key) }
-        let started = try await client.startRun(StartRunRequest(kind: kind.id, subjectType: JobRuns.jobSubject, subjectID: jobID, note: note))
+        let request = StartRunRequest(kind: kind.id, subjectType: JobRuns.jobSubject, subjectID: jobID, model: model, note: note)
+        let started = try await client.startRun(request)
         running[key] = Running(runID: started.id, startedAt: requestedAt)
         return Task { await follow(started, of: kind, key: key, with: client) }
     }

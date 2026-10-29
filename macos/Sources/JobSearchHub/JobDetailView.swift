@@ -30,9 +30,10 @@ final class JobDetailModel {
 }
 
 extension JobDetailModel {
-    /// Asks the hub to read the job's facts ahead of background work, follows
-    /// the run through the model queue, then shows the fresh facts.
-    func readFactsNow(_ jobID: UUID, with client: HubClient) async {
+    /// Asks the hub to read the job's facts ahead of background work, on the
+    /// model chosen for this run or else its kind's, follows the run through
+    /// the model queue, then shows the fresh facts.
+    func readFactsNow(_ jobID: UUID, on model: RoutedModel? = nil, with client: HubClient) async {
         isReadingFacts = true
         factsReadState = .queued
         defer {
@@ -40,7 +41,7 @@ extension JobDetailModel {
             factsReadState = .notQueued
         }
         do {
-            _ = try await client.send("POST", "v1/jobs/\(jobID.uuidString)/facts/read", body: EmptyBody(), as: FactsReadResponse.self)
+            _ = try await client.startRun(StartRunRequest(kind: JobRuns.factsKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: model))
             let deadline = Date.now.addingTimeInterval(20 * 60)
             while Date.now < deadline {
                 try await Task.sleep(for: .seconds(2))
@@ -91,10 +92,6 @@ extension JobDetailModel {
     }
 }
 
-private struct FactsReadResponse: Decodable {
-    var queued: Bool
-}
-
 extension JobDetailModel {
     /// Records the decision, then shows the job as it now stands.
     func decide(_ jobID: UUID, _ decision: JobDecisionKind, reason: String = "", through decisions: JobDecisions, with client: HubClient) async {
@@ -117,14 +114,15 @@ extension JobDetailModel {
         }
     }
 
-    /// Asks Claude for the job's full brief, then follows the job until the
-    /// full brief replaces the pre-brief, for up to three minutes.
-    func writeFullBrief(_ jobID: UUID, with client: HubClient) async {
+    /// Asks for the job's full brief, on the model chosen for this run or
+    /// else its kind's, then follows the job until the full brief replaces
+    /// the pre-brief, for up to three minutes.
+    func writeFullBrief(_ jobID: UUID, on model: RoutedModel? = nil, with client: HubClient) async {
         isWritingFullBrief = true
         defer { isWritingFullBrief = false }
         let writtenBefore = details?.brief?.isFull == true ? details?.brief?.writtenAt : nil
         do {
-            try await client.writeFullBrief(jobID)
+            _ = try await client.startRun(StartRunRequest(kind: JobRuns.fullBriefKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: model))
             let deadline = Date.now.addingTimeInterval(3 * 60)
             while Date.now < deadline {
                 try await Task.sleep(for: .seconds(3))
@@ -627,18 +625,31 @@ struct JobDetailView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        } trailing: {
             if brief?.isFull != true {
-                AsyncButton("Write full brief", busyTitle: "Writing…", isBusy: model.isWritingFullBrief) {
-                    await model.writeFullBrief(jobID, with: client)
-                }
-                .help("Have Claude write a fuller brief now")
+                fullBriefControl
             }
         }
     }
 
+    /// The model select, then ▶ Write full brief: on a line of its own at
+    /// the card's foot, as the header beside who wrote the brief has no room
+    /// for both on a page's rail.
+    private var fullBriefControl: some View {
+        JobSectionRunControl(kind: JobRuns.fullBriefKind, jobID: jobID, client: client) { chosen in
+            Self.makeFullBriefButton(isBusy: model.isWritingFullBrief) {
+                await model.writeFullBrief(jobID, on: chosen, with: client)
+            }
+        }
+    }
+
+    static func makeFullBriefButton(isBusy: Bool, write: @escaping @MainActor () async -> Void) -> some View {
+        AsyncButton("Write full brief", busyTitle: "Writing…", systemImage: "play.fill", isBusy: isBusy, action: write)
+            .buttonStyle(.link)
+            .help("Have a fuller brief written now, on the model beside it")
+    }
+
     /// "local model · 2 days ago", "local model · 5 min ago": short units
-    /// keep it whole beside Write full brief on a page's rail.
+    /// keep it whole in the header on a page's rail.
     static func describeAuthor(isFull: Bool, writtenAt: Date) -> String {
         "\(isFull ? "Claude" : "local model") · \(writtenAt.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))"
     }

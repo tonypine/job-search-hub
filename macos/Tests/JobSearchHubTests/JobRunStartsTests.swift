@@ -204,3 +204,19 @@ private final class TaskLog {
     #expect(starts.revision == 1)
     #expect(recording.lastRequest?.url?.path() == kindsPath)
 }
+
+@MainActor @Test func aStartOnAModelPickedForTheRunAsksTheHubForThatModel() async throws {
+    let (client, recording) = makeHub()
+    recording.setAnswer(started(firstRunID, taskID: taskID), for: "/v1/runs")
+    let starts = JobRunStarts(pollInterval: .milliseconds(10), runTask: { _, _ in true })
+    let sonnet = RoutedModel(providerID: UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000006")!, model: "sonnet")
+
+    let follow = try await starts.start(try makeBrief(), for: jobID, note: "the title has the city in it", model: sonnet, with: client)
+    await follow.value
+
+    // Only the start went to the hub, with the model and the note.
+    #expect(recording.requestCount == 1)
+    let sent = try #require(try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any])
+    #expect(sent["provider_id"] as? String == sonnet.providerID.uuidString && sent["model"] as? String == "sonnet")
+    #expect(sent["note"] as? String == "the title has the city in it" && sent["kind"] as? String == briefKind)
+}

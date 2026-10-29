@@ -57,11 +57,10 @@ private let briefedDetailsJSON = #"""
     #expect(details.screenRows == [ScreenRow(name: "Level", verdict: .no, reason: "junior")])
 }
 
-@Test func aDecisionAndAFullBriefAreAskedFor() async throws {
+@Test func aDecisionIsAskedFor() async throws {
     let jobID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae7")!
     let (session, recording) = StubHub.makeSession(answers: [
         "/v1/jobs/\(jobID.uuidString)/decision": StubHub.Answer(status: 200, body: #"{"decision":"skip","reason":"agency","decided_at":"2026-09-30T21:00:00Z"}"#),
-        "/v1/jobs/\(jobID.uuidString)/brief/full": StubHub.Answer(status: 202, body: #"{"queued":true}"#),
     ])
     let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
 
@@ -69,7 +68,4 @@ private let briefedDetailsJSON = #"""
     #expect(decision.decision == .skip)
     let sent = try JSONSerialization.jsonObject(with: try #require(recording.lastBody)) as? [String: Any]
     #expect(sent?["decision"] as? String == "skip" && sent?["reason"] as? String == "agency")
-
-    try await client.writeFullBrief(jobID)
-    #expect(recording.lastRequest?.httpMethod == "POST" && recording.lastRequest?.url?.path == "/v1/jobs/\(jobID.uuidString)/brief/full")
 }

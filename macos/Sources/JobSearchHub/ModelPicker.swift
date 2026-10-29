@@ -21,8 +21,9 @@ final class ModelChoicesModel {
         ModelChoices.group(providers: providers, catalogs: catalogs, averages: averages, claudeOnly: claudeOnly, keeping: current)
     }
 
-    /// Reads the providers, then their models.
-    func load(with client: HubClient) async {
+    /// Reads the providers, then their models, and the time a run on each
+    /// unless the menu leaves times out, as a run's model select does.
+    func load(with client: HubClient, readsAverages: Bool = true) async {
         do {
             setProviders(try await client.get("v1/model-providers", as: ModelProvidersResponse.self).providers)
             failure = nil
@@ -31,7 +32,7 @@ final class ModelChoicesModel {
             hasLoaded = true
             return
         }
-        await loadModels(with: client)
+        await loadModels(with: client, readsAverages: readsAverages)
     }
 
     /// The providers as another read found them. A provider gone takes its
@@ -42,10 +43,10 @@ final class ModelChoicesModel {
         catalogs = catalogs.filter { ids.contains($0.key) }
     }
 
-    /// Reads every provider's models and the latest runs that worked at
-    /// once. A provider whose models can't be listed keeps the ones read
-    /// before.
-    func loadModels(with client: HubClient) async {
+    /// Reads every provider's models and, unless told not to, the latest
+    /// runs that worked at once. A provider whose models can't be listed
+    /// keeps the ones read before.
+    func loadModels(with client: HubClient, readsAverages: Bool = true) async {
         let read = providers
         let listed = await withTaskGroup(of: (UUID, [ProviderModel]?).self) { group in
             for provider in read {
@@ -68,7 +69,7 @@ final class ModelChoicesModel {
         self.catalogs = catalogs
         unlistedProviders = read.filter { listed[$0.id].flatMap { $0 } == nil }.map(\.name)
         let latest = [URLQueryItem(name: "outcome", value: "succeeded"), URLQueryItem(name: "limit", value: "200")]
-        if let page = try? await client.get("v1/runs", query: latest, as: ActivityRunsPage.self) {
+        if readsAverages, let page = try? await client.get("v1/runs", query: latest, as: ActivityRunsPage.self) {
             averages = ModelRunAverages(page.runs)
         }
         hasLoaded = true
