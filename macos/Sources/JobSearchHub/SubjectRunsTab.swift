@@ -26,7 +26,6 @@ final class SubjectRunsModel {
     private(set) var nextCursor = ""
     /// The subject the runs are for; nil before the first read.
     private(set) var subject: Subject?
-    private(set) var isLoadingMore = false
     var failure: HubFailure?
 
     var hasMore: Bool { !nextCursor.isEmpty }
@@ -51,23 +50,27 @@ final class SubjectRunsModel {
         }
     }
 
-    /// Reads the page after the last run loaded.
+    /// Reads the page after the last run loaded. A read for a cursor the
+    /// list has moved past, as another page landed or a read again started
+    /// the list over, is dropped, so a read in flight never holds up the
+    /// next one.
     func loadMore(with client: HubClient) async {
-        guard let subject, hasMore, !isLoadingMore else { return }
+        guard let subject, hasMore else { return }
         let cursor = nextCursor
-        isLoadingMore = true
-        defer { isLoadingMore = false }
         do {
             let query = SubjectRuns.makeQuery(subjectType: subject.type, subjectID: subject.id, limit: SubjectRuns.pageSize, cursor: cursor)
             let page = try await client.get("v1/runs", query: query, as: ActivityRunsPage.self)
-            // A read again in the meantime started the list over.
             guard subject == self.subject, cursor == nextCursor else { return }
             let shown = Set(runs.map(\.id))
             runs += page.runs.filter { !shown.contains($0.id) }
             nextCursor = page.nextCursor
             failure = nil
         } catch {
-            failure = HubFailure("Couldn't load more runs", error)
+            // A read the tab cancelled, as the end scrolled away or the
+            // list started over, isn't a failure.
+            if !Task.isCancelled {
+                failure = HubFailure("Couldn't load more runs", error)
+            }
         }
     }
 

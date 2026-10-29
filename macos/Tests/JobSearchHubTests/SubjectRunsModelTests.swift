@@ -118,3 +118,104 @@ private func makeClient(_ answers: [String: StubHub.Answer]) -> (HubClient, Stub
 
     #expect(model.subject == .job(jobID) && model.runs.isEmpty && !model.hasMore && model.failure == nil)
 }
+
+@MainActor
+@Test func aFailedReadSaysSoKeepsTheRunsShownAndClearsOnceAReadWorks() async {
+    let latest = page([runJSON(runID(1), minute: 58), runJSON(runID(2), minute: 57)], next: "c1")
+    let (client, recording) = makeClient([pageKey("job", jobID): latest])
+    let model = SubjectRunsModel()
+    await model.load(.job(jobID), with: client)
+
+    recording.setAnswer(StubHub.Answer(status: 500, body: #"{"error":"database down"}"#), for: pageKey("job", jobID))
+    await model.load(.job(jobID), with: client)
+    #expect(model.failure?.title == "Couldn't load the runs")
+    #expect(model.runs.map(\.id) == [runID(1), runID(2)] && model.nextCursor == "c1")
+
+    recording.setAnswer(latest, for: pageKey("job", jobID))
+    await model.load(.job(jobID), with: client)
+    #expect(model.failure == nil)
+}
+
+@MainActor
+@Test func aHubThatIsDownLeavesTheTabWithNoRunsAndSaysSo() async {
+    let (session, _) = StubHub.makeSession(answers: [:], isDown: true)
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let model = SubjectRunsModel()
+
+    await model.load(.job(jobID), with: client)
+
+    #expect(model.failure?.title == "Couldn't load the runs")
+    #expect(model.subject == nil && model.runs.isEmpty)
+}
+
+@MainActor
+@Test func aFailedReadOfTheNextPageKeepsTheRunsLoaded() async {
+    let (client, _) = makeClient([
+        pageKey("job", jobID): page([runJSON(runID(1), minute: 58), runJSON(runID(2), minute: 57)], next: "c1"),
+        pageKey("job", jobID, cursor: "c1"): StubHub.Answer(status: 500, body: #"{"error":"database down"}"#),
+    ])
+    let model = SubjectRunsModel()
+    await model.load(.job(jobID), with: client)
+
+    await model.loadMore(with: client)
+
+    #expect(model.failure?.title == "Couldn't load more runs")
+    #expect(model.runs.map(\.id) == [runID(1), runID(2)] && model.nextCursor == "c1")
+}
+
+@MainActor
+@Test(.timeLimit(.minutes(1)))
+func aReadOfTheNextPageTheTabCancelsIsntAFailure() async {
+    let nextPage = pageKey("job", jobID, cursor: "c1")
+    let (client, recording) = makeClient([
+        pageKey("job", jobID): page([runJSON(runID(1), minute: 58), runJSON(runID(2), minute: 57)], next: "c1"),
+        nextPage: page([runJSON(runID(3), minute: 56)]),
+    ])
+    let model = SubjectRunsModel()
+    await model.load(.job(jobID), with: client)
+
+    // The end scrolls away while its page is on the way.
+    recording.hold(nextPage)
+    let reading = Task { await model.loadMore(with: client) }
+    await recording.waitForHeld(nextPage)
+    reading.cancel()
+    await reading.value
+
+    #expect(model.failure == nil)
+    #expect(model.runs.map(\.id) == [runID(1), runID(2)] && model.nextCursor == "c1")
+
+    // It scrolls back in: the page loads.
+    recording.release(nextPage)
+    await model.loadMore(with: client)
+    #expect(model.runs.map(\.id) == [runID(1), runID(2), runID(3)] && !model.hasMore)
+}
+
+@MainActor
+@Test(.timeLimit(.minutes(1)))
+func aPageReadBeforeTheListStartedOverIsDroppedAndTheNextOneLoads() async {
+    let oldPage = pageKey("job", jobID, cursor: "c1")
+    let (client, recording) = makeClient([
+        pageKey("job", jobID): page([runJSON(runID(1), minute: 40), runJSON(runID(2), minute: 39)], next: "c1"),
+        oldPage: page([runJSON(runID(3), minute: 38)]),
+        pageKey("job", jobID, cursor: "c9"): page([runJSON(runID(7), minute: 57)]),
+    ])
+    let model = SubjectRunsModel()
+    await model.load(.job(jobID), with: client)
+    recording.hold(oldPage)
+    let reading = Task { await model.loadMore(with: client) }
+    await recording.waitForHeld(oldPage)
+
+    // More runs started than the latest page holds, so it no longer reaches
+    // the runs loaded, and the list starts over.
+    recording.setAnswer(page([runJSON(runID(5), minute: 59), runJSON(runID(6), minute: 58)], next: "c9"), for: pageKey("job", jobID))
+    await model.load(.job(jobID), with: client)
+    #expect(model.runs.map(\.id) == [runID(5), runID(6)] && model.nextCursor == "c9")
+
+    // The new end reads its page while the old one is still on the way.
+    await model.loadMore(with: client)
+    recording.release(oldPage)
+    await reading.value
+
+    #expect(model.runs.map(\.id) == [runID(5), runID(6), runID(7)])
+    #expect(!model.hasMore && model.failure == nil)
+}
