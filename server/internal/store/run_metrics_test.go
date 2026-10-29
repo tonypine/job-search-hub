@@ -231,3 +231,21 @@ func TestRunMetricsCountWhatAProviderChargedButNotTheClaudePlan(t *testing.T) {
 		t.Errorf("totals = %+v", metrics.Totals)
 	}
 }
+
+// An agent run that finished a month after it started takes more
+// milliseconds than an integer holds, and still counts.
+func TestRunMetricsAverageAnAgentRunLongerThanAnIntegerHolds(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	from := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	research := startAgentRunAt(t, pool, hub, store.AgentRunKindCompanyTriage, "acme.com", nil, from.Add(time.Hour))
+	finishAgentRunAfter(t, pool, hub, research.ID, 30*24*time.Hour, "0.42")
+	metrics, err := hub.GetRunMetrics(ctx, store.RunMetricsFilter{From: from, To: from.Add(24 * time.Hour), Bucket: store.RunBucketDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := metrics.Totals.AverageDurationMS; metrics.Totals.Runs != 1 || took == nil || *took != 30*24*60*60*1000 {
+		t.Errorf("totals = %+v", metrics.Totals)
+	}
+}

@@ -148,7 +148,7 @@ const runMetricsRuns = `
 		FROM task_runs
 		WHERE started_at >= $1 AND started_at < $2 AND ($3 = '' OR kind = $3)
 		UNION ALL
-		SELECT kind, started_at, status, 0, 0, round(extract(epoch FROM finished_at - started_at) * 1000)::integer, cost_usd_estimate,
+		SELECT kind, started_at, status, 0, 0, round(extract(epoch FROM finished_at - started_at) * 1000)::bigint, cost_usd_estimate,
 			false
 		FROM agent_runs
 		WHERE started_at >= $1 AND started_at < $2 AND ($3 = '' OR kind = $3)
@@ -180,7 +180,7 @@ func (s *Store) GetRunMetrics(ctx context.Context, filter RunMetricsFilter) (Run
 
 	rows, err := s.pool.Query(ctx, runMetricsRuns+`
 		SELECT started_at >= $4, count(*), count(*) FILTER (WHERE outcome = 'failed'), count(*) FILTER (WHERE outcome = 'invalid'),
-			coalesce(sum(prompt_tokens), 0), coalesce(sum(completion_tokens), 0), round(avg(duration_ms))::integer,
+			coalesce(sum(prompt_tokens), 0), coalesce(sum(completion_tokens), 0), round(avg(duration_ms))::bigint,
 			coalesce(sum(cost_usd), 0)::text, count(*) FILTER (WHERE on_claude_plan)
 		FROM runs
 		GROUP BY 1`, previousFrom, to, filter.Kind, from)
