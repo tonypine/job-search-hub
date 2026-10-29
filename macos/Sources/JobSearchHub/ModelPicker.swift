@@ -24,15 +24,26 @@ final class ModelChoicesModel {
     /// Reads the providers, then their models, and the time a run on each
     /// unless the menu leaves times out, as a run's model select does.
     func load(with client: HubClient, readsAverages: Bool = true) async {
-        do {
-            setProviders(try await client.get("v1/model-providers", as: ModelProvidersResponse.self).providers)
-            failure = nil
-        } catch {
-            failure = HubFailure("Couldn't read the model providers", error)
+        guard await loadProviders(with: client) else {
             hasLoaded = true
             return
         }
         await loadModels(with: client, readsAverages: readsAverages)
+    }
+
+    /// Reads the providers alone, which name a model and give its mark,
+    /// and lists none of their models: the hub asks openrouter.ai for
+    /// OpenRouter's each time. Whether it could.
+    @discardableResult
+    func loadProviders(with client: HubClient) async -> Bool {
+        do {
+            setProviders(try await client.get("v1/model-providers", as: ModelProvidersResponse.self).providers)
+            failure = nil
+            return true
+        } catch {
+            failure = HubFailure("Couldn't read the model providers", error)
+            return false
+        }
     }
 
     /// The providers as another read found them. A provider gone takes its

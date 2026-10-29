@@ -1,43 +1,71 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// The model select of one run control, beside its ▶: the model menu of
-/// Activity in a compact form, names and provider marks alone, set to the
-/// kind's model. A model picked here runs that one run; the kind keeps its
-/// own.
+/// The model select of one run control, beside its ▶: the kind's model, or
+/// the one picked, which opens the model menu of Activity in a compact
+/// form, names and provider marks alone. A model picked here runs that one
+/// run; the kind keeps its own. Its label needs the providers alone; the
+/// providers' models are read only once the menu opens, as the hub asks
+/// openrouter.ai for OpenRouter's each time.
 struct RunModelSelect: View {
     @Binding var selection: RunModelSelection
     let choices: ModelChoicesModel
+    let client: HubClient
+    @State private var isPicking = false
 
     var body: some View {
         let label = selection.getLabel(providers: choices.providers, catalogs: choices.catalogs)
-        let groups = selection.getGroups(providers: choices.providers, catalogs: choices.catalogs)
-        Menu {
-            ModelChoiceMenuItems(groups: groups, selection: selection.selected) { choice in
-                selection.pick(choice.routed)
-            }
-            if groups.isEmpty {
-                Text(choices.hasLoaded ? "No models yet. Set up a provider in Settings." : "Reading the models…")
-            }
-            Divider()
-            ProviderSettingsButton()
+        Button {
+            isPicking = true
         } label: {
-            Label(label?.name ?? "No model", systemImage: label?.markSymbol ?? "cube")
-                .lineLimit(1)
-                .truncationMode(.middle)
+            HStack(spacing: Space.xs) {
+                Label(label?.name ?? "No model", systemImage: label?.markSymbol ?? "cube")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+            .font(.hubCaption)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .font(.hubCaption)
-        .foregroundStyle(.secondary)
         .help(describe(label))
         .accessibilityLabel("Model for this run")
         .accessibilityValue(label?.name ?? "None")
+        .popover(isPresented: $isPicking, arrowEdge: .bottom) {
+            ModelPicker(
+                groups: selection.getGroups(providers: choices.providers, catalogs: choices.catalogs), selection: selection.selected,
+                isLoading: !choices.hasLoaded, unlistedProviders: choices.unlistedProviders
+            ) { choice in
+                selection.pick(choice.routed)
+                isPicking = false
+            } footer: {
+                if selection.isAgent {
+                    Text("An agent runs on your Claude subscription, so only Claude's models are here.")
+                        .font(.hubCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ProviderSettingsButton()
+                    .buttonStyle(.link)
+            }
+            .task { await choices.load(with: client, readsAverages: false) }
+        }
     }
 
     private func describe(_ label: RunKindModel?) -> String {
         let runsOn = label.map { "\($0.runsOnText). " } ?? ""
         return "\(runsOn)Choose another model for this run only; the kind keeps its own"
+    }
+
+    /// The select on the kind's model, from the job's kinds, and the
+    /// providers, which name and mark it. It reads none of the providers'
+    /// models, so a section that shows on every job downloads no catalog.
+    /// Nil when the kinds can't be read or the job has no such kind.
+    static func prepare(kind: String, forJob jobID: UUID, choices: ModelChoicesModel, with client: HubClient) async -> RunModelSelection? {
+        async let kinds = try? client.listRunnableKinds(forJob: jobID)
+        await choices.loadProviders(with: client)
+        return await kinds?.first { $0.id == kind }.map(RunModelSelection.init(kind:))
     }
 }
 
@@ -71,21 +99,14 @@ struct JobSectionRunControl<Start: View>: View {
     var body: some View {
         HStack(spacing: Space.s) {
             if let binding = Binding($selection) {
-                RunModelSelect(selection: binding, choices: choices)
+                RunModelSelect(selection: binding, choices: choices, client: client)
                     .frame(maxWidth: Self.selectWidth)
                     .fixedSize(horizontal: false, vertical: true)
             }
             start(selection?.chosen)
         }
-        .task(id: jobID) { await load() }
-    }
-
-    /// Sets the select on the kind's model again, then reads the models it
-    /// lists.
-    private func load() async {
-        let kinds = try? await client.listRunnableKinds(forJob: jobID)
-        selection = kinds?.first { $0.id == kind }.map(RunModelSelection.init(kind:))
-        guard selection != nil else { return }
-        await choices.load(with: client, readsAverages: false)
+        .task(id: jobID) {
+            selection = await RunModelSelect.prepare(kind: kind, forJob: jobID, choices: choices, with: client)
+        }
     }
 }

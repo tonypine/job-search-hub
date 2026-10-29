@@ -120,7 +120,9 @@ struct JobRunPopover: View {
         .frame(width: Self.width)
         .onAppear { selections = [:] }
         .task(id: starts.revision) { await load() }
-        .task { await choices.load(with: client, readsAverages: false) }
+        // The selects' labels need the providers alone; a select reads the
+        // models once it opens.
+        .task { await choices.loadProviders(with: client) }
     }
 
     private func load() async {
@@ -147,7 +149,7 @@ struct JobRunPopover: View {
             running: starts.getRunning(kind.id, of: jobID),
             isBusy: starts.isBusy(kind.id, of: jobID)
         ) {
-            RunModelSelect(selection: selection, choices: choices)
+            RunModelSelect(selection: selection, choices: choices, client: client)
         } onStart: {
             start(kind, on: selection.wrappedValue.chosen)
         }

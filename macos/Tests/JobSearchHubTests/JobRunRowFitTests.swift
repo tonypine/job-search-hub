@@ -46,8 +46,9 @@ private func makeKind(reason: String?, route: String = "") throws -> RunnableKin
 
 @MainActor
 private func makeRow(_ kind: RunnableKind) -> JobRunRow<RunModelSelect> {
-    JobRunRow(kind: kind, running: nil, isBusy: false) {
-        RunModelSelect(selection: .constant(RunModelSelection(kind: kind)), choices: ModelChoicesModel())
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
+    return JobRunRow(kind: kind, running: nil, isBusy: false) {
+        RunModelSelect(selection: .constant(RunModelSelection(kind: kind)), choices: ModelChoicesModel(), client: client)
     } onStart: {}
 }
 
