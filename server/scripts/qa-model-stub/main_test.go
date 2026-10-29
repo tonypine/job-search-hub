@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +151,66 @@ func TestAnAnswerFitsTheSchemaInTheSystemPromptWhenTheProviderDoesntEnforceIt(t 
 	}
 	if err := json.Unmarshal(answer.Object, &facts); err != nil || facts.Summary != standInText {
 		t.Errorf("answer = %s, %v", answer.Object, err)
+	}
+}
+
+// The hub lists a provider's models from its base URL's /models, reading
+// data[].id, so the model choice offers the stand-in.
+func TestTheModelsListNamesTheStandIn(t *testing.T) {
+	server := httptest.NewServer(newHandler(0))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	var served struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&served); err != nil {
+		t.Fatal(err)
+	}
+	if len(served.Data) != 1 || served.Data[0].ID != Model {
+		t.Errorf("models = %+v, want only %s", served.Data, Model)
+	}
+}
+
+func TestAnUnreadableRequestOrSchemaIsABadRequest(t *testing.T) {
+	server := httptest.NewServer(newHandler(0))
+	defer server.Close()
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{"request", `{`},
+		{"schema", `{"model":"qa-stand-in","response_format":{"type":"json_schema","json_schema":{"name":"job_brief","schema":[1]}}}`},
+	} {
+		response, err := http.Post(server.URL+"/v1/chat/completions", "application/json", strings.NewReader(test.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		err = json.NewDecoder(response.Body).Decode(&answer)
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest || err != nil || answer.Error.Message == "" {
+			t.Errorf("%s: status %d, message %q, %v", test.name, response.StatusCode, answer.Error.Message, err)
+		}
+	}
+
+	_, err := chatcompletions.NewClient(server.URL+"/v1").CompleteJSON(context.Background(), chatcompletions.JSONRequest{
+		Model: Model, SchemaName: "job_brief", Schema: json.RawMessage(`[1]`),
+	})
+	if err == nil {
+		t.Error("the client took an answer to an unreadable schema")
 	}
 }
 
