@@ -30,7 +30,8 @@ final class CompanyInspectorModel {
 
 /// One company in the inspector: its header and actions, then Overview (the
 /// summary, boards, applications and latest mail), Jobs (its open jobs),
-/// People (everyone who can get you in) and its Session.
+/// People (everyone who can get you in), Runs (every run for it) and its
+/// Session.
 struct CompanyInspector: View {
     let companyID: UUID
     let client: HubClient
@@ -57,6 +58,11 @@ struct CompanyInspector: View {
                     switch tab {
                     case .jobs: jobsTab(dossier)
                     case .people: peopleTab(dossier)
+                    case .runs:
+                        SubjectRunsTab(
+                            subject: .company(companyID), client: client, revision: research.revision + jobFinder.revision,
+                            isRunningHere: jobFinder.isRunning(companyID)
+                        )
                     case .session: InspectorSessionTab(subject: .company(companyID), client: client)
                     default: overviewTab(dossier)
                     }
