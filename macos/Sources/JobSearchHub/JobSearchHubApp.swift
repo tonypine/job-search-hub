@@ -15,6 +15,7 @@ struct JobSearchHubApp: App {
     @State private var profileSeed = ProfileSeed()
     @State private var jobDecisions = JobDecisions()
     @State private var applicationChanges = ApplicationChanges()
+    @State private var jobRunStarts = JobRunStarts()
     @State private var newVersions = NewVersionChecker.shared
 
     init() {
@@ -49,6 +50,7 @@ struct JobSearchHubApp: App {
                 .environment(profileSeed)
                 .environment(jobDecisions)
                 .environment(applicationChanges)
+                .environment(jobRunStarts)
                 .environment(taskRunner)
                 .environment(newVersions)
                 .frame(minWidth: 900, minHeight: 600)
