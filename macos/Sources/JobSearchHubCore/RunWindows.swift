@@ -71,6 +71,21 @@ public enum RunBucketSize: String, CaseIterable, Codable, Identifiable, Sendable
         }
     }
 
+    /// The whole hour, day or week a moment falls in, in the calendar's
+    /// time zone; weeks start on Monday, as the hub's do.
+    public func getPeriod(containing date: Date, calendar: Calendar) -> DateInterval? {
+        switch self {
+        case .hour:
+            return calendar.dateInterval(of: .hour, for: date)
+        case .day:
+            return calendar.dateInterval(of: .day, for: date)
+        case .week:
+            var mondayFirst = calendar
+            mondayFirst.firstWeekday = 2
+            return mondayFirst.dateInterval(of: .weekOfYear, for: date)
+        }
+    }
+
     /// The buckets a window of this length offers: by hour up to two weeks,
     /// by week from two weeks, by day whenever the hub can split it so.
     public static func getOffered(forLength length: TimeInterval) -> [RunBucketSize] {

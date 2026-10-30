@@ -287,7 +287,8 @@ private struct RunBarChart: View {
     var body: some View {
         let plotted = Chart {
             if let hovered {
-                RectangleMark(xStart: .value("Start", hovered.start), xEnd: .value("End", hovered.end))
+                let band = drawn(hovered.start, hovered.end)
+                RectangleMark(xStart: .value("Start", band.start), xEnd: .value("End", band.end))
                     .foregroundStyle(Color.primary.opacity(0.06))
             }
             ForEach(segments) { segment in
@@ -302,14 +303,15 @@ private struct RunBarChart: View {
                 .accessibilityValue(isTokens ? "\(segment.value) tokens" : "\(segment.value) runs")
             }
             if !isTokens, let hovered {
-                RuleMark(x: .value("Time", hovered.start.addingTimeInterval(hovered.end.timeIntervalSince(hovered.start) / 2)))
+                let band = drawn(hovered.start, hovered.end)
+                RuleMark(x: .value("Time", band.start.addingTimeInterval(band.duration / 2)))
                     .foregroundStyle(Color.clear)
                     .annotation(position: .top, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
                         RunBucketTooltip(bucket: hovered, chart: chart, size: window.bucket, isAllKinds: metrics.kind.isEmpty)
                     }
             }
         }
-        .chartXScale(domain: window.from ... max(window.to, window.from.addingTimeInterval(1)))
+        .chartXScale(domain: drawnRange.start ... max(drawnRange.end, drawnRange.start.addingTimeInterval(1)))
         .chartYScale(domain: 0 ... Double(valueTicks.last ?? 1))
         .chartYAxis {
             AxisMarks(position: .leading, values: valueTicks.map(Double.init)) { value in
@@ -346,7 +348,7 @@ private struct RunBarChart: View {
             // its end.
             GeometryReader { geometry in
                 let ticks = RunTimeAxis.getTicks(
-                    from: window.from, to: window.to,
+                    from: drawnRange.start, to: drawnRange.end,
                     width: geometry.size.width - Self.valueLabelWidth - Self.valueLabelSpacing, calendar: .current
                 )
                 plotted.chartXAxis {
@@ -372,10 +374,22 @@ private struct RunBarChart: View {
         hoveredStart.flatMap { start in metrics.buckets.first { $0.start == start } }
     }
 
+    /// The time axis: the window, through the whole of its last bucket.
+    private var drawnRange: DateInterval {
+        metrics.getDrawnRange(calendar: .current) ?? window.range
+    }
+
+    /// The span a bucket's bar takes: the bucket in progress as wide as a
+    /// whole one.
+    private func drawn(_ start: Date, _ end: Date) -> DateInterval {
+        metrics.getDrawnInterval(start: start, end: end, calendar: .current)
+    }
+
     /// A bar a little narrower than its bucket, so bars stand apart.
     private func inset(_ segment: RunChartSegment) -> DateInterval {
-        let gap = segment.bucketEnd.timeIntervalSince(segment.bucketStart) * 0.1
-        return DateInterval(start: segment.bucketStart.addingTimeInterval(gap), end: segment.bucketEnd.addingTimeInterval(-gap))
+        let span = drawn(segment.bucketStart, segment.bucketEnd)
+        let gap = span.duration * 0.1
+        return DateInterval(start: span.start.addingTimeInterval(gap), end: span.end.addingTimeInterval(-gap))
     }
 
     private func isDimmed(_ segment: RunChartSegment) -> Bool {
@@ -387,7 +401,7 @@ private struct RunBarChart: View {
         guard let plotFrame = proxy.plotFrame else { return nil }
         let x = location.x - geometry[plotFrame].origin.x
         guard let date = proxy.value(atX: x, as: Date.self) else { return nil }
-        return metrics.getBucket(at: date)
+        return metrics.getDrawnBucket(at: date, calendar: .current)
     }
 }
 
