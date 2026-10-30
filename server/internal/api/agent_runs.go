@@ -67,11 +67,13 @@ type startAgentRunResponse struct {
 }
 
 type finishAgentRunRequest struct {
-	Status          string          `json:"status"`
-	ClaudeSessionID string          `json:"claude_session_id"`
-	CostUSDEstimate json.Number     `json:"cost_usd_estimate"`
-	Result          json.RawMessage `json:"result"`
-	Error           string          `json:"error"`
+	Status           string          `json:"status"`
+	ClaudeSessionID  string          `json:"claude_session_id"`
+	CostUSDEstimate  json.Number     `json:"cost_usd_estimate"`
+	PromptTokens     int             `json:"prompt_tokens"`
+	CompletionTokens int             `json:"completion_tokens"`
+	Result           json.RawMessage `json:"result"`
+	Error            string          `json:"error"`
 }
 
 type agentRunResponse struct {
@@ -178,11 +180,13 @@ func RegisterAgentRunRoutes(routes *http.ServeMux, hub *store.Store, drainer *dr
 		}
 
 		run, err := hub.FinishAgentRun(r.Context(), id, store.AgentRunOutcome{
-			Status:          request.Status,
-			ClaudeSessionID: request.ClaudeSessionID,
-			CostUSDEstimate: request.CostUSDEstimate.String(),
-			Result:          request.Result,
-			Error:           request.Error,
+			Status:           request.Status,
+			ClaudeSessionID:  request.ClaudeSessionID,
+			CostUSDEstimate:  request.CostUSDEstimate.String(),
+			PromptTokens:     request.PromptTokens,
+			CompletionTokens: request.CompletionTokens,
+			Result:           request.Result,
+			Error:            request.Error,
 		})
 		switch {
 		case errors.Is(err, store.ErrAgentRunNotFound):

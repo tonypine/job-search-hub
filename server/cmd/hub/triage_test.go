@@ -97,6 +97,7 @@ func initLine(extraPlugin string) string {
 func resultLine(companyID string) string {
 	encoded, _ := json.Marshal(map[string]any{
 		"type": "result", "subtype": "success", "is_error": false, "session_id": "session-1", "total_cost_usd": 0.42,
+		"usage": map[string]int{"input_tokens": 12, "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 9000, "output_tokens": 640},
 		"structured_output": map[string]any{
 			"company_id": companyID, "domain": "acme.com", "job_board": nil, "people_added": 0,
 			"unresolved": []string{"no job board link on the careers page"}, "summary": "Stored Acme.",
@@ -133,6 +134,12 @@ func TestAddCompanyRecordsTheRunAndWatchesTheCompany(t *testing.T) {
 	status, sessionID, cost, _ := readAgentRun(t, hub.pool)
 	if status != store.AgentRunSucceeded || sessionID != "session-1" || cost != "0.42" {
 		t.Fatalf("run: status=%s session=%s cost=%s", status, sessionID, cost)
+	}
+	// The run counts every token the session read, from its cache too.
+	var promptTokens, completionTokens int
+	if err := hub.pool.QueryRow(context.Background(), `SELECT prompt_tokens, completion_tokens FROM agent_runs`).Scan(&promptTokens,
+		&completionTokens); err != nil || promptTokens != 12012 || completionTokens != 640 {
+		t.Fatalf("tokens = %d in, %d out (%v); want 12012 in, 640 out", promptTokens, completionTokens, err)
 	}
 	if since, err := hub.store.GetWatchedSince(context.Background(), company.ID); err != nil || since == nil {
 		t.Fatalf("the company is not watched: %v", err)

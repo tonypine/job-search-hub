@@ -37,6 +37,19 @@ type ToolUse struct {
 	Input json.RawMessage `json:"input"`
 }
 
+// Usage counts the tokens a session read, by where they came from, and wrote.
+type Usage struct {
+	InputTokens              int `json:"input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+}
+
+// GetPromptTokens counts every token the session read, from its cache too.
+func (usage Usage) GetPromptTokens() int {
+	return usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+}
+
 // Result is the session's final report. The cost stays a json.Number so the
 // decimal Claude reported is never rounded through a float.
 type Result struct {
@@ -44,6 +57,7 @@ type Result struct {
 	IsError          bool            `json:"is_error"`
 	SessionID        string          `json:"session_id"`
 	TotalCostUSD     json.Number     `json:"total_cost_usd"`
+	Usage            Usage           `json:"usage"`
 	StructuredOutput json.RawMessage `json:"structured_output"`
 	Text             string          `json:"result"`
 }

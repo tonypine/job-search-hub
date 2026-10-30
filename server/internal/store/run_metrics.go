@@ -148,7 +148,7 @@ const runMetricsRuns = `
 		FROM task_runs
 		WHERE started_at >= $1 AND started_at < $2 AND ($3 = '' OR kind = $3)
 		UNION ALL
-		SELECT kind, started_at, status, 0, 0, round(extract(epoch FROM finished_at - started_at) * 1000)::bigint, cost_usd_estimate,
+		SELECT kind, started_at, status, prompt_tokens, completion_tokens, round(extract(epoch FROM finished_at - started_at) * 1000)::bigint, cost_usd_estimate,
 			false
 		FROM agent_runs
 		WHERE started_at >= $1 AND started_at < $2 AND ($3 = '' OR kind = $3)

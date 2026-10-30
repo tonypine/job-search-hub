@@ -139,7 +139,8 @@ func TestFinishingARunRecordsItAndRevokesItsToken(t *testing.T) {
 	finishURL := service.url + "/v1/agent-runs/" + started.AgentRun.ID.String() + "/finish"
 
 	status, body := send(t, http.MethodPost, finishURL, ownerToken,
-		`{"status":"succeeded","claude_session_id":"session-1","cost_usd_estimate":0.4217,"result":{"people_added":2}}`)
+		`{"status":"succeeded","claude_session_id":"session-1","cost_usd_estimate":0.4217,"prompt_tokens":21040,"completion_tokens":1830,`+
+			`"result":{"people_added":2}}`)
 	if status != http.StatusOK {
 		t.Fatalf("finish: %d %s", status, body)
 	}
@@ -151,7 +152,8 @@ func TestFinishingARunRecordsItAndRevokesItsToken(t *testing.T) {
 		t.Fatalf("get: %d %s", status, body)
 	}
 	run := read.AgentRun
-	if run.Status != store.AgentRunSucceeded || run.ClaudeSessionID != "session-1" || run.CostUSDEstimate == nil || *run.CostUSDEstimate != "0.4217" {
+	if run.Status != store.AgentRunSucceeded || run.ClaudeSessionID != "session-1" || run.CostUSDEstimate == nil || *run.CostUSDEstimate != "0.4217" ||
+		run.PromptTokens != 21040 || run.CompletionTokens != 1830 {
 		t.Fatalf("run = %+v", run)
 	}
 

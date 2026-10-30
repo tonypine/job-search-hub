@@ -48,26 +48,30 @@ type AgentRun struct {
 	Status      string     `json:"status"`
 	// Model is the Claude model the run was started with, from its kind's
 	// route or the runner's choice; empty leaves it to Claude Code.
-	Model              string          `json:"model,omitempty"`
-	AgentPromptVersion *int            `json:"agent_prompt_version,omitempty"`
-	TokenExpiresAt     time.Time       `json:"token_expires_at"`
-	ClaudeSessionID    string          `json:"claude_session_id,omitempty"`
-	CostUSDEstimate    *string         `json:"cost_usd_estimate,omitempty"`
-	Result             json.RawMessage `json:"result,omitempty"`
-	Error              string          `json:"error,omitempty"`
-	StartedAt          time.Time       `json:"started_at"`
-	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
+	Model              string    `json:"model,omitempty"`
+	AgentPromptVersion *int      `json:"agent_prompt_version,omitempty"`
+	TokenExpiresAt     time.Time `json:"token_expires_at"`
+	ClaudeSessionID    string    `json:"claude_session_id,omitempty"`
+	CostUSDEstimate    *string   `json:"cost_usd_estimate,omitempty"`
+	// PromptTokens and CompletionTokens are what the session read and wrote,
+	// as its result reported; zero until it finishes.
+	PromptTokens     int             `json:"prompt_tokens"`
+	CompletionTokens int             `json:"completion_tokens"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	Error            string          `json:"error,omitempty"`
+	StartedAt        time.Time       `json:"started_at"`
+	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 }
 
 // The cost is read as text so the decimal Claude reported is never rounded
 // through a float.
 const agentRunColumns = `id, kind, input, subject_type, subject_id, status, model, agent_prompt_version, token_expires_at, claude_session_id,
-	cost_usd_estimate::text, result, error, started_at, finished_at`
+	cost_usd_estimate::text, prompt_tokens, completion_tokens, result, error, started_at, finished_at`
 
 func scanAgentRun(row pgx.Row) (AgentRun, error) {
 	var run AgentRun
 	err := row.Scan(&run.ID, &run.Kind, &run.Input, &run.SubjectType, &run.SubjectID, &run.Status, &run.Model, &run.AgentPromptVersion, &run.TokenExpiresAt,
-		&run.ClaudeSessionID, &run.CostUSDEstimate, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
+		&run.ClaudeSessionID, &run.CostUSDEstimate, &run.PromptTokens, &run.CompletionTokens, &run.Result, &run.Error, &run.StartedAt, &run.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentRun{}, ErrAgentRunNotFound
 	}
@@ -97,8 +101,12 @@ type AgentRunOutcome struct {
 	Status          string
 	ClaudeSessionID string
 	CostUSDEstimate string
-	Result          json.RawMessage
-	Error           string
+	// PromptTokens counts what the session read, its cache included, and
+	// CompletionTokens what it wrote.
+	PromptTokens     int
+	CompletionTokens int
+	Result           json.RawMessage
+	Error            string
 }
 
 // FinishAgentRun records how a running run ended. A finished run's token no
@@ -124,13 +132,15 @@ func (s *Store) FinishAgentRun(ctx context.Context, id uuid.UUID, outcome AgentR
 		)
 		UPDATE agent_runs SET
 			status = $2, claude_session_id = $3, cost_usd_estimate = $4::numeric, result = $5, error = $6, finished_at = now(),
+			prompt_tokens = $9, completion_tokens = $10,
 			subject_id = coalesce(agent_runs.subject_id, CASE WHEN kind = ANY($7) THEN (SELECT entity_id FROM changed) END),
 			subject_type = CASE
 				WHEN agent_runs.subject_id IS NULL AND kind = ANY($7) AND EXISTS (SELECT FROM changed) THEN $8
 				ELSE agent_runs.subject_type END
 		WHERE id = $1 AND status = 'running'
 		RETURNING `+agentRunColumns,
-		id, outcome.Status, outcome.ClaudeSessionID, cost, result, outcome.Error, companyAgentRunKinds, RunSubjectCompany))
+		id, outcome.Status, outcome.ClaudeSessionID, cost, result, outcome.Error, companyAgentRunKinds, RunSubjectCompany,
+		outcome.PromptTokens, outcome.CompletionTokens))
 	if errors.Is(err, ErrAgentRunNotFound) {
 		if _, getErr := s.GetAgentRun(ctx, id); getErr != nil {
 			return AgentRun{}, getErr
