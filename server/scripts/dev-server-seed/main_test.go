@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tonypine/job-search-hub/server/internal/api"
+	"github.com/tonypine/job-search-hub/server/internal/chatcompletions"
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
+	"github.com/tonypine/job-search-hub/server/internal/cvdrafts"
 	"github.com/tonypine/job-search-hub/server/internal/modelqueue"
+	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/modelwork"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
@@ -44,6 +48,9 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	}
 	if entries, err := hub.CountConfirmedProfileEntries(ctx); err != nil || entries != len(seededEntries) {
 		t.Errorf("confirmed entries = %d, %v; want %d", entries, err, len(seededEntries))
+	}
+	if cv, err := hub.GetBaseCV(ctx); err != nil || cv.Content.Basics.Name != seededBaseCV.Basics.Name || len(cv.Content.Work) != len(seededBaseCV.Work) {
+		t.Errorf("base CV = %+v, %v; want the seeded one", cv.Content, err)
 	}
 
 	// A second run adds nothing.
@@ -118,6 +125,130 @@ func TestTheQAModelRoutesEveryModelKindToTheStandIn(t *testing.T) {
 	if onModels != 6 {
 		t.Errorf("%d kinds on a model in the Run popover, want job facts, brief, full brief, tailored CV, recruiter screen and interview pack", onModels)
 	}
+}
+
+// TestATailoredCVRunStartsAndLandsOnTheStandIn checks the seeded hub drafts
+// a tailored CV from the Run popover: its kind can run, as the seed saved a
+// base CV, and a run started for a pursued job with no CV asks the stand-in
+// model, lands as the job's CV and is listed in Activity. The stand-in here
+// answers as qa-model-stub does the QA prompts' job_cv schema, an object
+// with no properties: with an empty object, which keeps the base CV's
+// words.
+func TestATailoredCVRunStartsAndLandsOnTheStandIn(t *testing.T) {
+	ctx := context.Background()
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	if _, err := seed(ctx, pool, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan struct{}, 1)
+	standIn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		select {
+		case asked <- struct{}{}:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   standInModel,
+			"choices": []map[string]any{{"index": 0, "finish_reason": "stop", "message": map[string]string{"role": "assistant", "content": "{}"}}},
+			"usage":   map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+		})
+	}))
+	defer standIn.Close()
+	if err := routeToStandInModel(ctx, hub, standIn.URL+"/v1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tidewell Robotics' Saved job is pursued and has no CV.
+	jobID := findSeededJob(t, hub, "Tidewell Robotics", "swift-engineer-operator-app")
+	if _, err := hub.GetJobCV(ctx, jobID); !errors.Is(err, store.ErrCVNotFound) {
+		t.Fatalf("the Saved job's CV: %v; want none yet", err)
+	}
+	router := modelrouter.New(hub)
+	router.RecordRun = func(ctx context.Context, record chatcompletions.RunRecord) {
+		if _, err := hub.RecordTaskRun(ctx, store.NewTaskRun{
+			ID: record.ID, Kind: record.Kind, SubjectID: record.Task.SubjectID, BaseURL: record.BaseURL, Provider: record.Provider, Model: record.Model,
+			PromptID: record.Task.PromptID, PromptVersion: record.Task.PromptVersion, StartedAt: record.StartedAt, Duration: record.Duration,
+			Outcome: record.Outcome, Error: record.Error, StartedByOwner: record.StartedByOwner,
+		}); err != nil {
+			t.Errorf("record the %s run: %v", record.Kind, err)
+		}
+	}
+	ended := make(chan store.NewUpdate, 1)
+	controls := &modelwork.Controls{
+		Hub: hub, Queue: modelqueue.New(nil, modelqueue.Settings{}), CVs: cvdrafts.NewDrafter(hub, router), Updates: endedRuns(ended),
+	}
+
+	kinds, err := controls.ListRunnableKinds(ctx, store.RunSubjectJob, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cvKind := slices.IndexFunc(kinds, func(kind modelwork.RunnableKind) bool { return kind.ID == store.AgentPromptKindJobCV })
+	if cvKind < 0 || !kinds[cvKind].CanRun || kinds[cvKind].Reason != "" {
+		t.Fatalf("tailored CV in the Run popover = %+v; want it able to run", kinds)
+	}
+	started, err := controls.StartRun(ctx, store.Actor{Kind: store.ActorOwner}, modelwork.StartRequest{Kind: store.AgentPromptKindJobCV, SubjectID: jobID})
+	if err != nil {
+		t.Fatalf("start the tailored CV: %v", err)
+	}
+	if started.Provider != standInProviderName || started.Model != standInModel {
+		t.Errorf("started = %+v; want it on %s at %s", started, standInModel, standInProviderName)
+	}
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stand-in model was never asked")
+	}
+	select {
+	case update := <-ended:
+		if update.Body != "" {
+			t.Fatalf("the run ended with %q, %q; want it drafted", update.Title, update.Body)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the tailored CV run never ended")
+	}
+
+	cv, err := hub.GetJobCV(ctx, jobID)
+	if err != nil || cv.Content.Basics.Name != seededBaseCV.Basics.Name || len(cv.Content.Work) != len(seededBaseCV.Work) {
+		t.Errorf("the job's CV = %+v, %v; want one drafted from the base CV", cv.Content, err)
+	}
+	runs, err := hub.ListRuns(ctx, store.RunFilter{Kind: store.AgentPromptKindJobCV, SubjectID: &jobID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs.Runs) != 1 || runs.Runs[0].ID != started.ID || runs.Runs[0].Outcome != store.RunOutcomeSucceeded || !runs.Runs[0].StartedByOwner ||
+		runs.Runs[0].Model != standInModel {
+		t.Errorf("Activity's tailored CV runs for the job = %+v; want the started one, succeeded on %s", runs.Runs, standInModel)
+	}
+}
+
+// endedRuns hears the update a started run records when it ends.
+type endedRuns chan store.NewUpdate
+
+func (ended endedRuns) Record(_ context.Context, input store.NewUpdate) (store.Update, error) {
+	ended <- input
+	return store.Update{}, nil
+}
+
+// findSeededJob is the id of the seeded job with slug at the company called
+// name.
+func findSeededJob(t *testing.T, hub *store.Store, name, slug string) uuid.UUID {
+	t.Helper()
+	items, _, err := hub.ListJobs(context.Background(), store.JobFilter{Status: store.JobStatusAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.CompanyName != nil && *item.CompanyName == name && item.Job.ExternalID != nil && *item.Job.ExternalID == slug {
+			return item.Job.ID
+		}
+	}
+	t.Fatalf("no %s job at %s", slug, name)
+	return uuid.Nil
 }
 
 // TestEveryPostingIsMarkdownItsFactsQuote checks each seeded posting is
