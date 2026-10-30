@@ -1,8 +1,8 @@
 import JobSearchHubCore
 import SwiftUI
 
-/// A run started from a job's Run popover that the hub doesn't list yet:
-/// it waits in the queue, or its record isn't written.
+/// A run started from a Run popover or a section that the hub doesn't
+/// list yet: it waits in the queue, or its record isn't written.
 struct UnlistedStart: Equatable, Identifiable {
     /// The id the run is recorded under once it runs.
     let id: UUID
@@ -130,8 +130,8 @@ final class SubjectRunsModel {
 }
 
 /// A job's or a company's Runs tab: every run for it, the latest first, the
-/// next page loading as the end scrolls in. A run started from the job's
-/// Run popover shows at the top at once, and the tab reads again every few
+/// next page loading as the end scrolls in. A run started from its Run
+/// popover shows at the top at once, and the tab reads again every few
 /// seconds while anything for the subject runs.
 struct SubjectRunsTab: View {
     let subject: SubjectRunsModel.Subject
@@ -199,13 +199,13 @@ struct SubjectRunsTab: View {
     private var emptyText: String {
         subject.type == SubjectRuns.jobSubject
             ? "No runs for this job yet. Start one from Run."
-            : "No runs for this company yet. Find jobs or research it to start one."
+            : "No runs for this company yet. Start one from Run."
     }
 
-    /// The runs started for the job from its Run popover that still go.
+    /// The runs started for the job or the company from its Run popover or
+    /// a section that still go.
     private var startedHere: [UnlistedStart] {
-        guard subject.type == SubjectRuns.jobSubject else { return [] }
-        return starts.getRunning(of: subject.id).map { UnlistedStart(id: $0.running.runID, kind: $0.kind, startedAt: $0.running.startedAt) }
+        starts.getRunning(of: subject.id).map { UnlistedStart(id: $0.running.runID, kind: $0.kind, startedAt: $0.running.startedAt) }
     }
 
     /// Something for the subject still runs: a run listed as running, or

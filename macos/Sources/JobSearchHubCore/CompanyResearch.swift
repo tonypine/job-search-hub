@@ -29,6 +29,16 @@ public enum CompanyResearchLaunch {
         return arguments
     }
 
+    /// The research the Mac runs for a task. A company the phone asked for
+    /// is new to the hub, and is recorded as found that way; one the owner
+    /// started research for, which the task names, keeps how it was found.
+    public static func makeArguments(for task: TaskRequest) -> [String] {
+        makeArguments(company: task.input ?? "", foundVia: task.companyID == nil ? phoneFoundVia : "")
+    }
+
+    /// How a company the phone asked to research was found.
+    public static let phoneFoundVia = "Asked for from the phone"
+
     /// The company a finished run added, from its last line,
     /// "Company id: <uuid>".
     public static func parseCompanyID(_ line: String) -> UUID? {

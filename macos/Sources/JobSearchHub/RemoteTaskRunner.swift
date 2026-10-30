@@ -101,6 +101,7 @@ final class RemoteTaskRunner {
     private static func describe(_ task: TaskRequest) -> String {
         switch task.kind {
         case TaskRequest.findJobs: "Finding jobs for your phone"
+        case TaskRequest.researchCompany where task.companyID != nil: task.input.flatMap { $0.isEmpty ? nil : "Researching \($0)" } ?? "Researching a company"
         case TaskRequest.researchCompany: task.input.flatMap { $0.isEmpty ? nil : "Researching \($0) for your phone" } ?? "Researching a company for your phone"
         case TaskRequest.fixJob: "Fixing a job's details"
         default: "A task for your phone"
@@ -115,7 +116,7 @@ final class RemoteTaskRunner {
             }
             return await findJobs(companyID, with: client, addedName: nil)
         case TaskRequest.researchCompany:
-            return await research(task.input ?? "", with: client)
+            return await research(task, with: client)
         case TaskRequest.fixJob:
             guard let jobID = task.jobID else {
                 return FinishTaskRequest(succeeded: false, result: "The request named no job.", companyID: nil)
@@ -161,7 +162,11 @@ final class RemoteTaskRunner {
         return FinishTaskRequest(succeeded: false, result: "Fixing \(title) failed: \(outcome.summary)", companyID: companyID)
     }
 
-    private func research(_ company: String, with client: HubClient) async -> FinishTaskRequest {
+    /// Researches the company the task names, then finds its jobs. One the
+    /// phone asked for is added; one the owner started research for, which
+    /// the hub already has, keeps how it was found.
+    private func research(_ task: TaskRequest, with client: HubClient) async -> FinishTaskRequest {
+        let company = task.input ?? ""
         guard let command = ServerAgent.hubCommand, let claude = ClaudeLaunch.findClaudeExecutable() else {
             return FinishTaskRequest(succeeded: false, result: "The Mac app can't run agents: its hub command or Claude Code is missing.", companyID: nil)
         }
@@ -169,13 +174,13 @@ final class RemoteTaskRunner {
             from: ProcessInfo.processInfo.environment, hubURL: client.baseURL, ownerToken: client.token, claude: claude
         )
         let finished = await BundledHubCommandRunner.run(
-            command, arguments: CompanyResearchLaunch.makeArguments(company: company, foundVia: "Asked for from the phone"), environment: environment
+            command, arguments: CompanyResearchLaunch.makeArguments(for: task), environment: environment
         )
         let lines = finished.output.components(separatedBy: "\n")
         guard finished.status == 0, let companyID = lines.lazy.compactMap(CompanyResearchLaunch.parseCompanyID).last else {
             let reason = lines.last { !$0.isEmpty } ?? "exit status \(finished.status)"
             return FinishTaskRequest(succeeded: false, result: "Researching \(company) failed: \(reason)", companyID: nil)
         }
-        return await findJobs(companyID, with: client, addedName: company)
+        return await findJobs(companyID, with: client, addedName: task.companyID == nil ? company : nil)
     }
 }

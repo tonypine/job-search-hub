@@ -18,19 +18,8 @@ struct JobRunButton: View {
     @State private var startFailure: HubFailure?
 
     var body: some View {
-        Button {
-            isShowingRuns.toggle()
-        } label: {
-            HStack(spacing: Space.xs) {
-                Label("Run", systemImage: "play.circle")
-                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
-            }
-        }
-        .buttonStyle(.bordered)
-        .tint(.hubAccent)
-        .help("Start any of the job's runs now, whatever their pause")
-        .popover(isPresented: $isShowingRuns, arrowEdge: .bottom) {
-            JobRunPopover(jobID: jobID, client: client, starts: starts, startFailure: $startFailure) { kind, model in
+        RunPopoverButton(isShowingRuns: $isShowingRuns, help: "Start any of the job's runs now, whatever their pause") {
+            RunPopover(subject: .job(jobID), client: client, starts: starts, startFailure: $startFailure) { kind, model in
                 noteNext = NoteRequest(kind: kind, model: model)
                 isShowingRuns = false
             }
@@ -56,6 +45,47 @@ struct JobRunButton: View {
     }
 }
 
+/// Run ▾ in a company's action bar: a popover with a row for each kind of
+/// run the hub can start for the company, its research and find jobs, each
+/// started with its ▶.
+struct CompanyRunButton: View {
+    let companyID: UUID
+    let client: HubClient
+    @Environment(JobRunStarts.self) private var starts
+    @State private var isShowingRuns = false
+    /// Why the last start failed, kept here so it still shows once the
+    /// popover closes and opens again.
+    @State private var startFailure: HubFailure?
+
+    var body: some View {
+        RunPopoverButton(isShowingRuns: $isShowingRuns, help: "Research the company or find its jobs now, whatever their pause") {
+            RunPopover(subject: .company(companyID), client: client, starts: starts, startFailure: $startFailure)
+        }
+    }
+}
+
+/// The Run ▾ button of an action bar, which opens its popover.
+struct RunPopoverButton<Popover: View>: View {
+    @Binding var isShowingRuns: Bool
+    let help: String
+    @ViewBuilder let popover: () -> Popover
+
+    var body: some View {
+        Button {
+            isShowingRuns.toggle()
+        } label: {
+            HStack(spacing: Space.xs) {
+                Label("Run", systemImage: "play.circle")
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+        }
+        .buttonStyle(.bordered)
+        .tint(.hubAccent)
+        .help(help)
+        .popover(isPresented: $isShowingRuns, arrowEdge: .bottom, content: popover)
+    }
+}
+
 /// A run that asks for its note before it starts, on the model picked for
 /// it, nil for its kind's.
 private struct NoteRequest: Identifiable {
@@ -65,20 +95,21 @@ private struct NoteRequest: Identifiable {
     var id: String { kind.id }
 }
 
-/// The job's kinds of run, in the hub's order, each a row of its name and
-/// last run, its model select and ▶; the fix of the job's details last,
-/// under a separator. Only ▶ starts a run, on the model its select shows.
-/// Each time the popover opens, every select is on its kind's model. No
-/// prices or tokens show here.
-struct JobRunPopover: View {
-    let jobID: UUID
+/// The job's or the company's kinds of run, in the hub's order, each a row
+/// of its name and last run, its model select and ▶; the fix of the job's
+/// details last, under a separator. Only ▶ starts a run, on the model its
+/// select shows. Each time the popover opens, every select is on its kind's
+/// model. No prices or tokens show here.
+struct RunPopover: View {
+    let subject: SubjectRunsModel.Subject
     let client: HubClient
     /// Handed over rather than read from the environment, which a popover's
     /// own window may not carry.
     let starts: JobRunStarts
     @Binding var startFailure: HubFailure?
-    /// Asks for the note a kind needs before it runs on the model picked.
-    let askForNote: (RunnableKind, RoutedModel?) -> Void
+    /// Asks for the note a kind needs before it runs on the model picked; a
+    /// company's kinds take none.
+    var askForNote: (RunnableKind, RoutedModel?) -> Void = { _, _ in }
     @State private var kinds: [RunnableKind]?
     @State private var choices = ModelChoicesModel()
     /// Each kind's select, by kind, once it is set; the rest show their
@@ -102,7 +133,7 @@ struct JobRunPopover: View {
                     ForEach(rows.withNote) { row($0) }
                 }
                 if kinds.isEmpty {
-                    Text("No runs to start for this job.").foregroundStyle(.secondary).padding(Space.s)
+                    Text("No runs to start for this \(subject.type).").foregroundStyle(.secondary).padding(Space.s)
                 }
                 if loadFailure != nil {
                     HubErrorView($loadFailure).padding(.top, Space.s)
@@ -127,10 +158,10 @@ struct JobRunPopover: View {
 
     private func load() async {
         do {
-            kinds = try await client.listRunnableKinds(forJob: jobID)
+            kinds = try await client.listRunnableKinds(subjectType: subject.type, id: subject.id)
             loadFailure = nil
         } catch {
-            loadFailure = HubFailure("Couldn't read the job's runs", error)
+            loadFailure = HubFailure("Couldn't read the \(subject.type)'s runs", error)
         }
     }
 
@@ -147,8 +178,8 @@ struct JobRunPopover: View {
         return JobRunRow(
             kind: kind,
             chosen: selection.wrappedValue.chosen,
-            running: starts.getRunning(kind.id, of: jobID),
-            isBusy: starts.isBusy(kind.id, of: jobID)
+            running: starts.getRunning(kind.id, of: subject.id),
+            isBusy: starts.isBusy(kind.id, of: subject.id)
         ) {
             RunModelSelect(selection: selection, choices: choices, client: client)
         } onStart: {
@@ -164,7 +195,7 @@ struct JobRunPopover: View {
         startFailure = nil
         Task {
             do {
-                try await starts.start(kind, for: jobID, model: model, with: client)
+                try await starts.start(kind, for: subject.id, model: model, with: client)
             } catch {
                 startFailure = HubFailure("Couldn't start \(JobRuns.getTitle(of: kind))", error)
             }
