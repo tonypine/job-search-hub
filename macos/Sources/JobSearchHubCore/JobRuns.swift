@@ -32,6 +32,9 @@ public struct RunnableKind: Decodable, Equatable, Identifiable, Sendable {
     public var canRun: Bool
     /// Why it can't run yet, when it can't: "needs the tailored CV first".
     public var reason: String?
+    /// It can't run only for want of a model: nothing routes it, but a run
+    /// on a model picked for it goes ahead.
+    public var needsModel: Bool
     /// A start takes the owner's note on what to fix.
     public var needsNote: Bool
     /// The runs of the kind the owner started for the subject that the hub
@@ -46,24 +49,83 @@ public struct RunnableKindsResponse: Decodable, Equatable, Sendable {
     public var kinds: [RunnableKind]
 }
 
-/// Starts a kind's run for a job or a company now, on its kind's model and
-/// whatever its pause. A fix takes its note.
+/// Starts a kind's run for a job or a company now, whatever its pause: on
+/// the model chosen for this run only, else on its kind's. A fix takes its
+/// note.
 public struct StartRunRequest: Encodable, Equatable, Sendable {
     public var kind: String
     public var subjectType: String
     public var subjectID: UUID
+    /// The provider and model chosen for this run; nil runs it on the
+    /// kind's model.
+    public var providerID: UUID?
+    public var model: String?
     public var note: String?
 
-    public init(kind: String, subjectType: String, subjectID: UUID, note: String? = nil) {
+    public init(kind: String, subjectType: String, subjectID: UUID, model chosen: RoutedModel? = nil, note: String? = nil) {
         self.kind = kind
         self.subjectType = subjectType
         self.subjectID = subjectID
+        providerID = chosen?.providerID
+        model = chosen?.model
         self.note = note
     }
 
     enum CodingKeys: String, CodingKey {
-        case kind, subjectType, note
+        case kind, subjectType, model, note
         case subjectID = "subjectId"
+        case providerID = "providerId"
+    }
+}
+
+/// The model select of one run control: the kind's own model, which it is
+/// set to each time it shows, and the one picked for the run. Only a model
+/// picked that isn't the kind's goes with the start, so the kind's own
+/// model never changes.
+public struct RunModelSelection: Equatable, Sendable {
+    /// The kind's route; nil when nothing routes it, as for an agent that
+    /// leaves the model to Claude Code.
+    public var kindRoute: RunnableKindRoute?
+    /// An agent runs on Claude alone, so its select lists Claude's models.
+    public var isAgent: Bool
+    /// The model picked for the run, which its start asks for; nil runs it
+    /// on the kind's.
+    public private(set) var chosen: RoutedModel?
+
+    public init(kind: RunnableKind) {
+        kindRoute = kind.route
+        isAgent = kind.isAgent
+    }
+
+    /// The kind's own model, as its route names it.
+    public var kindModel: RoutedModel? {
+        kindRoute.map { RoutedModel(providerID: $0.providerID, model: $0.model) }
+    }
+
+    /// The model the select ticks: the one picked, else the kind's.
+    public var selected: RoutedModel? { chosen ?? kindModel }
+
+    /// Picks model for the run; the kind's own model clears the pick.
+    public mutating func pick(_ model: RoutedModel) {
+        chosen = model == kindModel ? nil : model
+    }
+
+    /// What the select says: the model selected by the name its catalog
+    /// gives it, with its provider's mark; Claude for an agent with no
+    /// route; nil when nothing routes the kind.
+    public func getLabel(providers: [ModelProvider], catalogs: [UUID: [ProviderModel]]) -> RunKindModel? {
+        guard let selected else {
+            return isAgent ? RunKindModel(name: "Claude", providerName: "Claude", providerKind: RunKindModel.claudeProviderKind) : nil
+        }
+        let provider = providers.first { $0.id == selected.providerID }
+        let providerName = provider?.name ?? (selected == kindModel ? kindRoute?.provider ?? "" : "")
+        return RunKindModel(name: ModelChoices.getModelName(selected, catalogs: catalogs), providerName: providerName, providerKind: provider?.kind ?? "")
+    }
+
+    /// The select's models, by place, with no prices or times: Claude's
+    /// alone for an agent, and the model selected kept so it shows ticked.
+    public func getGroups(providers: [ModelProvider], catalogs: [UUID: [ProviderModel]]) -> [ModelChoiceGroup] {
+        ModelChoices.makeCompact(ModelChoices.group(providers: providers, catalogs: catalogs, claudeOnly: isAgent, keeping: selected))
     }
 }
 
@@ -95,6 +157,11 @@ public struct StartedRunResponse: Decodable, Equatable, Sendable {
 public enum JobRuns {
     public static let jobSubject = "job"
     public static let fixKind = "job_fix"
+    /// The kinds the job's sections start: Read facts, Write full brief and
+    /// Draft CV.
+    public static let factsKind = "job_facts"
+    public static let fullBriefKind = "job_brief_full"
+    public static let cvKind = "job_cv"
 
     /// The rows in the hub's order, then those that ask for a note, such as
     /// the fix of the job's details, under a separator.
@@ -165,27 +232,23 @@ public enum JobRuns {
         return String(format: "Running %d:%02d", minutes, rest)
     }
 
-    /// The ▶ button's tooltip: what it starts, why it can't, and that a
-    /// paused kind runs anyway.
-    public static func describeStart(of kind: RunnableKind) -> String {
-        let title = getTitle(of: kind)
-        guard kind.canRun else { return capitalizeFirst(kind.reason ?? "Can't run yet") }
-        if kind.needsNote { return "Say what's wrong, and an agent corrects the job's details" }
-        let start = "Start \(title.lowercasedFirst) now"
-        return kind.paused ? "\(start). \(kind.title) are paused, but a run you start goes ahead anyway." : start
+    /// Whether ▶ starts the kind on the model chosen, nil for its own: when
+    /// the hub can run it, or when it lacks only a model and one is picked.
+    public static func canStart(_ kind: RunnableKind, on chosen: RoutedModel?) -> Bool {
+        kind.canRun || (kind.needsModel && chosen != nil)
     }
 
-    /// The model the kind runs on, with its provider's mark: its route's,
-    /// or Claude for an agent with none; nil when nothing routes it.
-    public static func getModel(of kind: RunnableKind, providers: [ModelProvider]) -> RunKindModel? {
-        if let route = kind.route {
-            let providerKind = providers.first { $0.id == route.providerID }?.kind ?? ""
-            return RunKindModel(name: RunKinds.describeModel(route.model), providerName: route.provider, providerKind: providerKind)
+    /// The ▶ button's tooltip: what it starts and on which model, why it
+    /// can't, and that a paused kind runs anyway.
+    public static func describeStart(of kind: RunnableKind, on chosen: RoutedModel? = nil) -> String {
+        let title = getTitle(of: kind)
+        guard canStart(kind, on: chosen) else {
+            let reason = capitalizeFirst(kind.reason ?? "Can't run yet")
+            return kind.needsModel ? "\(reason). Pick a model for this run to start it on that one" : reason
         }
-        if kind.isAgent {
-            return RunKindModel(name: "Claude", providerName: "Claude", providerKind: RunKindModel.claudeProviderKind)
-        }
-        return nil
+        if kind.needsNote { return "Say what's wrong, and an agent corrects the job's details" }
+        let start = chosen == nil ? "Start \(title.lowercasedFirst) now" : "Start \(title.lowercasedFirst) now on the model picked"
+        return kind.paused ? "\(start). \(kind.title) are paused, but a run you start goes ahead anyway." : start
     }
 
     /// Whether the run started has landed. One the hub runs has once the

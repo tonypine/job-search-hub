@@ -22,10 +22,10 @@ type startedRunResponse struct {
 
 // RegisterRunStartRoutes adds the owner-only routes that list the kinds of
 // run a job or a company can have, each with its model, its latest run for
-// it and whether it can run now, and that start one now, on its kind's model
-// or one chosen for that run only. A started run goes ahead of background
-// work whatever its kind's pause. Reading a job's facts now, its full brief
-// and its tailored CV start the same way.
+// it and whether it can run now or lacks only a model, and that start one
+// now, on its kind's model or one chosen for that run only. A started run
+// goes ahead of background work whatever its kind's pause. Reading a job's
+// facts now, its full brief and its tailored CV start the same way.
 func RegisterRunStartRoutes(routes *http.ServeMux, controls *modelwork.Controls, requireOwner func(http.Handler) http.Handler) {
 	owner := store.Actor{Kind: store.ActorOwner}
 	for path, subjectType := range map[string]string{"/v1/jobs/{id}/runnable-kinds": store.RunSubjectJob, "/v1/companies/{id}/runnable-kinds": store.RunSubjectCompany} {

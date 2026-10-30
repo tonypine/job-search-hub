@@ -222,6 +222,9 @@ type RunnableKind struct {
 	CanRun  bool       `json:"can_run"`
 	// Reason says why it can't run yet, when it can't.
 	Reason string `json:"reason,omitempty"`
+	// NeedsModel says it can't run only for want of a model: nothing routes
+	// it, but a start that chooses one for the run goes ahead.
+	NeedsModel bool `json:"needs_model"`
 	// NeedsNote says a start takes a note: the owner's word on what to fix.
 	NeedsNote bool `json:"needs_note"`
 	// RunningStarts are the ids of the kind's runs the owner started for the
@@ -263,6 +266,7 @@ func (controls *Controls) ListRunnableKinds(ctx context.Context, subjectType str
 		}
 		if reason := getCannotRunReason(controls, kind, starter, subject, route != nil); reason != nil {
 			runnable.Reason = reason.Reason
+			runnable.NeedsModel = route == nil && getCannotRunReason(controls, kind, starter, subject, true) == nil
 		} else {
 			runnable.CanRun = true
 		}

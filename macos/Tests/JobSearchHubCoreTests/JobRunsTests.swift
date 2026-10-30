@@ -17,14 +17,14 @@ private let kindsJSON = #"""
   "last_run":{"id":"0aa55565-58d2-4247-ba01-cba65060a316","record":"model_call","kind":"job_facts","subject":{"type":"job","id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","title":"Staff engineer"},
    "model":"qwen3-8b.gguf","provider":"This Mac","started_at":"2026-10-29T13:12:05Z","duration_ms":4200,"outcome":"invalid","prompt_tokens":900,"completion_tokens":80,
    "cost_usd_estimate":"0.0012","started_by_owner":false},
-  "can_run":true,"needs_note":false,"running_starts":[]},
+  "can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]},
  {"id":"job_brief_full","title":"Full briefs","description":"Claude writes a full brief.","group":"jobs","subject_type":"job","engine":"claude_one_shot","automatic":true,
-  "paused":true,"route":{"provider_id":"5f1b1c7e-3e0a-4a51-9f0e-6c1d2b7a8e91","provider":"Claude","model":"claude-sonnet"},"can_run":true,"needs_note":false,
+  "paused":true,"route":{"provider_id":"5f1b1c7e-3e0a-4a51-9f0e-6c1d2b7a8e91","provider":"Claude","model":"claude-sonnet"},"can_run":true,"needs_model":false,"needs_note":false,
   "running_starts":["0aa55565-58d2-4247-ba01-cba65060a317"]},
  {"id":"recruiter_screen","title":"Recruiter screens","description":"Reads the CV as a recruiter.","group":"jobs","subject_type":"job","engine":"model_call","automatic":true,
-  "paused":false,"can_run":false,"reason":"needs the tailored CV first","needs_note":false,"running_starts":[]},
+  "paused":false,"can_run":false,"reason":"needs the tailored CV first","needs_model":false,"needs_note":false,"running_starts":[]},
  {"id":"job_fix","title":"Job fixes","description":"An agent fixes a job's details.","group":"jobs","subject_type":"job","engine":"claude_agent","automatic":false,
-  "paused":false,"can_run":true,"needs_note":true,"running_starts":[]}
+  "paused":false,"can_run":true,"needs_model":false,"needs_note":true,"running_starts":[]}
 ]}
 """#
 
@@ -107,6 +107,45 @@ private let english = Locale(identifier: "en_US")
     #expect(JobRuns.describeStart(of: try getKind("job_facts")) == "Start job facts now")
 }
 
+/// A job's tailored CV with nothing routed for it, as the hub lists it: it
+/// runs only on a model picked for the run.
+private let unroutedCVJSON = #"""
+{"id":"job_cv","title":"Tailored CVs","description":"Drafts a CV for the job.","group":"jobs","subject_type":"job","engine":"model_call","automatic":true,
+ "paused":false,"can_run":false,"reason":"no model is routed for it yet","needs_model":true,"needs_note":false,"running_starts":[]}
+"""#
+
+private let flash = RoutedModel(providerID: providerID, model: "google/gemini-2.5-flash")
+
+@Test func aKindWithNoModelRoutedStartsOnceAModelIsPickedForTheRun() throws {
+    let cv = try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(unroutedCVJSON.utf8))
+    #expect(cv.needsModel && !cv.canRun && cv.route == nil)
+
+    // Its select starts on no model, so ▶ waits for a pick.
+    var selection = RunModelSelection(kind: cv)
+    #expect(selection.chosen == nil && !JobRuns.canStart(cv, on: selection.chosen))
+    #expect(JobRuns.describeStart(of: cv, on: selection.chosen) == "No model is routed for it yet. Pick a model for this run to start it on that one")
+
+    selection.pick(flash)
+    #expect(selection.chosen == flash && JobRuns.canStart(cv, on: selection.chosen))
+    #expect(JobRuns.describeStart(of: cv, on: selection.chosen) == "Start tailored CV now on the model picked")
+}
+
+@Test func aKindThatLacksMoreThanAModelWaitsWhateverIsPicked() throws {
+    let screen = try getKind("recruiter_screen")
+    #expect(!screen.needsModel)
+
+    #expect(!JobRuns.canStart(screen, on: flash))
+    #expect(JobRuns.describeStart(of: screen, on: flash) == "Needs the tailored CV first")
+}
+
+@Test func aRoutedKindStartsOnItsOwnModelOrOnePicked() throws {
+    let facts = try getKind("job_facts")
+
+    #expect(JobRuns.canStart(facts, on: nil) && JobRuns.canStart(facts, on: flash))
+    #expect(JobRuns.describeStart(of: facts, on: nil) == "Start job facts now")
+    #expect(JobRuns.describeStart(of: facts, on: flash) == "Start job facts now on the model picked")
+}
+
 @Test func aRunningRowCountsUp() {
     let start = afternoon
     #expect(JobRuns.describeRunning(since: start, now: start) == "Running 0:00")
@@ -119,11 +158,11 @@ private let english = Locale(identifier: "en_US")
 @Test func aRowsModelCarriesItsProvidersMark() throws {
     let providers = [ModelProvider(id: providerID, kind: ModelProvider.hubRuntimeKind, name: "This Mac", baseURL: "", hasKey: false, enforcesSchema: true)]
 
-    let facts = try #require(JobRuns.getModel(of: try getKind("job_facts"), providers: providers))
+    let facts = try #require(RunModelSelection(kind: try getKind("job_facts")).getLabel(providers: providers, catalogs: [:]))
     #expect(facts.name == "qwen3-8b" && facts.markSymbol == "cpu" && facts.runsOnText == "Runs on qwen3-8b from This Mac")
-    let fix = try #require(JobRuns.getModel(of: try getKind("job_fix"), providers: providers))
+    let fix = try #require(RunModelSelection(kind: try getKind("job_fix")).getLabel(providers: providers, catalogs: [:]))
     #expect(fix.name == "Claude" && fix.markSymbol == "sparkle")
-    #expect(JobRuns.getModel(of: try getKind("recruiter_screen"), providers: providers) == nil)
+    #expect(RunModelSelection(kind: try getKind("recruiter_screen")).getLabel(providers: providers, catalogs: [:]) == nil)
 }
 
 @Test func theRowShowsNoPriceOrTokens() throws {
@@ -191,6 +230,24 @@ private let english = Locale(identifier: "en_US")
     let fix = StartRunRequest(kind: JobRuns.fixKind, subjectType: JobRuns.jobSubject, subjectID: jobID, note: "the title has the city in it")
     let fixEncoded = try #require(String(data: HubJSON.makeEncoder().encode(fix), encoding: .utf8))
     #expect(fixEncoded.contains(#""note":"the title has the city in it""#))
+    // On the kind's model, the start names none.
+    #expect(!encoded.contains("provider_id") && !encoded.contains("model") && !fixEncoded.contains("model"))
+}
+
+@Test func theSectionsStartTheKindsTheHubRunsThemAs() {
+    // A job's facts, full brief and tailored CV, as the hub names their kinds.
+    #expect(JobRuns.factsKind == "job_facts")
+    #expect(JobRuns.fullBriefKind == "job_brief_full")
+    #expect(JobRuns.cvKind == "job_cv")
+}
+
+@Test func aStartOnAModelChosenForTheRunNamesItsProviderAndModel() throws {
+    let flash = RoutedModel(providerID: providerID, model: "google/gemini-2.5-flash")
+    let start = StartRunRequest(kind: JobRuns.cvKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: flash)
+    let sent = try #require(try JSONSerialization.jsonObject(with: HubJSON.makeEncoder().encode(start)) as? [String: Any])
+
+    #expect(sent["kind"] as? String == "job_cv" && sent["subject_id"] as? String == jobID.uuidString)
+    #expect(sent["provider_id"] as? String == providerID.uuidString && sent["model"] as? String == "google/gemini-2.5-flash")
 }
 
 @Test func theClientListsAJobsKindsAndStartsOne() async throws {

@@ -74,14 +74,15 @@ final class JobCVModel {
         self.cv?.content.work[role].highlights.remove(at: index)
     }
 
-    /// Asks Claude for a new draft, then follows the job until it's saved,
-    /// for up to three minutes.
-    func draftAgain(_ jobID: UUID, with client: HubClient) async {
+    /// Asks for a new draft, on the model chosen for this run or else its
+    /// kind's, then follows the job until it's saved, for up to three
+    /// minutes.
+    func draftAgain(_ jobID: UUID, on model: RoutedModel? = nil, with client: HubClient) async {
         isDrafting = true
         defer { isDrafting = false }
         let draftedBefore = cv?.id
         do {
-            try await client.draftCV(jobID)
+            _ = try await client.startRun(StartRunRequest(kind: JobRuns.cvKind, subjectType: JobRuns.jobSubject, subjectID: jobID, model: model))
             let deadline = Date.now.addingTimeInterval(3 * 60)
             while Date.now < deadline {
                 try await Task.sleep(for: .seconds(3))
@@ -163,9 +164,12 @@ struct JobCVSection: View {
         .task(id: details.cvID) { await model.load(jobID, with: client) }
     }
 
+    /// The model select, then ▶ Draft CV, or Draft again once there's one.
     private var draftButton: some View {
-        AsyncButton(model.cv == nil ? "Draft CV" : "Draft again", busyTitle: "Drafting…", systemImage: "doc.text", isBusy: model.isDrafting) {
-            await model.draftAgain(jobID, with: client)
+        JobSectionRunControl(kind: JobRuns.cvKind, jobID: jobID, client: client) { chosen in
+            AsyncButton(model.cv == nil ? "Draft CV" : "Draft again", busyTitle: "Drafting…", systemImage: "play.fill", isBusy: model.isDrafting) {
+                await model.draftAgain(jobID, on: chosen, with: client)
+            }
         }
     }
 
@@ -196,7 +200,8 @@ struct JobCVSection: View {
                     }
                 }
             }
-            HStack(spacing: Space.s) {
+            // The run control wraps to a line of its own in a narrow inspector.
+            FlowRow(spacing: Space.s) {
                 AsyncButton("Save edits", busyTitle: "Saving…", isBusy: model.isSaving) { await model.saveEdits(jobID, with: client) }
                     .disabled(!model.hasEdits)
                 AsyncButton("Print to PDF", busyTitle: "Printing…", systemImage: "printer", isBusy: model.isPrinting) {
