@@ -123,10 +123,6 @@ public struct ClearedJobDecision: Decodable, Equatable, Sendable {
     }
 }
 
-struct FullBriefResponse: Decodable {
-    var queued: Bool
-}
-
 public extension HubClient {
     /// Records the decision and acts on it: pursue puts the job on the
     /// pipeline, skip dismisses it, later only records.
@@ -142,10 +138,5 @@ public extension HubClient {
     @discardableResult
     func clearJobDecision(_ id: UUID) async throws -> ClearedJobDecision {
         try await delete("v1/jobs/\(id.uuidString)/decision", as: ClearedJobDecision.self)
-    }
-
-    /// Asks Claude for the job's full brief; it's written in the background.
-    func writeFullBrief(_ id: UUID) async throws {
-        _ = try await send("POST", "v1/jobs/\(id.uuidString)/brief/full", body: EmptyBody(), as: FullBriefResponse.self)
     }
 }
