@@ -32,8 +32,9 @@ private let hubReasons = [
 /// without one, a recruiter screen whose last run, today, gave an invalid
 /// answer.
 private func makeKind(reason: String?, route: String = "") throws -> RunnableKind {
-    let state = reason.map { #""can_run":false,"reason":"\#($0)""# } ?? #"""
-    "can_run":true,"last_run":{"id":"cccccccc-0000-4000-8000-000000000002","record":"model_call","kind":"recruiter_screen",
+    // Of the reasons, only a missing route goes once a model is picked.
+    let state = reason.map { #""can_run":false,"reason":"\#($0)","needs_model":\#($0 == hubReasons[0])"# } ?? #"""
+    "can_run":true,"needs_model":false,"last_run":{"id":"cccccccc-0000-4000-8000-000000000002","record":"model_call","kind":"recruiter_screen",
      "subject":{"type":"job","id":"cccccccc-0000-4000-8000-000000000001","title":"Staff engineer"},"model":"qwen3-8b.gguf","provider":"This Mac",
      "started_at":"\#(Date.now.ISO8601Format())","outcome":"invalid","prompt_tokens":0,"completion_tokens":0,"started_by_owner":false}
     """#
@@ -47,7 +48,7 @@ private func makeKind(reason: String?, route: String = "") throws -> RunnableKin
 @MainActor
 private func makeRow(_ kind: RunnableKind) -> JobRunRow<RunModelSelect> {
     let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
-    return JobRunRow(kind: kind, running: nil, isBusy: false) {
+    return JobRunRow(kind: kind, chosen: nil, running: nil, isBusy: false) {
         RunModelSelect(selection: .constant(RunModelSelection(kind: kind)), choices: ModelChoicesModel(), client: client)
     } onStart: {}
 }

@@ -26,7 +26,7 @@ private func makeFullBrief() throws -> RunnableKind {
     let json = #"""
     {"id":"job_brief_full","title":"Full briefs","description":"Claude writes a full brief.","subject_type":"job","engine":"claude_one_shot",
      "automatic":true,"paused":false,"route":{"provider_id":"dddddddd-0000-4000-8000-000000000001","provider":"Claude","model":"sonnet"},
-     "can_run":true,"needs_note":false,"running_starts":[]}
+     "can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]}
     """#
     return try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(json.utf8))
 }

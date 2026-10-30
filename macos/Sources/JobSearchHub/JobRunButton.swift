@@ -146,6 +146,7 @@ struct JobRunPopover: View {
         let selection = getSelection(kind)
         return JobRunRow(
             kind: kind,
+            chosen: selection.wrappedValue.chosen,
             running: starts.getRunning(kind.id, of: jobID),
             isBusy: starts.isBusy(kind.id, of: jobID)
         ) {
@@ -172,10 +173,13 @@ struct JobRunPopover: View {
 }
 
 /// A row of the Run popover: the kind's name over its last run or why it
-/// can't run yet, its model select, and ▶. The second line wraps rather
-/// than being cut, so "kind paused" at its end always shows.
+/// can't run yet, its model select, and ▶, which a kind with no model
+/// routed takes once a model is picked. The second line wraps rather than
+/// being cut, so "kind paused" at its end always shows.
 struct JobRunRow<Select: View>: View {
     let kind: RunnableKind
+    /// The model picked in the row's select, nil for the kind's own.
+    let chosen: RoutedModel?
     /// The run started here that still goes.
     let running: JobRunStarts.Running?
     /// Starting or running, so ▶ waits.
@@ -201,8 +205,8 @@ struct JobRunRow<Select: View>: View {
             .buttonStyle(.bordered)
             .buttonBorderShape(.circle)
             .tint(.hubAccent)
-            .disabled(!kind.canRun || isBusy)
-            .help(JobRuns.describeStart(of: kind))
+            .disabled(!JobRuns.canStart(kind, on: chosen) || isBusy)
+            .help(JobRuns.describeStart(of: kind, on: chosen))
             .accessibilityLabel("Start \(title)")
         }
         .padding(.vertical, Space.xs)

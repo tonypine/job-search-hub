@@ -275,7 +275,7 @@ private func makeRunnableKind(_ id: String, engine: String, route: RoutedModel? 
     let routeJSON = route.map { #","route":{"provider_id":"\#($0.providerID.uuidString)","provider":"\#(provider)","model":"\#($0.model)"}"# } ?? ""
     let json = #"""
     {"id":"\#(id)","title":"\#(id)","description":"","subject_type":"job","engine":"\#(engine)","automatic":true,"paused":false,
-     "can_run":true,"needs_note":false,"running_starts":[]\#(routeJSON)}
+     "can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]\#(routeJSON)}
     """#
     return try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(json.utf8))
 }

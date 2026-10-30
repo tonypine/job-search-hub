@@ -28,7 +28,7 @@ private func briefJSON(lastRun: UUID?, outcome: String, running: [UUID]) -> Stri
     let runningIDs = running.map { "\"\($0.uuidString)\"" }.joined(separator: ",")
     return #"""
     {"id":"job_brief_full","title":"Full briefs","description":"Claude writes a full brief.","group":"jobs","subject_type":"job",
-     "engine":"claude_one_shot","automatic":true,"paused":true,"can_run":true,"needs_note":false,
+     "engine":"claude_one_shot","automatic":true,"paused":true,"can_run":true,"needs_model":false,"needs_note":false,
      "running_starts":[\#(runningIDs)]\#(run)}
     """#
 }

@@ -27,7 +27,7 @@ private let providersJSON = #"""
 private let kindsJSON = #"""
 {"kinds":[{"id":"job_brief_full","title":"Full briefs","description":"Writes a full brief.","subject_type":"job","engine":"claude_one_shot",
  "automatic":true,"paused":false,"route":{"provider_id":"\#(openRouterID.uuidString)","provider":"OpenRouter","model":"anthropic/claude-sonnet-4.5"},
- "can_run":true,"needs_note":false,"running_starts":[]}]}
+ "can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]}]}
 """#
 
 private let modelsJSON = #"""

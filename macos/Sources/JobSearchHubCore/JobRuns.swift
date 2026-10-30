@@ -32,6 +32,9 @@ public struct RunnableKind: Decodable, Equatable, Identifiable, Sendable {
     public var canRun: Bool
     /// Why it can't run yet, when it can't: "needs the tailored CV first".
     public var reason: String?
+    /// It can't run only for want of a model: nothing routes it, but a run
+    /// on a model picked for it goes ahead.
+    public var needsModel: Bool
     /// A start takes the owner's note on what to fix.
     public var needsNote: Bool
     /// The runs of the kind the owner started for the subject that the hub
@@ -238,13 +241,22 @@ public enum JobRuns {
         return String(format: "Running %d:%02d", minutes, rest)
     }
 
-    /// The ▶ button's tooltip: what it starts, why it can't, and that a
-    /// paused kind runs anyway.
-    public static func describeStart(of kind: RunnableKind) -> String {
+    /// Whether ▶ starts the kind on the model chosen, nil for its own: when
+    /// the hub can run it, or when it lacks only a model and one is picked.
+    public static func canStart(_ kind: RunnableKind, on chosen: RoutedModel?) -> Bool {
+        kind.canRun || (kind.needsModel && chosen != nil)
+    }
+
+    /// The ▶ button's tooltip: what it starts and on which model, why it
+    /// can't, and that a paused kind runs anyway.
+    public static func describeStart(of kind: RunnableKind, on chosen: RoutedModel? = nil) -> String {
         let title = getTitle(of: kind)
-        guard kind.canRun else { return capitalizeFirst(kind.reason ?? "Can't run yet") }
+        guard canStart(kind, on: chosen) else {
+            let reason = capitalizeFirst(kind.reason ?? "Can't run yet")
+            return kind.needsModel ? "\(reason). Pick a model for this run to start it on that one" : reason
+        }
         if kind.needsNote { return "Say what's wrong, and an agent corrects the job's details" }
-        let start = "Start \(title.lowercasedFirst) now"
+        let start = chosen == nil ? "Start \(title.lowercasedFirst) now" : "Start \(title.lowercasedFirst) now on the model picked"
         return kind.paused ? "\(start). \(kind.title) are paused, but a run you start goes ahead anyway." : start
     }
 
