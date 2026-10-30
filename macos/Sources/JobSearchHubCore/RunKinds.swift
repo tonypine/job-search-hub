@@ -393,6 +393,32 @@ public struct RunMetrics: Decodable, Equatable, Sendable {
     public func getBucket(at date: Date) -> Bucket? {
         buckets.first { $0.contains(date) }
     }
+
+    /// The span a bucket's bar is drawn over: the bucket, but the last one
+    /// to the end of its hour, day or week, so the one in progress is as
+    /// wide as the others rather than clipped to now.
+    public func getDrawnInterval(start: Date, end: Date, calendar: Calendar) -> DateInterval {
+        let counted = DateInterval(start: start, end: max(start, end))
+        guard start == buckets.last?.start, let size = RunBucketSize(rawValue: bucket),
+              let period = size.getPeriod(containing: start, calendar: calendar) else { return counted }
+        return DateInterval(start: start, end: max(counted.end, period.end))
+    }
+
+    /// The charts' time axis: from the first bucket's start to the end of
+    /// the last one's bar; nil without buckets.
+    public func getDrawnRange(calendar: Calendar) -> DateInterval? {
+        guard let first = buckets.first, let last = buckets.last else { return nil }
+        return DateInterval(start: first.start, end: getDrawnInterval(start: last.start, end: last.end, calendar: calendar).end)
+    }
+
+    /// The bucket whose bar is drawn at a moment, the last one's past now
+    /// included; nil outside the bars.
+    public func getDrawnBucket(at date: Date, calendar: Calendar) -> Bucket? {
+        if let bucket = getBucket(at: date) { return bucket }
+        guard let last = buckets.last else { return nil }
+        let drawn = getDrawnInterval(start: last.start, end: last.end, calendar: calendar)
+        return drawn.start <= date && date < drawn.end ? last : nil
+    }
 }
 
 /// What a run was for: a job with its company, a company, a message or a
