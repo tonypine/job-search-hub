@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -207,6 +208,11 @@ func TestAJobListsEveryKindItCanRunWithItsModelAndLastRun(t *testing.T) {
 	}
 	if fix := byKind[store.AgentRunKindJobFix]; !fix.CanRun || !fix.NeedsNote || fix.Route != nil {
 		t.Errorf("job fix = %+v", fix)
+	}
+	for _, kind := range kinds {
+		if kind.NeedsModel {
+			t.Errorf("%s needs a model, though it has one", kind.ID)
+		}
 	}
 
 	company, _, _ := service.hub.CreateCompany(ctx, ownerActor, store.NewCompany{Name: "Acme", Domain: "acme.example"})
@@ -464,6 +470,68 @@ func TestAKindThatCantRunYetSaysWhyAndStartsNothing(t *testing.T) {
 	if screen := kinds[slices.IndexFunc(kinds, func(kind modelwork.RunnableKind) bool { return kind.ID == store.AgentPromptKindRecruiterScreen })]; screen.CanRun ||
 		screen.Reason != "no model is routed for it yet" {
 		t.Errorf("an unrouted screen = %+v", screen)
+	}
+}
+
+func TestAKindWithNoModelRoutedRunsOnAModelChosenForTheRun(t *testing.T) {
+	service := startRunStartAPI(t)
+	ctx := context.Background()
+	thisMac, err := service.hub.SaveModelProvider(ctx, ownerActor, nil, store.ModelProviderInput{Name: "This Mac", BaseURL: "http://127.0.0.1:1/v1", EnforcesSchema: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := addJob(t, service.hub, "Staff Engineer")
+	kindsURL := service.url + "/v1/jobs/" + job.ID.String() + "/runnable-kinds"
+	listByKind := func() map[string]modelwork.RunnableKind {
+		byKind := map[string]modelwork.RunnableKind{}
+		for _, kind := range listRunnableKinds(t, kindsURL) {
+			byKind[kind.ID] = kind
+		}
+		return byKind
+	}
+
+	// Nothing is routed. The facts and the full brief lack only a model; the
+	// brief and the CV lack more, and the fix's agent needs none.
+	byKind := listByKind()
+	for id, needsModel := range map[string]bool{
+		store.AgentPromptKindJobFacts: true,
+		store.RunKindJobBriefFull:     true,
+		store.AgentPromptKindJobBrief: false,
+		store.AgentPromptKindJobCV:    false,
+		store.AgentRunKindJobFix:      false,
+	} {
+		if kind := byKind[id]; kind.NeedsModel != needsModel || (needsModel && (kind.CanRun || kind.Reason != "no model is routed for it yet")) {
+			t.Errorf("%s = can run %v, reason %q, needs a model %v; want needs a model %v", id, kind.CanRun, kind.Reason, kind.NeedsModel, needsModel)
+		}
+	}
+
+	if status, _, answer := startRun(t, service, fmt.Sprintf(`{"kind":"job_brief_full","subject_id":%q}`, job.ID)); status != http.StatusServiceUnavailable ||
+		!strings.Contains(answer, "no model is routed for it yet") {
+		t.Fatalf("a full brief with no model: %d %s", status, answer)
+	}
+	status, started, answer := startRun(t, service, fmt.Sprintf(`{"kind":"job_brief_full","subject_id":%q,"provider_id":%q,"model":"qwen3.8-27b"}`, job.ID, thisMac.ID))
+	if status != http.StatusAccepted || started.Provider != "This Mac" || started.Model != "qwen3.8-27b" || !started.ChosenModel {
+		t.Fatalf("a full brief on a model chosen for it: %d %s", status, answer)
+	}
+	// The run fails, as this Mac's model isn't there, and the kind is still
+	// unrouted.
+	waitFor(t, "the run to end", func() bool {
+		updates, _ := service.hub.ListUpdatesAfter(ctx, 0)
+		return slices.ContainsFunc(updates, func(update store.Update) bool {
+			return update.Kind == modelwork.RunFinishedUpdate && strings.HasPrefix(update.Title, "Full brief failed for Staff Engineer")
+		})
+	})
+	if route, err := service.hub.GetTaskRoute(ctx, store.RunKindJobBriefFull); !errors.Is(err, store.ErrTaskRouteNotFound) {
+		t.Fatalf("the kind's route = %+v, %v; want none", route, err)
+	}
+
+	// A kind the hub has no worker for doesn't run on a chosen model either.
+	service.controls.Facts = nil
+	if facts := listByKind()[store.AgentPromptKindJobFacts]; facts.CanRun || facts.NeedsModel {
+		t.Errorf("facts with no worker = %+v", facts)
+	}
+	if status, _, answer := startRun(t, service, fmt.Sprintf(`{"kind":"job_facts","subject_id":%q,"provider_id":%q,"model":"qwen3.8-27b"}`, job.ID, thisMac.ID)); status != http.StatusServiceUnavailable {
+		t.Errorf("facts with no worker on a chosen model: %d %s", status, answer)
 	}
 }
 

@@ -424,11 +424,13 @@ private struct JobFactsPopover: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack(spacing: Space.s) {
-                        AsyncButton(
-                            details.facts == nil ? "Read facts now" : "Read facts again", busyTitle: "Reading…", systemImage: "arrow.clockwise",
-                            isBusy: model.isReadingFacts
-                        ) {
-                            await model.readFactsNow(jobID, with: client)
+                        JobSectionRunControl(kind: JobRuns.factsKind, jobID: jobID, client: client) { chosen in
+                            AsyncButton(
+                                details.facts == nil ? "Read facts now" : "Read facts again", busyTitle: "Reading…", systemImage: "play.fill",
+                                isBusy: model.isReadingFacts
+                            ) {
+                                await model.readFactsNow(jobID, on: chosen, with: client)
+                            }
                         }
                         if model.isReadingFacts {
                             Text(model.factsReadState.statusText).foregroundStyle(.secondary)

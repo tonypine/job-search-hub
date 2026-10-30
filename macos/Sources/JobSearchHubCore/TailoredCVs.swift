@@ -159,11 +159,6 @@ public extension HubClient {
         try await send("PUT", "v1/jobs/\(jobID.uuidString)/cv", body: edit, as: CV.self)
     }
 
-    /// Asks Claude for a new draft; it's written in the background.
-    func draftCV(_ jobID: UUID) async throws {
-        _ = try await send("POST", "v1/jobs/\(jobID.uuidString)/cv", body: EmptyBody(), as: FullBriefResponse.self)
-    }
-
     /// Starts generating the CV of every good-fit or pursued job that has
     /// none, in the background; returns how many it will make, 0 when none
     /// are missing or a run is already going.

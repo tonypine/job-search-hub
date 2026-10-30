@@ -165,6 +165,20 @@ public enum ModelChoices {
             .filter { !$0.choices.isEmpty }
     }
 
+    /// The groups as a run's model select lists them: names alone, without
+    /// OpenRouter's prices or this Mac's time a run.
+    public static func makeCompact(_ groups: [ModelChoiceGroup]) -> [ModelChoiceGroup] {
+        groups.map { group in
+            var group = group
+            group.choices = group.choices.map { choice in
+                var choice = choice
+                choice.detail = nil
+                return choice
+            }
+            return group
+        }
+    }
+
     /// The models whose name or id holds every word of query, in any case
     /// and with or without accents: "flash" finds Gemini 2.5 Flash, and
     /// "gemini flash" too. An empty query keeps them all.

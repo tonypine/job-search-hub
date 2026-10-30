@@ -89,6 +89,8 @@ public final class StubHub: URLProtocol, @unchecked Sendable {
         public var lastRequest: URLRequest? { lock.withLock { requests.last?.request } }
         public var lastBody: Data? { lock.withLock { requests.last?.body } }
         public var requestCount: Int { lock.withLock { requests.count } }
+        /// The paths asked for, in order.
+        public var requestPaths: [String] { lock.withLock { requests.map { $0.request.url?.path() ?? "" } } }
     }
 
     private static let recordingHeader = "X-Stub-Recording"
