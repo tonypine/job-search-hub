@@ -449,7 +449,10 @@ public struct ActivityRun: Decodable, Equatable, Identifiable, Sendable {
     public var isAgentRun: Bool { record == Self.agentRunRecord }
     public var isFailed: Bool { outcome == "failed" || outcome == "invalid" }
 
-    public var outcomeSymbol: String {
+    public var outcomeSymbol: String { Self.getOutcomeSymbol(outcome) }
+
+    /// An outcome's symbol: succeeded, running, invalid or failed.
+    public static func getOutcomeSymbol(_ outcome: String) -> String {
         switch outcome {
         case "succeeded": "checkmark.circle.fill"
         case "running": "clock"
@@ -541,6 +544,11 @@ public struct ActivityRun: Decodable, Equatable, Identifiable, Sendable {
 public struct ActivityRunsPage: Decodable, Equatable, Sendable {
     public var runs: [ActivityRun]
     public var nextCursor: String
+
+    public init(runs: [ActivityRun], nextCursor: String) {
+        self.runs = runs
+        self.nextCursor = nextCursor
+    }
 
     public var hasMore: Bool { !nextCursor.isEmpty }
 }

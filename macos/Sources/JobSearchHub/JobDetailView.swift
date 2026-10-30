@@ -152,9 +152,10 @@ enum JobDetailLayout {
 /// One job in the inspector: its header with the verdict strip and its
 /// actions, then Overview (why it fits, the screen, the people), Prep once
 /// pursued (the CV and the interview pack), Posting (the key facts, then the
-/// posting to read) and its Session. As a page, the header runs across the
-/// top with the actions on its right, and the tabs are Posting, with the
-/// Overview's cards on a rail beside the posting, Prep and Session.
+/// posting to read), Runs (every run for it) and its Session. As a page, the
+/// header runs across the top with the actions on its right, and the tabs
+/// are Posting, with the Overview's cards on a rail beside the posting, Prep,
+/// Runs and Session.
 struct JobDetailView: View {
     let jobID: UUID
     let client: HubClient
@@ -226,6 +227,8 @@ struct JobDetailView: View {
                         }
                         JobPostingTab(jobID: jobID, details: details, client: client, model: model, postingAnchor: Anchor.posting)
                             .id(jobID)
+                    case .runs:
+                        SubjectRunsTab(subject: .job(jobID), client: client)
                     case .session:
                         InspectorSessionTab(subject: .job(jobID), client: client)
                     default:
@@ -310,7 +313,7 @@ struct JobDetailView: View {
     /// Posting, the outline, the posting and a rail with the Overview's
     /// cards.
     private func page(_ details: JobDetails) -> some View {
-        let tabs: [InspectorTab] = hasPrep(details) ? [.posting, .prep, .session] : [.posting, .session]
+        let tabs: [InspectorTab] = hasPrep(details) ? [.posting, .prep, .runs, .session] : [.posting, .runs, .session]
         let shown = InspectorTab.resolve(tab, among: tabs)
         let wideWidth = showsOutline ? JobDetailLayout.wideWidth : JobDetailLayout.wideWidth - JobPostingTab<EmptyView>.outlineWidth - Space.xl
         return VStack(alignment: .leading, spacing: 0) {
@@ -343,6 +346,8 @@ struct JobDetailView: View {
             switch shown {
             case .session:
                 InspectorSessionTab(subject: .job(jobID), client: client)
+            case .runs:
+                SubjectRunsTab(subject: .job(jobID), client: client, layout: .page)
             case .prep:
                 ScrollView {
                     VStack(alignment: .leading, spacing: Space.l) { prep(details) }

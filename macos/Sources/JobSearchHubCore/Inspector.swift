@@ -31,17 +31,18 @@ public enum InspectorSubject: Hashable, Sendable {
 
 /// A tab of the inspector. A kind has the same tabs everywhere.
 public enum InspectorTab: String, CaseIterable, Identifiable, Sendable {
-    case overview, prep, posting, jobs, people, conversation, session
+    case overview, prep, posting, jobs, people, conversation, runs, session
 
     public var id: String { rawValue }
     public var title: String { rawValue.capitalized }
 
     /// The subject's tabs, in order. A job has Prep once it's pursued or has
-    /// a CV; the profile interview is its session alone.
+    /// a CV; a job and a company list their runs; the profile interview is
+    /// its session alone.
     public static func getTabs(for subject: InspectorSubject, hasPrep: Bool = false) -> [InspectorTab] {
         switch subject {
-        case .job: hasPrep ? [.overview, .prep, .posting, .session] : [.overview, .posting, .session]
-        case .company: [.overview, .jobs, .people, .session]
+        case .job: hasPrep ? [.overview, .prep, .posting, .runs, .session] : [.overview, .posting, .runs, .session]
+        case .company: [.overview, .jobs, .people, .runs, .session]
         case .person: [.overview, .conversation]
         case .profileInterview: [.session]
         }

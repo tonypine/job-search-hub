@@ -82,9 +82,9 @@ private let person = InspectorSubject.person(PersonReference(key: "recruiter:\(U
 }
 
 @Test func eachKindHasTheSameTabs() {
-    #expect(InspectorTab.getTabs(for: job).map(\.title) == ["Overview", "Posting", "Session"])
-    #expect(InspectorTab.getTabs(for: job, hasPrep: true).map(\.title) == ["Overview", "Prep", "Posting", "Session"])
-    #expect(InspectorTab.getTabs(for: company).map(\.title) == ["Overview", "Jobs", "People", "Session"])
+    #expect(InspectorTab.getTabs(for: job).map(\.title) == ["Overview", "Posting", "Runs", "Session"])
+    #expect(InspectorTab.getTabs(for: job, hasPrep: true).map(\.title) == ["Overview", "Prep", "Posting", "Runs", "Session"])
+    #expect(InspectorTab.getTabs(for: company).map(\.title) == ["Overview", "Jobs", "People", "Runs", "Session"])
     #expect(InspectorTab.getTabs(for: person).map(\.title) == ["Overview", "Conversation"])
     #expect(InspectorTab.getTabs(for: .profileInterview) == [.session])
 }
