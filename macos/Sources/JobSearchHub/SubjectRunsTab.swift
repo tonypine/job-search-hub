@@ -10,6 +10,46 @@ struct UnlistedStart: Equatable, Identifiable {
     let startedAt: Date
 }
 
+/// A row of a Runs tab: a run the hub lists, or one started here that it
+/// doesn't list yet, which says "Running" and "You started".
+struct SubjectRunItem: Equatable, Identifiable {
+    /// The run's id, whichever it comes from, so a start's row turns into
+    /// its run's in place once the hub lists it.
+    let id: UUID
+    let kind: String
+    let outcome: String
+    let startedAt: Date
+    /// Nil while the hub hasn't listed the run.
+    let model: String?
+    let startedByOwner: Bool
+    /// How a finished run ended: "Succeeded in 4.2 s".
+    let detail: String?
+    /// A failed run's error, as its outcome's tooltip.
+    let error: String?
+
+    init(run: ActivityRun) {
+        id = run.id
+        kind = run.kind
+        outcome = run.outcome
+        startedAt = run.startedAt
+        model = run.modelText
+        startedByOwner = run.startedByOwner
+        detail = SubjectRuns.describeOutcome(run)
+        error = run.isFailed ? run.error : nil
+    }
+
+    init(start: UnlistedStart) {
+        id = start.id
+        kind = start.kind
+        outcome = "running"
+        startedAt = start.startedAt
+        model = nil
+        startedByOwner = true
+        detail = nil
+        error = nil
+    }
+}
+
 /// Every run for a job or a company, the latest first, a page at a time.
 @MainActor
 @Observable
@@ -81,6 +121,12 @@ final class SubjectRunsModel {
         let listed = Set(runs.map(\.id))
         return starts.filter { !listed.contains($0.id) }.sorted { $0.startedAt > $1.startedAt }
     }
+
+    /// The tab's rows: the runs started here that the runs read don't hold
+    /// yet, then the runs read. Each run is one row, under its id.
+    func getRows(_ starts: [UnlistedStart]) -> [SubjectRunItem] {
+        getUnlisted(starts).map(SubjectRunItem.init(start:)) + runs.map(SubjectRunItem.init(run:))
+    }
 }
 
 /// A job's or a company's Runs tab: every run for it, the latest first, the
@@ -126,11 +172,13 @@ struct SubjectRunsTab: View {
                     ProgressView().controlSize(.small)
                 }
             } else {
-                let unlisted = model.getUnlisted(startedHere)
-                if model.runs.isEmpty, unlisted.isEmpty {
+                let rows = model.getRows(startedHere)
+                if rows.isEmpty {
                     Text(emptyText).foregroundStyle(.secondary)
                 } else {
-                    list(unlisted)
+                    SubjectRunsList(rows: rows, nextCursor: model.nextCursor, hasFailed: model.failure != nil) {
+                        await model.loadMore(with: client)
+                    }
                 }
             }
             if model.failure != nil {
@@ -144,35 +192,6 @@ struct SubjectRunsTab: View {
                 try? await Task.sleep(for: Self.pollInterval)
                 guard !Task.isCancelled else { return }
                 await model.load(subject, with: client)
-            }
-        }
-    }
-
-    private func list(_ unlisted: [UnlistedStart]) -> some View {
-        // Lazy, so the row at the end appears, and reads the next page,
-        // only once it scrolls in.
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(unlisted) { start in
-                SubjectRunRow(kind: start.kind, outcome: "running", startedAt: start.startedAt, model: nil, startedByOwner: true, detail: nil)
-                Divider()
-            }
-            ForEach(model.runs) { run in
-                SubjectRunRow(run: run)
-                if run.id != model.runs.last?.id || model.hasMore {
-                    Divider()
-                }
-            }
-            if model.hasMore {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Space.s)
-                    // Again for each page read while the end still shows,
-                    // and once a failure to read one is dismissed or retried.
-                    .task(id: PageKey(cursor: model.nextCursor, hasFailed: model.failure != nil)) {
-                        guard model.failure == nil else { return }
-                        await model.loadMore(with: client)
-                    }
             }
         }
     }
@@ -205,6 +224,44 @@ struct SubjectRunsTab: View {
         let startedHere: Set<UUID>
         let isRunningHere: Bool
     }
+}
+
+/// A Runs tab's rows and, while older runs remain, the row at the end that
+/// reads the next page. One list, each run once under its id: drawn as a
+/// list of starts and a list of runs keyed by the same ids, the lazy stack
+/// kept a start's "Running" row after its run had moved to the other list.
+struct SubjectRunsList: View {
+    let rows: [SubjectRunItem]
+    /// The page after the last row; empty once every run is loaded.
+    var nextCursor = ""
+    /// A read of a page failed, and the tab still says so.
+    var hasFailed = false
+    var loadMore: @MainActor () async -> Void = {}
+
+    var body: some View {
+        // Lazy, so the row at the end appears, and reads the next page,
+        // only once it scrolls in.
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(rows) { row in
+                SubjectRunRow(item: row)
+                if row.id != rows.last?.id || !nextCursor.isEmpty {
+                    Divider()
+                }
+            }
+            if !nextCursor.isEmpty {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Space.s)
+                    // Again for each page read while the end still shows,
+                    // and once a failure to read one is dismissed or retried.
+                    .task(id: PageKey(cursor: nextCursor, hasFailed: hasFailed)) {
+                        guard !hasFailed else { return }
+                        await loadMore()
+                    }
+            }
+        }
+    }
 
     private struct PageKey: Equatable {
         let cursor: String
@@ -216,44 +273,21 @@ struct SubjectRunsTab: View {
 /// outcome, its kind and "You started" when you did, how it ended or
 /// "Running" with its timer, when, and its model.
 struct SubjectRunRow: View {
-    let kind: String
-    let outcome: String
-    let startedAt: Date
-    /// Nil while the hub hasn't listed the run.
-    let model: String?
-    let startedByOwner: Bool
-    /// How a finished run ended, and its error as a tooltip.
-    let detail: (text: String, error: String?)?
-
-    init(kind: String, outcome: String, startedAt: Date, model: String?, startedByOwner: Bool, detail: (text: String, error: String?)?) {
-        self.kind = kind
-        self.outcome = outcome
-        self.startedAt = startedAt
-        self.model = model
-        self.startedByOwner = startedByOwner
-        self.detail = detail
-    }
-
-    init(run: ActivityRun) {
-        self.init(
-            kind: run.kind, outcome: run.outcome, startedAt: run.startedAt, model: run.modelText, startedByOwner: run.startedByOwner,
-            detail: (text: SubjectRuns.describeOutcome(run), error: run.isFailed ? run.error : nil)
-        )
-    }
+    let item: SubjectRunItem
 
     private static let startFormat = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
     static let trailingWidth: CGFloat = 140
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-            Image(systemName: ActivityRun.getOutcomeSymbol(outcome))
-                .foregroundStyle(Tone.ofRunOutcome(outcome).color)
-                .help(outcome)
-                .accessibilityLabel(outcome)
+            Image(systemName: ActivityRun.getOutcomeSymbol(item.outcome))
+                .foregroundStyle(Tone.ofRunOutcome(item.outcome).color)
+                .help(item.outcome)
+                .accessibilityLabel(item.outcome)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-                    Text(SubjectRuns.getTitle(ofKind: kind)).fontWeight(.medium).lineLimit(1)
-                    if startedByOwner {
+                    Text(SubjectRuns.getTitle(ofKind: item.kind)).fontWeight(.medium).lineLimit(1)
+                    if item.startedByOwner {
                         ToneChip("You started", tone: .accent)
                             .fixedSize()
                             .help("You started this run")
@@ -265,9 +299,9 @@ struct SubjectRunRow: View {
             // As wide as "Oct 19, 4:42 PM" and a short model's name; a
             // longer name is cut in its middle.
             VStack(alignment: .trailing, spacing: 2) {
-                Text(startedAt.formatted(Self.startFormat)).lineLimit(1)
-                    .help(startedAt.formatted(date: .complete, time: .standard))
-                if let model {
+                Text(item.startedAt.formatted(Self.startFormat)).lineLimit(1)
+                    .help(item.startedAt.formatted(date: .complete, time: .standard))
+                if let model = item.model {
                     Text(model).lineLimit(1).truncationMode(.middle)
                         .help(model)
                 }
@@ -284,18 +318,18 @@ struct SubjectRunRow: View {
     /// ended.
     @ViewBuilder
     private var stateLine: some View {
-        if outcome == "running" {
-            TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                Text(JobRuns.describeRunning(since: startedAt, now: context.date))
+        if item.outcome == "running" {
+            TimelineView(.periodic(from: item.startedAt, by: 1)) { context in
+                Text(JobRuns.describeRunning(since: item.startedAt, now: context.date))
                     .monospacedDigit()
             }
             .font(.hubCaption)
             .foregroundStyle(Color.hubAccent)
-        } else if let detail {
-            Text(detail.text)
+        } else if let detail = item.detail {
+            Text(detail)
                 .font(.hubCaption)
-                .foregroundStyle(detail.error == nil ? Color.secondary : Tone.negative.color)
-                .help(detail.error ?? "")
+                .foregroundStyle(item.error == nil ? Color.secondary : Tone.negative.color)
+                .help(item.error ?? "")
         }
     }
 }

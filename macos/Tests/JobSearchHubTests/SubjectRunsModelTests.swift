@@ -97,6 +97,30 @@ private func makeClient(_ answers: [String: StubHub.Answer]) -> (HubClient, Stub
 }
 
 @MainActor
+@Test func aStartsRowBecomesItsRunsRowOnceTheHubListsIt() async throws {
+    let (client, recording) = makeClient([pageKey("job", jobID): page([runJSON(runID(1), minute: 50)])])
+    let model = SubjectRunsModel()
+    let start = UnlistedStart(id: startedID, kind: "job_brief", startedAt: .now)
+    await model.load(.job(jobID), with: client)
+
+    let going = model.getRows([start])
+    #expect(going.map(\.id) == [startedID, runID(1)])
+    let started = try #require(going.first)
+    #expect(started.outcome == "running" && started.startedByOwner && started.model == nil && started.detail == nil)
+
+    // The hub records the run as it ends, before the Run popover hears it
+    // has landed: the run is one row, the first, now with how it ended.
+    recording.setAnswer(page([runJSON(startedID, minute: 59, byOwner: true), runJSON(runID(1), minute: 50)]), for: pageKey("job", jobID))
+    await model.load(.job(jobID), with: client)
+
+    let ended = model.getRows([start])
+    #expect(ended.map(\.id) == [startedID, runID(1)])
+    let run = try #require(ended.first)
+    #expect(run.outcome == "succeeded" && run.startedByOwner && run.detail == "Succeeded in 4.2 s" && run.model != nil)
+    #expect(model.getRows([]) == ended)
+}
+
+@MainActor
 @Test func aCompanysTabAsksForTheCompanysRuns() async {
     let (client, recording) = makeClient([
         pageKey("company", companyID): page([runJSON(runID(1), minute: 58, kind: "company_triage"), runJSON(runID(2), minute: 57, kind: "job_finder")]),
