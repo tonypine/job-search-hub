@@ -15,6 +15,21 @@ import Testing
     #expect(environment["HUB_CLAUDE_BIN"] == "/Users/x/.local/bin/claude")
 }
 
+@Test func researchStartedForACompanyTheHubHasKeepsHowItWasFound() throws {
+    let decoder = HubJSON.makeDecoder()
+    let fromThePhone = try decoder.decode(TaskRequest.self, from: Data(#"""
+    {"id":"AAAAAAAA-0000-4000-8000-000000000001","kind":"research_company","input":"acme.example","status":"running"}
+    """#.utf8))
+    #expect(CompanyResearchLaunch.makeArguments(for: fromThePhone) == ["company", "add", "acme.example", "--found-via", "Asked for from the phone"])
+
+    // Started from the company's Run popover: the task names the company.
+    let startedForTheCompany = try decoder.decode(TaskRequest.self, from: Data(#"""
+    {"id":"AAAAAAAA-0000-4000-8000-000000000002","kind":"research_company","company_id":"AAAAAAAA-0000-4000-8000-000000000003",
+     "input":"acme.example","status":"running","run_id":"AAAAAAAA-0000-4000-8000-000000000004"}
+    """#.utf8))
+    #expect(CompanyResearchLaunch.makeArguments(for: startedForTheCompany) == ["company", "add", "acme.example"])
+}
+
 @Test func theAddedCompanyIsReadFromTheLastLine() {
     #expect(CompanyResearchLaunch.parseCompanyID("Company id: 0aa55565-58d2-4247-ba01-cba65060a316") == UUID(uuidString: "0aa55565-58d2-4247-ba01-cba65060a316"))
     #expect(CompanyResearchLaunch.parseCompanyID("Researching acme.com (agent run 1)") == nil)
