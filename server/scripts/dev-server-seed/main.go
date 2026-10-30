@@ -405,8 +405,9 @@ type seededRun struct {
 	outcome      string
 	ago, took    time.Duration
 	on           seededModel
-	// tokensIn and tokensOut are a model call's; cost is what the provider
-	// charged, or what Claude reckons the run would cost on its API.
+	// tokensIn and tokensOut are what a model call or a finished agent run
+	// read and wrote; cost is what the provider charged, or what Claude
+	// reckons the run would cost on its API.
 	tokensIn, tokensOut int
 	cost                string
 	err                 string
@@ -447,17 +448,17 @@ var seededRuns = []seededRun{
 	{kind: store.AgentPromptKindInterviewPrep, company: "Orchard Mesa Analytics", job: "senior-software-engineer-ios", outcome: store.RunOutcomeSucceeded,
 		ago: 2*time.Hour + 40*time.Minute, took: 41700 * time.Millisecond, on: openRouterModel, tokensIn: 5120, tokensOut: 2930, cost: "0.0094"},
 	{kind: store.AgentRunKindJobFix, company: "Quillfeather Systems", job: "platform-engineer", outcome: store.RunOutcomeFailed,
-		ago: 2 * time.Hour, took: 3*time.Minute + 40*time.Second, cost: "0.4710",
+		ago: 2 * time.Hour, took: 3*time.Minute + 40*time.Second, tokensIn: 642180, tokensOut: 8740, cost: "0.4710",
 		err: "the session ended without a result: error_max_turns Reached the maximum number of turns (40)"},
 	{kind: store.AgentRunKindCompanyTriage, company: "Larkspur Freight", outcome: store.RunOutcomeRunning, ago: 3 * time.Minute},
 	{kind: store.AgentRunKindCompanyTriage, company: "Nimbleforge", outcome: store.RunOutcomeSucceeded,
-		ago: 6 * time.Hour, took: 3*time.Minute + 41*time.Second, cost: "0.9620",
+		ago: 6 * time.Hour, took: 3*time.Minute + 41*time.Second, tokensIn: 1284500, tokensOut: 15320, cost: "0.9620",
 		summary: "Filled in Nimbleforge's dossier: a puzzle game studio of about 30 people that hires through its own careers page."},
 	{kind: store.AgentRunKindJobFinder, company: "Orchard Mesa Analytics", outcome: store.RunOutcomeSucceeded,
-		ago: 5*time.Hour + 30*time.Minute, took: 2*time.Minute + 18*time.Second, cost: "0.5480",
+		ago: 5*time.Hour + 30*time.Minute, took: 2*time.Minute + 18*time.Second, tokensIn: 734200, tokensOut: 9180, cost: "0.5480",
 		summary: "Read Orchard Mesa Analytics' careers page and recorded its two open roles."},
 	{kind: store.AgentRunKindJobFinder, company: "Copperleaf Health", outcome: store.RunOutcomeFailed,
-		ago: 35 * time.Minute, took: 10 * time.Minute, cost: "0.7130", err: "the session was stopped: context deadline exceeded"},
+		ago: 35 * time.Minute, took: 10 * time.Minute, tokensIn: 951600, tokensOut: 11840, cost: "0.7130", err: "the session was stopped: context deadline exceeded"},
 }
 
 // runningAgentRunLifetime is how long the running run's token lasts: past a
@@ -878,7 +879,7 @@ func seedAgentRun(ctx context.Context, pool *pgxpool.Pool, hub *store.Store, run
 			return err
 		}
 		if _, err := hub.FinishAgentRun(ctx, started.ID, store.AgentRunOutcome{
-			Status: run.outcome, CostUSDEstimate: run.cost, Result: answer, Error: run.err,
+			Status: run.outcome, CostUSDEstimate: run.cost, PromptTokens: run.tokensIn, CompletionTokens: run.tokensOut, Result: answer, Error: run.err,
 		}); err != nil {
 			return err
 		}
