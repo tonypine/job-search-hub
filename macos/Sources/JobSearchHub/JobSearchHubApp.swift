@@ -32,6 +32,7 @@ struct JobSearchHubApp: App {
         // and asks the hub through the app's connection.
         Installer.shared.taskRunner = taskRunner
         Installer.shared.makeClient = { connection.makeClient() }
+        GoingBack.shared.makeClient = { connection.makeClient() }
     }
 
     var body: some Scene {
@@ -182,6 +183,7 @@ struct ContentView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     private let installer = Installer.shared
+    private let goingBack = GoingBack.shared
     @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.connection
     @State private var selectedPage: Page?
     /// The sidebar groups folded away, by raw value: the Hub's at first.
@@ -261,6 +263,11 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Going back, from Settings › Version, the withdrawn banner or the
+            // prompt after a crash in a version's first day.
+            .sheet(isPresented: Binding(get: { goingBack.isShowingSheet }, set: { if !$0 { goingBack.dismiss() } })) {
+                GoBackSheet()
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 // How the last install ended gives way to the connection
                 // banner while the hub is unreachable.
@@ -272,6 +279,14 @@ struct ContentView: View {
                     InstallNoticeBanner(
                         notice: notice, showWhatsNew: openVersionSettings,
                         showLog: { NSWorkspace.shared.open(newVersions.updates.logURL) }, dismiss: installer.dismissNotice
+                    )
+                } else if newVersions.facts.isRunningWithdrawn && !goingBack.isWithdrawnBannerDismissed {
+                    let offer = goingBack.withdrawnOffer
+                    WithdrawnBanner(
+                        running: newVersions.facts.running,
+                        summary: offer.map { $0.cost.summarize(target: $0.target) },
+                        goBack: offer == nil ? nil : { Task { await goingBack.offerPrevious(.withdrawn) } },
+                        dismiss: goingBack.dismissWithdrawnBanner
                     )
                 }
             }

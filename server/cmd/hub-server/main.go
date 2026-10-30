@@ -194,6 +194,7 @@ func run() error {
 	routes := http.NewServeMux()
 	routes.Handle("GET /v1/health", api.NewHealthHandler(database.pool, database.postgresHealth()))
 	routes.Handle("GET /v1/version", api.NewVersionHandler())
+	api.RegisterGoingBackRoutes(routes, hub, settings.backupsDir, requireOwner)
 	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
 	go abandonedruns.NewCloser(hub).Run(workCtx, abandonedRunInterval)
