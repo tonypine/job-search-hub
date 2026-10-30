@@ -9,8 +9,9 @@
 // not yet due; and cards in Saved, Interviewing (whose follow-up falls due
 // today) and Closed. The Jobs page has jobs in every scope, each with facts
 // and a brief; the Companies page has every company with a job board and two
-// suggestions; the owner's profile, knowledge base and criteria are filled
-// in. A database that already holds companies is left as it is.
+// suggestions; the owner's profile, knowledge base, criteria and base CV are
+// filled in, so a tailored CV can be drafted for any job. A database that
+// already holds companies is left as it is.
 //
 // Each posting is Markdown, as a board stores it, with headings, a list and
 // bold, and its facts were read with evidence: the screen's rows quote the
@@ -52,6 +53,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/claudeprint"
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/openrouter"
+	"github.com/tonypine/job-search-hub/server/internal/resume"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/textextract"
 	"github.com/tonypine/job-search-hub/server/internal/tokens"
@@ -344,6 +346,29 @@ var seededEntries = []store.ProfileEntryInput{
 	{Kind: store.ProfileEntrySkill, Title: "Swift Charts dashboards", Skills: []string{"Swift Charts"}},
 }
 
+// seededBaseCV is the owner's base CV, which every tailored CV is drafted
+// from: the knowledge base's two roles, each with bullets to cite.
+var seededBaseCV = resume.Resume{
+	Basics: resume.Basics{Name: "Avery Quinlan", Label: "Senior iOS Engineer", Location: resume.Location{Country: "Brazil"},
+		Summary: "Senior iOS engineer with seven years of Swift, the last three on SwiftUI, working remotely for teams in the Americas."},
+	Work: []resume.Work{
+		{Name: "Fernhollow Apps", Position: "Senior iOS Engineer", StartDate: "2022-03", Skills: []string{"Swift", "SwiftUI", "HealthKit"},
+			Highlights: []string{
+				"Led the iOS app of a sleep and fitness product, from UIKit to SwiftUI screen by screen, without a slipped release.",
+				"Built a HealthKit sleep tracker the app's subscribers open daily.",
+				"Halved the crash rate by triaging the release pipeline's crash reports each week.",
+			}},
+		{Name: "Pebblecrest Media", Position: "iOS Engineer", StartDate: "2018-01", EndDate: "2022-02", Skills: []string{"Swift", "UIKit", "MapKit"},
+			Highlights: []string{
+				"Built a news reader with offline maps of local stories.",
+				"Shipped Swift Charts dashboards of readers' habits for the newsroom.",
+			}},
+	},
+	Education: []resume.Education{{Institution: "Universidade Exemplo", StudyType: "Bachelor", Area: "Computer Science", StartDate: "2013", EndDate: "2017"}},
+	Skills:    []resume.Skill{{Name: "Swift"}, {Name: "SwiftUI"}, {Name: "UIKit"}, {Name: "HealthKit"}, {Name: "MapKit"}, {Name: "Swift Charts"}},
+	Languages: []resume.Language{{Language: "Portuguese", Fluency: "Native"}, {Language: "English", Fluency: "Fluent"}},
+}
+
 var seededCriteria = store.JobCriteria{
 	Roles:                   []string{"Senior iOS Engineer", "Senior Mobile Engineer", "Senior Swift Engineer"},
 	ExcludedRoleTerms:       []string{"Android", "Firmware", "Unity"},
@@ -519,8 +544,8 @@ func seed(ctx context.Context, pool *pgxpool.Pool, now time.Time) (bool, error) 
 	return true, nil
 }
 
-// seedOwner fills in the owner's profile, knowledge base and criteria, and
-// returns the entries' ids in seededEntries' order.
+// seedOwner fills in the owner's profile, knowledge base, criteria and base
+// CV, and returns the entries' ids in seededEntries' order.
 func seedOwner(ctx context.Context, hub *store.Store, owner store.Actor) ([]uuid.UUID, error) {
 	if _, err := hub.SaveOwnerProfile(ctx, owner, seededProfile); err != nil {
 		return nil, fmt.Errorf("save the profile: %w", err)
@@ -542,6 +567,9 @@ func seedOwner(ctx context.Context, hub *store.Store, owner store.Actor) ([]uuid
 	}
 	if _, err := hub.SaveJobCriteria(ctx, owner, seededCriteria); err != nil {
 		return nil, fmt.Errorf("save the criteria: %w", err)
+	}
+	if _, err := hub.SaveBaseCV(ctx, owner, seededBaseCV); err != nil {
+		return nil, fmt.Errorf("save the base CV: %w", err)
 	}
 	return ids, nil
 }
