@@ -535,6 +535,48 @@ func TestAKindWithNoModelRoutedRunsOnAModelChosenForTheRun(t *testing.T) {
 	}
 }
 
+func TestARunStartedOnClaudeWithNoClaudeCLIIsListedFailedUnderItsID(t *testing.T) {
+	service := startRunStartAPI(t)
+	ctx := context.Background()
+	claude, err := service.hub.SaveModelProvider(ctx, ownerActor, nil, store.ModelProviderInput{Kind: store.ModelProviderKindClaudeSubscription, Name: "Claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.hub.SaveTaskRoute(ctx, ownerActor, store.RunKindJobBriefFull, store.TaskRouteInput{ProviderID: claude.ID, Model: "sonnet"}); err != nil {
+		t.Fatal(err)
+	}
+	job := addJob(t, service.hub, "Staff Engineer")
+
+	// The test's router has no Claude CLI, so the run ends before its model
+	// is asked and records no call of its own.
+	status, started, answer := startRun(t, service, fmt.Sprintf(`{"kind":"job_brief_full","subject_id":%q}`, job.ID))
+	if status != http.StatusAccepted || started.Provider != "Claude" || started.Model != "sonnet" {
+		t.Fatalf("start: %d %s", status, answer)
+	}
+	kindsURL := service.url + "/v1/jobs/" + job.ID.String() + "/runnable-kinds"
+	waitFor(t, "the run to end", func() bool {
+		for _, kind := range listRunnableKinds(t, kindsURL) {
+			if kind.ID == store.RunKindJobBriefFull {
+				return len(kind.RunningStarts) == 0
+			}
+		}
+		return false
+	})
+
+	// Once the kind no longer lists it running, the job's runs and the
+	// kind's last run say it failed, and why.
+	runs := listSubjectRuns(t, service, job.ID)
+	if len(runs) != 1 || runs[0].ID != started.ID || runs[0].Kind != store.RunKindJobBriefFull || runs[0].Outcome != chatcompletions.RunFailed ||
+		!runs[0].StartedByOwner || runs[0].Provider != "Claude" || runs[0].Model != "sonnet" || !strings.Contains(runs[0].Error, "no Claude CLI") {
+		t.Fatalf("the job's runs = %+v, want one failed run %s on Claude's sonnet", runs, started.ID)
+	}
+	for _, kind := range listRunnableKinds(t, kindsURL) {
+		if kind.ID == store.RunKindJobBriefFull && (kind.LastRun == nil || kind.LastRun.ID != started.ID || kind.LastRun.Outcome != chatcompletions.RunFailed) {
+			t.Errorf("the full brief's last run = %+v, want the failed start", kind.LastRun)
+		}
+	}
+}
+
 func TestCompanyResearchStartedOnClaudeIsListedAgainstTheCompanyOnceTheMacRunsIt(t *testing.T) {
 	service := startRunStartAPI(t)
 	ctx := context.Background()

@@ -355,8 +355,10 @@ type StartedRun struct {
 // StartRun starts the kind's run for the subject now, ahead of background
 // work and whatever the kind's pause, and returns once it is queued. A model
 // run's records and the job change as it goes, and its kind lists it among
-// its running starts until it ends; an agent run waits for the Mac. A kind
-// that can't run yet is a CannotRunError and starts nothing.
+// its running starts until it ends; one that fails before a model call is
+// recorded, as on a Claude route with no Claude CLI, is recorded failed under
+// its id. An agent run waits for the Mac. A kind that can't run yet is a
+// CannotRunError and starts nothing.
 func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, request StartRequest) (StartedRun, error) {
 	kind, found := store.GetRunKind(request.Kind)
 	starter, startable := starters[request.Kind]
@@ -407,11 +409,13 @@ func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, reque
 	go func() {
 		runCtx, cancel := context.WithTimeout(runCtx, startedRunTimeout)
 		defer cancel()
+		startedAt := time.Now()
 		err := starter.run(runCtx, controls, request.SubjectID)
-		controls.endStart(key, started.ID)
 		if err != nil {
 			slog.Warn("a started run failed", "kind", kind.ID, "subject", request.SubjectID, "run", started.ID, "error", err)
+			controls.recordFailedStart(runCtx, started, startedAt, err)
 		}
+		controls.endStart(key, started.ID)
 		controls.recordRunEnded(context.WithoutCancel(ctx), kind, starter, subject, request.SubjectID, err)
 	}()
 	return started, nil
@@ -505,6 +509,25 @@ func (controls *Controls) queueAgentRun(ctx context.Context, actor store.Actor, 
 		}
 	}
 	return started, nil
+}
+
+// recordFailedStart records a started run that failed before any of its
+// model calls was recorded, as when the hub has no Claude CLI, under the id
+// its start answered with, so the owner sees it failed and why. A run whose
+// call was recorded already has its record.
+func (controls *Controls) recordFailedStart(runCtx context.Context, started StartedRun, startedAt time.Time, err error) {
+	id := chatcompletions.TakeRunID(runCtx, started.Kind)
+	if id == nil {
+		return
+	}
+	subjectID := started.SubjectID
+	_, recordErr := controls.Hub.RecordTaskRun(context.WithoutCancel(runCtx), store.NewTaskRun{
+		ID: id, Kind: started.Kind, SubjectID: &subjectID, Provider: started.Provider, Model: started.Model,
+		StartedAt: startedAt, Duration: time.Since(startedAt), Outcome: chatcompletions.RunFailed, Error: err.Error(), StartedByOwner: true,
+	})
+	if recordErr != nil {
+		slog.Warn("record a started run that failed", "kind", started.Kind, "run", started.ID, "error", recordErr)
+	}
 }
 
 // recordRunEnded tells the apps a started run ended, so the job's page and
