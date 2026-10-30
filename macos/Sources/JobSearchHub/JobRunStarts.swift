@@ -42,6 +42,11 @@ final class JobRunStarts {
         running[Key(jobID: jobID, kind: kind)]
     }
 
+    /// The runs started for the job that still go, by kind.
+    func getRunning(of jobID: UUID) -> [(kind: String, running: Running)] {
+        running.filter { $0.key.jobID == jobID }.map { (kind: $0.key.kind, running: $0.value) }
+    }
+
     /// Whether the kind is starting or running for the job, so its ▶ waits,
     /// whichever popover pressed it.
     func isBusy(_ kind: String, of jobID: UUID) -> Bool {

@@ -172,16 +172,7 @@ public enum JobRuns {
     /// A row's name: one run of the kind, "Full brief", where the hub names
     /// the kind by its runs, "Full briefs".
     public static func getTitle(of kind: RunnableKind) -> String {
-        switch kind.id {
-        case "job_facts": "Job facts"
-        case "job_brief": "Brief"
-        case "job_brief_full": "Full brief"
-        case "job_cv": "Tailored CV"
-        case "recruiter_screen": "Recruiter screen"
-        case "interview_prep": "Interview pack"
-        case fixKind: "Fix the job's details"
-        default: kind.title
-        }
+        kind.id == fixKind ? "Fix the job's details" : SubjectRuns.getRunTitle(kind.id) ?? kind.title
     }
 
     /// What a finished run of the kind did: "Read", "Written".
