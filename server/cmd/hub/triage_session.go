@@ -31,11 +31,13 @@ type triageOptions struct {
 // sessionOutcome is how an agent session ended, in the shape the hub's finish
 // route records.
 type sessionOutcome struct {
-	Status          string          `json:"status"`
-	ClaudeSessionID string          `json:"claude_session_id,omitempty"`
-	CostUSDEstimate json.Number     `json:"cost_usd_estimate,omitempty"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Error           string          `json:"error,omitempty"`
+	Status           string          `json:"status"`
+	ClaudeSessionID  string          `json:"claude_session_id,omitempty"`
+	CostUSDEstimate  json.Number     `json:"cost_usd_estimate,omitempty"`
+	PromptTokens     int             `json:"prompt_tokens,omitempty"`
+	CompletionTokens int             `json:"completion_tokens,omitempty"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	Error            string          `json:"error,omitempty"`
 }
 
 // buildClaudeArguments isolates the session: no user settings, plugins,
@@ -162,10 +164,12 @@ func runTriageSession(ctx context.Context, hubURL string, started startedRun, op
 			}
 		case message.Result != nil && outcome == nil:
 			finished := sessionOutcome{
-				Status:          store.AgentRunSucceeded,
-				ClaudeSessionID: message.Result.SessionID,
-				CostUSDEstimate: message.Result.TotalCostUSD,
-				Result:          message.Result.StructuredOutput,
+				Status:           store.AgentRunSucceeded,
+				ClaudeSessionID:  message.Result.SessionID,
+				CostUSDEstimate:  message.Result.TotalCostUSD,
+				PromptTokens:     message.Result.Usage.GetPromptTokens(),
+				CompletionTokens: message.Result.Usage.OutputTokens,
+				Result:           message.Result.StructuredOutput,
 			}
 			if message.Result.IsError || len(message.Result.StructuredOutput) == 0 {
 				finished.Status = store.AgentRunFailed
