@@ -40,6 +40,7 @@ struct CompanyInspector: View {
     @Environment(UnseenUpdates.self) private var unseen
     @Environment(CompanyResearch.self) private var research
     @Environment(CompanyJobFinder.self) private var jobFinder
+    @Environment(JobRunStarts.self) private var starts
     @Environment(DetailsInspector.self) private var inspector
     @State private var model = CompanyInspectorModel()
     @State private var isAddingWarmPath = false
@@ -47,6 +48,7 @@ struct CompanyInspector: View {
     @State private var isRecordingOutreach = false
     @State private var outreachNote = ""
     @State private var outreachFailure: HubFailure?
+    @State private var findJobsFailure: HubFailure?
 
     var body: some View {
         Group {
@@ -97,7 +99,7 @@ struct CompanyInspector: View {
             await model.load(companyID, with: client)
             await unseen.markSeen(UpdateSelection(companyID: companyID), with: client)
         }
-        .onChange(of: [events.revision, research.revision, jobFinder.revision]) { Task { await model.load(companyID, with: client) } }
+        .onChange(of: [events.revision, research.revision, jobFinder.revision, starts.revision]) { Task { await model.load(companyID, with: client) } }
     }
 
     /// The company's name, industry and size, and up to three chips: watched,
@@ -128,14 +130,13 @@ struct CompanyInspector: View {
             .1.getFollowUpStatus(now: .now)
     }
 
-    /// Find jobs, the one primary action, then Messaged someone…, with its
-    /// site and careers page in the overflow.
+    /// Run ▾, the one primary action and the header's only way to start a
+    /// run, then Messaged someone…, with its site and careers page in the
+    /// overflow.
     private func actions(_ dossier: CompanyDossier) -> some View {
         let company = dossier.company
         return ActionBar {
-            Button("Find jobs", systemImage: "magnifyingglass") { jobFinder.start(companyID: company.id, client: client) }
-                .disabled(jobFinder.isRunning(company.id))
-                .help("An agent finds the company's open roles: it sets the job board when the hub reads it, or records the roles off the careers page")
+            CompanyRunButton(companyID: company.id, client: client)
         } secondary: {
             Button("Messaged someone…", systemImage: "paperplane") {
                 outreachNote = ""
@@ -265,16 +266,51 @@ struct CompanyInspector: View {
 
     // MARK: Jobs
 
+    /// Its open jobs, with the find jobs run beside what it makes: Find jobs
+    /// under the empty state, Refresh jobs over the jobs it already found.
     private func jobsTab(_ dossier: CompanyDossier) -> some View {
         HubSection("Open jobs") {
             if let openJobs = model.openJobs {
                 if openJobs.isEmpty {
                     Text("None in the feed. Find jobs looks for its board or careers page.").foregroundStyle(.secondary)
                 }
+                findJobsControl(hasOpenJobs: !openJobs.isEmpty)
+                if findJobsFailure != nil {
+                    HubErrorView($findJobsFailure)
+                }
                 CompanyJobRows(jobs: openJobs)
             } else {
                 ProgressView().controlSize(.small)
             }
+        }
+    }
+
+    /// The model select, then ▶ Find jobs, or ▶ Refresh jobs once the
+    /// company has open jobs: the same find jobs run, on the model picked
+    /// for it alone. It waits while a find jobs run goes on the company,
+    /// wherever it was started.
+    private func findJobsControl(hasOpenJobs: Bool) -> some View {
+        SectionRunControl(kind: JobRuns.findJobsKind, subject: .company(companyID), client: client) { chosen in
+            AsyncButton(
+                hasOpenJobs ? "Refresh jobs" : "Find jobs", busyTitle: "Finding jobs…", systemImage: "play.fill",
+                isBusy: starts.isBusy(JobRuns.findJobsKind, of: companyID) || jobFinder.isRunning(companyID)
+            ) {
+                await findJobs(on: chosen)
+            }
+            .buttonStyle(.link)
+            .help("An agent finds the company's open roles, on the model beside it: it sets the job board when the hub reads it, or records the roles off the careers page")
+        }
+    }
+
+    /// Starts a find jobs run for the company now, whatever its pause, on
+    /// the model chosen, nil for its kind's. The Mac runs it, and the
+    /// company's jobs read again once it ends.
+    private func findJobs(on chosen: RoutedModel?) async {
+        do {
+            try await starts.start(JobRuns.findJobsKind, subjectType: JobRuns.companySubject, for: companyID, model: chosen, with: client)
+            findJobsFailure = nil
+        } catch {
+            findJobsFailure = HubFailure("Couldn't start find jobs", error)
         }
     }
 
