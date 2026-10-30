@@ -63,6 +63,11 @@ func TestTheRecordedStreamDecodes(t *testing.T) {
 	if result == nil || result.IsError || result.SessionID == "" || result.TotalCostUSD.String() != "0.08809900000000001" {
 		t.Fatalf("result = %+v", result)
 	}
+	// What it read counts its cache: 4 new tokens, 10185 written to the cache
+	// and 9915 read from it.
+	if result.Usage.GetPromptTokens() != 20104 || result.Usage.OutputTokens != 213 {
+		t.Fatalf("usage = %+v", result.Usage)
+	}
 	var output struct {
 		Answer string `json:"answer"`
 	}

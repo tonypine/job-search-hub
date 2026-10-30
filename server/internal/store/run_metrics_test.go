@@ -249,3 +249,60 @@ func TestRunMetricsAverageAnAgentRunLongerThanAnIntegerHolds(t *testing.T) {
 		t.Errorf("totals = %+v", metrics.Totals)
 	}
 }
+
+// An agent run counts the tokens its session reported, in the kind's totals,
+// its buckets and the runs list, as a model call does.
+func TestRunMetricsCountAnAgentRunsTokens(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	from := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	for _, run := range []struct {
+		at                       time.Duration
+		status                   string
+		promptTokens, completion int
+	}{
+		{time.Hour, store.AgentRunSucceeded, 20104, 1830},
+		{3 * time.Hour, store.AgentRunFailed, 41200, 2410},
+	} {
+		started := startAgentRunAt(t, pool, hub, store.AgentRunKindJobFinder, "acme.com", nil, from.Add(run.at))
+		if _, err := hub.FinishAgentRun(ctx, started.ID, store.AgentRunOutcome{
+			Status: run.status, CostUSDEstimate: "0.5", PromptTokens: run.promptTokens, CompletionTokens: run.completion,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A run still going has reported none yet.
+	startAgentRunAt(t, pool, hub, store.AgentRunKindJobFinder, "acme.com", nil, from.Add(4*time.Hour))
+
+	metrics, err := hub.GetRunMetrics(ctx, store.RunMetricsFilter{
+		Kind: store.AgentRunKindJobFinder, From: from, To: from.Add(6 * time.Hour), Bucket: store.RunBucketHour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals := metrics.Totals; totals.Runs != 3 || totals.Failed != 1 || totals.InputTokens != 61304 || totals.OutputTokens != 4240 ||
+		totals.CostUSD != "1.0" {
+		t.Errorf("totals = %+v", totals)
+	}
+	if len(metrics.Buckets) != 6 {
+		t.Fatalf("%d buckets; want 6", len(metrics.Buckets))
+	}
+	for index, want := range []struct{ input, output int64 }{{0, 0}, {20104, 1830}, {0, 0}, {41200, 2410}, {0, 0}, {0, 0}} {
+		bucket := metrics.Buckets[index]
+		if bucket.InputTokens != want.input || bucket.OutputTokens != want.output {
+			t.Errorf("bucket %d = %+v; want %d in, %d out", index, bucket, want.input, want.output)
+		}
+		if want.input != 0 && (len(bucket.Kinds) != 1 || bucket.Kinds[0].InputTokens != want.input || bucket.Kinds[0].OutputTokens != want.output) {
+			t.Errorf("bucket %d's kinds = %+v", index, bucket.Kinds)
+		}
+	}
+
+	listed, err := hub.ListRuns(ctx, store.RunFilter{Kind: store.AgentRunKindJobFinder, Limit: 10})
+	if err != nil || len(listed.Runs) != 3 {
+		t.Fatalf("runs = %+v, %v", listed, err)
+	}
+	if latest, first := listed.Runs[0], listed.Runs[2]; latest.PromptTokens != 0 || first.PromptTokens != 20104 || first.CompletionTokens != 1830 {
+		t.Errorf("listed tokens: latest %+v, first %+v", latest, first)
+	}
+}

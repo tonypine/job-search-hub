@@ -123,7 +123,7 @@ const runsQuery = `
 		UNION ALL
 		SELECT id, 'agent_run', kind, subject_type, subject_id, model, 'Claude', started_at,
 			CASE WHEN finished_at IS NOT NULL THEN round(extract(epoch FROM finished_at - started_at) * 1000)::bigint END, status,
-			0, 0, cost_usd_estimate::text, error, true, ''
+			prompt_tokens, completion_tokens, cost_usd_estimate::text, error, true, ''
 		FROM agent_runs
 	)
 	SELECT runs.id, runs.record, runs.kind, runs.subject_type, runs.subject_id,
