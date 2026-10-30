@@ -310,8 +310,9 @@ private struct RunBarChart: View {
             }
         }
         .chartXScale(domain: window.from ... max(window.to, window.from.addingTimeInterval(1)))
+        .chartYScale(domain: 0 ... Double(valueTicks.last ?? 1))
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+            AxisMarks(position: .leading, values: valueTicks.map(Double.init)) { value in
                 AxisGridLine()
                 AxisValueLabel(horizontalSpacing: Self.valueLabelSpacing) {
                     if let number = value.as(Double.self) {
@@ -359,6 +360,12 @@ private struct RunBarChart: View {
         } else {
             plotted.chartXAxis(.hidden)
         }
+    }
+
+    /// The value axis's gridlines, in whole runs or tokens, the last the top
+    /// of the scale.
+    private var valueTicks: [Int] {
+        RunValueAxis.getTicks(max: segments.map(\.top).max() ?? 0)
     }
 
     private var hovered: RunMetrics.Bucket? {
