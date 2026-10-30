@@ -221,3 +221,98 @@ private final class TaskLog {
     #expect(sent["provider_id"] as? String == sonnet.providerID.uuidString && sent["model"] as? String == "sonnet")
     #expect(sent["note"] as? String == "the title has the city in it" && sent["kind"] as? String == briefKind)
 }
+
+private let companyID = UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000007")!
+private let companyKindsPath = "/v1/companies/\(companyID.uuidString)/runnable-kinds"
+private let findJobsKind = "job_finder"
+
+/// The company's find jobs, an agent, with its last run `lastRun` with
+/// `outcome` when it has one.
+private func findJobsKinds(lastRun: UUID?, outcome: String = "succeeded") -> StubHub.Answer {
+    let run = lastRun.map { id in
+        #"""
+        ,"last_run":{"id":"\#(id.uuidString)","record":"agent_run","kind":"job_finder",
+         "subject":{"type":"company","id":"\#(companyID.uuidString)","title":"Acme"},"model":"","provider":"",
+         "started_at":"2020-10-29T14:14:00Z","outcome":"\#(outcome)","prompt_tokens":0,"completion_tokens":0,"started_by_owner":true}
+        """#
+    } ?? ""
+    return StubHub.Answer(status: 200, body: #"""
+    {"kinds":[{"id":"job_finder","title":"Find jobs","description":"An agent finds a company's open jobs.","group":"companies",
+     "subject_type":"company","engine":"claude_agent","automatic":false,"paused":false,"can_run":true,"needs_model":false,
+     "needs_note":false,"running_starts":[]\#(run)}]}
+    """#)
+}
+
+/// A find jobs start, waiting in the Mac's task.
+private func startedFindJobs(_ runID: UUID) -> StubHub.Answer {
+    StubHub.Answer(status: 202, body: #"""
+    {"queued":true,"run":{"id":"\#(runID.uuidString)","kind":"job_finder","subject_type":"company","subject_id":"\#(companyID.uuidString)",
+     "provider":"","model":"","chosen_model":false,"started_by_owner":true,"task_id":"\#(taskID.uuidString)"}}
+    """#)
+}
+
+@MainActor @Test func aCompanysSectionStartsFindJobsAsTheHubListsItForTheCompany() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        companyKindsPath: findJobsKinds(lastRun: nil),
+        "/v1/runs": startedFindJobs(firstRunID),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let log = TaskLog()
+    let starts = JobRunStarts(pollInterval: .milliseconds(10), runTask: { taskID, _ in
+        log.taskIDs.append(taskID)
+        return true
+    })
+    let sonnet = RoutedModel(providerID: UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000006")!, model: "claude-sonnet-4-5")
+
+    let follow = try await starts.start(findJobsKind, subjectType: JobRuns.companySubject, for: companyID, model: sonnet, with: client)
+
+    #expect(starts.getRunning(findJobsKind, of: companyID)?.runID == firstRunID)
+    #expect(starts.isBusy(findJobsKind, of: companyID))
+    #expect(recording.requestPaths == [companyKindsPath, "/v1/runs"])
+    let sent = try #require(try recording.lastBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+    #expect(sent["kind"] as? String == findJobsKind && sent["subject_type"] as? String == "company")
+    #expect(sent["subject_id"] as? String == companyID.uuidString && sent["model"] as? String == "claude-sonnet-4-5")
+
+    // The Mac ran the task here; the company's jobs read again with the bump.
+    await follow.value
+    #expect(log.taskIDs == [taskID])
+    #expect(starts.getRunning(findJobsKind, of: companyID) == nil)
+    #expect(starts.revision == 1)
+}
+
+@MainActor @Test func aCompanysRunAnotherRunnerTookIsFollowedOnTheCompanysKinds() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        companyKindsPath: findJobsKinds(lastRun: firstRunID, outcome: "running"),
+        "/v1/runs": startedFindJobs(firstRunID),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let starts = JobRunStarts(pollInterval: .milliseconds(10), runTask: { _, _ in false })
+
+    let follow = try await starts.start(findJobsKind, subjectType: JobRuns.companySubject, for: companyID, with: client)
+    let asked = recording.requestCount
+    await waitForRequests(asked + 2, on: recording)
+    #expect(starts.getRunning(findJobsKind, of: companyID)?.runID == firstRunID)
+    #expect(starts.getRunning(of: companyID).map(\.kind) == [findJobsKind])
+
+    recording.setAnswer(findJobsKinds(lastRun: firstRunID), for: companyKindsPath)
+    await follow.value
+
+    #expect(starts.getRunning(findJobsKind, of: companyID) == nil)
+    #expect(starts.revision == 1)
+    #expect(recording.lastRequest?.url?.path() == companyKindsPath)
+}
+
+@MainActor @Test func aSectionsStartOfAKindTheHubDoesntListStartsNothing() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        companyKindsPath: StubHub.Answer(status: 200, body: #"{"kinds":[]}"#),
+        "/v1/runs": startedFindJobs(firstRunID),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let starts = JobRunStarts(pollInterval: .milliseconds(10))
+
+    await #expect(throws: RunNotListedError.self) {
+        try await starts.start(findJobsKind, subjectType: JobRuns.companySubject, for: companyID, with: client)
+    }
+    #expect(recording.requestPaths == [companyKindsPath])
+    #expect(!starts.isBusy(findJobsKind, of: companyID))
+}

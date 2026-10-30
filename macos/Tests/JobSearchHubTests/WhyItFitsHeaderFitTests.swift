@@ -40,7 +40,7 @@ private func makeCard(writtenAgo age: TimeInterval) throws -> some View {
     let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
     let selection = RunModelSelection(kind: try makeFullBrief())
     return HubCard("Why it fits", meta: meta) {
-        JobSectionRunControl(kind: JobRuns.fullBriefKind, jobID: UUID(), client: client, selection: selection) { _ in
+        SectionRunControl(kind: JobRuns.fullBriefKind, subject: .job(UUID()), client: client, selection: selection) { _ in
             JobDetailView.makeFullBriefButton(isBusy: false) {}
         }
     }

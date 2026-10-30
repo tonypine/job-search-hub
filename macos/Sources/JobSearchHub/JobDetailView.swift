@@ -640,7 +640,7 @@ struct JobDetailView: View {
     /// the card's foot, as the header beside who wrote the brief has no room
     /// for both on a page's rail.
     private var fullBriefControl: some View {
-        JobSectionRunControl(kind: JobRuns.fullBriefKind, jobID: jobID, client: client) { chosen in
+        SectionRunControl(kind: JobRuns.fullBriefKind, subject: .job(jobID), client: client) { chosen in
             Self.makeFullBriefButton(isBusy: model.isWritingFullBrief) {
                 await model.writeFullBrief(jobID, on: chosen, with: client)
             }

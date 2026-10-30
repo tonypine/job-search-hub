@@ -284,3 +284,54 @@ private let flash = RoutedModel(providerID: providerID, model: "google/gemini-2.
 
     #expect(started.id == runID && started.kind == JobRuns.fixKind && started.taskID == taskID)
 }
+
+private let companyID = UUID(uuidString: "7c9e6679-7425-40de-944b-e07fc1f90ae8")!
+
+/// A company's runnable kinds as the hub answers them: its research, and
+/// find jobs, which last ran this afternoon. Both are agents with no model
+/// routed, so Claude Code picks theirs.
+private let companyKindsJSON = #"""
+{"kinds":[
+ {"id":"company_triage","title":"Company research","description":"An agent researches a company.","group":"companies","subject_type":"company",
+  "engine":"claude_agent","automatic":false,"paused":false,"can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]},
+ {"id":"job_finder","title":"Find jobs","description":"An agent finds a company's open jobs.","group":"companies","subject_type":"company",
+  "engine":"claude_agent","automatic":false,"paused":false,
+  "last_run":{"id":"0aa55565-58d2-4247-ba01-cba65060a318","record":"agent_run","kind":"job_finder","subject":{"type":"company","id":"7c9e6679-7425-40de-944b-e07fc1f90ae8","title":"Acme"},
+   "model":"claude-sonnet","provider":"Claude","started_at":"2026-10-29T13:12:05Z","outcome":"succeeded","prompt_tokens":0,"completion_tokens":0,"started_by_owner":true},
+  "can_run":true,"needs_model":false,"needs_note":false,"running_starts":[]}
+]}
+"""#
+
+@Test func aCompanysKindsAreItsResearchAndFindJobsEachStartedForTheCompany() async throws {
+    let runID = UUID()
+    let taskID = UUID()
+    let (session, recording) = StubHub.makeSession(answers: [
+        "/v1/companies/\(companyID.uuidString)/runnable-kinds": .init(status: 200, body: companyKindsJSON),
+        "/v1/runs": .init(status: 202, body: #"""
+        {"queued":true,"run":{"id":"\#(runID.uuidString)","kind":"job_finder","subject_type":"company","subject_id":"\#(companyID.uuidString)",
+         "provider":"","model":"","chosen_model":false,"started_by_owner":true,"task_id":"\#(taskID.uuidString)"}}
+        """#),
+    ])
+    let client = HubClient(baseURL: hubURL, token: "owner-token", session: session)
+
+    let kinds = try await client.listRunnableKinds(forCompany: companyID)
+    #expect(recording.lastRequest?.url?.path() == "/v1/companies/\(companyID.uuidString)/runnable-kinds")
+    #expect(kinds.map(\.id) == [JobRuns.companyResearchKind, JobRuns.findJobsKind])
+    #expect(kinds.allSatisfy { $0.isAgent && $0.subjectType == JobRuns.companySubject && !$0.needsNote })
+    // The popover lists both as runs, none under the note separator.
+    #expect(JobRuns.split(kinds).runs.count == 2 && JobRuns.split(kinds).withNote.isEmpty)
+    #expect(kinds.map(JobRuns.getTitle(of:)) == ["Company research", "Find jobs"])
+    #expect(JobRuns.describeState(of: kinds[0], now: afternoon, calendar: utc, locale: english) == "Never")
+    #expect(JobRuns.describeState(of: kinds[1], now: afternoon, calendar: utc, locale: english) == "Searched 13:12")
+    #expect(JobRuns.describeStart(of: kinds[0]) == "Start company research now")
+    #expect(JobRuns.describeStart(of: kinds[1]) == "Find the company's jobs now")
+    // An agent's select lists Claude's models only.
+    #expect(RunModelSelection(kind: kinds[1]).isAgent)
+
+    let sonnet = RoutedModel(providerID: providerID, model: "claude-sonnet-4-5")
+    let started = try await client.startRun(StartRunRequest(kind: kinds[1].id, subjectType: kinds[1].subjectType, subjectID: companyID, model: sonnet))
+    #expect(started.subjectID == companyID && started.startedByOwner && started.taskID == taskID)
+    let sent = try #require(try recording.lastBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+    #expect(sent["kind"] as? String == "job_finder" && sent["subject_type"] as? String == "company")
+    #expect(sent["subject_id"] as? String == companyID.uuidString && sent["model"] as? String == "claude-sonnet-4-5")
+}
