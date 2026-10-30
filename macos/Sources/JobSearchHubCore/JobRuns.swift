@@ -13,8 +13,9 @@ public struct RunnableKindRoute: Decodable, Equatable, Sendable {
 }
 
 /// A kind the owner can start for a job or a company, as
-/// `GET /v1/jobs/{id}/runnable-kinds` lists it: its model, its latest run
-/// for the subject, and whether it can run now.
+/// `GET /v1/jobs/{id}/runnable-kinds` or `/v1/companies/{id}/runnable-kinds`
+/// lists it: its model, its latest run for the subject, and whether it can
+/// run now.
 public struct RunnableKind: Decodable, Equatable, Identifiable, Sendable {
     public var id: String
     public var title: String
@@ -152,11 +153,16 @@ public struct StartedRunResponse: Decodable, Equatable, Sendable {
     public var run: StartedRun
 }
 
-/// A job's Run popover: its rows, what each says and when a run it started
-/// has landed.
+/// A job's or a company's Run popover: its rows, what each says and when a
+/// run it started has landed.
 public enum JobRuns {
     public static let jobSubject = "job"
+    public static let companySubject = "company"
     public static let fixKind = "job_fix"
+    /// A company's kinds: its research, and find jobs, which its open jobs
+    /// section starts too.
+    public static let companyResearchKind = "company_triage"
+    public static let findJobsKind = "job_finder"
     /// The kinds the job's sections start: Read facts, Write full brief and
     /// Draft CV.
     public static let factsKind = "job_facts"
@@ -184,11 +190,13 @@ public enum JobRuns {
         case "recruiter_screen": "Screened"
         case "interview_prep": "Prepared"
         case fixKind: "Fixed"
+        case companyResearchKind: "Researched"
+        case findJobsKind: "Searched"
         default: "Ran"
         }
     }
 
-    /// The kind's last run for the job: "Read 13:12 · invalid answer",
+    /// The kind's last run for the subject: "Read 13:12 · invalid answer",
     /// "Written 14:14", "Written Oct 27", "Never".
     public static func describeLastRun(
         _ run: ActivityRun?, now: Date, calendar: Calendar = .current, locale: Locale = .current
@@ -247,7 +255,8 @@ public enum JobRuns {
             return kind.needsModel ? "\(reason). Pick a model for this run to start it on that one" : reason
         }
         if kind.needsNote { return "Say what's wrong, and an agent corrects the job's details" }
-        let start = chosen == nil ? "Start \(title.lowercasedFirst) now" : "Start \(title.lowercasedFirst) now on the model picked"
+        let now = kind.id == findJobsKind ? "Find the company's jobs now" : "Start \(title.lowercasedFirst) now"
+        let start = chosen == nil ? now : "\(now) on the model picked"
         return kind.paused ? "\(start). \(kind.title) are paused, but a run you start goes ahead anyway." : start
     }
 
@@ -282,7 +291,20 @@ private extension String {
 public extension HubClient {
     /// The kinds the owner can start for the job, in the hub's order.
     func listRunnableKinds(forJob id: UUID) async throws -> [RunnableKind] {
-        try await get("v1/jobs/\(id.uuidString)/runnable-kinds", as: RunnableKindsResponse.self).kinds
+        try await listRunnableKinds(subjectType: JobRuns.jobSubject, id: id)
+    }
+
+    /// The kinds the owner can start for the company: its research and find
+    /// jobs.
+    func listRunnableKinds(forCompany id: UUID) async throws -> [RunnableKind] {
+        try await listRunnableKinds(subjectType: JobRuns.companySubject, id: id)
+    }
+
+    /// The kinds the owner can start for the job or the company, in the
+    /// hub's order.
+    func listRunnableKinds(subjectType: String, id: UUID) async throws -> [RunnableKind] {
+        let collection = subjectType == JobRuns.companySubject ? "companies" : "jobs"
+        return try await get("v1/\(collection)/\(id.uuidString)/runnable-kinds", as: RunnableKindsResponse.self).kinds
     }
 
     /// Starts the run now, ahead of background work and whatever its kind's

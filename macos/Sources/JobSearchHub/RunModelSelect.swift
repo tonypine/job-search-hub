@@ -63,19 +63,29 @@ struct RunModelSelect: View {
     /// models, so a section that shows on every job downloads no catalog.
     /// Nil when the kinds can't be read or the job has no such kind.
     static func prepare(kind: String, forJob jobID: UUID, choices: ModelChoicesModel, with client: HubClient) async -> RunModelSelection? {
-        async let kinds = try? client.listRunnableKinds(forJob: jobID)
+        await prepare(kind: kind, for: .job(jobID), choices: choices, with: client)
+    }
+
+    /// The select on the kind's model, from the job's or the company's
+    /// kinds, and the providers. Nil when the kinds can't be read or the
+    /// subject has no such kind.
+    static func prepare(
+        kind: String, for subject: SubjectRunsModel.Subject, choices: ModelChoicesModel, with client: HubClient
+    ) async -> RunModelSelection? {
+        async let kinds = try? client.listRunnableKinds(subjectType: subject.type, id: subject.id)
         await choices.loadProviders(with: client)
         return await kinds?.first { $0.id == kind }.map(RunModelSelection.init(kind:))
     }
 }
 
-/// A job section's run control: the model select, set to the kind's model
-/// each time the section shows, then the section's run button, which starts
-/// the run on the model chosen, nil for the kind's own. Until the job's
-/// kinds are read, or when they can't be, the button stands alone.
-struct JobSectionRunControl<Start: View>: View {
+/// A job's or a company's section's run control: the model select, set to
+/// the kind's model each time the section shows, then the section's run
+/// button, which starts the run on the model chosen, nil for the kind's
+/// own. Until the subject's kinds are read, or when they can't be, the
+/// button stands alone.
+struct SectionRunControl<Start: View>: View {
     let kind: String
-    let jobID: UUID
+    let subject: SubjectRunsModel.Subject
     let client: HubClient
     @ViewBuilder let start: (_ chosen: RoutedModel?) -> Start
     @State private var selection: RunModelSelection?
@@ -84,13 +94,14 @@ struct JobSectionRunControl<Start: View>: View {
     /// The select's room at most, so the button beside it keeps its words.
     static var selectWidth: CGFloat { 120 }
 
-    /// `selection` is what the select shows until the job's kinds are read.
+    /// `selection` is what the select shows until the subject's kinds are
+    /// read.
     init(
-        kind: String, jobID: UUID, client: HubClient, selection: RunModelSelection? = nil,
+        kind: String, subject: SubjectRunsModel.Subject, client: HubClient, selection: RunModelSelection? = nil,
         @ViewBuilder start: @escaping (_ chosen: RoutedModel?) -> Start
     ) {
         self.kind = kind
-        self.jobID = jobID
+        self.subject = subject
         self.client = client
         self.start = start
         _selection = State(initialValue: selection)
@@ -105,8 +116,8 @@ struct JobSectionRunControl<Start: View>: View {
             }
             start(selection?.chosen)
         }
-        .task(id: jobID) {
-            selection = await RunModelSelect.prepare(kind: kind, forJob: jobID, choices: choices, with: client)
+        .task(id: subject) {
+            selection = await RunModelSelect.prepare(kind: kind, for: subject, choices: choices, with: client)
         }
     }
 }

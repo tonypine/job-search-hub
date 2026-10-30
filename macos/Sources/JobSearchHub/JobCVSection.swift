@@ -166,7 +166,7 @@ struct JobCVSection: View {
 
     /// The model select, then ▶ Draft CV, or Draft again once there's one.
     private var draftButton: some View {
-        JobSectionRunControl(kind: JobRuns.cvKind, jobID: jobID, client: client) { chosen in
+        SectionRunControl(kind: JobRuns.cvKind, subject: .job(jobID), client: client) { chosen in
             AsyncButton(model.cv == nil ? "Draft CV" : "Draft again", busyTitle: "Drafting…", systemImage: "play.fill", isBusy: model.isDrafting) {
                 await model.draftAgain(jobID, on: chosen, with: client)
             }

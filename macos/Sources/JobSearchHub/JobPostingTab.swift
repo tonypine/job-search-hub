@@ -424,7 +424,7 @@ private struct JobFactsPopover: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack(spacing: Space.s) {
-                        JobSectionRunControl(kind: JobRuns.factsKind, jobID: jobID, client: client) { chosen in
+                        SectionRunControl(kind: JobRuns.factsKind, subject: .job(jobID), client: client) { chosen in
                             AsyncButton(
                                 details.facts == nil ? "Read facts now" : "Read facts again", busyTitle: "Reading…", systemImage: "play.fill",
                                 isBusy: model.isReadingFacts

@@ -60,7 +60,7 @@ private func measure(_ view: some View) -> CGSize {
 
 @MainActor
 @Test func aPausedKindsSecondLineFitsOneLineOfThePopover() throws {
-    let room = JobRunPopover.rowWidth
+    let room = RunPopover.rowWidth
     let kinds = try hubReasons.map { try makeKind(reason: $0) } + [makeKind(reason: nil)]
     for kind in kinds {
         let line = JobRuns.describeState(of: kind, now: .now)
@@ -75,7 +75,7 @@ private func measure(_ view: some View) -> CGSize {
 
 @MainActor
 @Test func aSecondLineTooLongForOneLineWrapsRatherThanBeingCut() throws {
-    let room = JobRunPopover.rowWidth
+    let room = RunPopover.rowWidth
     let row = makeRow(try makeKind(reason: "needs the job's facts and a tailored CV for this posting first"))
     let oneLine = measure(row.fixedSize())
     #expect(oneLine.width > room, "The line fits one line of \(room) pt, so this checks nothing")
@@ -88,7 +88,7 @@ private func measure(_ view: some View) -> CGSize {
 
 @MainActor
 @Test func aModelNameLongerThanTheSelectsRoomLeavesTheRowInThePopover() throws {
-    let room = JobRunPopover.rowWidth
+    let room = RunPopover.rowWidth
     let kind = try makeKind(reason: nil, route: longModelRoute)
     #expect(kind.route != nil)
     let rowWidth = measure(makeRow(kind).fixedSize()).width
