@@ -75,7 +75,7 @@ final class ClaudeSessionHost {
     /// started. A session with a conversation is resumed.
     func start(_ session: ClaudeSession, with client: HubClient, firstMessage: String? = nil) async throws {
         guard !isRunning(session.id) else { return }
-        guard let claude = ClaudeLaunch.findClaudeExecutable() else { throw ClaudeSessionLaunchError.claudeNotFound }
+        guard let claudeCode = ClaudeCodeHandoff.resolveCurrent() else { throw ClaudeSessionLaunchError.claudeNotFound }
         let context = try await client.get("v1/claude-sessions/\(session.id.uuidString)/context", as: ClaudeSessionContext.self)
 
         let fileManager = FileManager.default
@@ -91,10 +91,21 @@ final class ClaudeSessionHost {
         let transcript = ClaudeLaunch.getTranscriptURL(for: session, workingDirectory: folder, home: fileManager.homeDirectoryForCurrentUser)
         let readableFolder = UserDefaults.standard.string(forKey: ClaudeLaunch.readableFolderKey)
             ?? ClaudeLaunch.getDefaultReadableFolder(home: fileManager.homeDirectoryForCurrentUser)
-        let command = ClaudeLaunch.getShellCommand(
-            claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path),
-            readableFolder: fileManager.fileExists(atPath: readableFolder) ? readableFolder : nil, firstMessage: firstMessage
-        )
+        let command: String
+        switch claudeCode {
+        case let .claude(claude):
+            command = ClaudeLaunch.getShellCommand(
+                claude: claude, session: session, hasConversation: fileManager.fileExists(atPath: transcript.path),
+                readableFolder: fileManager.fileExists(atPath: readableFolder) ? readableFolder : nil, firstMessage: firstMessage
+            )
+        case let .qaStub(stub):
+            // QA mode: the session's terminal says it went to the stub, and QA reads what it was handed.
+            try stub.record(ClaudeCodeHandoffRecord(
+                kind: ClaudeCodeHandoffRecord.session, jobID: session.jobID, title: session.name, companyID: session.companyID,
+                note: firstMessage, file: folder.appending(path: ClaudeLaunch.getContextFileName(for: session)).path, workingDirectory: folder.path
+            ))
+            command = ClaudeCodeStub.sessionShellCommand
+        }
 
         let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         let watcher = ProcessEndWatcher { [weak self] in self?.handleEnd(of: session.id, client: client) }

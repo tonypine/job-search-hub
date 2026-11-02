@@ -9,11 +9,16 @@ import JobSearchHubCore
 @Observable
 final class RemoteTaskRunner {
     @ObservationIgnored private let jobFinder: CompanyJobFinder
+    /// Where a fix goes: `claude`, or the stub in QA mode.
+    @ObservationIgnored private let findClaudeCode: () -> ClaudeCodeTarget?
     @ObservationIgnored private var isChecking = false
     /// The jobs whose fix is running.
     private(set) var fixingJobIDs: Set<UUID> = []
     /// Moves when a fix ends, so a job's details read again.
     private(set) var fixRevision = 0
+    /// The jobs whose fix went to the QA stub, with the note it was handed,
+    /// which their page shows.
+    private(set) var stubHandedNotes: [UUID: String] = [:]
     /// The tasks running now, for the install sheet.
     private(set) var runningTasks: [UUID: RunningTask] = [:]
     /// While an install waits for running work, no queued task is claimed:
@@ -24,8 +29,9 @@ final class RemoteTaskRunner {
     @ObservationIgnored private var claimedTaskIDs: Set<UUID> = []
     @ObservationIgnored private var endWaiters: [UUID: [CheckedContinuation<Bool, Never>]] = [:]
 
-    init(jobFinder: CompanyJobFinder) {
+    init(jobFinder: CompanyJobFinder, findClaudeCode: @escaping () -> ClaudeCodeTarget? = ClaudeCodeHandoff.resolveCurrent) {
         self.jobFinder = jobFinder
+        self.findClaudeCode = findClaudeCode
     }
 
     func check(with client: HubClient) async {
@@ -142,7 +148,11 @@ final class RemoteTaskRunner {
     }
 
     private func fix(_ jobID: UUID, note: String, companyID: UUID?, with client: HubClient) async -> FinishTaskRequest {
-        guard let command = ServerAgent.hubCommand, let claude = ClaudeLaunch.findClaudeExecutable() else {
+        let claudeCode = findClaudeCode()
+        if case let .qaStub(stub)? = claudeCode {
+            return await handFix(jobID, note: note, companyID: companyID, to: stub, with: client)
+        }
+        guard let command = ServerAgent.hubCommand, case let .claude(claude)? = claudeCode else {
             return FinishTaskRequest(succeeded: false, result: "The Mac app can't run agents: its hub command or Claude Code is missing.", companyID: companyID)
         }
         fixingJobIDs.insert(jobID)
@@ -160,6 +170,26 @@ final class RemoteTaskRunner {
             return FinishTaskRequest(succeeded: true, result: "\(outcome.summary)\nFrom your note on \(title): \(note)", companyID: companyID)
         }
         return FinishTaskRequest(succeeded: false, result: "Fixing \(title) failed: \(outcome.summary)", companyID: companyID)
+    }
+
+    /// In QA mode: records the fix for QA to read and answers as a launch
+    /// that went through, without running Claude Code.
+    private func handFix(_ jobID: UUID, note: String, companyID: UUID?, to stub: ClaudeCodeStub, with client: HubClient) async -> FinishTaskRequest {
+        let title = try? await client.get("v1/jobs/\(jobID)", as: JobDetails.self).job.title
+        let handoff = ClaudeCodeHandoffRecord(
+            kind: ClaudeCodeHandoffRecord.fixJob, jobID: jobID, title: title, companyID: companyID,
+            note: note, workingDirectory: FileManager.default.currentDirectoryPath
+        )
+        do {
+            try stub.record(handoff)
+        } catch {
+            return FinishTaskRequest(succeeded: false, result: "Couldn't record the fix for QA: \(error.localizedDescription)", companyID: companyID)
+        }
+        stubHandedNotes[jobID] = note
+        fixRevision += 1
+        return FinishTaskRequest(
+            succeeded: true, result: "\(ClaudeCodeStub.confirmation)\nFrom your note on \(title ?? "the job"): \(note)", companyID: companyID
+        )
     }
 
     /// Researches the company the task names, then finds its jobs. One the
