@@ -89,3 +89,168 @@ private func makeRoot() -> URL {
     #expect(installer.work.items.map(\.hasEnded) == [true])
     await installer.cancel()
 }
+
+/// What the app looked like each time it quit for the install, with the
+/// install sheet attached to a window for its first `sheetChecks` looks.
+@MainActor
+private final class QuitRecorder {
+    var sheetChecksLeft: Int
+    var quits: [(answersPendingQuit: Bool, isShowingSheet: Bool, sheetChecksLeft: Int)] = []
+
+    init(sheetChecks: Int) {
+        sheetChecksLeft = sheetChecks
+    }
+
+    func attach(to installer: Installer) {
+        installer.hasAttachedSheet = { [unowned self] in
+            guard sheetChecksLeft > 0 else { return false }
+            sheetChecksLeft -= 1
+            return true
+        }
+        installer.quit = { [unowned self, unowned installer] answersPendingQuit in
+            quits.append((answersPendingQuit, installer.isShowingSheet, sheetChecksLeft))
+        }
+    }
+}
+
+private func makeState(_ step: InstallStep, failure: String? = nil) -> InstallState {
+    var state = InstallState(
+        from: HubVersion("0.1.251")!, to: HubVersion("0.1.252")!, installed: URL(filePath: "/Applications/Job Search Hub.app"),
+        newApp: URL(filePath: "/tmp/Job Search Hub.app"), reopenApp: true, fromMigration: 90, toMigration: 91, startedAt: .now, jobPlist: nil
+    )
+    state.step = step
+    state.failure = failure
+    return state
+}
+
+@MainActor
+@Test func installingFromTheSheetClosesItBeforeTheAppQuits() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, _) = makeInstaller(root: root, drain: nothingRunning)
+    installer.launchHubUpdate = { _ in }
+    installer.stateCheckInterval = .seconds(3600)
+    let recorder = QuitRecorder(sheetChecks: 3)
+    recorder.attach(to: installer)
+
+    // *Install anyway* in its alert, over the sheet.
+    installer.isShowingSheet = true
+    installer.isConfirmingInstallAnyway = true
+    await installer.installAnyway()
+
+    // AppKit won't quit with a sheet attached: the app quits once, after
+    // the sheet and its alert have gone.
+    #expect(installer.failure == nil)
+    #expect(installer.phase == .starting)
+    #expect(!installer.isConfirmingInstallAnyway)
+    #expect(recorder.quits.count == 1)
+    #expect(recorder.quits.first?.answersPendingQuit == false)
+    #expect(recorder.quits.first?.isShowingSheet == false)
+    #expect(recorder.quits.first?.sheetChecksLeft == 0)
+}
+
+@MainActor
+@Test func waitingForWorkInTheSheetClosesItBeforeTheAppQuits() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, _) = makeInstaller(root: root, drain: nothingRunning)
+    installer.launchHubUpdate = { _ in }
+    installer.stateCheckInterval = .seconds(3600)
+    let recorder = QuitRecorder(sheetChecks: 2)
+    recorder.attach(to: installer)
+
+    // *Install when these finish*, with nothing left to wait for.
+    installer.isShowingSheet = true
+    await installer.installWhenTheseFinish()
+
+    #expect(recorder.quits.count == 1)
+    #expect(recorder.quits.first?.isShowingSheet == false)
+    #expect(recorder.quits.first?.sheetChecksLeft == 0)
+}
+
+@MainActor
+@Test func anInstallAbandonedWhileTheAppStillRunsEndsInTheApp() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, recording) = makeInstaller(root: root, drain: nothingRunning)
+    let updates = UpdatesFolder(root: root)
+    installer.launchHubUpdate = { _ in try updates.writeState(makeState(.waitingForApp)) }
+    installer.stateCheckInterval = .milliseconds(10)
+    // The quit never happens, as when AppKit aborts it.
+    installer.hasAttachedSheet = { false }
+    installer.quit = { _ in }
+
+    await installer.installWhenTheseFinish()
+    #expect(installer.phase == .starting)
+    #expect(installer.isDraining)
+
+    // hub-update gives up waiting.
+    try updates.writeState(makeState(.abandoned, failure: "Job Search Hub didn't quit, so nothing was installed."))
+    for _ in 0..<500 where installer.phase == .starting {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    // No more "Installing": the failure shows, and the hub and the app
+    // start work again.
+    #expect(installer.phase == .idle)
+    #expect(installer.failure?.report.advice == "Job Search Hub didn't quit, so nothing was installed.")
+    #expect(installer.notice?.outcome == .abandoned(message: "Job Search Hub didn't quit, so nothing was installed."))
+    #expect(!installer.isDraining)
+    #expect(recording.lastRequest?.httpMethod == "DELETE")
+    #expect(updates.readState() == nil)
+    #expect(!FileManager.default.fileExists(atPath: updates.reopenURL.path))
+}
+
+@MainActor
+@Test func anInstallWhoseStateIsGoneWhileTheAppStillRunsEndsInTheApp() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, recording) = makeInstaller(root: root, drain: nothingRunning)
+    let updates = UpdatesFolder(root: root)
+    installer.launchHubUpdate = { _ in try updates.writeState(makeState(.waitingForApp)) }
+    installer.stateCheckInterval = .milliseconds(10)
+    // The quit never happens, as when AppKit aborts it.
+    installer.hasAttachedSheet = { false }
+    installer.quit = { _ in }
+
+    await installer.installWhenTheseFinish()
+    #expect(installer.phase == .starting)
+    #expect(installer.isDraining)
+    #expect(FileManager.default.fileExists(atPath: updates.reopenURL.path))
+
+    // The install's state is gone, with no finished step to read.
+    try FileManager.default.removeItem(at: updates.stateURL)
+    for _ in 0..<500 where installer.phase == .starting {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    // The app leaves "Installing" with its own advice, and no notice.
+    #expect(installer.phase == .idle)
+    #expect(installer.failure?.report.advice == "The install stopped before the app quit, so nothing was installed.")
+    #expect(installer.notice == nil)
+    #expect(!installer.isDraining)
+    #expect(recording.lastRequest?.httpMethod == "DELETE")
+    #expect(!FileManager.default.fileExists(atPath: updates.reopenURL.path))
+}
+
+@MainActor
+@Test func aSheetThatNeverClosesStillLetsTheAppQuitOnce() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, _) = makeInstaller(root: root, drain: nothingRunning)
+    installer.launchHubUpdate = { _ in }
+    installer.stateCheckInterval = .seconds(3600)
+    installer.sheetCloseTimeout = .milliseconds(200)
+    // The sheet never detaches.
+    let recorder = QuitRecorder(sheetChecks: .max)
+    recorder.attach(to: installer)
+
+    installer.isShowingSheet = true
+    await installer.installAnyway()
+
+    // After the deadline the app asks to quit anyway, once.
+    #expect(recorder.quits.count == 1)
+    #expect(recorder.quits.first?.isShowingSheet == false)
+    #expect(installer.phase == .starting)
+    #expect(!installer.isShowingSheet)
+}
