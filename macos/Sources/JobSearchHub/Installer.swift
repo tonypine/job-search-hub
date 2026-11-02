@@ -368,9 +368,9 @@ final class Installer {
         failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
         isQuittingForInstall = false
         reopensApp = true
-        phase = .idle
         await stopDraining()
         taskRunner?.isPaused = false
+        phase = .idle
     }
 
     private func saveReopenRecord() throws {
