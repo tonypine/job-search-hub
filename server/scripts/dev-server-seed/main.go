@@ -166,6 +166,9 @@ type seededJob struct {
 	heardBack bool
 	payMin    float64
 	payMax    float64
+	// paySummary is the board's pay line when it publishes no range: the
+	// pay QA reads on a job whose pay is a summary alone.
+	paySummary string
 	// technologies, seniority, yearsAsked and timezone are its facts; 0
 	// years and no timezone are not stated.
 	technologies []string
@@ -183,6 +186,10 @@ type seededCompany struct {
 	people                                []seededPerson
 	jobs                                  []seededJob
 }
+
+// summaryOnlyPay is the pay of the one seeded job whose board publishes no
+// range, only this line.
+const summaryOnlyPay = "Competitive salary and equity; no range published"
 
 // seededCompanies is the search QA judges. Applied asks for a follow-up
 // after 7 days and Interviewing after 5, so the Applied cards entered 8 or
@@ -215,7 +222,7 @@ var seededCompanies = []seededCompany{
 		},
 		jobs: []seededJob{
 			{slug: "platform-engineer", title: "Senior Platform Engineer, Swift", location: "Remote, worldwide", workplace: "Remote", status: jobOpen,
-				phase: "Applied", daysInPhase: 10, technologies: []string{"Swift", "Vapor", "Postgres"}, seniority: "Senior",
+				phase: "Applied", daysInPhase: 10, paySummary: summaryOnlyPay, technologies: []string{"Swift", "Vapor", "Postgres"}, seniority: "Senior",
 				match: "possible", reason: "Swift on the server is new ground, but the API work carries over.",
 				strength: "Built the app's offline sync API", weakness: "Little server-side Swift"},
 			{slug: "site-reliability-engineer", title: "Site Reliability Engineer", location: "Remote, worldwide", workplace: "Remote", status: jobLater,
@@ -614,8 +621,13 @@ func seedCompany(ctx context.Context, hub *store.Store, owner store.Actor, compa
 			URL: careers + "/" + job.slug, Description: describeJob(company, job), Raw: json.RawMessage(`{}`),
 			BoardFacts: store.BoardFacts{EmploymentType: "Full-time"},
 		}
-		if job.payMax > 0 {
+		switch {
+		case job.payMax > 0:
 			posting.Pay = &store.Pay{Ranges: []store.PayRange{{Min: job.payMin, Max: job.payMax, Currency: "USD", Interval: "year"}}}
+		case job.paySummary != "":
+			// No ranges, as a board that publishes only a pay line gives
+			// it: the hub stores and sends them as an empty list.
+			posting.Pay = &store.Pay{Summary: job.paySummary}
 		}
 		postings = append(postings, posting)
 		if job.status != jobClosed {

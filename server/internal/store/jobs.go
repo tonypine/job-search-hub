@@ -57,6 +57,16 @@ type Pay struct {
 	Summary string     `json:"summary,omitempty"`
 }
 
+// MarshalJSON writes no ranges as an empty list, never null, in the stored
+// pay and in every answer that carries it: the apps read ranges as a list.
+func (pay Pay) MarshalJSON() ([]byte, error) {
+	type plainPay Pay
+	if pay.Ranges == nil {
+		pay.Ranges = []PayRange{}
+	}
+	return json.Marshal(plainPay(pay))
+}
+
 // PayRange is one published range. Interval is year, month, week, day or
 // hour, and empty when the board does not say.
 type PayRange struct {
