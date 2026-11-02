@@ -114,6 +114,28 @@ private let jobFixJSON = #"{"id":"\#(taskID.uuidString)","kind":"fix_job","jobId
     #expect(requests.first?.body.jobID == jobID && requests.first?.body.note == "the pay ranges are missing")
 }
 
+@MainActor @Test func inQAModeAFixTheStubCantRecordFailsAndShowsNoNote() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        claimPath: StubHub.Answer(status: 200, body: jobFixJSON),
+        finishPath: StubHub.Answer(status: 200, body: jobFixJSON),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    // The stub's folder is a regular file, so it can't write its record there.
+    let blocker = FileManager.default.temporaryDirectory.appending(path: "RemoteTaskRunnerTests-\(UUID().uuidString)")
+    try Data("not a folder".utf8).write(to: blocker)
+    defer { try? FileManager.default.removeItem(at: blocker) }
+    let stub = ClaudeCodeStub(directory: blocker)
+    let runner = RemoteTaskRunner(jobFinder: CompanyJobFinder()) { .qaStub(stub) }
+
+    #expect(await runner.runStarted(taskID, with: client))
+
+    #expect(recording.lastRequest?.url?.path() == finishPath)
+    let finish = try #require(recording.lastBody.flatMap { String(data: $0, encoding: .utf8) })
+    #expect(finish.contains(#""succeeded":false"#) && finish.contains("Couldn't record the fix for QA"))
+    #expect(!finish.contains("Handed to Claude Code (QA stub)"))
+    #expect(runner.stubHandedNotes.isEmpty)
+}
+
 @MainActor @Test func outsideQAModeAFixWithoutClaudeFailsAsToday() async throws {
     let (session, recording) = StubHub.makeSession(answers: [
         claimPath: StubHub.Answer(status: 200, body: jobFixJSON),
