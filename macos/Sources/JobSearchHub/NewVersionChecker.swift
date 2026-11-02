@@ -72,7 +72,17 @@ final class NewVersionChecker {
     /// The feed a check reads: in QA mode, the one Settings › Version shows.
     private var currentFeed: ReleaseFeed {
         guard feed.isQAMode else { return feed }
-        return feed.reading(ReleaseFeed.feedURL(qaFeedText) ?? GitHubRepository.releasesAPIURL)
+        return feed.reading(qaFeedURL ?? GitHubRepository.releasesAPIURL)
+    }
+
+    /// The URL *Release feed (QA)* holds: an http(s) one, or the QA
+    /// fixture's `releases.json` the launch started from, which no one
+    /// types.
+    var qaFeedURL: URL? {
+        if let url = ReleaseFeed.feedURL(qaFeedText) {
+            return url
+        }
+        return feed.url.isFileURL && qaFeedText.trimmingCharacters(in: .whitespaces) == feed.url.absoluteString ? feed.url : nil
     }
 
     /// Checks at launch, then every hour, until the app quits.

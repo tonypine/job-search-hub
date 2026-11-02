@@ -5,16 +5,27 @@ import Foundation
 /// of its checks; `previous/`, the version installed before this one; and
 /// `install.log`. It keeps one downloaded version: a newer one that passes
 /// its checks replaces an older one that wasn't installed.
+///
+/// In QA mode, a QA fixture's `updates/` folder stands in for it (see
+/// `QAFixtures`), as `HUB_RELEASES_URL` stands in for GitHub's releases.
 public struct UpdatesFolder: Sendable {
     public let root: URL
+    /// A QA fixture's copy: installing and going back are recorded in its
+    /// log, never handed to `hub-update`.
+    public let isQAFixture: Bool
 
-    /// The folder, and the log, that *Show install log* opens.
-    public static func makeDefault(home: URL) -> UpdatesFolder {
-        UpdatesFolder(root: home.appending(path: "Library/Application Support/JobSearchHub/Updates"))
+    /// The folder, and the log, that *Show install log* opens: the QA
+    /// fixture's `updates/` when there is one, in QA mode only.
+    public static func makeDefault(home: URL, fixtures: QAFixtures? = QAFixtures.current) -> UpdatesFolder {
+        if let root = fixtures?.updatesRoot {
+            return UpdatesFolder(root: root, isQAFixture: true)
+        }
+        return UpdatesFolder(root: home.appending(path: "Library/Application Support/JobSearchHub/Updates"))
     }
 
-    public init(root: URL) {
+    public init(root: URL, isQAFixture: Bool = false) {
         self.root = root
+        self.isQAFixture = isQAFixture
     }
 
     /// Folders and files the downloads never replace.

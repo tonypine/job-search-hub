@@ -19,10 +19,13 @@ public struct HubClient: Sendable {
     public static let clientHeader = "X-Hub-Client"
 
     /// The app's version, which Scripts/make-app.sh stamps into its
-    /// Info.plist; a build run outside the bundle has none.
+    /// Info.plist; a build run outside the bundle has none. In QA mode, the
+    /// one a QA fixture's `running-version` names stands in for it.
     public static var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0-dev"
+        qaRunningVersion ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0-dev"
     }
+
+    private static let qaRunningVersion = QAFixtures.current?.readRunningVersion()?.description
 
     public let baseURL: URL
     public let token: String

@@ -389,26 +389,34 @@ public struct ReleaseFeed: Sendable {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         isQABuild: Bool = Bundle.main.object(forInfoDictionaryKey: HubConnection.qaBuildInfoKey) as? Bool == true,
-        bundledURL: String? = Bundle.main.object(forInfoDictionaryKey: ReleaseFeed.urlInfoKey) as? String
+        bundledURL: String? = Bundle.main.object(forInfoDictionaryKey: ReleaseFeed.urlInfoKey) as? String,
+        fixtures: QAFixtures? = QAFixtures.current
     ) {
         self.session = session
-        self.url = url ?? Self.makeURL(arguments: arguments, environment: environment, isQABuild: isQABuild, bundledURL: bundledURL)
+        self.url = url ?? Self.makeURL(
+            arguments: arguments, environment: environment, isQABuild: isQABuild, bundledURL: bundledURL, fixtures: fixtures
+        )
         self.appVersion = appVersion
         isQAMode = isQABuild || arguments.contains(HubConnection.qaModeArgument)
     }
 
     /// The same feed, reading the releases from another URL.
     public func reading(_ url: URL) -> ReleaseFeed {
-        ReleaseFeed(session: session, url: url, appVersion: appVersion, arguments: [], environment: [:], isQABuild: isQAMode, bundledURL: nil)
+        ReleaseFeed(
+            session: session, url: url, appVersion: appVersion, arguments: [], environment: [:], isQABuild: isQAMode, bundledURL: nil,
+            fixtures: nil
+        )
     }
 
     /// In QA mode, HUB_RELEASES_URL when it holds an http(s) URL, else the
-    /// bundle's HubReleasesURL when it does; GitHub's releases otherwise.
+    /// bundle's HubReleasesURL when it does, else a QA fixture's
+    /// `releases.json`; GitHub's releases otherwise.
     public static func makeURL(
-        arguments: [String], environment: [String: String], isQABuild: Bool = false, bundledURL: String? = nil
+        arguments: [String], environment: [String: String], isQABuild: Bool = false, bundledURL: String? = nil,
+        fixtures: QAFixtures? = nil
     ) -> URL {
-        guard isQABuild || arguments.contains(HubConnection.qaModeArgument),
-              let url = feedURL(environment[urlVariable]) ?? feedURL(bundledURL)
+        guard QAMode.isOn(arguments: arguments, isQABuild: isQABuild),
+              let url = feedURL(environment[urlVariable]) ?? feedURL(bundledURL) ?? fixtures?.releasesURL
         else { return GitHubRepository.releasesAPIURL }
         return url
     }
@@ -421,7 +429,12 @@ public struct ReleaseFeed: Sendable {
         return url
     }
 
+    /// A QA fixture's `releases.json` is read from the file, as GitHub's
+    /// answer would be.
     public func fetch() async throws -> [GitHubRelease] {
+        if url.isFileURL {
+            return try GitHubRelease.decodeList(Data(contentsOf: url))
+        }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
