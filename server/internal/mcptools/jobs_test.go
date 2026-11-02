@@ -2,6 +2,7 @@ package mcptools_test
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -209,6 +210,28 @@ func TestAnAgentCorrectsAJobWithReasonsAndUnknownFieldsAreRefused(t *testing.T) 
 		"job_id": jobs[0].Job.ID, "salary": "100k", "reasons": map[string]any{"salary": "x"},
 	}); !strings.Contains(text, "salary") {
 		t.Errorf("an unknown field: %s", text)
+	}
+}
+
+func TestAnUpdateJobPayWithNullRangesStoresAnEmptyList(t *testing.T) {
+	hub := startHub(t)
+	ctx := context.Background()
+	job, _, err := hub.store.AddManualJob(ctx, store.Actor{Kind: store.ActorOwner}, store.ManualJobInput{Title: "Engineer", URL: "https://acme.example/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := connect(t, hub, ownerToken)
+
+	fixed := callTool[map[string]any](t, owner, "update_job", map[string]any{
+		"job_id": job.ID, "pay": map[string]any{"ranges": nil, "summary": "no range published"},
+		"reasons": map[string]any{"pay": "the posting gives no range"},
+	})
+	if pay, _ := fixed["pay"].(map[string]any); pay == nil || pay["summary"] != "no range published" || !reflect.DeepEqual(pay["ranges"], []any{}) {
+		t.Errorf("the fixed job's pay = %#v, want an empty list of ranges", fixed["pay"])
+	}
+	var rangesType string
+	if err := hub.pool.QueryRow(ctx, `SELECT jsonb_typeof(pay->'ranges') FROM jobs WHERE id = $1`, job.ID).Scan(&rangesType); err != nil || rangesType != "array" {
+		t.Errorf("stored ranges are %q, want an array: %v", rangesType, err)
 	}
 }
 
