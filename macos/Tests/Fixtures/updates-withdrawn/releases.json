@@ -1,0 +1,4 @@
+[
+  {"tag_name": "mac-v0.1.252", "name": "Job Search Hub 0.1.252", "draft": false, "prerelease": true, "body": "QA fixture release.", "assets": [{"name": "Job-Search-Hub-0.1.252.zip", "browser_download_url": "https://downloads.invalid/Job-Search-Hub-0.1.252.zip"}, {"name": "Job-Search-Hub-0.1.252.zip.sha256", "browser_download_url": "https://downloads.invalid/Job-Search-Hub-0.1.252.zip.sha256"}]},
+  {"tag_name": "mac-v0.1.247", "name": "Job Search Hub 0.1.247", "draft": false, "prerelease": false, "body": "QA fixture release.", "assets": [{"name": "Job-Search-Hub-0.1.247.zip", "browser_download_url": "https://downloads.invalid/Job-Search-Hub-0.1.247.zip"}, {"name": "Job-Search-Hub-0.1.247.zip.sha256", "browser_download_url": "https://downloads.invalid/Job-Search-Hub-0.1.247.zip.sha256"}]}
+]
