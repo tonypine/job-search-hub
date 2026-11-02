@@ -16,8 +16,9 @@ final class RemoteTaskRunner {
     private(set) var fixingJobIDs: Set<UUID> = []
     /// Moves when a fix ends, so a job's details read again.
     private(set) var fixRevision = 0
-    /// The jobs whose fix went to the QA stub, which their page says.
-    private(set) var stubHandedJobIDs: Set<UUID> = []
+    /// The jobs whose fix went to the QA stub, with the note it was handed,
+    /// which their page shows.
+    private(set) var stubHandedNotes: [UUID: String] = [:]
     /// The tasks running now, for the install sheet.
     private(set) var runningTasks: [UUID: RunningTask] = [:]
     /// While an install waits for running work, no queued task is claimed:
@@ -184,7 +185,7 @@ final class RemoteTaskRunner {
         } catch {
             return FinishTaskRequest(succeeded: false, result: "Couldn't record the fix for QA: \(error.localizedDescription)", companyID: companyID)
         }
-        stubHandedJobIDs.insert(jobID)
+        stubHandedNotes[jobID] = note
         fixRevision += 1
         return FinishTaskRequest(
             succeeded: true, result: "\(ClaudeCodeStub.confirmation)\nFrom your note on \(title ?? "the job"): \(note)", companyID: companyID

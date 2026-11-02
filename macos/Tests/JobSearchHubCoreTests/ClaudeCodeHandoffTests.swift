@@ -7,6 +7,14 @@ import Testing
 
 private let home = URL(filePath: "/Users/qa")
 
+private extension JSONDecoder {
+    static var iso8601: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 private func makeTemporaryFolder() -> URL {
     FileManager.default.temporaryDirectory.appending(path: "ClaudeCodeHandoffTests-\(UUID().uuidString)", directoryHint: .isDirectory)
 }
@@ -72,6 +80,30 @@ private func makeTemporaryFolder() -> URL {
     #expect(text.contains(#""note":"the title has the city in it""#))
 }
 
+@Test func theStubLogsEachHandoffAsARequestTheQADriverReadsBack() throws {
+    let folder = makeTemporaryFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let stub = ClaudeCodeStub(directory: folder)
+    // The request log may already hold the app's other requests.
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data(#"{"method":"GET","path":"/v1/health"}"#.utf8 + [0x0A]).write(to: stub.requestLogURL)
+    let fix = ClaudeCodeHandoffRecord(
+        kind: ClaudeCodeHandoffRecord.fixJob, jobID: UUID(), title: "Platform Engineer", note: "the pay ranges are missing",
+        workingDirectory: "/", handedAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+
+    try stub.record(fix)
+
+    #expect(stub.requestLogURL.lastPathComponent == "api-requests.jsonl")
+    #expect(stub.requestLogURL.deletingLastPathComponent() == stub.recordURL.deletingLastPathComponent())
+    #expect(try stub.readRequests() == [ClaudeCodeStubRequest(fix)])
+    let lines = try String(contentsOf: stub.requestLogURL, encoding: .utf8).split(separator: "\n")
+    #expect(lines.count == 2)
+    #expect(lines[1].hasPrefix(#"{"body":{"#))
+    #expect(lines[1].contains(#""method":"POST""#) && lines[1].contains(#""path":"/claude-code/handoff""#))
+    #expect(lines[1].contains(#""note":"the pay ranges are missing""#))
+}
+
 @Test func theCommittedFixtureHoldsOneFixHandoff() throws {
     let fixture = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .appending(path: "Fixtures/claude-code-handoff/\(ClaudeCodeStub.recordFileName)")
@@ -81,6 +113,10 @@ private func makeTemporaryFolder() -> URL {
     #expect(records.count == 1)
     #expect(records.first?.kind == ClaudeCodeHandoffRecord.fixJob)
     #expect(records.first?.jobID != nil && records.first?.note?.isEmpty == false)
+    let requestLog = fixture.deletingLastPathComponent().appending(path: ClaudeCodeStub.requestLogFileName)
+    let request = try JSONDecoder.iso8601.decode(ClaudeCodeStubRequest.self, from: Data(contentsOf: requestLog))
+    let fix = try #require(records.first)
+    #expect(request == ClaudeCodeStubRequest(fix))
 }
 
 @Test func aStubSessionSaysItWentToTheStubAndWaits() {

@@ -44,13 +44,19 @@ public enum ClaudeCodeHandoff {
 
 /// The stand-in for Claude Code in QA mode. Each hand-off adds one JSON line
 /// to `claude-code-handoffs.jsonl` in its folder: the QA fixture folder
-/// Symphony's QA launch names in `SYMPHONY_BAR_QA_API_FIXTURES`, which the QA
-/// driver reads back, or `~/Library/Application Support/JobSearchHub/QA/`
-/// when the variable is unset.
+/// Symphony's QA launch names in `SYMPHONY_BAR_QA_API_FIXTURES`, or
+/// `~/Library/Application Support/JobSearchHub/QA/` when the variable is
+/// unset. It also logs the hand-off as a request, `POST /claude-code/handoff`
+/// with the record as its body, to `api-requests.jsonl` in the same folder,
+/// the request log Symphony's QA driver reads back with `qa_api_requests`.
 public struct ClaudeCodeStub: Equatable, Sendable {
     /// What the app says where it would say Claude Code took the work.
     public static let confirmation = "Handed to Claude Code (QA stub)"
     public static let recordFileName = "claude-code-handoffs.jsonl"
+    /// The QA root's request log, and the request a hand-off is logged as.
+    public static let requestLogFileName = "api-requests.jsonl"
+    public static let requestMethod = "POST"
+    public static let requestPath = "/claude-code/handoff"
     public static let fixturesVariable = "SYMPHONY_BAR_QA_API_FIXTURES"
 
     public let directory: URL
@@ -63,6 +69,10 @@ public struct ClaudeCodeStub: Equatable, Sendable {
         directory.appending(path: Self.recordFileName)
     }
 
+    public var requestLogURL: URL {
+        directory.appending(path: Self.requestLogFileName)
+    }
+
     static func findDirectory(environment: [String: String], home: URL) -> URL {
         if let path = environment[fixturesVariable]?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return URL(filePath: path, directoryHint: .isDirectory)
@@ -70,19 +80,39 @@ public struct ClaudeCodeStub: Equatable, Sendable {
         return home.appending(path: "Library/Application Support/JobSearchHub/QA", directoryHint: .isDirectory)
     }
 
-    /// Adds the hand-off to the record file, creating the folder and the file
-    /// when they don't exist yet.
+    /// Adds the hand-off to the record file and, as a request, to the request
+    /// log, creating the folder and the files when they don't exist yet.
     public func record(_ handoff: ClaudeCodeHandoffRecord) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var line = try Self.makeEncoder().encode(handoff)
+        let encoder = Self.makeEncoder()
+        try Self.append(encoder.encode(handoff), to: recordURL)
+        try Self.append(encoder.encode(ClaudeCodeStubRequest(handoff)), to: requestLogURL)
+    }
+
+    private static func append(_ line: Data, to url: URL) throws {
+        var line = line
         line.append(0x0A)
-        if FileManager.default.fileExists(atPath: recordURL.path) {
-            let file = try FileHandle(forWritingTo: recordURL)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let file = try FileHandle(forWritingTo: url)
             defer { try? file.close() }
             try file.seekToEnd()
             try file.write(contentsOf: line)
         } else {
-            try line.write(to: recordURL)
+            try line.write(to: url)
+        }
+    }
+
+    /// The hand-offs logged as requests so far, oldest first. Lines another
+    /// writer of the request log added are left out.
+    public func readRequests() throws -> [ClaudeCodeStubRequest] {
+        guard FileManager.default.fileExists(atPath: requestLogURL.path) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let data = try Data(contentsOf: requestLogURL)
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap {
+            guard let request = try? decoder.decode(ClaudeCodeStubRequest.self, from: Data($0.utf8)),
+                  request.method == Self.requestMethod, request.path == Self.requestPath else { return nil }
+            return request
         }
     }
 
@@ -145,5 +175,19 @@ public struct ClaudeCodeHandoffRecord: Codable, Equatable, Sendable {
         self.file = file
         self.workingDirectory = workingDirectory
         self.handedAt = handedAt
+    }
+}
+
+/// A hand-off as the request log holds it: `POST /claude-code/handoff`, the
+/// record as its body.
+public struct ClaudeCodeStubRequest: Codable, Equatable, Sendable {
+    public var method: String
+    public var path: String
+    public var body: ClaudeCodeHandoffRecord
+
+    public init(_ handoff: ClaudeCodeHandoffRecord) {
+        method = ClaudeCodeStub.requestMethod
+        path = ClaudeCodeStub.requestPath
+        body = handoff
     }
 }

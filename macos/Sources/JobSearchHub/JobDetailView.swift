@@ -568,9 +568,10 @@ struct JobDetailView: View {
         }
         if taskRunner.fixingJobIDs.contains(jobID) {
             Label("An agent is fixing its details…", systemImage: "wrench.adjustable").font(.hubCaption).foregroundStyle(.secondary)
-        } else if taskRunner.stubHandedJobIDs.contains(jobID) {
-            // QA mode only: the fix went to the stub, not to Claude Code.
+        } else if let note = taskRunner.stubHandedNotes[jobID] {
+            // QA mode only: the fix went to the stub, not to Claude Code, with this note.
             Label(ClaudeCodeStub.confirmation, systemImage: "checkmark.circle").font(.hubCaption).foregroundStyle(.secondary)
+            Text("Note handed over: \(note)").font(.hubCaption).foregroundStyle(.secondary).textSelection(.enabled)
         }
     }
 

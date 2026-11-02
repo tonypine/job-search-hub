@@ -107,7 +107,11 @@ private let jobFixJSON = #"{"id":"\#(taskID.uuidString)","kind":"fix_job","jobId
     #expect(records.count == 1)
     #expect(records.first?.kind == ClaudeCodeHandoffRecord.fixJob)
     #expect(records.first?.jobID == jobID && records.first?.note == "the pay ranges are missing")
-    #expect(runner.stubHandedJobIDs == [jobID])
+    #expect(runner.stubHandedNotes == [jobID: "the pay ranges are missing"])
+    // The QA driver reads the hand-off back from the request log.
+    let requests = try stub.readRequests()
+    #expect(requests.map(\.path) == ["/claude-code/handoff"])
+    #expect(requests.first?.body.jobID == jobID && requests.first?.body.note == "the pay ranges are missing")
 }
 
 @MainActor @Test func outsideQAModeAFixWithoutClaudeFailsAsToday() async throws {
@@ -122,5 +126,5 @@ private let jobFixJSON = #"{"id":"\#(taskID.uuidString)","kind":"fix_job","jobId
 
     let finish = try #require(recording.lastBody.flatMap { String(data: $0, encoding: .utf8) })
     #expect(finish.contains(#""succeeded":false"#) && finish.contains("Claude Code is missing"))
-    #expect(runner.stubHandedJobIDs.isEmpty)
+    #expect(runner.stubHandedNotes.isEmpty)
 }
