@@ -61,6 +61,51 @@ private func makeJobsPageJSON(titles: [String], total: Int) -> String {
     #expect(response.total == 3)
 }
 
+@Test func aPayWithMissingOrNullRangesReadsAsNone() throws {
+    let decoder = HubJSON.makeDecoder()
+
+    let null = try decoder.decode(Pay.self, from: Data(#"{"ranges":null,"summary":"No range published"}"#.utf8))
+    let missing = try decoder.decode(Pay.self, from: Data(#"{"summary":"No range published"}"#.utf8))
+
+    #expect(null == Pay(ranges: [], summary: "No range published"))
+    #expect(missing == Pay(ranges: [], summary: "No range published"))
+    #expect(null.summaryLine == "No range published")
+}
+
+private let jobsWithAnUnreadableOneJSON = #"""
+{"jobs":[{"job":{"id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"First","url":"https://acme.com/1",
+                 "first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z"},"fit":{"level":"good","checks":[]},"unseen_updates":0},
+         {"job":{"id":"not a uuid","source":"manual","title":"Broken","url":"https://acme.com/2",
+                 "first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z"},"fit":{"level":"good","checks":[]},"unseen_updates":0},
+         {"job":{"id":"8d9e6679-7425-40de-944b-e07fc1f90ae7","source":"manual","title":"Third","url":"https://acme.com/3",
+                 "pay":{"ranges":null,"summary":"No range published"},
+                 "first_seen_at":"2026-09-28T14:00:00Z","last_seen_at":"2026-09-28T14:00:00Z"},"fit":{"level":"good","checks":[]},"unseen_updates":0}],
+ "total":3}
+"""#
+
+@Test func aJobTheAppCantReadIsLeftOutAndTheRestLoad() throws {
+    let response = try HubJSON.makeDecoder().decode(JobsResponse.self, from: Data(jobsWithAnUnreadableOneJSON.utf8))
+
+    #expect(response.jobs.map(\.job.title) == ["First", "Third"])
+    #expect(response.jobs[1].job.pay?.summaryLine == "No range published")
+    #expect(response.total == 3)
+    #expect(response.unreadableJobs.count == 1)
+    #expect(response.unreadableJobs.first?.hasPrefix("jobs.1.job.id") == true)
+}
+
+@Test func aJobLeftOutStillCountsTowardTheNextPage() async throws {
+    let (session, _) = StubHub.makeSession(answers: [
+        "/v1/jobs?status=open&limit=500": StubHub.Answer(status: 200, body: jobsWithAnUnreadableOneJSON.replacingOccurrences(of: #""total":3"#, with: #""total":4"#)),
+        "/v1/jobs?status=open&limit=500&offset=3": StubHub.Answer(status: 200, body: makeJobsPageJSON(titles: ["Fourth"], total: 4)),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t", session: session)
+
+    let response = try await client.getAllJobs(search: "", status: .open)
+
+    #expect(response.jobs.map(\.job.title) == ["First", "Third", "Fourth"])
+    #expect(response.unreadableJobs.count == 1)
+}
+
 @Test func queryItemsLandInTheURLNotThePath() {
     let client = HubClient(baseURL: URL(string: "http://localhost:8090")!, token: "t")
     let request = client.makeRequest(method: "GET", path: "v1/jobs", query: [URLQueryItem(name: "query", value: "front end")], body: nil)
