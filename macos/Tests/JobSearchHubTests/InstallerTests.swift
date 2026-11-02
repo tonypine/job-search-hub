@@ -200,3 +200,57 @@ private func makeState(_ step: InstallStep, failure: String? = nil) -> InstallSt
     #expect(updates.readState() == nil)
     #expect(!FileManager.default.fileExists(atPath: updates.reopenURL.path))
 }
+
+@MainActor
+@Test func anInstallWhoseStateIsGoneWhileTheAppStillRunsEndsInTheApp() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, recording) = makeInstaller(root: root, drain: nothingRunning)
+    let updates = UpdatesFolder(root: root)
+    installer.launchHubUpdate = { _ in try updates.writeState(makeState(.waitingForApp)) }
+    installer.stateCheckInterval = .milliseconds(10)
+    // The quit never happens, as when AppKit aborts it.
+    installer.hasAttachedSheet = { false }
+    installer.quit = { _ in }
+
+    await installer.installWhenTheseFinish()
+    #expect(installer.phase == .starting)
+    #expect(installer.isDraining)
+    #expect(FileManager.default.fileExists(atPath: updates.reopenURL.path))
+
+    // The install's state is gone, with no finished step to read.
+    try FileManager.default.removeItem(at: updates.stateURL)
+    for _ in 0..<500 where installer.phase == .starting {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    // The app leaves "Installing" with its own advice, and no notice.
+    #expect(installer.phase == .idle)
+    #expect(installer.failure?.report.advice == "The install stopped before the app quit, so nothing was installed.")
+    #expect(installer.notice == nil)
+    #expect(!installer.isDraining)
+    #expect(recording.lastRequest?.httpMethod == "DELETE")
+    #expect(!FileManager.default.fileExists(atPath: updates.reopenURL.path))
+}
+
+@MainActor
+@Test func aSheetThatNeverClosesStillLetsTheAppQuitOnce() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (installer, _) = makeInstaller(root: root, drain: nothingRunning)
+    installer.launchHubUpdate = { _ in }
+    installer.stateCheckInterval = .seconds(3600)
+    installer.sheetCloseTimeout = .milliseconds(200)
+    // The sheet never detaches.
+    let recorder = QuitRecorder(sheetChecks: .max)
+    recorder.attach(to: installer)
+
+    installer.isShowingSheet = true
+    await installer.installAnyway()
+
+    // After the deadline the app asks to quit anyway, once.
+    #expect(recorder.quits.count == 1)
+    #expect(recorder.quits.first?.isShowingSheet == false)
+    #expect(installer.phase == .starting)
+    #expect(!installer.isShowingSheet)
+}

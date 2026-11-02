@@ -105,7 +105,7 @@ final class Installer {
     /// `hub-update` gave up on it.
     @ObservationIgnored var stateCheckInterval: Duration = .seconds(1)
     /// How long the sheet gets to close before the app quits anyway.
-    static let sheetCloseTimeout: Duration = .seconds(5)
+    @ObservationIgnored var sheetCloseTimeout: Duration = .seconds(5)
 
     init(updates: UpdatesFolder) {
         self.updates = updates
@@ -328,7 +328,7 @@ final class Installer {
     /// Closes the install sheet and its *Install anyway?* alert, and waits
     /// until no window holds a sheet, for at most `sheetCloseTimeout`.
     private func closeSheets() async {
-        let deadline = ContinuousClock.now + Self.sheetCloseTimeout
+        let deadline = ContinuousClock.now + sheetCloseTimeout
         while true {
             isConfirmingInstallAnyway = false
             isShowingSheet = false
