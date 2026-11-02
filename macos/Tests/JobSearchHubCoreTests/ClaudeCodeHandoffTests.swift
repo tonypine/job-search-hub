@@ -55,6 +55,23 @@ private func makeTemporaryFolder() -> URL {
     #expect(blank == .qaStub(ClaudeCodeStub(directory: home.appending(path: "Library/Application Support/JobSearchHub/QA", directoryHint: .isDirectory))))
 }
 
+@Test func theStubRecordsInTheQARootTheDriverReadsBeforeTheFixtureFolder() {
+    let environment = [
+        ClaudeCodeStub.rootVariable: "/Users/admin/.symphony-qa/runs/run.a/root-1",
+        ClaudeCodeStub.fixturesVariable: "/Users/admin/.symphony-qa/runs/run.a/api-fixtures-1",
+    ]
+    let target = ClaudeCodeHandoff.resolve(isQAMode: true, environment: environment, home: home) { nil }
+
+    let root = URL(filePath: "/Users/admin/.symphony-qa/runs/run.a/root-1", directoryHint: .isDirectory)
+    #expect(target == .qaStub(ClaudeCodeStub(directory: root)))
+    #expect(ClaudeCodeStub(directory: root).requestLogURL.path == "/Users/admin/.symphony-qa/runs/run.a/root-1/api-requests.jsonl")
+    // A QA root alone is enough, and a blank one falls through to the fixture folder.
+    #expect(ClaudeCodeHandoff.resolve(isQAMode: true, environment: [ClaudeCodeStub.rootVariable: "/private/tmp/qa-root"], home: home) { nil }
+        == .qaStub(ClaudeCodeStub(directory: URL(filePath: "/private/tmp/qa-root", directoryHint: .isDirectory))))
+    let blank = ClaudeCodeHandoff.resolve(isQAMode: true, environment: [ClaudeCodeStub.rootVariable: " ", ClaudeCodeStub.fixturesVariable: "/private/tmp/qa-fixture"], home: home) { nil }
+    #expect(blank == .qaStub(ClaudeCodeStub(directory: URL(filePath: "/private/tmp/qa-fixture", directoryHint: .isDirectory))))
+}
+
 @Test func theStubAddsOneLinePerHandoffAndReadsThemBack() throws {
     let folder = makeTemporaryFolder()
     defer { try? FileManager.default.removeItem(at: folder) }

@@ -43,10 +43,10 @@ public enum ClaudeCodeHandoff {
 }
 
 /// The stand-in for Claude Code in QA mode. Each hand-off adds one JSON line
-/// to `claude-code-handoffs.jsonl` in its folder: the QA fixture folder
-/// Symphony's QA launch names in `SYMPHONY_BAR_QA_API_FIXTURES`, or
-/// `~/Library/Application Support/JobSearchHub/QA/` when the variable is
-/// unset. It also logs the hand-off as a request, `POST /claude-code/handoff`
+/// to `claude-code-handoffs.jsonl` in its folder: the QA root Symphony's QA
+/// launch names in `SYMPHONY_BAR_QA_ROOT`, else the QA fixture folder it names
+/// in `SYMPHONY_BAR_QA_API_FIXTURES`, else
+/// `~/Library/Application Support/JobSearchHub/QA/`. It also logs the hand-off as a request, `POST /claude-code/handoff`
 /// with the record as its body, to `api-requests.jsonl` in the same folder,
 /// the request log Symphony's QA driver reads back with `qa_api_requests`.
 public struct ClaudeCodeStub: Equatable, Sendable {
@@ -57,6 +57,7 @@ public struct ClaudeCodeStub: Equatable, Sendable {
     public static let requestLogFileName = "api-requests.jsonl"
     public static let requestMethod = "POST"
     public static let requestPath = "/claude-code/handoff"
+    public static let rootVariable = "SYMPHONY_BAR_QA_ROOT"
     public static let fixturesVariable = "SYMPHONY_BAR_QA_API_FIXTURES"
 
     public let directory: URL
@@ -74,8 +75,10 @@ public struct ClaudeCodeStub: Equatable, Sendable {
     }
 
     static func findDirectory(environment: [String: String], home: URL) -> URL {
-        if let path = environment[fixturesVariable]?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-            return URL(filePath: path, directoryHint: .isDirectory)
+        for variable in [rootVariable, fixturesVariable] {
+            if let path = environment[variable]?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                return URL(filePath: path, directoryHint: .isDirectory)
+            }
         }
         return home.appending(path: "Library/Application Support/JobSearchHub/QA", directoryHint: .isDirectory)
     }
