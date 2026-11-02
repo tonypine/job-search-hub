@@ -82,3 +82,45 @@ private func makeHub() -> (HubClient, StubHub.Recording) {
 
     #expect(recording.lastRequest?.url?.path() == finishPath)
 }
+
+/// A fix that names a job, the one the owner wrote a note on.
+private let jobID = UUID(uuidString: "CCCCCCCC-0000-4000-8000-000000000002")!
+private let jobFixJSON = #"{"id":"\#(taskID.uuidString)","kind":"fix_job","jobId":"\#(jobID.uuidString)","input":"the pay ranges are missing","status":"running"}"#
+
+@MainActor @Test func inQAModeAFixGoesToTheStubWhichRecordsItAndAnswersAsALaunch() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        claimPath: StubHub.Answer(status: 200, body: jobFixJSON),
+        finishPath: StubHub.Answer(status: 200, body: jobFixJSON),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let folder = FileManager.default.temporaryDirectory.appending(path: "RemoteTaskRunnerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let stub = ClaudeCodeStub(directory: folder)
+    let runner = RemoteTaskRunner(jobFinder: CompanyJobFinder()) { .qaStub(stub) }
+
+    #expect(await runner.runStarted(taskID, with: client))
+
+    #expect(recording.lastRequest?.url?.path() == finishPath)
+    let finish = try #require(recording.lastBody.flatMap { String(data: $0, encoding: .utf8) })
+    #expect(finish.contains(#""succeeded":true"#) && finish.contains("Handed to Claude Code (QA stub)"))
+    let records = try stub.readRecords()
+    #expect(records.count == 1)
+    #expect(records.first?.kind == ClaudeCodeHandoffRecord.fixJob)
+    #expect(records.first?.jobID == jobID && records.first?.note == "the pay ranges are missing")
+    #expect(runner.stubHandedJobIDs == [jobID])
+}
+
+@MainActor @Test func outsideQAModeAFixWithoutClaudeFailsAsToday() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        claimPath: StubHub.Answer(status: 200, body: jobFixJSON),
+        finishPath: StubHub.Answer(status: 200, body: jobFixJSON),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let runner = RemoteTaskRunner(jobFinder: CompanyJobFinder()) { nil }
+
+    #expect(await runner.runStarted(taskID, with: client))
+
+    let finish = try #require(recording.lastBody.flatMap { String(data: $0, encoding: .utf8) })
+    #expect(finish.contains(#""succeeded":false"#) && finish.contains("Claude Code is missing"))
+    #expect(runner.stubHandedJobIDs.isEmpty)
+}
