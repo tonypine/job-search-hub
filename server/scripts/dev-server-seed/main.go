@@ -354,10 +354,14 @@ var seededEntries = []store.ProfileEntryInput{
 }
 
 // seededBaseCV is the owner's base CV, which every tailored CV is drafted
-// from: the knowledge base's two roles, each with bullets to cite.
+// from: the knowledge base's two roles, each with bullets to cite. Its
+// contact details are made up, and its second role is long enough that a
+// print splits it across two pages.
 var seededBaseCV = resume.Resume{
-	Basics: resume.Basics{Name: "Avery Quinlan", Label: "Senior iOS Engineer", Location: resume.Location{Country: "Brazil"},
-		Summary: "Senior iOS engineer with seven years of Swift, the last three on SwiftUI, working remotely for teams in the Americas."},
+	Basics: resume.Basics{Name: "Avery Quinlan", Label: "Senior iOS Engineer", Location: resume.Location{City: "Recife", Country: "Brazil"},
+		Phone: "+55 81 90000-0000", Email: "avery.quinlan@example.com",
+		Profiles: []resume.Profile{{Network: "LinkedIn", Username: "avery-quinlan-example", URL: "https://www.linkedin.com/in/avery-quinlan-example"}},
+		Summary:  "Senior iOS engineer with seven years of Swift, the last three on SwiftUI, working remotely for teams in the Americas."},
 	Work: []resume.Work{
 		{Name: "Fernhollow Apps", Position: "Senior iOS Engineer", StartDate: "2022-03", Skills: []string{"Swift", "SwiftUI", "HealthKit"},
 			Highlights: []string{
@@ -369,6 +373,13 @@ var seededBaseCV = resume.Resume{
 			Highlights: []string{
 				"Built a news reader with offline maps of local stories.",
 				"Shipped Swift Charts dashboards of readers' habits for the newsroom.",
+				"Moved the app's networking to async/await, removing a third of its callback code.",
+				"Cut the cold launch from three seconds to one by deferring the map tiles' download.",
+				"Added VoiceOver labels and Dynamic Type to every screen, passing the publisher's accessibility audit.",
+				"Wrote the snapshot tests that guard the article layouts on every pull request.",
+				"Built the push notification service's iOS side, letting editors target readers by neighbourhood.",
+				"Mentored two junior engineers through their first App Store releases.",
+				"Ran the weekly release train and its TestFlight beta of four hundred readers.",
 			}},
 	},
 	Education: []resume.Education{{Institution: "Universidade Exemplo", StudyType: "Bachelor", Area: "Computer Science", StartDate: "2013", EndDate: "2017"}},
