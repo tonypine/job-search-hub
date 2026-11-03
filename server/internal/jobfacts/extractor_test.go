@@ -23,6 +23,7 @@ var owner = store.Actor{Kind: store.ActorOwner}
 // it is told to fail on.
 type fakeModel struct {
 	failOn      string
+	failAll     bool
 	unreachable bool
 	requests    []chatcompletions.JSONRequest
 	priorities  []modelqueue.Priority
@@ -35,7 +36,7 @@ func (model *fakeModel) CompleteJSON(ctx context.Context, request chatcompletion
 		return chatcompletions.Answer{}, fmt.Errorf("%w: connection refused", chatcompletions.ErrUnreachable)
 	}
 	title := strings.TrimPrefix(strings.SplitN(request.User, "\n", 2)[0], "Title: ")
-	if title == model.failOn {
+	if title == model.failOn || model.failAll {
 		return chatcompletions.Answer{}, errors.New("the answer is not a JSON object")
 	}
 	return chatcompletions.Answer{Object: json.RawMessage(fmt.Sprintf(`{"summary":%q}`, title)), Model: "routed-model"}, nil
@@ -70,6 +71,8 @@ func TestAPassReadsEveryJobAndSkipsTheOneTheModelFailsOn(t *testing.T) {
 	hub := startJobs(t, "Engineer", "Designer", "Manager")
 	model := &fakeModel{failOn: "Designer"}
 	extractor := jobfacts.NewExtractor(hub, model)
+	now := time.Now()
+	extractor.Now = func() time.Time { return now }
 
 	summary, err := extractor.ExtractOnce(context.Background())
 	if err != nil || summary.Read != 2 || summary.Failed != 1 {
@@ -90,11 +93,71 @@ func TestAPassReadsEveryJobAndSkipsTheOneTheModelFailsOn(t *testing.T) {
 		}
 	}
 
-	// The next pass only retries the failed job.
+	// The failed job waits before its next try.
 	model.failOn = ""
 	model.requests = nil
+	if summary, err := extractor.ExtractOnce(context.Background()); err != nil || summary.Waiting != 1 || len(model.requests) != 0 {
+		t.Fatalf("a pass right after = %+v, %v, %d requests", summary, err, len(model.requests))
+	}
+	// Once its wait is over, the next pass only retries the failed job.
+	now = now.Add(15 * time.Minute)
 	if summary, err := extractor.ExtractOnce(context.Background()); err != nil || summary.Read != 1 || len(model.requests) != 1 {
 		t.Fatalf("second pass = %+v, %v, %d requests", summary, err, len(model.requests))
+	}
+}
+
+// With the model failing every call, as a Claude CLI over its usage limit
+// does, each job is tried a few times an hour, not once a minute.
+func TestAModelFailingEveryCallIsRetriedWithBackoff(t *testing.T) {
+	hub := startJobs(t, "Engineer", "Designer", "Manager", "Writer", "Analyst")
+	model := &fakeModel{failAll: true}
+	extractor := jobfacts.NewExtractor(hub, model)
+	now := time.Now()
+	extractor.Now = func() time.Time { return now }
+
+	summary, err := extractor.ExtractOnce(context.Background())
+	if err != nil || summary.Failed != 3 || summary.PausedUntil.IsZero() || summary.LastError == nil {
+		t.Fatalf("the first pass = %+v, %v; want it paused after three failures", summary, err)
+	}
+	for range 59 { // the background's pass every minute, for the rest of the hour
+		now = now.Add(time.Minute)
+		if _, err := extractor.ExtractOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	attempts := map[string]int{}
+	for _, request := range model.requests {
+		attempts[strings.SplitN(request.User, "\n", 2)[0]]++
+	}
+	for job, count := range attempts {
+		if count > 3 {
+			t.Errorf("%s was tried %d times in an hour", job, count)
+		}
+	}
+	if len(model.requests) > 15 {
+		t.Errorf("%d tries in an hour: %v", len(model.requests), attempts)
+	}
+
+	// A job read now succeeds, and so ends the pause; the other jobs are read
+	// once their waits are over.
+	model.failAll = false
+	jobs, _, _ := hub.ListJobs(context.Background(), store.JobFilter{})
+	if err := extractor.ReadJobNow(context.Background(), jobs[0].Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	read := 0
+	summary, err = extractor.ExtractOnce(context.Background())
+	if err != nil || !summary.PausedUntil.IsZero() {
+		t.Fatalf("a pass after a success = %+v, %v", summary, err)
+	}
+	read += summary.Read
+	now = now.Add(6 * time.Hour)
+	summary, err = extractor.ExtractOnce(context.Background())
+	if err != nil || summary.Failed != 0 || summary.Waiting != 0 {
+		t.Fatalf("a pass after the waits = %+v, %v", summary, err)
+	}
+	if read += summary.Read; read != 4 {
+		t.Fatalf("%d jobs read after the success, want the other 4", read)
 	}
 }
 
