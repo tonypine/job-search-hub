@@ -620,7 +620,7 @@ func checkScreens(t *testing.T, hub *store.Store) {
 	t.Helper()
 	routes := http.NewServeMux()
 	asOwner := func(next http.Handler) http.Handler { return next }
-	api.RegisterJobRoutes(routes, hub, nil, nil, asOwner)
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{}, nil, asOwner)
 	api.RegisterCompanyRoutes(routes, hub, nil, asOwner)
 	get := func(path string, response any) {
 		t.Helper()
@@ -689,7 +689,7 @@ func checkScreens(t *testing.T, hub *store.Store) {
 func checkSummaryOnlyPay(t *testing.T, hub *store.Store) {
 	t.Helper()
 	routes := http.NewServeMux()
-	api.RegisterJobRoutes(routes, hub, nil, nil, func(next http.Handler) http.Handler { return next })
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{}, nil, func(next http.Handler) http.Handler { return next })
 
 	type payJSON struct {
 		Ranges  *[]json.RawMessage `json:"ranges"`

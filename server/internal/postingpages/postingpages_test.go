@@ -36,6 +36,10 @@ func TestAPageLinkingItsPostingOnLeverNamesThatPosting(t *testing.T) {
 	if page.Reference == nil || *page.Reference != want {
 		t.Fatalf("reference = %+v, want %+v", page.Reference, want)
 	}
+	// Should Lever not answer, the page's own text is there too.
+	if page.Posting.Title != "Senior Platform Engineer" || strings.Contains(page.Posting.Description, "Designer") {
+		t.Fatalf("posting = %+v", page.Posting)
+	}
 }
 
 func TestAnEmbeddedGreenhouseBoardNamesThePostingOfTheGhJid(t *testing.T) {

@@ -200,11 +200,11 @@ func TestLivePostings(t *testing.T) {
 
 func TestParsePostingURL(t *testing.T) {
 	for raw, want := range map[string]jobboards.PostingReference{
-		"https://job-boards.greenhouse.io/tailscale/jobs/4721289005": {Provider: "greenhouse", BoardToken: "tailscale", PostingID: "4721289005"},
-		"https://boards.greenhouse.io/stripe/jobs/123?gh_src=x":      {Provider: "greenhouse", BoardToken: "stripe", PostingID: "123"},
-		"https://jobs.lever.co/waveapps/6961-abc":                    {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
-		"https://jobs.lever.co/waveapps/6961-abc/apply":              {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
-		"https://jobs.ashbyhq.com/revenuecat/c3fe34a4":               {Provider: "ashby", BoardToken: "revenuecat", PostingID: "c3fe34a4"},
+		"https://job-boards.greenhouse.io/tailscale/jobs/4721289005":      {Provider: "greenhouse", BoardToken: "tailscale", PostingID: "4721289005"},
+		"https://boards.greenhouse.io/stripe/jobs/123?gh_src=x":           {Provider: "greenhouse", BoardToken: "stripe", PostingID: "123"},
+		"https://jobs.lever.co/waveapps/6961-abc":                         {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
+		"https://jobs.lever.co/waveapps/6961-abc/apply":                   {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
+		"https://jobs.ashbyhq.com/revenuecat/c3fe34a4":                    {Provider: "ashby", BoardToken: "revenuecat", PostingID: "c3fe34a4"},
 		"https://boards.greenhouse.io/embed/job_app?for=initech&token=55": {Provider: "greenhouse", BoardToken: "initech", PostingID: "55"},
 	} {
 		got, ok := jobboards.ParsePostingURL(raw)

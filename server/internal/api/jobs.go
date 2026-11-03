@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,11 +14,31 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
+	"github.com/tonypine/job-search-hub/server/internal/postingpages"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
 type postingSource interface {
 	FetchPosting(ctx context.Context, reference jobboards.PostingReference) (store.JobPosting, error)
+}
+
+type pageSource interface {
+	ReadPage(ctx context.Context, pageURL string) (postingpages.Page, error)
+}
+
+type jobRunStarter interface {
+	StartJobRuns(ctx context.Context, actor store.Actor, jobID uuid.UUID)
+}
+
+// JobAdding is what adding a job by URL reads its posting with, and what
+// starts its runs once it's added.
+type JobAdding struct {
+	// Postings reads a posting from its provider.
+	Postings postingSource
+	// Pages reads any other page; nil stores such a link as given.
+	Pages pageSource
+	// Runs starts a job's runs once it's added; nil starts none.
+	Runs jobRunStarter
 }
 
 type exchangeRateSource = jobfit.RateSource
@@ -73,6 +94,9 @@ type addJobRequest struct {
 type addJobResponse struct {
 	Job     store.Job `json:"job"`
 	Created bool      `json:"created"`
+	// RunsStarted says the hub started the new job's runs, which its Run
+	// menu lists running, or queued until the runs they read end.
+	RunsStarted bool `json:"runs_started"`
 }
 
 // jobDismissalRequest names the jobs to dismiss or restore; the reason is
@@ -94,9 +118,9 @@ type jobDecisionRequest struct {
 }
 
 // RegisterJobRoutes adds the owner-only routes for listing jobs, reading one
-// job's details, adding one by URL, dismissing and restoring jobs, and
-// deciding on one.
-func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings postingSource, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
+// job's details, adding one by URL, which starts its runs, dismissing and
+// restoring jobs, and deciding on one.
+func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, adding JobAdding, rateSource exchangeRateSource, requireOwner func(http.Handler) http.Handler) {
 	routes.Handle("GET /v1/jobs", requireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parameters := r.URL.Query()
 		filter := store.JobFilter{Query: parameters.Get("query"), Status: parameters.Get("status")}
@@ -164,20 +188,24 @@ func RegisterJobRoutes(routes *http.ServeMux, hub *store.Store, postings posting
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "the body must be JSON: " + err.Error()})
 			return
 		}
-		job, created, err := addJobByURL(r.Context(), hub, postings, request)
+		job, created, err := addJobByURL(r.Context(), hub, adding, request)
 		switch {
 		case errors.Is(err, store.ErrCompanyNotFound):
 			writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
 		case err != nil:
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		case created:
-			writeJSON(w, http.StatusCreated, addJobResponse{Job: job, Created: true})
+			response := addJobResponse{Job: job, Created: true}
+			if adding.Runs != nil {
+				adding.Runs.StartJobRuns(r.Context(), owner, job.ID)
+				response.RunsStarted = true
+			}
+			writeJSON(w, http.StatusCreated, response)
 		default:
 			writeJSON(w, http.StatusOK, addJobResponse{Job: job})
 		}
 	})))
 
-	owner := store.Actor{Kind: store.ActorOwner}
 	routes.Handle("POST /v1/jobs/dismiss", requireOwner(handleJobDismissal(func(ctx context.Context, request jobDismissalRequest) ([]store.Job, error) {
 		return hub.DismissJobs(ctx, owner, request.JobIDs, strings.TrimSpace(request.Reason))
 	})))
@@ -247,32 +275,96 @@ func handleJobDismissal(apply func(context.Context, jobDismissalRequest) ([]stor
 
 // addJobByURL stores the job behind a URL. A Greenhouse, Lever or Ashby
 // posting is read from its provider; when its board is already stored, the
-// job joins that board's jobs, so the board poller never duplicates it. Any
-// other URL, or a posting that cannot be read, is stored as given.
-func addJobByURL(ctx context.Context, hub *store.Store, postings postingSource, request addJobRequest) (store.Job, bool, error) {
-	owner := store.Actor{Kind: store.ActorOwner}
-	manual := store.ManualJobInput{Title: request.Title, URL: request.URL}
+// job joins that board's jobs, and when it isn't, the job names the posting,
+// so the board's sync adopts it once the board is stored. Any other URL is
+// read as a page: the provider posting it links to, else its JobPosting
+// data, else its main content. Only a page that can't be read, or has no
+// text, is stored as given, with the reason, and needs a title.
+func addJobByURL(ctx context.Context, hub *store.Store, adding JobAdding, request addJobRequest) (store.Job, bool, error) {
+	given := store.ManualJobInput{Title: strings.TrimSpace(request.Title), URL: strings.TrimSpace(request.URL)}
 
-	reference, isPostingURL := jobboards.ParsePostingURL(request.URL)
-	if !isPostingURL {
-		return hub.AddManualJob(ctx, owner, manual)
-	}
-	posting, err := postings.FetchPosting(ctx, reference)
-	if err != nil {
-		if manual.Title == "" {
-			return store.Job{}, false, errors.New("the posting could not be read (" + err.Error() + "); give a title to store it as given")
+	if reference, isPostingURL := jobboards.ParsePostingURL(given.URL); isPostingURL {
+		posting, err := adding.Postings.FetchPosting(ctx, reference)
+		if err != nil {
+			return addJobAsGiven(ctx, hub, given, describeUnreadPosting(reference, err))
 		}
-		return hub.AddManualJob(ctx, owner, manual)
+		return addProviderPosting(ctx, hub, reference, posting, given.URL)
 	}
+	if adding.Pages == nil {
+		return addJobAsGiven(ctx, hub, given, "")
+	}
+	page, err := adding.Pages.ReadPage(ctx, given.URL)
+	if err != nil {
+		return addJobAsGiven(ctx, hub, given, "The hub couldn't read the page: "+err.Error()+".")
+	}
+	if page.Reference != nil {
+		posting, err := adding.Postings.FetchPosting(ctx, *page.Reference)
+		if err == nil {
+			return addProviderPosting(ctx, hub, *page.Reference, posting, given.URL)
+		}
+		slog.Info("the provider posting a page links to couldn't be read", "url", given.URL, "provider", page.Reference.Provider, "error", err)
+	}
+	read := page.Posting
+	if strings.TrimSpace(read.Description) == "" {
+		return addJobAsGiven(ctx, hub, given, "The page shows no posting text without JavaScript, so the hub couldn't read it.")
+	}
+	title := given.Title
+	if title == "" {
+		title = read.Title
+	}
+	if title == "" {
+		return store.Job{}, false, errors.New("the page names no title; give one to store the job")
+	}
+	return hub.AddManualJob(ctx, owner, store.ManualJobInput{
+		Title: title, URL: given.URL, Location: read.Location, WorkplaceType: read.WorkplaceType, Description: read.Description,
+		BoardFacts: read.BoardFacts,
+	})
+}
 
+// owner is the actor of the owner's own adds.
+var owner = store.Actor{Kind: store.ActorOwner}
+
+// addProviderPosting stores a posting read from its provider: as its board's
+// job when the board is stored, else as a job added by hand that names it.
+func addProviderPosting(ctx context.Context, hub *store.Store, reference jobboards.PostingReference, posting store.JobPosting,
+	givenURL string) (store.Job, bool, error) {
 	board, err := hub.GetJobBoardByToken(ctx, reference.Provider, reference.BoardToken)
 	if errors.Is(err, store.ErrJobBoardNotFound) {
+		jobURL := posting.URL
+		if jobURL == "" {
+			jobURL = givenURL
+		}
+		externalID := posting.ExternalID
+		if externalID == "" {
+			externalID = reference.PostingID
+		}
 		return hub.AddManualJob(ctx, owner, store.ManualJobInput{
-			Title: posting.Title, URL: posting.URL, Location: posting.Location, Description: posting.Description,
+			Title: posting.Title, URL: jobURL, Location: posting.Location, WorkplaceType: posting.WorkplaceType, Description: posting.Description,
+			BoardFacts: posting.BoardFacts, Raw: posting.Raw,
+			Posting: &store.ProviderPosting{Provider: reference.Provider, BoardToken: reference.BoardToken, ExternalID: externalID},
 		})
 	}
 	if err != nil {
 		return store.Job{}, false, err
 	}
 	return hub.UpsertBoardJob(ctx, owner, board, posting, time.Now())
+}
+
+// addJobAsGiven stores the job with the title and URL given, and the reason
+// it has no text. Without a title it isn't stored, and the error says why.
+func addJobAsGiven(ctx context.Context, hub *store.Store, given store.ManualJobInput, reason string) (store.Job, bool, error) {
+	if given.Title == "" {
+		if reason == "" {
+			return store.Job{}, false, errors.New("a job needs a title and an http(s) URL")
+		}
+		return store.Job{}, false, errors.New(reason + " Give a title to store the job as given.")
+	}
+	given.TextMissingReason = reason
+	return hub.AddManualJob(ctx, owner, given)
+}
+
+// describeUnreadPosting says why a provider's posting wasn't read.
+func describeUnreadPosting(reference jobboards.PostingReference, err error) string {
+	provider := strings.ToUpper(reference.Provider[:1]) + reference.Provider[1:]
+	return "The hub couldn't read the posting on " + provider + ": " + err.Error() + "."
 }

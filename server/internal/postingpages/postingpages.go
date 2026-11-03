@@ -44,9 +44,10 @@ const (
 )
 
 // Page is what a posting's page gives. Reference names the posting on a
-// provider when the page links to it, and the posting is then read there.
-// Otherwise Posting holds what the page itself says, read as ReadFrom says;
-// its Description is empty when the page has no text to read.
+// provider when the page links to it, to be read there. Posting holds what
+// the page itself says, read as ReadFrom says, for when there is no
+// Reference or the provider can't be read; its Description is empty when
+// the page has no text to read.
 type Page struct {
 	Reference *jobboards.PostingReference
 	Posting   store.JobPosting
@@ -100,18 +101,20 @@ func ParsePage(pageURL *url.URL, body []byte) Page {
 	if err != nil {
 		return Page{}
 	}
+	var page Page
 	if reference, found := findPostingReference(pageURL, document); found {
-		return Page{Reference: &reference}
+		page.Reference = &reference
 	}
 	if posting, found := readJobPostingData(document); found {
 		posting.URL = pageURL.String()
-		return Page{Posting: posting, ReadFrom: ReadFromStructuredData}
+		page.Posting, page.ReadFrom = posting, ReadFromStructuredData
+		return page
 	}
-	posting := store.JobPosting{URL: pageURL.String(), Title: readTitle(document)}
+	page.Posting, page.ReadFrom = store.JobPosting{URL: pageURL.String(), Title: readTitle(document)}, ReadFromPageText
 	if text := readMainText(document); utf8.RuneCountInString(text) >= MinimumTextLength {
-		posting.Description = text
+		page.Posting.Description = text
 	}
-	return Page{Posting: posting, ReadFrom: ReadFromPageText}
+	return page
 }
 
 // pageURLPattern finds the URLs a page names, in its links and embeds and in
