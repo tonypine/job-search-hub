@@ -17,7 +17,8 @@ import (
 )
 
 var base = resume.Resume{
-	Basics: resume.Basics{Name: "Ada", Label: "Engineer", Summary: "Builds."},
+	Basics: resume.Basics{Name: "Ada", Label: "Engineer", Summary: "Builds.", Email: "ada@example.com", Phone: "+44 20 7946 0000",
+		Profiles: []resume.Profile{{Network: "LinkedIn", URL: "https://www.linkedin.com/in/ada-example"}}},
 	Work: []resume.Work{
 		{Name: "Acme", Position: "Senior Engineer", StartDate: "2022-01", Highlights: []string{"Built the API.", "Led the web app."}},
 		{Name: "Initech", Position: "Engineer", StartDate: "2019-01", EndDate: "2021-12", Highlights: []string{"Wrote reports."}},
@@ -53,6 +54,10 @@ func TestATailoredCVKeepsTheBaseFactsAndTakesTheDraftsWords(t *testing.T) {
 	})
 	if tailored.Basics.Label != "Front-End Engineer" || tailored.Basics.Summary != "Builds web apps." || tailored.Basics.Name != "Ada" {
 		t.Errorf("basics = %+v", tailored.Basics)
+	}
+	if tailored.Basics.Email != "ada@example.com" || tailored.Basics.Phone != "+44 20 7946 0000" ||
+		len(tailored.Basics.Profiles) != 1 || tailored.Basics.Profiles[0].URL != "https://www.linkedin.com/in/ada-example" {
+		t.Errorf("the tailored CV lost the base CV's contact details: %+v", tailored.Basics)
 	}
 	if len(tailored.Work) != 2 || tailored.Work[0].StartDate != "2022-01" || tailored.Work[0].Highlights[0] != "Led the React web app." || len(tailored.Work[0].Highlights) != 1 {
 		t.Errorf("work = %+v", tailored.Work)
