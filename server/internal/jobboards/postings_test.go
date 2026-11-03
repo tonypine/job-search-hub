@@ -2,6 +2,7 @@ package jobboards_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +57,13 @@ func startPostingProviders(t *testing.T) *jobboards.Verifier {
 			{"id":"b7aa","title":"Support Engineer","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/b7aa","descriptionPlain":"No pay here.","isListed":true},
 			{"id":"hidden","title":"Internal role","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/acme/hidden","descriptionPlain":"","isListed":false}]}`))
 	})
+	// An Ashby board can publish a pay summary with no salary to read a range from.
+	routes.HandleFunc("GET /posting-api/job-board/summaryonly", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"jobs":[{"id":"d4c1","title":"Designer","location":"Remote","jobUrl":"https://jobs.ashbyhq.com/summaryonly/d4c1",
+			"compensation":{"compensationTierSummary":"Offers Equity","compensationTiers":[{"title":null,"components":[
+				{"compensationType":"EquityPercentage","interval":"NONE","currencyCode":null,"minValue":null,"maxValue":null}]}]},
+			"descriptionPlain":"Design things.","isListed":true}]}`))
+	})
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
 	return &jobboards.Verifier{HTTPClient: &http.Client{Timeout: time.Second}, GreenhouseAPIBase: server.URL, LeverAPIBase: server.URL, AshbyAPIBase: server.URL, AshbyBoardBase: server.URL}
@@ -103,6 +111,17 @@ func TestAshbyPostingsKeepTheirHeadingsAndListsAsMarkdown(t *testing.T) {
 	}
 	if postings[1].Description != "No pay here." {
 		t.Errorf("a posting without HTML stored %q, want its plain text", postings[1].Description)
+	}
+}
+
+func TestAnAshbyPayWithOnlyASummaryKeepsItsRangesAnEmptyList(t *testing.T) {
+	postings, err := startPostingProviders(t).FetchPostings(context.Background(), jobboards.Ashby, "summaryonly")
+	if err != nil || len(postings) != 1 || postings[0].Pay == nil || postings[0].Pay.Summary != "Offers Equity" {
+		t.Fatalf("postings = %+v, %v", postings, err)
+	}
+	stored, err := json.Marshal(postings[0].Pay)
+	if err != nil || string(stored) != `{"ranges":[],"summary":"Offers Equity"}` {
+		t.Errorf("pay = %s, %v", stored, err)
 	}
 }
 
