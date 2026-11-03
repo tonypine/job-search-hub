@@ -145,12 +145,19 @@ func TestAModelFailingEveryCallIsRetriedWithBackoff(t *testing.T) {
 	if err := extractor.ReadJobNow(context.Background(), jobs[0].Job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if summary, err := extractor.ExtractOnce(context.Background()); err != nil || !summary.PausedUntil.IsZero() {
+	read := 0
+	summary, err = extractor.ExtractOnce(context.Background())
+	if err != nil || !summary.PausedUntil.IsZero() {
 		t.Fatalf("a pass after a success = %+v, %v", summary, err)
 	}
+	read += summary.Read
 	now = now.Add(6 * time.Hour)
-	if summary, err := extractor.ExtractOnce(context.Background()); err != nil || summary.Read != 4 || summary.Waiting != 0 {
-		t.Fatalf("a pass after a success = %+v, %v", summary, err)
+	summary, err = extractor.ExtractOnce(context.Background())
+	if err != nil || summary.Failed != 0 || summary.Waiting != 0 {
+		t.Fatalf("a pass after the waits = %+v, %v", summary, err)
+	}
+	if read += summary.Read; read != 4 {
+		t.Fatalf("%d jobs read after the success, want the other 4", read)
 	}
 }
 
