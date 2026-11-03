@@ -283,7 +283,7 @@ func handleJobDismissal(apply func(context.Context, jobDismissalRequest) ([]stor
 func addJobByURL(ctx context.Context, hub *store.Store, adding JobAdding, request addJobRequest) (store.Job, bool, error) {
 	given := store.ManualJobInput{Title: strings.TrimSpace(request.Title), URL: strings.TrimSpace(request.URL)}
 
-	if reference, isPostingURL := jobboards.ParsePostingURL(given.URL); isPostingURL {
+	if reference, isPostingURL := jobboards.ParsePostingURL(given.URL); isPostingURL && adding.Postings != nil {
 		posting, err := adding.Postings.FetchPosting(ctx, reference)
 		if err != nil {
 			return addJobAsGiven(ctx, hub, given, describeUnreadPosting(reference, err))
@@ -297,7 +297,7 @@ func addJobByURL(ctx context.Context, hub *store.Store, adding JobAdding, reques
 	if err != nil {
 		return addJobAsGiven(ctx, hub, given, "The hub couldn't read the page: "+err.Error()+".")
 	}
-	if page.Reference != nil {
+	if page.Reference != nil && adding.Postings != nil {
 		posting, err := adding.Postings.FetchPosting(ctx, *page.Reference)
 		if err == nil {
 			return addProviderPosting(ctx, hub, *page.Reference, posting, given.URL)
