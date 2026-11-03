@@ -186,7 +186,7 @@ To open the screens that need a past install, such as Settings › Version's *Go
 - `running-version`: the version the app runs as, such as `0.1.252`, in place of the build's `0.1.0-dev`, so the version in `previous/` is older and the app isn't a local build;
 - `releases.json`: the releases in GitHub's shape, read when neither `HUB_RELEASES_URL` nor the build names a feed.
 
-With a fixture's Updates folder the app writes only in the copy: *Install now…* is turned off with a note, and an install or a going back that's asked for is written to the copy's `install.log` and never reaches `hub-update` or launchd. The committed fixtures are in `macos/Tests/Fixtures/`: `updates-nothing-lost` runs 0.1.252 with 0.1.247 kept, and `updates-withdrawn` does too, with 0.1.252 withdrawn in its feed.
+With a fixture's Updates folder the app writes only in the copy: *Install now…* is turned off with a note, and an install or a going back that's asked for is written to the copy's `install.log` and never reaches `hub-update` or launchd. The committed fixtures are in `macos/Tests/Fixtures/`: `updates-nothing-lost` runs 0.1.252 with 0.1.247 kept, and `updates-withdrawn` does too, with 0.1.252 withdrawn in its feed. They reach Settings › Version's *Go back to…* and the withdrawn card; the go-back sheet, its cost and the offer after a first-day crash bring their own fixtures with the screens that draw them.
 
 `qa_launch_app`'s `appearance: "dark"` (or `"light"`) sets `SYMPHONY_BAR_QA_APPEARANCE`, which the app applies at launch in QA mode; outside it, or with no or another value, it follows the system's.
 
