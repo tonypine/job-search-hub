@@ -491,14 +491,20 @@ func TestTheBaseCVIsSavedAndRenderedAsHTML(t *testing.T) {
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/cvs/base", ownerToken, ""); status != http.StatusNotFound {
 		t.Errorf("before a base CV: %d, want 404", status)
 	}
-	body := `{"basics":{"name":"Ada Lovelace","label":"Senior Engineer"},"work":[{"name":"Acme","position":"Engineer","startDate":"2020-03","highlights":["Shipped it."]}]}`
+	body := `{"basics":{"name":"Ada Lovelace","label":"Senior Engineer","email":"ada@example.com","phone":"+44 20 7946 0000",` +
+		`"profiles":[{"network":"LinkedIn","url":"https://www.linkedin.com/in/ada-example"}]},"work":[{"name":"Acme","position":"Engineer","startDate":"2020-03","highlights":["Shipped it."]}]}`
 	status, answer := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, body)
 	var saved store.CV
 	if err := json.Unmarshal(answer, &saved); status != http.StatusOK || err != nil || saved.Kind != "base" || saved.Content.Work[0].Highlights[0] != "Shipped it." {
 		t.Fatalf("save: %d %s", status, answer)
 	}
+	if basics := saved.Content.Basics; basics.Email != "ada@example.com" || basics.Phone != "+44 20 7946 0000" ||
+		len(basics.Profiles) != 1 || basics.Profiles[0].Network != "LinkedIn" || basics.Profiles[0].URL != "https://www.linkedin.com/in/ada-example" {
+		t.Errorf("the contact details weren't saved: %+v", basics)
+	}
 	status, page := send(t, http.MethodGet, service.url+"/v1/cvs/base/html", ownerToken, "")
-	if status != http.StatusOK || !strings.Contains(string(page), "<h1>Ada Lovelace</h1>") || !strings.Contains(string(page), "Mar 2020 - Present") {
+	if status != http.StatusOK || !strings.Contains(string(page), "<h1>Ada Lovelace</h1>") || !strings.Contains(string(page), "Mar 2020 - Present") ||
+		!strings.Contains(string(page), `<a href="mailto:ada@example.com">ada@example.com</a>`) {
 		t.Fatalf("html: %d %s", status, page)
 	}
 	if status, _ := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, `{"basics":{}}`); status != http.StatusBadRequest {

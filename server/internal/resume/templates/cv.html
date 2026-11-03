@@ -10,14 +10,21 @@
   h1 { margin: 0; font-size: 25pt; font-weight: 700; letter-spacing: -0.2pt; }
   .label { margin-top: 4pt; font-size: 11pt; color: #222; }
   .location { margin-top: 3pt; font-size: 9pt; color: #444; }
-  h2 { margin: 14pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.2pt solid #111; font-size: 10.5pt; font-weight: 700; letter-spacing: 1.1pt; text-transform: uppercase; }
+  .location a { color: inherit; text-decoration: none; }
+  h2 { margin: 14pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.2pt solid #111; font-size: 10.5pt; font-weight: 700; letter-spacing: 1.1pt; text-transform: uppercase; break-after: avoid; }
   p { margin: 0; }
-  .entry { margin-bottom: 9pt; break-inside: avoid; }
+  /* A role may split between bullets. WebKit ignores break-after on the
+     heading and place lines, so each role groups its heading, place line and
+     first bullet in one .keep, and its last bullet and skills line in
+     another, and each section groups its h2 with its first block. */
+  .entry { margin-bottom: 9pt; break-inside: auto; }
+  .keep, li { break-inside: avoid; }
   .heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12pt; padding-right: 3pt; }
   .heading strong { font-weight: 700; }
   .dates { font-size: 9pt; color: #444; white-space: nowrap; }
   .place { color: #444; }
   ul { margin: 4pt 0 0; padding-left: 13pt; }
+  ul.rest { margin-top: 0; }
   li { margin: 1pt 0; }
   .skills { margin-top: 3pt; font-size: 9pt; }
   .skills strong { font-weight: 700; }
@@ -27,46 +34,56 @@
 <header>
   <h1>{{.Basics.Name}}</h1>
   {{with .Basics.Label}}<p class="label">{{.}}</p>{{end}}
-  {{with formatLocation .Basics.Location}}<p class="location">{{.}}</p>{{end}}
+  {{with listContactParts .Basics}}<p class="location">{{range $index, $part := .}}{{if $index}} · {{end}}{{if $part.Link}}<a href="{{$part.Link}}">{{$part.Text}}</a>{{else}}{{$part.Text}}{{end}}{{end}}</p>{{end}}
 </header>
 {{with .Basics.Summary}}
-<section>
+<section class="keep">
   <h2>Summary</h2>
   <p>{{.}}</p>
 </section>
 {{end}}
 {{if .Work}}
 <section>
-  <h2>Experience</h2>
-  {{range .Work}}
+  {{range $index, $work := .Work}}
+  {{$bullets := splitHighlights $work.Highlights}}
   <div class="entry">
-    <div class="heading"><strong>{{.Position}}</strong><span class="dates">{{formatDateRange .StartDate .EndDate}}</span></div>
-    <p class="place">{{.Name}}{{with .Location}} | {{.}}{{end}}</p>
-    {{if .Highlights}}<ul>{{range .Highlights}}<li>{{.}}</li>{{end}}</ul>{{end}}
-    {{if .Skills}}<p class="skills"><strong>Skills:</strong> {{join .Skills ", "}}</p>{{end}}
+    <div class="keep">
+      {{if eq $index 0}}<h2>Experience</h2>{{end}}
+      <div class="heading"><strong>{{$work.Position}}</strong><span class="dates">{{formatDateRange $work.StartDate $work.EndDate}}</span></div>
+      <p class="place">{{$work.Name}}{{with $work.Location}} | {{.}}{{end}}</p>
+      {{if $bullets.HasFirst}}<ul><li>{{$bullets.First}}</li></ul>{{end}}
+      {{if and $work.Skills (not $bullets.HasLast)}}<p class="skills"><strong>Skills:</strong> {{join $work.Skills ", "}}</p>{{end}}
+    </div>
+    {{with $bullets.Middle}}<ul class="rest">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+    {{if $bullets.HasLast}}
+    <div class="keep">
+      <ul class="rest"><li>{{$bullets.Last}}</li></ul>
+      {{if $work.Skills}}<p class="skills"><strong>Skills:</strong> {{join $work.Skills ", "}}</p>{{end}}
+    </div>
+    {{end}}
   </div>
   {{end}}
 </section>
 {{end}}
 {{if .Education}}
 <section>
-  <h2>Education</h2>
-  {{range .Education}}
-  <div class="entry">
-    <div class="heading"><strong>{{formatDegree .}}</strong><span class="dates">{{formatDateRange .StartDate .EndDate}}</span></div>
-    <p class="place">{{.Institution}}</p>
+  {{range $index, $education := .Education}}
+  <div class="entry keep">
+    {{if eq $index 0}}<h2>Education</h2>{{end}}
+    <div class="heading"><strong>{{formatDegree $education}}</strong><span class="dates">{{formatDateRange $education.StartDate $education.EndDate}}</span></div>
+    <p class="place">{{$education.Institution}}</p>
   </div>
   {{end}}
 </section>
 {{end}}
 {{if .Skills}}
-<section>
+<section class="keep">
   <h2>Skills</h2>
   <p>{{joinSkillNames .Skills}}</p>
 </section>
 {{end}}
 {{if .Languages}}
-<section>
+<section class="keep">
   <h2>Languages</h2>
   <p>{{joinLanguages .Languages}}</p>
 </section>

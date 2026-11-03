@@ -7,6 +7,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -22,10 +23,21 @@ type Resume struct {
 }
 
 type Basics struct {
-	Name     string   `json:"name"`
-	Label    string   `json:"label"`
-	Location Location `json:"location"`
-	Summary  string   `json:"summary"`
+	Name     string    `json:"name"`
+	Label    string    `json:"label"`
+	Email    string    `json:"email,omitempty"`
+	Phone    string    `json:"phone,omitempty"`
+	Location Location  `json:"location"`
+	Summary  string    `json:"summary"`
+	Profiles []Profile `json:"profiles,omitempty"`
+}
+
+// Profile is an account elsewhere, such as LinkedIn: its network, the
+// owner's username there and the profile's address.
+type Profile struct {
+	Network  string `json:"network"`
+	Username string `json:"username,omitempty"`
+	URL      string `json:"url"`
 }
 
 type Location struct {
@@ -98,6 +110,93 @@ func formatLocation(location Location) string {
 	return strings.Join(parts, ", ")
 }
 
+// contactPart is one piece of the CV's contact line: its text and, when it
+// has one, the link it opens.
+type contactPart struct {
+	Text string
+	Link template.URL
+}
+
+// listContactParts is the header's contact line: the location, then the
+// phone, the email and each profile, leaving out the ones that are empty.
+// The phone links as tel:, the email as mailto:, and a profile as its own
+// http(s) address, shown without its scheme and "www.".
+func listContactParts(basics Basics) []contactPart {
+	var parts []contactPart
+	if location := formatLocation(basics.Location); location != "" {
+		parts = append(parts, contactPart{Text: location})
+	}
+	if phone := strings.TrimSpace(basics.Phone); phone != "" {
+		part := contactPart{Text: phone}
+		if number := buildPhoneNumber(phone); number != "" {
+			part.Link = template.URL("tel:" + number)
+		}
+		parts = append(parts, part)
+	}
+	if email := strings.TrimSpace(basics.Email); email != "" {
+		part := contactPart{Text: email}
+		if strings.Contains(email, "@") && !strings.ContainsAny(email, " <>\"'") {
+			part.Link = template.URL("mailto:" + email)
+		}
+		parts = append(parts, part)
+	}
+	for _, profile := range basics.Profiles {
+		address := strings.TrimSpace(profile.URL)
+		parsed, err := url.Parse(address)
+		if address == "" || err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+			if text := strings.TrimSpace(profile.Username); text != "" {
+				parts = append(parts, contactPart{Text: text})
+			} else if address != "" {
+				parts = append(parts, contactPart{Text: address})
+			}
+			continue
+		}
+		text := strings.TrimPrefix(parsed.Host, "www.") + strings.TrimSuffix(parsed.EscapedPath(), "/")
+		parts = append(parts, contactPart{Text: text, Link: template.URL(parsed.String())})
+	}
+	return parts
+}
+
+// buildPhoneNumber is the phone as a tel: link dials it: its digits, with a
+// leading "+" when it has one.
+func buildPhoneNumber(phone string) string {
+	var number strings.Builder
+	for index, character := range phone {
+		switch {
+		case character >= '0' && character <= '9':
+			number.WriteRune(character)
+		case character == '+' && index == 0:
+			number.WriteRune(character)
+		}
+	}
+	if strings.Trim(number.String(), "+") == "" {
+		return ""
+	}
+	return number.String()
+}
+
+// roleBullets splits a role's bullets so the print keeps the first with
+// the role's heading and the last with its skills line, and lets a page end
+// between the ones in the middle.
+type roleBullets struct {
+	First, Last       string
+	HasFirst, HasLast bool
+	Middle            []string
+}
+
+func splitHighlights(highlights []string) roleBullets {
+	var bullets roleBullets
+	if len(highlights) == 0 {
+		return bullets
+	}
+	bullets.First, bullets.HasFirst = highlights[0], true
+	if len(highlights) > 1 {
+		bullets.Last, bullets.HasLast = highlights[len(highlights)-1], true
+		bullets.Middle = highlights[1 : len(highlights)-1]
+	}
+	return bullets
+}
+
 // formatDegree is "Technical Degree in Digital Media Design".
 func formatDegree(education Education) string {
 	if education.Area == "" {
@@ -129,12 +228,14 @@ func joinLanguages(languages []Language) string {
 var templates embed.FS
 
 var cvTemplate = template.Must(template.New("cv.html").Funcs(template.FuncMap{
-	"formatDateRange": formatDateRange,
-	"formatLocation":  formatLocation,
-	"formatDegree":    formatDegree,
-	"joinSkillNames":  joinSkillNames,
-	"joinLanguages":   joinLanguages,
-	"join":            strings.Join,
+	"formatDateRange":  formatDateRange,
+	"formatLocation":   formatLocation,
+	"listContactParts": listContactParts,
+	"splitHighlights":  splitHighlights,
+	"formatDegree":     formatDegree,
+	"joinSkillNames":   joinSkillNames,
+	"joinLanguages":    joinLanguages,
+	"join":             strings.Join,
 }).ParseFS(templates, "templates/cv.html"))
 
 // RenderHTML renders the CV as a self-contained HTML page in the owner's
