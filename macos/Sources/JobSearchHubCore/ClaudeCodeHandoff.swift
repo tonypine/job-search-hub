@@ -14,7 +14,7 @@ public enum ClaudeCodeHandoff {
     /// QA mode as the app has it: a QA build, which make-app.sh marks with
     /// HubQABuild, or a launch with `--qa-mode`.
     public static func isQAMode(arguments: [String], isQABuild: Bool) -> Bool {
-        isQABuild || arguments.contains(HubConnection.qaModeArgument)
+        QAMode.isOn(arguments: arguments, isQABuild: isQABuild)
     }
 
     /// The stub in QA mode, without ever looking for `claude`; outside QA
