@@ -205,13 +205,15 @@ func TestParsePostingURL(t *testing.T) {
 		"https://jobs.lever.co/waveapps/6961-abc":                    {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
 		"https://jobs.lever.co/waveapps/6961-abc/apply":              {Provider: "lever", BoardToken: "waveapps", PostingID: "6961-abc"},
 		"https://jobs.ashbyhq.com/revenuecat/c3fe34a4":               {Provider: "ashby", BoardToken: "revenuecat", PostingID: "c3fe34a4"},
+		"https://boards.greenhouse.io/embed/job_app?for=initech&token=55": {Provider: "greenhouse", BoardToken: "initech", PostingID: "55"},
 	} {
 		got, ok := jobboards.ParsePostingURL(raw)
 		if !ok || got != want {
 			t.Errorf("%s: got %+v, %v; want %+v", raw, got, ok, want)
 		}
 	}
-	for _, raw := range []string{"https://acme.com/careers/42", "https://jobs.lever.co/waveapps", "https://job-boards.greenhouse.io/tailscale"} {
+	for _, raw := range []string{"https://acme.com/careers/42", "https://jobs.lever.co/waveapps", "https://job-boards.greenhouse.io/tailscale",
+		"https://jobs.ashbyhq.com/revenuecat/embed?version=2", "https://boards.greenhouse.io/embed/job_app?for=initech"} {
 		if got, ok := jobboards.ParsePostingURL(raw); ok {
 			t.Errorf("%s was recognized as %+v", raw, got)
 		}
