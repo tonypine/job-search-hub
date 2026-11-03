@@ -25,7 +25,7 @@ struct QAReleaseFeedCard: View {
     }
 
     private var detail: String {
-        if ReleaseFeed.feedURL(checker.qaFeedText) != nil {
+        if checker.qaFeedURL != nil {
             return "Checks read the releases from this URL."
         }
         if checker.qaFeedText.trimmingCharacters(in: .whitespaces).isEmpty {

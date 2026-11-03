@@ -111,9 +111,14 @@ final class Installer {
         self.updates = updates
     }
 
+    static let qaFixtureReason = "A QA fixture stands in for the Updates folder, so installs and going back are recorded in its log, not run."
+
     /// Why this copy of the app can't install versions; nil when it can. Only
     /// the installed app, carrying `hub-update`, installs over itself.
     var cannotInstallReason: String? {
+        if updates.isQAFixture {
+            return Self.qaFixtureReason
+        }
         if !ServerAgent.isInstalledCopy {
             return "Only the app installed in ~/Applications installs new versions. Install a build with macos/Scripts/install-app.sh first."
         }
@@ -390,6 +395,7 @@ final class Installer {
     /// bundle, which the install moves, and loads it as a one-shot launchd
     /// job that runs again if it crashes, or at login after a power loss.
     private func startHubUpdate(_ target: Target) throws {
+        try refuseQAFixture("Install \(target.version)")
         if let state = updates.readState(), !state.step.isFinished {
             throw InstallError("The install of \(state.to) is still under way.")
         }
@@ -436,6 +442,14 @@ final class Installer {
             try? fileManager.removeItem(at: updates.stateURL)
             throw InstallError("launchd didn't start hub-update: \(output)")
         }
+    }
+
+    /// With a QA fixture's Updates folder, records what was asked in its
+    /// log and throws before anything reaches `hub-update` or launchd.
+    func refuseQAFixture(_ request: String) throws {
+        guard updates.isQAFixture else { return }
+        updates.log("QA fixture: \(request) was asked; hub-update wasn't started.", at: .now)
+        throw InstallError(Self.qaFixtureReason)
     }
 
     private static func runLaunchctl(_ arguments: [String]) -> (Int32, String) {

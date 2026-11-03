@@ -6,11 +6,16 @@ import UserNotifications
 /// without a delegate, macOS keeps them out of sight. Also answers Control-
 /// Command-F with full screen, opens the main window when launch ends
 /// without one, starts looking for new versions, reads how the last install
-/// ended, and installs at ⌘Q when asked to.
+/// ended, and installs at ⌘Q when asked to. In QA mode it draws light or
+/// dark as `SYMPHONY_BAR_QA_APPEARANCE` asks.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var fullScreenShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // In QA mode, the appearance Symphony's QA launch asks for.
+        if let appearance = QAAppearance.read(isQAMode: QAMode.current, environment: ProcessInfo.processInfo.environment) {
+            NSApp.appearance = NSAppearance(named: appearance.appearanceName)
+        }
         UNUserNotificationCenter.current().delegate = self
         fullScreenShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: Self.toggleFullScreenOnShortcut)
         // Before the checker: what the last install installed is part of
@@ -64,5 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         else { return event }
         window.toggleFullScreen(nil)
         return nil
+    }
+}
+
+extension QAAppearance {
+    /// The appearance `NSApp` draws in.
+    var appearanceName: NSAppearance.Name {
+        switch self {
+        case .light: .aqua
+        case .dark: .darkAqua
+        }
     }
 }
