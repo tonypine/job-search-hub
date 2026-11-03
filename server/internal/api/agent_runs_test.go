@@ -33,6 +33,8 @@ type apiUnderTest struct {
 	verifier auth.TokenVerifier
 	drainer  *drain.Drain
 	url      string
+	// runs are the jobs whose runs an add started.
+	runs *stubRuns
 }
 
 func startAPI(t *testing.T) apiUnderTest {
@@ -44,12 +46,13 @@ func startAPI(t *testing.T) apiUnderTest {
 		Scopes: []string{tokens.ScopeOwner}, AllowMissingExpiration: true,
 	})
 	routes := http.NewServeMux()
+	runs := &stubRuns{}
 	drainer := drain.New(time.Hour)
 	api.RegisterDrainRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterAgentRunRoutes(routes, hub, drainer, requireOwner)
 	api.RegisterCompanyRoutes(routes, hub, stubRates{}, requireOwner)
 	api.RegisterProfileRoutes(routes, hub, requireOwner)
-	api.RegisterJobRoutes(routes, hub, stubPostings{}, stubRates{}, requireOwner)
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{Postings: stubPostings{}, Pages: stubPages{}, Runs: runs}, stubRates{}, requireOwner)
 	api.RegisterPipelineRoutes(routes, hub, requireOwner)
 	api.RegisterJobCriteriaRoutes(routes, hub, requireOwner)
 	api.RegisterConnectionRoutes(routes, hub, requireOwner)
@@ -78,7 +81,7 @@ func startAPI(t *testing.T) apiUnderTest {
 	api.RegisterCVRoutes(routes, hub, nil, nil, requireOwner)
 	server := httptest.NewServer(routes)
 	t.Cleanup(server.Close)
-	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, drainer: drainer, url: server.URL}
+	return apiUnderTest{pool: pool, hub: hub, verifier: verifier, drainer: drainer, url: server.URL, runs: runs}
 }
 
 func send(t *testing.T, method, url, token, body string) (int, []byte) {

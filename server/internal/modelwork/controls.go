@@ -55,6 +55,9 @@ type Controls struct {
 	// by kind and subject; starting guards them.
 	starting sync.Mutex
 	starts   map[startKey][]uuid.UUID
+	// queued are the kinds StartJobRuns starts for a job once their stage
+	// comes; starting guards them too.
+	queued map[startKey]bool
 }
 
 // Status is the queue's state with the runtime's, and how many jobs wait

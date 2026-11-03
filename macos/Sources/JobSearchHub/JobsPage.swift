@@ -191,6 +191,7 @@ struct JobsPage: View {
     @Environment(HubConnection.self) private var connection
     @Environment(HubEventStream.self) private var events
     @Environment(UnseenUpdates.self) private var unseen
+    @Environment(JobRunStarts.self) private var runStarts
     @Environment(DetailsInspector.self) private var details
     @Environment(CompanyJobFinder.self) private var jobFinder
     @Environment(JobDecisions.self) private var decisions
@@ -266,7 +267,7 @@ struct JobsPage: View {
                     }
                 }
                 .sheet(isPresented: $isAddingByURL) {
-                    AddJobSheet(client: client) { added in
+                    AddJobSheet(client: client, starts: runStarts) { added in
                         model.selectedIDs = [added.id]
                         Task { await model.load(with: client) }
                     }
@@ -569,22 +570,29 @@ private struct JobsTableRevision: Hashable {
 struct AddJobSheet: View {
     let client: HubClient
     let failureTitle: String
+    /// Follows the runs the hub starts for the job once it's added, so its
+    /// Run menu says each runs, then lands.
+    let starts: JobRunStarts
     let onAdded: @MainActor (Job) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var title = ""
     @State private var failure: HubFailure?
 
-    init(client: HubClient, failureTitle: String = "Couldn't add the job", onAdded: @escaping @MainActor (Job) async throws -> Void) {
+    init(
+        client: HubClient, starts: JobRunStarts, failureTitle: String = "Couldn't add the job",
+        onAdded: @escaping @MainActor (Job) async throws -> Void
+    ) {
         self.client = client
+        self.starts = starts
         self.failureTitle = failureTitle
         self.onAdded = onAdded
     }
 
     var body: some View {
         Form {
-            TextField("Posting URL", text: $url, prompt: Text("https://jobs.ashbyhq.com/…"))
-            TextField("Title", text: $title, prompt: Text("Only needed for sites other than Greenhouse, Lever and Ashby"))
+            TextField("Posting URL", text: $url, prompt: Text("https://acme.com/careers/…"))
+            TextField("Title", text: $title, prompt: Text("Only needed when the hub can't read the page"))
             if let failure {
                 HubErrorView(failure)
             }
@@ -604,6 +612,9 @@ struct AddJobSheet: View {
     private func add() async {
         do {
             let response = try await client.send("POST", "v1/jobs", body: AddJobRequest(url: url, title: title), as: AddJobResponse.self)
+            if response.runsStarted == true {
+                starts.followHubRuns(of: response.job.id, subjectType: JobRuns.jobSubject, with: client)
+            }
             try await onAdded(response.job)
             dismiss()
         } catch {

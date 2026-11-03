@@ -55,6 +55,7 @@ import (
 	"github.com/tonypine/job-search-hub/server/internal/modelrouter"
 	"github.com/tonypine/job-search-hub/server/internal/modelruntime"
 	"github.com/tonypine/job-search-hub/server/internal/modelwork"
+	"github.com/tonypine/job-search-hub/server/internal/postingpages"
 	"github.com/tonypine/job-search-hub/server/internal/postingtexts"
 	"github.com/tonypine/job-search-hub/server/internal/push"
 	"github.com/tonypine/job-search-hub/server/internal/startupsgallery"
@@ -234,7 +235,6 @@ func run() error {
 		}
 		return saved.Criteria.SearchTerms
 	}
-	api.RegisterJobRoutes(routes, hub, boards, rates, requireOwner)
 	googleClient := makeGoogleClient(settings, hub)
 	api.RegisterGoogleRoutes(routes, hub, googleClient, requireOwner)
 	boardPoller := boardpoller.New(hub, boards)
@@ -320,6 +320,9 @@ func run() error {
 		UnloadModel:    modelRuntime.Unload,
 	})
 	modelWork := &modelwork.Controls{Hub: hub, Queue: modelQueue, Runtime: modelRuntime, Drain: drainer, Updates: updateRecorder}
+	// A job added by URL is read from whatever page the link names, and its
+	// runs start once it's added.
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{Postings: boards, Pages: postingpages.NewReader(), Runs: modelWork}, rates, requireOwner)
 	drainer.OnChange(modelQueue.SetDraining)
 	drainer.AddLister(func() []drain.Work { return listRunningModelCall(modelQueue) })
 

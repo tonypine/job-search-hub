@@ -144,7 +144,7 @@ struct JobPostingTab<Rail: View>: View {
             }
             .id(postingAnchor)
             if document.blocks.isEmpty {
-                Text("The board kept no text for this posting; the original has it.").foregroundStyle(.secondary)
+                Text(JobPosting.describeMissingText(of: details.job)).foregroundStyle(.secondary)
             } else {
                 PostingReader(document: document, marks: marks, matches: matches, size: layout == .inspector ? .inspector : .page) { block, isPassed in
                     if isPassed {
