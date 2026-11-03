@@ -90,6 +90,53 @@ func TestAnAnswerWithoutStructuredOutputIsInvalid(t *testing.T) {
 	}
 }
 
+// writeFailingClaude writes a CLI that prints stdout and stderr and exits 1.
+func writeFailingClaude(t *testing.T, stdout, stderr string) string {
+	t.Helper()
+	folder := t.TempDir()
+	script := "#!/bin/sh\ncat <<'OUT'\n" + stdout + "\nOUT\ncat >&2 <<'ERR'\n" + stderr + "\nERR\nexit 1\n"
+	binary := filepath.Join(folder, "claude")
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return binary
+}
+
+// `claude -p --output-format json` prints its error as the result of its JSON
+// answer on stdout, so the run's error and record carry it.
+func TestACLIThatExitsNonZeroKeepsItsOwnError(t *testing.T) {
+	binary := writeFailingClaude(t, `{"type":"result","is_error":true,"result":"Claude AI usage limit reached|1762200000","total_cost_usd":0,
+		"usage":{"input_tokens":3,"output_tokens":0}}`, "")
+	var records []chatcompletions.RunRecord
+	client := &claudeprint.Client{Binary: binary, Directory: t.TempDir(),
+		RecordRun: func(_ context.Context, record chatcompletions.RunRecord) { records = append(records, record) }}
+
+	_, err := client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_facts", Schema: json.RawMessage(`{}`)})
+	if err == nil || err.Error() != "claude exited: exit status 1: Claude AI usage limit reached|1762200000" {
+		t.Fatalf("error = %v", err)
+	}
+	if errors.Is(err, chatcompletions.ErrUnreachable) || errors.Is(err, chatcompletions.ErrInvalidAnswer) {
+		t.Errorf("a failed run reads as %v", err)
+	}
+	if len(records) != 1 || records[0].Outcome != chatcompletions.RunFailed || !strings.Contains(records[0].Error, "usage limit reached") ||
+		records[0].PromptTokens != 3 {
+		t.Errorf("records = %+v", records)
+	}
+
+	// Output that isn't the CLI's JSON answer still reaches the error, with stderr.
+	client.Binary = writeFailingClaude(t, "Invalid API key · Please run /login", "warning: no settings")
+	_, err = client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_facts", Schema: json.RawMessage(`{}`)})
+	if err == nil || err.Error() != "claude exited: exit status 1: Invalid API key · Please run /login\nwarning: no settings" {
+		t.Fatalf("error without a JSON answer = %v", err)
+	}
+
+	client.Binary = writeFailingClaude(t, "", "")
+	_, err = client.CompleteJSON(context.Background(), chatcompletions.JSONRequest{SchemaName: "job_facts", Schema: json.RawMessage(`{}`)})
+	if err == nil || !strings.HasSuffix(err.Error(), "the Claude CLI said nothing") {
+		t.Fatalf("error from a silent CLI = %v", err)
+	}
+}
+
 // A missing CLI is unreachable, so a route's fallback runs instead.
 func TestAMissingBinaryIsUnreachable(t *testing.T) {
 	client := &claudeprint.Client{Binary: filepath.Join(t.TempDir(), "absent"), Directory: t.TempDir()}
