@@ -241,6 +241,7 @@ struct PipelinePage: View {
     @Environment(JobDecisions.self) private var decisions
     @Environment(ApplicationChanges.self) private var changes
     @Environment(CompanyResearch.self) private var research
+    @Environment(JobRunStarts.self) private var runStarts
     @State private var model = PipelineModel()
     @State private var pendingClose: PendingClose?
     @State private var closedReason = ""
@@ -289,7 +290,7 @@ struct PipelinePage: View {
                 .onChange(of: getJobOrder(), initial: true) { _, order in details.setJobOrder(order, on: .pipeline) }
                 .onChange(of: research.state) { finishFindingPeople(with: client) }
                 .sheet(isPresented: $isAdding) {
-                    AddJobSheet(client: client, failureTitle: "Couldn't add the application") { job in
+                    AddJobSheet(client: client, starts: runStarts, failureTitle: "Couldn't add the application") { job in
                         let cardID = try await model.addApplication(for: job.id, with: client)
                         model.search = ""
                         // A change of scope clears the selection, so the card

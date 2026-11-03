@@ -42,8 +42,12 @@ public struct RunnableKind: Decodable, Equatable, Identifiable, Sendable {
     /// is still running, retries and fallbacks included. An agent's, which
     /// the Mac runs, aren't here.
     public var runningStarts: [UUID]
+    /// The hub starts the kind once the runs it reads end, as for a job just
+    /// added; nil from a hub that doesn't say.
+    public var queued: Bool?
 
     public var isAgent: Bool { engine == "claude_agent" }
+    public var isQueued: Bool { queued ?? false }
 }
 
 public struct RunnableKindsResponse: Decodable, Equatable, Sendable {
@@ -223,7 +227,9 @@ public enum JobRuns {
     public static func describeState(
         of kind: RunnableKind, now: Date, calendar: Calendar = .current, locale: Locale = .current
     ) -> String {
-        let line = kind.canRun
+        let line = kind.isQueued
+            ? "Starts once the runs before it end"
+            : kind.canRun
             ? describeLastRun(kind.lastRun, now: now, calendar: calendar, locale: locale)
             : capitalizeFirst(kind.reason ?? "Can't run yet")
         return kind.paused ? "\(line) · kind paused" : line

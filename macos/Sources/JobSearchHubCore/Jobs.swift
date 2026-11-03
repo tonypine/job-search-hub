@@ -23,10 +23,13 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     /// job leaves the jobs list until restored.
     public var dismissedAt: Date?
     public var dismissalReason: String?
+    /// Why the job has no posting text, as when the page it was added from
+    /// couldn't be read; nil once it has its text.
+    public var textMissingReason: String?
 
     enum CodingKeys: String, CodingKey {
         case id, source, title, location, workplaceType, url, description, pay, employmentType, department, otherLocations, publishedAt
-        case firstSeenAt, lastSeenAt, closedAt, dismissedAt, dismissalReason
+        case firstSeenAt, lastSeenAt, closedAt, dismissedAt, dismissalReason, textMissingReason
         case companyID = "companyId"
         case jobBoardID = "jobBoardId"
     }
@@ -223,6 +226,8 @@ public struct AddJobRequest: Codable, Equatable, Sendable {
 public struct AddJobResponse: Codable, Equatable, Sendable {
     public var job: Job
     public var created: Bool
+    /// The hub started the new job's runs; nil from a hub that doesn't.
+    public var runsStarted: Bool?
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
@@ -324,5 +329,17 @@ public enum CompanyJobs {
             URLQueryItem(name: "company_id", value: companyID.uuidString), URLQueryItem(name: "status", value: JobStatusFilter.open.rawValue),
             URLQueryItem(name: "limit", value: String(JobsQuery.pageSize)),
         ]
+    }
+}
+
+/// What a job's posting tab says when the job has no posting text.
+public enum JobPosting {
+    /// Why the job has no text, when the hub knows, else that the original
+    /// has it.
+    public static func describeMissingText(of job: Job) -> String {
+        if let reason = job.textMissingReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            return reason
+        }
+        return "The board kept no text for this posting; the original has it."
     }
 }
