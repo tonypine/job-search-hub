@@ -242,33 +242,7 @@ struct ContentView: View {
             // without a client renders nothing, which would take it along.
             // The page stays in the tree without one, so its state outlives
             // a hub address that is briefly invalid while being edited.
-            ZStack {
-                // A job open as a page takes the list's place. The list stays
-                // underneath, hidden and out of reach of the keyboard, so it
-                // comes back with its selection and its scroll as they were.
-                page
-                    .opacity(expandedJobID == nil ? 1 : 0)
-                    .allowsHitTesting(expandedJobID == nil)
-                    .accessibilityHidden(expandedJobID != nil)
-                    .disabled(expandedJobID != nil)
-                if let expandedJobID, let selectedPage, let client = connection.makeClient() {
-                    JobPageView(jobID: expandedJobID, listPage: selectedPage, client: client) {
-                        details.collapse()
-                        requests.ask(.focusList, on: selectedPage)
-                    }
-                }
-                if connectionProblem == .notSetUp {
-                    ConnectToHubView()
-                        .navigationTitle(selectedPage?.title ?? "Job Search Hub")
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Going back, from Settings › Version, the withdrawn banner or the
-            // prompt after a crash in a version's first day.
-            .sheet(isPresented: Binding(get: { goingBack.isShowingSheet }, set: { if !$0 { goingBack.dismiss() } })) {
-                GoBackSheet()
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
+            DetailColumn {
                 // How the last install ended gives way to the connection
                 // banner while the hub is unreachable.
                 if let connectionProblem {
@@ -289,6 +263,32 @@ struct ContentView: View {
                         dismiss: goingBack.dismissWithdrawnBanner
                     )
                 }
+            } content: {
+                ZStack {
+                    // A job open as a page takes the list's place. The list stays
+                    // underneath, hidden and out of reach of the keyboard, so it
+                    // comes back with its selection and its scroll as they were.
+                    page
+                        .opacity(expandedJobID == nil ? 1 : 0)
+                        .allowsHitTesting(expandedJobID == nil)
+                        .accessibilityHidden(expandedJobID != nil)
+                        .disabled(expandedJobID != nil)
+                    if let expandedJobID, let selectedPage, let client = connection.makeClient() {
+                        JobPageView(jobID: expandedJobID, listPage: selectedPage, client: client) {
+                            details.collapse()
+                            requests.ask(.focusList, on: selectedPage)
+                        }
+                    }
+                    if connectionProblem == .notSetUp {
+                        ConnectToHubView()
+                            .navigationTitle(selectedPage?.title ?? "Job Search Hub")
+                    }
+                }
+            }
+            // Going back, from Settings › Version, the withdrawn banner or the
+            // prompt after a crash in a version's first day.
+            .sheet(isPresented: Binding(get: { goingBack.isShowingSheet }, set: { if !$0 { goingBack.dismiss() } })) {
+                GoBackSheet()
             }
             .overlay(alignment: .bottom) {
                 if actionError != nil {
