@@ -12,7 +12,7 @@ import UserNotifications
 @Observable
 final class GoingBack {
     static let shared = GoingBack(updates: Installer.shared.updates, qaStandIn: QAFixtures.current?.readGoingBack())
-    private static let withdrawnDismissedKey = "withdrawnBannerDismissed"
+    static let withdrawnDismissedKey = "withdrawnBannerDismissed"
     private static let withdrawnNotifiedKey = "withdrawnNotified"
 
     /// What the sheet asks about: its title and buttons follow.
@@ -72,11 +72,17 @@ final class GoingBack {
     /// In QA, a fixture's `going-back.json`: the migrations and the report
     /// the servers would give, which the QA host has no real servers for.
     @ObservationIgnored let qaStandIn: QAGoingBack?
+    @ObservationIgnored private let installer: Installer
+    /// With a QA fixture, what the withdrawn banner remembers, for this
+    /// launch only: the preferences outlive the fixture's copy, and a banner
+    /// dismissed on one launch would be gone from every later one on the host.
+    @ObservationIgnored private var qaWithdrawnMarks: [String: String] = [:]
 
-    init(updates: UpdatesFolder, running: HubVersion? = HubVersion(HubClient.appVersion), qaStandIn: QAGoingBack? = nil) {
+    init(updates: UpdatesFolder, running: HubVersion? = HubVersion(HubClient.appVersion), qaStandIn: QAGoingBack? = nil, installer: Installer? = nil) {
         self.updates = updates
         self.running = running
         self.qaStandIn = qaStandIn
+        self.installer = installer ?? .shared
     }
 
     /// The version in `previous/`, when it's older than the one running: the
@@ -260,10 +266,11 @@ final class GoingBack {
         )
         isStarting = true
         do {
-            try Installer.shared.goBack(state)
+            try installer.goBack(state)
         } catch {
             isStarting = false
-            failure = HubFailure("Couldn't go back to \(offer.target)", error)
+            // Each reason it refuses is already a sentence for the owner.
+            failure = HubFailure("Couldn't go back to \(offer.target)", advice: error.localizedDescription)
         }
     }
 
@@ -342,17 +349,9 @@ final class GoingBack {
     /// the app isn't in front.
     func noticeWithdrawn() async {
         guard let running else { return }
-        isWithdrawnBannerDismissed = UserDefaults.standard.string(forKey: Self.withdrawnDismissedKey) == running.description
-        if previousVersion != nil {
-            let failure = self.failure
-            withdrawnOffer = await weighPrevious(.withdrawn)
-            // Weighing for the banner shows no failure of its own.
-            self.failure = failure
-        } else {
-            withdrawnOffer = nil
-        }
-        guard UserDefaults.standard.string(forKey: Self.withdrawnNotifiedKey) != running.description, !NSApp.isActive else { return }
-        UserDefaults.standard.set(running.description, forKey: Self.withdrawnNotifiedKey)
+        await readWithdrawnBanner()
+        guard readWithdrawnMark(Self.withdrawnNotifiedKey) != running.description, !NSApp.isActive else { return }
+        markWithdrawn(Self.withdrawnNotifiedKey, running)
         let content = UNMutableNotificationContent()
         content.title = "\(running) was withdrawn"
         content.body = withdrawnOffer.map { "\($0.cost.summarize(target: $0.target)) Open Settings › Version to go back." }
@@ -361,9 +360,35 @@ final class GoingBack {
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "withdrawn-\(running)", content: content, trigger: nil))
     }
 
+    /// Whether the banner was dismissed for this version, and its way back.
+    func readWithdrawnBanner() async {
+        guard let running else { return }
+        isWithdrawnBannerDismissed = readWithdrawnMark(Self.withdrawnDismissedKey) == running.description
+        if previousVersion != nil {
+            let failure = self.failure
+            withdrawnOffer = await weighPrevious(.withdrawn)
+            // Weighing for the banner shows no failure of its own.
+            self.failure = failure
+        } else {
+            withdrawnOffer = nil
+        }
+    }
+
     func dismissWithdrawnBanner() {
         guard let running else { return }
-        UserDefaults.standard.set(running.description, forKey: Self.withdrawnDismissedKey)
+        markWithdrawn(Self.withdrawnDismissedKey, running)
         isWithdrawnBannerDismissed = true
+    }
+
+    private func readWithdrawnMark(_ key: String) -> String? {
+        updates.isQAFixture ? qaWithdrawnMarks[key] : UserDefaults.standard.string(forKey: key)
+    }
+
+    private func markWithdrawn(_ key: String, _ version: HubVersion) {
+        if updates.isQAFixture {
+            qaWithdrawnMarks[key] = version.description
+        } else {
+            UserDefaults.standard.set(version.description, forKey: key)
+        }
     }
 }

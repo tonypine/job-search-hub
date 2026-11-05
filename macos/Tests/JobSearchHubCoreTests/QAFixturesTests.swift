@@ -155,6 +155,22 @@ func eachCommittedFixtureKeepsAnOlderVersionThanItRuns(_ name: String) throws {
     #expect(!run.quitCleanly)
 }
 
+@Test func theAfterGoingBackFixtureRunsTheEarlierVersionWithTheOneItLeftMarkedBad() throws {
+    let fixtures = QAFixtures(directory: committedFixtures.appending(path: "updates-after-going-back"))
+    let updates = UpdatesFolder.makeDefault(home: home, fixtures: fixtures)
+    let running = try #require(fixtures.readRunningVersion())
+    let left = try #require(HubVersion("0.1.252"))
+    let releases = try HubJSON.makeDecoder().decode([GitHubRelease].self, from: Data(contentsOf: try #require(fixtures.releasesURL)))
+
+    #expect(running == HubVersion("0.1.247"))
+    #expect(updates.readBadVersions() == [left])
+    #expect(updates.readPreviousVersion() == nil)
+    #expect(updates.readInstalls().last?.wentBack == true)
+    // The feed has it: only being marked bad keeps it from being offered.
+    #expect(MacReleases.findNewest(in: releases, above: running)?.version == left)
+    #expect(MacReleases.findNewest(in: releases, above: running, excluding: updates.readBadVersions()) == nil)
+}
+
 @Test func aFixtureWithoutGoingBackJSONHasNoStandIn() throws {
     let directory = try makeFixture(runningVersion: "0.1.252")
     defer { try? FileManager.default.removeItem(at: directory) }

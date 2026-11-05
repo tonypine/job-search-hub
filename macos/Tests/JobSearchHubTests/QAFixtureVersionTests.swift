@@ -216,3 +216,76 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
     #expect(log.contains("QA fixture: Go back to 0.1.247 was asked; hub-update wasn't started."))
     #expect(!FileManager.default.fileExists(atPath: updates.stateURL.path))
 }
+
+@MainActor
+@Test func aGoingBackThatCantStartSaysWhyInItsSheet() async throws {
+    let fixtures = try copyFixture("updates-nothing-lost")
+    defer { try? FileManager.default.removeItem(at: fixtures.directory) }
+    let updates = UpdatesFolder.makeDefault(home: URL(filePath: "/Users/qa"), fixtures: fixtures)
+    let goingBack = GoingBack(
+        updates: updates, running: try #require(fixtures.readRunningVersion()), qaStandIn: try #require(fixtures.readGoingBack()),
+        installer: Installer(updates: updates)
+    )
+    await goingBack.offerPrevious(.settings)
+
+    goingBack.confirm()
+
+    let failure = try #require(goingBack.failure)
+    #expect(failure.title == "Couldn't go back to 0.1.247")
+    #expect(failure.report.advice == Installer.qaFixtureReason)
+    #expect(failure.report.details == nil)
+    #expect(!goingBack.isStarting)
+    #expect(goingBack.isShowingSheet)
+}
+
+// MARK: The withdrawn banner with a fixture
+
+@MainActor
+@Test func aWithdrawnBannerDismissedWithAFixtureLastsOnlyThatLaunch() async throws {
+    let key = GoingBack.withdrawnDismissedKey
+    let saved = UserDefaults.standard.object(forKey: key)
+    // A banner dismissed on an earlier launch of this host, before fixtures
+    // kept it to themselves, doesn't hide it either.
+    UserDefaults.standard.set("0.1.252", forKey: key)
+    defer { UserDefaults.standard.set(saved, forKey: key) }
+    let fixtures = try copyFixture("updates-withdrawn")
+    defer { try? FileManager.default.removeItem(at: fixtures.directory) }
+    let goingBack = try makeGoingBack(fixtures)
+
+    await goingBack.readWithdrawnBanner()
+
+    #expect(!goingBack.isWithdrawnBannerDismissed)
+    let offer = try #require(goingBack.withdrawnOffer)
+    #expect(offer.cost.summarize(target: offer.target) == "Going back to 0.1.247 loses nothing.")
+
+    // Every check reads the banner again: it stays dismissed on this launch.
+    UserDefaults.standard.removeObject(forKey: key)
+    goingBack.dismissWithdrawnBanner()
+    await goingBack.readWithdrawnBanner()
+    #expect(goingBack.isWithdrawnBannerDismissed)
+    #expect(UserDefaults.standard.string(forKey: key) == nil)
+
+    // The next launch shows it again.
+    let nextLaunch = try makeGoingBack(fixtures)
+    await nextLaunch.readWithdrawnBanner()
+    #expect(!nextLaunch.isWithdrawnBannerDismissed)
+}
+
+// MARK: After going back
+
+@MainActor
+@Test func theAfterGoingBackFixtureDoesntOfferTheVersionItLeft() async throws {
+    let fixtures = try copyFixture("updates-after-going-back")
+    defer { try? FileManager.default.removeItem(at: fixtures.directory) }
+    let checker = try makeChecker(fixtures)
+
+    await checker.checkAndWait()
+    let page = makePage(checker, installer: Installer(updates: checker.updates))
+
+    #expect(page.facts.running == HubVersion("0.1.247"))
+    #expect(page.facts.ready == nil)
+    #expect(page.facts.failed == nil)
+    #expect(page.previousVersion == nil)
+    #expect(page.goBackTitle == nil)
+    #expect(page.status == .upToDate(newest: HubVersion("0.1.252"), checkedAt: checker.facts.lastCheckedAt))
+}
