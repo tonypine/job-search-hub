@@ -112,6 +112,27 @@ func goBackSheetDrawsOffscreen(state: String) throws {
 }
 
 @MainActor
+@Test func returnNeverConfirmsAGoingBackThatLosesWrites() throws {
+    let since = GoBackSnapshots.now
+    for reason in [GoingBack.Reason.crash, .settings, .withdrawn, .older] {
+        var offer = try #require(GoBackSnapshots.makeOffer("crash"))
+        offer.reason = reason
+
+        offer.cost = .loses(since: since, lost: GoBackSnapshots.lost)
+        #expect(!offer.confirmsOnReturn, "counted writes, \(reason)")
+        offer.cost = .uncountable(since: since)
+        #expect(!offer.confirmsOnReturn, "writes it can't count, \(reason)")
+        offer.cost = .uncountable(since: nil)
+        #expect(!offer.confirmsOnReturn, "a hub it couldn't ask, \(reason)")
+
+        offer.cost = .nothingLost
+        #expect(offer.confirmsOnReturn, "nothing lost, \(reason)")
+        offer.cost = .loses(since: since, lost: [])
+        #expect(offer.confirmsOnReturn, "a restore with nothing written since, \(reason)")
+    }
+}
+
+@MainActor
 @Test func theCrashPromptSaysWhenTheVersionWasInstalledAndWhatGoingBackLoses() throws {
     let offer = try #require(GoBackSnapshots.makeOffer("crash"))
     #expect(offer.cost.losesWrites)

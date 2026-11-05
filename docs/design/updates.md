@@ -534,6 +534,8 @@ See [Failures](#failures) for what happens underneath. On screen:
   start, so the hub went back to 0.1.247. Nothing was lost." and *Show install log*.
 - **The new version crashed** in its first day: on the next launch, a sheet: "Job Search Hub 0.1.252
   quit unexpectedly. Go back to 0.1.247?", with the cost if migrations ran, and *Stay on 0.1.252*.
+  When going back would lose writes, Return doesn't confirm it: the sheet opens unasked, and a
+  Return meant for a page could land on it.
 - **Going back**, from Settings › Version: a sheet with what it would lose, counted from Postgres's
   per-table counters (see [Failures](#failures)), and the advice to stay and wait for a fix, which
   with daily merges is often better.

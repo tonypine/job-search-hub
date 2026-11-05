@@ -140,7 +140,7 @@ struct GoBackSheetContent: View {
                     .disabled(work.hasUnsavedEdits)
                 } else {
                     Button("Go back to \(offer.target.description)", action: goBack)
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(offer.confirmsOnReturn ? KeyboardShortcut.defaultAction : nil)
                         .buttonStyle(.borderedProminent)
                         .tint(offer.reason == .crash ? Tone.caution.color : nil)
                         .disabled(work.hasUnsavedEdits)

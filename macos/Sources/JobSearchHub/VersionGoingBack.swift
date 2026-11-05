@@ -41,6 +41,11 @@ final class GoingBack {
         var cost: GoingBackCost
         /// When the running version was installed, for the crash prompt.
         var installedAt: Date?
+
+        /// Whether Return confirms it: never when it loses writes, which
+        /// nothing brings back. The crash prompt opens unasked after launch,
+        /// so a Return meant for the page could land on it.
+        var confirmsOnReturn: Bool { !cost.losesWrites }
     }
 
     /// What the sheet shows.
