@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/tonypine/job-search-hub/server/internal/jobboards"
 	"github.com/tonypine/job-search-hub/server/internal/jobfit"
+	"github.com/tonypine/job-search-hub/server/internal/postingpages"
 	"github.com/tonypine/job-search-hub/server/internal/store"
 )
 
@@ -31,6 +33,57 @@ func (stubPostings) FetchPosting(_ context.Context, reference jobboards.PostingR
 	return store.JobPosting{}, errors.New("no such posting")
 }
 
+// stubPages are made-up careers pages under https://acme.example/careers/:
+// one linking a Greenhouse posting of the "stranger" board, one with
+// JobPosting data, one with its text alone, one drawn with JavaScript; any
+// other page fails to fetch.
+type stubPages struct{}
+
+func (stubPages) ReadPage(_ context.Context, pageURL string) (postingpages.Page, error) {
+	text := "### About the role\n\nShip the hub's careers integrations, end to end, with care for the people who read them every day."
+	switch strings.TrimPrefix(pageURL, "https://acme.example/careers/") {
+	case "linked":
+		return postingpages.Page{
+			Reference: &jobboards.PostingReference{Provider: "greenhouse", BoardToken: "stranger", PostingID: "7"},
+			Posting:   store.JobPosting{Title: "Frontend Engineer (careers)", Description: text},
+		}, nil
+	case "linked-gone":
+		return postingpages.Page{
+			Reference: &jobboards.PostingReference{Provider: "greenhouse", BoardToken: "stranger", PostingID: "8"},
+			Posting:   store.JobPosting{Title: "Data Engineer", Description: text}, ReadFrom: postingpages.ReadFromPageText,
+		}, nil
+	case "structured":
+		return postingpages.Page{Posting: store.JobPosting{
+			Title: "Backend Engineer", Location: "Lisbon, PT", Description: text,
+			BoardFacts: store.BoardFacts{Pay: &store.Pay{Ranges: []store.PayRange{{Min: 60000, Max: 80000, Currency: "EUR", Interval: "year"}}}},
+		}, ReadFrom: postingpages.ReadFromStructuredData}, nil
+	case "plain":
+		return postingpages.Page{Posting: store.JobPosting{Title: "Site Reliability Engineer", Description: text}, ReadFrom: postingpages.ReadFromPageText}, nil
+	case "javascript":
+		return postingpages.Page{Posting: store.JobPosting{Title: "Careers"}, ReadFrom: postingpages.ReadFromPageText}, nil
+	default:
+		return postingpages.Page{}, errors.New("the site answered 404 Not Found")
+	}
+}
+
+// stubRuns records the jobs whose runs an add started.
+type stubRuns struct {
+	lock sync.Mutex
+	jobs []uuid.UUID
+}
+
+func (runs *stubRuns) StartJobRuns(_ context.Context, _ store.Actor, jobID uuid.UUID) {
+	runs.lock.Lock()
+	defer runs.lock.Unlock()
+	runs.jobs = append(runs.jobs, jobID)
+}
+
+func (runs *stubRuns) started() []uuid.UUID {
+	runs.lock.Lock()
+	defer runs.lock.Unlock()
+	return append([]uuid.UUID{}, runs.jobs...)
+}
+
 // stubRates price one BRL at 0.2 USD.
 type stubRates struct{}
 
@@ -42,8 +95,21 @@ func (stubRates) GetRates(_ context.Context, base string) (map[string]float64, e
 }
 
 type addedJob struct {
-	Job     store.Job `json:"job"`
-	Created bool      `json:"created"`
+	Job         store.Job `json:"job"`
+	Created     bool      `json:"created"`
+	RunsStarted bool      `json:"runs_started"`
+}
+
+func addJobByURL(t *testing.T, service apiUnderTest, body string) (int, addedJob, []byte) {
+	t.Helper()
+	status, payload := send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, body)
+	var added addedJob
+	if status < 300 {
+		if err := json.Unmarshal(payload, &added); err != nil {
+			t.Fatalf("add %s: %d %s", body, status, payload)
+		}
+	}
+	return status, added, payload
 }
 
 func TestAddingAGreenhouseURLJoinsTheStoredBoardsJobs(t *testing.T) {
@@ -83,17 +149,96 @@ func TestAddingURLsOfUnknownBoardsAndSites(t *testing.T) {
 	status, body := send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, `{"url":"https://job-boards.greenhouse.io/stranger/jobs/7"}`)
 	var fromUnknownBoard addedJob
 	if err := json.Unmarshal(body, &fromUnknownBoard); status != http.StatusCreated || err != nil || fromUnknownBoard.Job.Title != "Frontend Engineer" ||
-		fromUnknownBoard.Job.Source != store.JobSourceManual || fromUnknownBoard.Job.CompanyID != nil {
+		fromUnknownBoard.Job.Source != store.JobSourceManual || fromUnknownBoard.Job.CompanyID != nil || fromUnknownBoard.Job.Description != "React." {
 		t.Fatalf("unknown board: %d %s", status, body)
 	}
 
+	// A page that can't be read is stored as given, saying why, and only
+	// with a title.
 	status, body = send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, `{"url":"https://acme.com/careers/42","title":"Staff Engineer"}`)
 	var fromSite addedJob
-	if err := json.Unmarshal(body, &fromSite); status != http.StatusCreated || err != nil || fromSite.Job.Title != "Staff Engineer" {
+	if err := json.Unmarshal(body, &fromSite); status != http.StatusCreated || err != nil || fromSite.Job.Title != "Staff Engineer" ||
+		fromSite.Job.Description != "" || !strings.Contains(fromSite.Job.TextMissingReason, "404") {
 		t.Fatalf("site URL: %d %s", status, body)
 	}
-	if status, _ := send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, `{"url":"https://acme.com/careers/43"}`); status != http.StatusBadRequest {
-		t.Fatalf("site URL without a title: %d, want 400", status)
+	if status, body := send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, `{"url":"https://acme.com/careers/43"}`); status != http.StatusBadRequest ||
+		!strings.Contains(string(body), "Give a title") {
+		t.Fatalf("site URL without a title: %d %s, want 400", status, body)
+	}
+}
+
+func TestAddingACareersPageReadsThePostingBehindIt(t *testing.T) {
+	service := startAPI(t)
+	ctx := context.Background()
+
+	// The page links its posting on Greenhouse, whose board the hub doesn't
+	// keep yet: the job is the provider's posting, and names it.
+	status, linked, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/linked"}`)
+	if status != http.StatusCreated || linked.Job.Title != "Frontend Engineer" || linked.Job.Description != "React." ||
+		linked.Job.URL != "https://job-boards.greenhouse.io/stranger/jobs/7" || linked.Job.Source != store.JobSourceManual {
+		t.Fatalf("linked: %d %s", status, body)
+	}
+	// The posting the page links to can't be read: the page's own text is
+	// the job's.
+	if status, gone, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/linked-gone"}`); status != http.StatusCreated ||
+		gone.Job.Title != "Data Engineer" || !strings.Contains(gone.Job.Description, "careers integrations") {
+		t.Fatalf("linked to a posting that's gone: %d %s", status, body)
+	}
+	status, structured, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/structured"}`)
+	if status != http.StatusCreated || structured.Job.Title != "Backend Engineer" || structured.Job.Location != "Lisbon, PT" ||
+		structured.Job.Pay == nil || len(structured.Job.Pay.Ranges) != 1 || structured.Job.Pay.Ranges[0].Currency != "EUR" ||
+		!strings.Contains(structured.Job.Description, "About the role") || structured.Job.URL != "https://acme.example/careers/structured" {
+		t.Fatalf("structured: %d %s", status, body)
+	}
+	if status, plain, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/plain","title":"SRE"}`); status != http.StatusCreated ||
+		plain.Job.Title != "SRE" || plain.Job.TextMissingReason != "" || !strings.Contains(plain.Job.Description, "About the role") {
+		t.Fatalf("plain, titled by hand: %d %s", status, body)
+	}
+	if status, body := send(t, http.MethodPost, service.url+"/v1/jobs", ownerToken, `{"url":"https://acme.example/careers/javascript"}`); status != http.StatusBadRequest ||
+		!strings.Contains(string(body), "JavaScript") {
+		t.Fatalf("drawn with JavaScript, no title: %d %s", status, body)
+	}
+	status, drawn, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/javascript","title":"Platform Engineer"}`)
+	if status != http.StatusCreated || drawn.Job.Title != "Platform Engineer" || !strings.Contains(drawn.Job.TextMissingReason, "JavaScript") {
+		t.Fatalf("drawn with JavaScript: %d %s", status, body)
+	}
+
+	// Once the hub keeps the board, its poll makes the hand-added job its
+	// posting rather than adding a second one.
+	owner := store.Actor{Kind: store.ActorOwner}
+	company, _, err := service.hub.CreateCompany(ctx, owner, store.NewCompany{Name: "Stranger", Domain: "stranger.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, err := service.hub.SetJobBoard(ctx, owner, store.JobBoardInput{CompanyID: company.ID, Provider: "greenhouse", BoardToken: "stranger", Verified: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.hub.SyncBoardJobs(ctx, store.Actor{Kind: store.ActorSystem}, board,
+		[]store.JobPosting{{ExternalID: "7", Title: "Frontend Engineer", URL: linked.Job.URL, Description: "React."}}, time.Now())
+	if err != nil || result.Created != 0 || result.Adopted != 1 {
+		t.Fatalf("the board's poll = %+v, %v; want the hand-added job adopted", result, err)
+	}
+	details, err := service.hub.GetJobDetails(ctx, linked.Job.ID)
+	if err != nil || details.Job.JobBoardID == nil || *details.Job.JobBoardID != board.ID {
+		t.Fatalf("the hand-added job = %+v, %v", details.Job, err)
+	}
+}
+
+func TestAddingAJobStartsItsRuns(t *testing.T) {
+	service := startAPI(t)
+
+	status, added, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/plain"}`)
+	if status != http.StatusCreated || !added.RunsStarted {
+		t.Fatalf("add: %d %s", status, body)
+	}
+	if started := service.runs.started(); len(started) != 1 || started[0] != added.Job.ID {
+		t.Fatalf("runs started for %v, want %v", started, added.Job.ID)
+	}
+	// Adding it again finds the same job, and starts nothing.
+	status, again, body := addJobByURL(t, service, `{"url":"https://acme.example/careers/plain"}`)
+	if status != http.StatusOK || again.RunsStarted || again.Job.ID != added.Job.ID || len(service.runs.started()) != 1 {
+		t.Fatalf("adding again: %d %s", status, body)
 	}
 }
 
@@ -491,14 +636,20 @@ func TestTheBaseCVIsSavedAndRenderedAsHTML(t *testing.T) {
 	if status, _ := send(t, http.MethodGet, service.url+"/v1/cvs/base", ownerToken, ""); status != http.StatusNotFound {
 		t.Errorf("before a base CV: %d, want 404", status)
 	}
-	body := `{"basics":{"name":"Ada Lovelace","label":"Senior Engineer"},"work":[{"name":"Acme","position":"Engineer","startDate":"2020-03","highlights":["Shipped it."]}]}`
+	body := `{"basics":{"name":"Ada Lovelace","label":"Senior Engineer","email":"ada@example.com","phone":"+44 20 7946 0000",` +
+		`"profiles":[{"network":"LinkedIn","url":"https://www.linkedin.com/in/ada-example"}]},"work":[{"name":"Acme","position":"Engineer","startDate":"2020-03","highlights":["Shipped it."]}]}`
 	status, answer := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, body)
 	var saved store.CV
 	if err := json.Unmarshal(answer, &saved); status != http.StatusOK || err != nil || saved.Kind != "base" || saved.Content.Work[0].Highlights[0] != "Shipped it." {
 		t.Fatalf("save: %d %s", status, answer)
 	}
+	if basics := saved.Content.Basics; basics.Email != "ada@example.com" || basics.Phone != "+44 20 7946 0000" ||
+		len(basics.Profiles) != 1 || basics.Profiles[0].Network != "LinkedIn" || basics.Profiles[0].URL != "https://www.linkedin.com/in/ada-example" {
+		t.Errorf("the contact details weren't saved: %+v", basics)
+	}
 	status, page := send(t, http.MethodGet, service.url+"/v1/cvs/base/html", ownerToken, "")
-	if status != http.StatusOK || !strings.Contains(string(page), "<h1>Ada Lovelace</h1>") || !strings.Contains(string(page), "Mar 2020 - Present") {
+	if status != http.StatusOK || !strings.Contains(string(page), "<h1>Ada Lovelace</h1>") || !strings.Contains(string(page), "Mar 2020 - Present") ||
+		!strings.Contains(string(page), `<a href="mailto:ada@example.com">ada@example.com</a>`) {
 		t.Fatalf("html: %d %s", status, page)
 	}
 	if status, _ := send(t, http.MethodPut, service.url+"/v1/cvs/base", ownerToken, `{"basics":{}}`); status != http.StatusBadRequest {

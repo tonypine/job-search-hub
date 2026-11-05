@@ -97,6 +97,11 @@ struct VersionPage {
     var installsOnQuit = false
     /// What the install that brought the running version changed.
     var installedChanges: InstalledChanges?
+
+    /// *Go back to 0.1.247…*, when a previous version is kept.
+    var goBackTitle: String? {
+        previousVersion.map { "Go back to \($0.description)…" }
+    }
 }
 
 /// The tab's content, drawn without AppKit controls (buttons and radios

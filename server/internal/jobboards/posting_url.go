@@ -18,7 +18,8 @@ type PostingReference struct {
 }
 
 // ParsePostingURL recognizes a posting's public URL on Greenhouse, Lever or
-// Ashby. ok is false for any other URL.
+// Ashby, its apply page, and Greenhouse's embedded application
+// (embed/job_app?for=<board>&token=<id>). ok is false for any other URL.
 func ParsePostingURL(raw string) (PostingReference, bool) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -26,9 +27,19 @@ func ParsePostingURL(raw string) (PostingReference, bool) {
 	}
 	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	host := strings.ToLower(parsed.Hostname())
+	isGreenhouse := host == "job-boards.greenhouse.io" || host == "boards.greenhouse.io"
 	switch {
-	case (host == "job-boards.greenhouse.io" || host == "boards.greenhouse.io") && len(segments) == 3 && segments[1] == "jobs":
+	case isGreenhouse && len(segments) == 2 && segments[0] == "embed" && segments[1] == "job_app":
+		board, id := parsed.Query().Get("for"), parsed.Query().Get("token")
+		if board == "" || id == "" {
+			return PostingReference{}, false
+		}
+		return PostingReference{Provider: Greenhouse, BoardToken: board, PostingID: id}, true
+	case isGreenhouse && len(segments) == 3 && segments[1] == "jobs":
 		return PostingReference{Provider: Greenhouse, BoardToken: segments[0], PostingID: segments[2]}, true
+	case len(segments) >= 2 && segments[1] == "embed":
+		// A board's embed, as jobs.ashbyhq.com/<board>/embed, names no posting.
+		return PostingReference{}, false
 	case host == "jobs.lever.co" && len(segments) >= 2:
 		return PostingReference{Provider: Lever, BoardToken: segments[0], PostingID: segments[1]}, true
 	case host == "jobs.ashbyhq.com" && len(segments) >= 2:

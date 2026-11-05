@@ -316,3 +316,68 @@ private func startedFindJobs(_ runID: UUID) -> StubHub.Answer {
     #expect(recording.requestPaths == [companyKindsPath])
     #expect(!starts.isBusy(findJobsKind, of: companyID))
 }
+
+/// A job kind as the hub lists it while it starts a job's runs by itself.
+private func chainKindJSON(_ id: String, running: [UUID] = [], queued: Bool = false) -> String {
+    let runningIDs = running.map { "\"\($0.uuidString)\"" }.joined(separator: ",")
+    return #"""
+    {"id":"\#(id)","title":"\#(id)","description":"","group":"jobs","subject_type":"job","engine":"model_call","automatic":true,
+     "paused":true,"can_run":true,"needs_model":false,"needs_note":false,"running_starts":[\#(runningIDs)],"queued":\#(queued)}
+    """#
+}
+
+private func chainKinds(_ kinds: String...) -> StubHub.Answer {
+    StubHub.Answer(status: 200, body: #"{"kinds":[\#(kinds.joined(separator: ","))]}"#)
+}
+
+/// Waits, for up to five seconds, until the condition holds.
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool) async {
+    let deadline = Date.now.addingTimeInterval(5)
+    while !condition(), Date.now < deadline {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+@MainActor @Test func theRunsTheHubStartsForAJobJustAddedSayRunningOneAfterAnother() async throws {
+    let (session, recording) = StubHub.makeSession(answers: [
+        kindsPath: chainKinds(chainKindJSON("job_facts", running: [firstRunID]), chainKindJSON("job_brief", queued: true)),
+    ])
+    let client = HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session)
+    let starts = JobRunStarts(pollInterval: .milliseconds(10))
+
+    let follow = starts.followHubRuns(of: jobID, subjectType: "job", with: client)
+    await waitUntil { starts.getRunning("job_facts", of: jobID) != nil }
+    #expect(starts.getRunning("job_facts", of: jobID)?.runID == firstRunID)
+    #expect(starts.getRunning("job_brief", of: jobID) == nil)
+
+    // The facts landed, and the brief, which reads them, runs.
+    recording.setAnswer(chainKinds(chainKindJSON("job_facts"), chainKindJSON("job_brief", running: [secondRunID])), for: kindsPath)
+    await waitUntil { starts.getRunning("job_brief", of: jobID) != nil }
+    #expect(starts.getRunning("job_facts", of: jobID) == nil)
+    #expect(starts.getRunning("job_brief", of: jobID)?.runID == secondRunID)
+
+    recording.setAnswer(chainKinds(chainKindJSON("job_facts"), chainKindJSON("job_brief")), for: kindsPath)
+    await follow.value
+    #expect(starts.getRunning("job_brief", of: jobID) == nil)
+    #expect(starts.revision >= 3)
+}
+
+@MainActor @Test func aQueuedKindSaysItStartsOnceTheRunsBeforeItEnd() throws {
+    let queued = try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(chainKindJSON("job_brief", queued: true).utf8))
+    #expect(queued.isQueued)
+    #expect(JobRuns.describeState(of: queued, now: .now).hasPrefix("Starts once the runs before it end"))
+    let unsaid = try HubJSON.makeDecoder().decode(RunnableKind.self, from: Data(briefJSON(lastRun: nil, outcome: "succeeded", running: []).utf8))
+    #expect(!unsaid.isQueued)
+}
+
+@MainActor @Test func aJobWithNoTextSaysWhyWhenTheHubKnows() throws {
+    var job = try HubJSON.makeDecoder().decode(Job.self, from: Data(#"""
+    {"id":"\#(jobID.uuidString)","source":"manual","title":"Platform engineer","url":"https://acme.example/careers/7",
+     "first_seen_at":"2026-11-03T10:00:00Z","last_seen_at":"2026-11-03T10:00:00Z",
+     "text_missing_reason":"The page shows no posting text without JavaScript, so the hub couldn't read it."}
+    """#.utf8))
+    #expect(JobPosting.describeMissingText(of: job) == "The page shows no posting text without JavaScript, so the hub couldn't read it.")
+    job.textMissingReason = nil
+    #expect(JobPosting.describeMissingText(of: job) == "The board kept no text for this posting; the original has it.")
+}

@@ -26,6 +26,9 @@ final class JobRunStarts {
     private(set) var revision = 0
     private let pollInterval: Duration
     private let getFollowLimit: (RunnableKind) -> TimeInterval
+    /// How long the runs the hub started by itself are followed: a chain of
+    /// model runs, each given ten minutes.
+    private let hubRunsFollowLimit: TimeInterval
     /// Runs the Mac's task an agent kind waits in here, at once and to its
     /// end; false when another runner has it.
     private let runTask: @MainActor (UUID, HubClient) async -> Bool
@@ -33,10 +36,12 @@ final class JobRunStarts {
     init(
         pollInterval: Duration = .seconds(3),
         followLimit: @escaping (RunnableKind) -> TimeInterval = JobRuns.getFollowLimit(of:),
+        hubRunsFollowLimit: TimeInterval = 60 * 60,
         runTask: @escaping @MainActor (UUID, HubClient) async -> Bool = { _, _ in false }
     ) {
         self.pollInterval = pollInterval
         getFollowLimit = followLimit
+        self.hubRunsFollowLimit = hubRunsFollowLimit
         self.runTask = runTask
     }
 
@@ -86,6 +91,53 @@ final class JobRunStarts {
         let kinds = try await client.listRunnableKinds(subjectType: subjectType, id: subjectID)
         guard let kind = kinds.first(where: { $0.id == kindID }) else { throw RunNotListedError(kind: kindID) }
         return try await start(kind, for: subjectID, model: model, with: client)
+    }
+
+    /// Follows the runs the hub started for the subject by itself, as for a
+    /// job just added: each kind's row says "Running" while the hub lists a
+    /// start of it running, and the job and its runs read again as each
+    /// lands. Ends once no kind runs or waits for the runs before it, or
+    /// after as long as a whole chain of runs can take. Returns the follow.
+    @discardableResult
+    func followHubRuns(of subjectID: UUID, subjectType: String, with client: HubClient) -> Task<Void, Never> {
+        Task { await followHub(subjectID, subjectType: subjectType, with: client) }
+    }
+
+    private func followHub(_ subjectID: UUID, subjectType: String, with client: HubClient) async {
+        // The rows this follow says run, by the run each says.
+        var followed: [Key: UUID] = [:]
+        defer {
+            for (key, runID) in followed where running[key]?.runID == runID {
+                running[key] = nil
+            }
+            if !followed.isEmpty { revision += 1 }
+        }
+        let deadline = Date.now.addingTimeInterval(hubRunsFollowLimit)
+        while Date.now < deadline {
+            guard let kinds = try? await client.listRunnableKinds(subjectType: subjectType, id: subjectID) else {
+                try? await Task.sleep(for: pollInterval)
+                continue
+            }
+            var changed = false
+            for kind in kinds {
+                let key = Key(subjectID: subjectID, kind: kind.id)
+                if let runID = followed[key], !kind.runningStarts.contains(runID) {
+                    followed[key] = nil
+                    if running[key]?.runID == runID {
+                        running[key] = nil
+                    }
+                    changed = true
+                }
+                if followed[key] == nil, running[key] == nil, let runID = kind.runningStarts.first {
+                    followed[key] = runID
+                    running[key] = Running(runID: runID, startedAt: .now)
+                    changed = true
+                }
+            }
+            if changed { revision += 1 }
+            if !kinds.contains(where: { !$0.runningStarts.isEmpty || $0.isQueued }) { return }
+            try? await Task.sleep(for: pollInterval)
+        }
     }
 
     /// Runs an agent's task here when this Mac gets it, and has landed once

@@ -57,6 +57,16 @@ type Pay struct {
 	Summary string     `json:"summary,omitempty"`
 }
 
+// MarshalJSON writes no ranges as an empty list, never null, in the stored
+// pay and in every answer that carries it: the apps read ranges as a list.
+func (pay Pay) MarshalJSON() ([]byte, error) {
+	type plainPay Pay
+	if pay.Ranges == nil {
+		pay.Ranges = []PayRange{}
+	}
+	return json.Marshal(plainPay(pay))
+}
+
 // PayRange is one published range. Interval is year, month, week, day or
 // hour, and empty when the board does not say.
 type PayRange struct {
@@ -136,7 +146,9 @@ var feedJobSources = []string{JobSourceHimalayas, JobSourceRemoteOK, JobSourceHa
 // disappeared are closed, and a closed one that returns is reopened. A new
 // posting that an open feed or alert job copies, by the same company under
 // the same title, adopts that job instead: it keeps its id, decisions and
-// briefs, and takes the board's text and link. Only those lifecycle events are
+// briefs, and takes the board's text and link. So does a job added by hand
+// that was read from the same posting on the board's provider. Only those
+// lifecycle events are
 // recorded as changes; refreshing a posting that is still open is not.
 func (s *Store) SyncBoardJobs(ctx context.Context, actor Actor, board JobBoard, postings []JobPosting, seenAt time.Time) (BoardSyncResult, error) {
 	return s.SyncBoardJobsStoringNewIf(ctx, actor, board, postings, seenAt, nil)
@@ -174,10 +186,22 @@ func (s *Store) SyncBoardJobsStoringNewIf(ctx context.Context, actor Actor, boar
 		if err != nil {
 			return err
 		}
+		handAdded, err := listHandAddedPostings(ctx, tx, board)
+		if err != nil {
+			return err
+		}
 		seenExternalIDs := make([]string, 0, len(postings))
 		for _, posting := range postings {
 			seenExternalIDs = append(seenExternalIDs, posting.ExternalID)
 			existing, isKnown := known[posting.ExternalID]
+			if jobID, isHandAdded := handAdded[posting.ExternalID]; !isKnown && isHandAdded {
+				delete(handAdded, posting.ExternalID)
+				if err := adoptFeedCopy(ctx, tx, actor, board, jobID, posting, seenAt); err != nil {
+					return err
+				}
+				result.Adopted++
+				continue
+			}
 			if copyID, isCopied := copies[getTitleKey(posting.Title)]; !isKnown && isCopied {
 				delete(copies, getTitleKey(posting.Title))
 				if err := adoptFeedCopy(ctx, tx, actor, board, copyID, posting, seenAt); err != nil {
@@ -285,8 +309,34 @@ func listFeedCopies(ctx context.Context, tx pgx.Tx, board JobBoard) (map[string]
 	return copies, rows.Err()
 }
 
-// adoptFeedCopy turns a feed or alert job into the board's posting, seen at
-// seenAt. Fields the owner fixed stay as fixed.
+// listHandAddedPostings returns the jobs added by hand that were read from
+// one of the board's postings, by the posting's id.
+func listHandAddedPostings(ctx context.Context, tx pgx.Tx, board JobBoard) (map[string]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT posting_external_id, id FROM jobs
+		WHERE source = 'manual' AND posting_provider = $1 AND lower(posting_board_token) = lower($2) AND posting_external_id <> ''
+		ORDER BY first_seen_at
+		FOR UPDATE`, board.Provider, board.BoardToken)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := map[string]uuid.UUID{}
+	for rows.Next() {
+		var externalID string
+		var id uuid.UUID
+		if err := rows.Scan(&externalID, &id); err != nil {
+			return nil, err
+		}
+		if _, listed := jobs[externalID]; !listed {
+			jobs[externalID] = id
+		}
+	}
+	return jobs, rows.Err()
+}
+
+// adoptFeedCopy turns a feed, alert or hand-added job into the board's
+// posting, seen at seenAt. Fields the owner fixed stay as fixed.
 func adoptFeedCopy(ctx context.Context, tx pgx.Tx, actor Actor, board JobBoard, jobID uuid.UUID, posting JobPosting, seenAt time.Time) error {
 	var previousSource, previousURL string
 	if err := tx.QueryRow(ctx, `SELECT source, url FROM jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&previousSource, &previousURL); err != nil {
@@ -319,12 +369,30 @@ func getTitleKey(title string) string {
 	return nonTitleCharacters.ReplaceAllString(strings.ToLower(title), "")
 }
 
+// ManualJobInput is a job added by hand: what was read from its posting,
+// or its title and URL alone.
 type ManualJobInput struct {
-	CompanyID   *uuid.UUID
-	Title       string
-	URL         string
-	Location    string
-	Description string
+	CompanyID     *uuid.UUID
+	Title         string
+	URL           string
+	Location      string
+	WorkplaceType string
+	Description   string
+	BoardFacts
+	// TextMissingReason says why the job has no text, when its page
+	// couldn't be read.
+	TextMissingReason string
+	// Posting names the provider posting the job was read from, so the
+	// sync of its board, once the hub keeps it, adopts the job.
+	Posting *ProviderPosting
+	Raw     json.RawMessage
+}
+
+// ProviderPosting names one posting on a provider's board.
+type ProviderPosting struct {
+	Provider   string
+	BoardToken string
+	ExternalID string
 }
 
 // AddManualJob stores a job added by hand, or returns the one already added
@@ -335,15 +403,22 @@ func (s *Store) AddManualJob(ctx context.Context, actor Actor, input ManualJobIn
 	if title == "" || !(strings.HasPrefix(jobURL, "https://") || strings.HasPrefix(jobURL, "http://")) {
 		return Job{}, false, errors.New("a job needs a title and an http(s) URL")
 	}
+	var posting ProviderPosting
+	if input.Posting != nil {
+		posting = *input.Posting
+	}
+	facts := JobPosting{BoardFacts: input.BoardFacts}
 
 	var job Job
 	created := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		inserted, err := scanJob(tx.QueryRow(ctx, `
-			INSERT INTO jobs (company_id, source, title, url, location, description)
-			VALUES ($1, 'manual', $2, $3, $4, $5)
+			INSERT INTO jobs (company_id, source, title, url, location, workplace_type, description, text_missing_reason, raw,
+				posting_provider, posting_board_token, posting_external_id, pay, employment_type, department, other_locations, published_at)
+			VALUES ($1, 'manual', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			ON CONFLICT (url) WHERE source = 'manual' DO NOTHING
-			RETURNING `+jobColumns, input.CompanyID, title, jobURL, input.Location, input.Description))
+			RETURNING `+jobColumns, append([]any{input.CompanyID, title, jobURL, input.Location, input.WorkplaceType, input.Description,
+			input.TextMissingReason, input.Raw, posting.Provider, posting.BoardToken, posting.ExternalID}, facts.boardFactsArguments()...)...))
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			job, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs WHERE source = 'manual' AND url = $1`, jobURL))
@@ -409,7 +484,24 @@ func (s *Store) UpsertBoardJob(ctx context.Context, actor Actor, board JobBoard,
 	var job Job
 	created := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var err error
+		handAdded, err := listHandAddedPostings(ctx, tx, board)
+		if err != nil {
+			return err
+		}
+		if jobID, found := handAdded[posting.ExternalID]; found {
+			var isKnown bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM jobs WHERE job_board_id = $1 AND external_id = $2)`, board.ID, posting.ExternalID).
+				Scan(&isKnown); err != nil {
+				return err
+			}
+			if !isKnown {
+				if err := adoptFeedCopy(ctx, tx, actor, board, jobID, posting, seenAt); err != nil {
+					return err
+				}
+				job, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = $1`, jobID))
+				return err
+			}
+		}
 		job, err = scanJob(tx.QueryRow(ctx, `
 			INSERT INTO jobs (company_id, job_board_id, external_id, source, title, location, workplace_type, url, description, raw, first_seen_at, last_seen_at,
 				pay, employment_type, department, other_locations, published_at, company_name)

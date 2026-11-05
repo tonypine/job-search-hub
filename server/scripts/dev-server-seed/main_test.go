@@ -40,6 +40,7 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
 	checkScreens(t, hub)
+	checkSummaryOnlyPay(t, hub)
 	checkRuns(t, hub, now)
 
 	profile, err := hub.GetOwnerProfile(ctx)
@@ -61,6 +62,7 @@ func TestTheSeedFillsEveryPageQAJudgesOnce(t *testing.T) {
 	checkJobs(t, hub)
 	checkCompanies(t, hub)
 	checkScreens(t, hub)
+	checkSummaryOnlyPay(t, hub)
 	checkRuns(t, hub, now)
 }
 
@@ -618,7 +620,7 @@ func checkScreens(t *testing.T, hub *store.Store) {
 	t.Helper()
 	routes := http.NewServeMux()
 	asOwner := func(next http.Handler) http.Handler { return next }
-	api.RegisterJobRoutes(routes, hub, nil, nil, asOwner)
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{}, nil, asOwner)
 	api.RegisterCompanyRoutes(routes, hub, nil, asOwner)
 	get := func(path string, response any) {
 		t.Helper()
@@ -678,6 +680,57 @@ func checkScreens(t *testing.T, hub *store.Store) {
 		if company.FittingJobs > 0 && company.BestMatch == nil {
 			t.Errorf("%s has %d open jobs that pass and no best match", company.Company.Name, company.FittingJobs)
 		}
+	}
+}
+
+// checkSummaryOnlyPay reads the jobs list as the app does: the one seeded job
+// whose pay is a summary alone carries it with "ranges": [], never null, on
+// its row and its page, and every other job's pay has its ranges as a list.
+func checkSummaryOnlyPay(t *testing.T, hub *store.Store) {
+	t.Helper()
+	routes := http.NewServeMux()
+	api.RegisterJobRoutes(routes, hub, api.JobAdding{}, nil, func(next http.Handler) http.Handler { return next })
+
+	type payJSON struct {
+		Ranges  *[]json.RawMessage `json:"ranges"`
+		Summary string             `json:"summary"`
+	}
+	type row struct {
+		Job struct {
+			ID    uuid.UUID `json:"id"`
+			Title string    `json:"title"`
+			Pay   *payJSON  `json:"pay"`
+		} `json:"job"`
+	}
+	var list struct {
+		Jobs []row `json:"jobs"`
+	}
+	getJSON(t, routes, "/v1/jobs?status=all&limit=500", &list)
+	var summaryOnly []string
+	for _, item := range list.Jobs {
+		pay := item.Job.Pay
+		if pay == nil {
+			continue
+		}
+		if pay.Ranges == nil {
+			t.Errorf("%s pay = %+v; want its ranges a list, never null", item.Job.Title, pay)
+			continue
+		}
+		if len(*pay.Ranges) > 0 {
+			continue
+		}
+		summaryOnly = append(summaryOnly, item.Job.Title)
+		if pay.Summary != summaryOnlyPay {
+			t.Errorf("%s pay summary = %q; want %q", item.Job.Title, pay.Summary, summaryOnlyPay)
+		}
+		var page row
+		getJSON(t, routes, "/v1/jobs/"+item.Job.ID.String(), &page)
+		if page.Job.Pay == nil || page.Job.Pay.Ranges == nil || len(*page.Job.Pay.Ranges) != 0 || page.Job.Pay.Summary != summaryOnlyPay {
+			t.Errorf("%s page pay = %+v; want the summary with no ranges", item.Job.Title, page.Job.Pay)
+		}
+	}
+	if !slices.Equal(summaryOnly, []string{"Senior Platform Engineer, Swift"}) {
+		t.Errorf("jobs whose pay is a summary alone = %v; want the Quillfeather platform role", summaryOnly)
 	}
 }
 

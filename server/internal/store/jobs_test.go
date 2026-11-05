@@ -145,6 +145,69 @@ func TestAJobAddedByHandNeedsATitleAndAURLAndIsStoredOnce(t *testing.T) {
 	}
 }
 
+func TestAJobAddedByHandFromABoardsPostingBecomesThatPosting(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	pay := &store.Pay{Ranges: []store.PayRange{{Min: 100000, Max: 120000, Currency: "USD", Interval: "year"}}}
+
+	// Added from the careers page before the hub kept the company's board.
+	added, created, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{
+		Title: "Frontend Engineer", URL: "https://jobs.lever.co/acme/a", Location: "Remote", Description: "React.",
+		BoardFacts: store.BoardFacts{Pay: pay, Department: "Web"},
+		Posting:    &store.ProviderPosting{Provider: "lever", BoardToken: "Acme", ExternalID: "a"},
+	})
+	if err != nil || !created || added.Pay == nil || len(added.Pay.Ranges) != 1 || added.Department != "Web" || added.Description != "React." {
+		t.Fatalf("add = %+v, %v, %v", added, created, err)
+	}
+	other, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Backend Engineer", URL: "https://acme.com/careers/b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	board := createBoard(t, hub)
+	result, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{posting("a", "Frontend Engineer"), posting("b", "Backend Engineer")}, time.Now())
+	if err != nil || result.Created != 1 || result.Adopted != 1 {
+		t.Fatalf("sync = %+v, %v; want a adopted and b, which names no posting, created", result, err)
+	}
+	adopted, err := getJob(ctx, hub, added.ID)
+	if err != nil || adopted.Source != store.JobSourceJobBoard || adopted.JobBoardID == nil || *adopted.JobBoardID != board.ID ||
+		adopted.ExternalID == nil || *adopted.ExternalID != "a" || adopted.CompanyID == nil || *adopted.CompanyID != *board.CompanyID {
+		t.Fatalf("adopted = %+v, %v", adopted, err)
+	}
+	if kept, err := getJob(ctx, hub, other.ID); err != nil || kept.Source != store.JobSourceManual {
+		t.Fatalf("the job that names no posting = %+v, %v", kept, err)
+	}
+
+	// The board's next sync, and adding the posting again, keep that job.
+	if result, err := hub.SyncBoardJobs(ctx, hubSystem, board, []store.JobPosting{posting("a", "Frontend Engineer"), posting("b", "Backend Engineer")}, time.Now()); err != nil ||
+		result.Created != 0 || result.Adopted != 0 {
+		t.Fatalf("second sync = %+v, %v", result, err)
+	}
+	again, created, err := hub.UpsertBoardJob(ctx, owner, board, posting("a", "Frontend Engineer"), time.Now())
+	if err != nil || created || again.ID != added.ID {
+		t.Fatalf("upsert = %+v, %v, %v", again, created, err)
+	}
+}
+
+func TestAddingABoardsPostingAdoptsTheJobAddedByHandFromIt(t *testing.T) {
+	hub := store.New(testdatabase.New(t))
+	ctx := context.Background()
+	added, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{
+		Title: "Frontend Engineer", URL: "https://acme.com/careers/a", TextMissingReason: "not read yet",
+		Posting: &store.ProviderPosting{Provider: "lever", BoardToken: "acme", ExternalID: "a"},
+	})
+	if err != nil || added.TextMissingReason != "not read yet" {
+		t.Fatalf("add = %+v, %v", added, err)
+	}
+	board := createBoard(t, hub)
+
+	job, created, err := hub.UpsertBoardJob(ctx, owner, board, posting("a", "Frontend Engineer"), time.Now())
+	if err != nil || created || job.ID != added.ID || job.Source != store.JobSourceJobBoard || job.TextMissingReason != "" {
+		t.Fatalf("upsert = %+v, %v, %v; want the hand-added job adopted", job, created, err)
+	}
+}
+
 func TestAJobAddedByHandForAnUnknownCompanyFails(t *testing.T) {
 	hub := store.New(testdatabase.New(t))
 	unknown := createBoard(t, hub).ID
@@ -215,4 +278,9 @@ func TestAJobAddedByHandIsGivenItsCompanyAndItsCardFollows(t *testing.T) {
 	if _, err := hub.SetJobCompany(ctx, owner, job.ID, uuid.New()); !errors.Is(err, store.ErrCompanyNotFound) {
 		t.Fatalf("an unknown company: err = %v", err)
 	}
+}
+
+func getJob(ctx context.Context, hub *store.Store, id uuid.UUID) (store.Job, error) {
+	details, err := hub.GetJobDetails(ctx, id)
+	return details.Job, err
 }

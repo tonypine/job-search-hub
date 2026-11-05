@@ -32,16 +32,25 @@ type modelClient interface {
 type Extractor struct {
 	hub    *store.Store
 	client modelClient
+	// Now is the clock the backoff reads; time.Now when nil.
+	Now     func() time.Time
+	backoff backoff
 }
 
 func NewExtractor(hub *store.Store, client modelClient) *Extractor {
 	return &Extractor{hub: hub, client: client}
 }
 
-// PassSummary counts one pass over the jobs awaiting facts.
+// PassSummary counts one pass over the jobs awaiting facts. Waiting counts
+// the jobs it left for later, as they failed recently. PausedUntil is set
+// when failures in a row paused the background, which reads no job until
+// then; LastError is the last failure's.
 type PassSummary struct {
-	Read   int
-	Failed int
+	Read        int
+	Failed      int
+	Waiting     int
+	PausedUntil time.Time
+	LastError   error
 }
 
 // Run reads facts once at start and then every interval, until ctx ends.
@@ -51,9 +60,13 @@ func (extractor *Extractor) Run(ctx context.Context, interval time.Duration) {
 	for {
 		if !drain.IsDraining(ctx) {
 			summary, err := extractor.ExtractOnce(ctx)
-			if err != nil {
+			switch {
+			case err != nil:
 				slog.Error("job facts pass stopped", "error", err, "read", summary.Read, "failed", summary.Failed)
-			} else if summary.Read > 0 || summary.Failed > 0 {
+			case !summary.PausedUntil.IsZero() && summary.Failed > 0:
+				slog.Warn("job facts paused after failures in a row", "until", summary.PausedUntil.Format(time.RFC3339),
+					"read", summary.Read, "failed", summary.Failed, "error", summary.LastError)
+			case summary.Read > 0 || summary.Failed > 0:
 				slog.Info("job facts pass done", "read", summary.Read, "failed", summary.Failed)
 			}
 		}
@@ -66,9 +79,15 @@ func (extractor *Extractor) Run(ctx context.Context, interval time.Duration) {
 }
 
 // ExtractOnce reads the facts of every job awaiting them, one at a time. A
-// job the model fails on is logged and counted, and the others go on; an
-// unreachable model server stops the pass.
+// job the model fails on is logged and counted, and the others go on; the
+// job waits before its next try, 15 minutes at first and doubling. Three
+// failures in a row stop the pass and pause it, 5 minutes at first and
+// doubling up to an hour, so a model failing every call isn't retried in a
+// loop. An unreachable model server stops the pass.
 func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error) {
+	if pausedUntil := extractor.backoff.pausedUntilAt(extractor.now()); !pausedUntil.IsZero() {
+		return PassSummary{PausedUntil: pausedUntil}, nil
+	}
 	prompt, err := extractor.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
 	if err != nil {
 		return PassSummary{}, fmt.Errorf("read the job_facts prompt: %w", err)
@@ -80,22 +99,39 @@ func (extractor *Extractor) ExtractOnce(ctx context.Context) (PassSummary, error
 
 	var summary PassSummary
 	for _, job := range jobs {
+		if extractor.backoff.isWaiting(job.ID, extractor.now()) {
+			summary.Waiting++
+			continue
+		}
 		err := extractor.readJobFacts(ctx, job, prompt)
 		if errors.Is(err, chatcompletions.ErrUnreachable) || ctx.Err() != nil {
 			return summary, err
 		}
 		if err != nil {
 			summary.Failed++
+			summary.LastError = err
 			slog.Warn("job facts failed", "job", job.ID, "title", job.Title, "error", err)
+			if summary.PausedUntil = extractor.backoff.failed(job.ID, extractor.now()); !summary.PausedUntil.IsZero() {
+				return summary, nil
+			}
 			continue
 		}
+		extractor.backoff.succeeded(job.ID)
 		summary.Read++
 	}
 	return summary, nil
 }
 
+func (extractor *Extractor) now() time.Time {
+	if extractor.Now == nil {
+		return time.Now()
+	}
+	return extractor.Now()
+}
+
 // ReadJobNow reads one job's facts with the latest prompt as a run the owner
-// dispatched: it goes ahead of background work, even while that is paused.
+// dispatched: it goes ahead of background work, even while that is paused,
+// or waits after failures. Its success ends that wait.
 func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) error {
 	prompt, err := extractor.hub.GetLatestAgentPrompt(ctx, store.AgentPromptKindJobFacts)
 	if err != nil {
@@ -106,7 +142,11 @@ func (extractor *Extractor) ReadJobNow(ctx context.Context, jobID uuid.UUID) err
 		return err
 	}
 	ctx = chatcompletions.WithStartedByOwner(modelqueue.WithPriority(ctx, modelqueue.PriorityDispatched))
-	return extractor.readJobFacts(ctx, job, prompt)
+	if err := extractor.readJobFacts(ctx, job, prompt); err != nil {
+		return err
+	}
+	extractor.backoff.succeeded(job.ID)
+	return nil
 }
 
 // readJobFacts asks the model for the job's facts and saves them.

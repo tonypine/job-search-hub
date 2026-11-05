@@ -104,23 +104,54 @@ func (client *Client) run(ctx context.Context, request chatcompletions.JSONReque
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: the Claude CLI isn't found: %v", chatcompletions.ErrUnreachable, err)
 	}
-	if err != nil {
-		return chatcompletions.Answer{}, fmt.Errorf("claude exited: %v: %s", err, strings.TrimSpace(stderr.String()))
-	}
 	var answer cliAnswer
-	if err := json.Unmarshal(output, &answer); err != nil {
-		return chatcompletions.Answer{}, fmt.Errorf("%w: claude's output isn't JSON", chatcompletions.ErrInvalidAnswer)
+	isJSON := json.Unmarshal(output, &answer) == nil
+	if isJSON {
+		record.PromptTokens = answer.Usage.InputTokens + answer.Usage.CacheReadInputTokens + answer.Usage.CacheCreationInputTokens
+		record.CompletionTokens = answer.Usage.OutputTokens
+		record.CostUSD = answer.TotalCostUSD.String()
+		for model := range answer.ModelUsage {
+			record.Model = model
+		}
 	}
-	record.PromptTokens = answer.Usage.InputTokens + answer.Usage.CacheReadInputTokens + answer.Usage.CacheCreationInputTokens
-	record.CompletionTokens = answer.Usage.OutputTokens
-	record.CostUSD = answer.TotalCostUSD.String()
-	for model := range answer.ModelUsage {
-		record.Model = model
+	if err != nil {
+		return chatcompletions.Answer{}, fmt.Errorf("claude exited: %v: %s", err, exitReason(answer.Result, isJSON, output, stderr.String()))
+	}
+	if !isJSON {
+		return chatcompletions.Answer{}, fmt.Errorf("%w: claude's output isn't JSON", chatcompletions.ErrInvalidAnswer)
 	}
 	if answer.IsError || len(answer.StructuredOutput) == 0 || string(answer.StructuredOutput) == "null" {
 		return chatcompletions.Answer{}, fmt.Errorf("%w: claude gave no structured answer: %s", chatcompletions.ErrInvalidAnswer, answer.Result)
 	}
 	return chatcompletions.Answer{Object: answer.StructuredOutput, Model: record.Model}, nil
+}
+
+// maximumReasonLength bounds the part of a failed run's output that goes
+// into its error, and so into the run record and the server log.
+const maximumReasonLength = 2000
+
+// exitReason is why the CLI exited non-zero, as it said it: `claude -p
+// --output-format json` writes its error, such as a usage limit or a failed
+// login, as the result of its JSON answer on stdout, not on stderr. Without a
+// result, it's the end of what the CLI printed.
+func exitReason(result string, isJSON bool, stdout []byte, stderr string) string {
+	var parts []string
+	if result = strings.TrimSpace(result); isJSON && result != "" {
+		parts = append(parts, result)
+	} else if text := strings.TrimSpace(string(stdout)); text != "" {
+		parts = append(parts, text)
+	}
+	if text := strings.TrimSpace(stderr); text != "" {
+		parts = append(parts, text)
+	}
+	reason := strings.Join(parts, "\n")
+	if len(reason) > maximumReasonLength {
+		reason = "…" + strings.ToValidUTF8(reason[len(reason)-maximumReasonLength:], "")
+	}
+	if reason == "" {
+		return "the Claude CLI said nothing"
+	}
+	return reason
 }
 
 // buildArguments is a one-turn session that can only answer: every tool,

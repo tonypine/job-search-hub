@@ -88,14 +88,37 @@ final class Installer {
     /// the app takes it back: any way the install stops short of quitting
     /// lets the hub start work again.
     @ObservationIgnored private(set) var isDraining = false
+    /// Whether a window still has a sheet attached: AppKit won't quit
+    /// while one is. Tests stand in for it.
+    @ObservationIgnored var hasAttachedSheet: @MainActor () -> Bool = { NSApp.windows.contains { $0.attachedSheet != nil } }
+    /// Quits the app, or answers the ⌘Q waiting for it. Tests stand in for it.
+    @ObservationIgnored var quit: @MainActor (_ answersPendingQuit: Bool) -> Void = { answersPendingQuit in
+        if answersPendingQuit {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        } else {
+            NSApp.terminate(nil)
+        }
+    }
+    /// Starts `hub-update` for the target; tests stand in for launchd.
+    @ObservationIgnored var launchHubUpdate: (@MainActor (Target) throws -> Void)?
+    /// How often the app, still open after asking to quit, looks at whether
+    /// `hub-update` gave up on it.
+    @ObservationIgnored var stateCheckInterval: Duration = .seconds(1)
+    /// How long the sheet gets to close before the app quits anyway.
+    @ObservationIgnored var sheetCloseTimeout: Duration = .seconds(5)
 
     init(updates: UpdatesFolder) {
         self.updates = updates
     }
 
+    static let qaFixtureReason = "A QA fixture stands in for the Updates folder, so installs and going back are recorded in its log, not run."
+
     /// Why this copy of the app can't install versions; nil when it can. Only
     /// the installed app, carrying `hub-update`, installs over itself.
     var cannotInstallReason: String? {
+        if updates.isQAFixture {
+            return Self.qaFixtureReason
+        }
         if !ServerAgent.isInstalledCopy {
             return "Only the app installed in ~/Applications installs new versions. Install a build with macos/Scripts/install-app.sh first."
         }
@@ -279,7 +302,11 @@ final class Installer {
         phase = .starting
         do {
             try saveReopenRecord()
-            try startHubUpdate(target)
+            if let launchHubUpdate {
+                try launchHubUpdate(target)
+            } else {
+                try startHubUpdate(target)
+            }
         } catch {
             failure = HubFailure("Couldn't start the install", error)
             phase = .reviewing
@@ -294,10 +321,24 @@ final class Installer {
         }
         updates.log("Installing \(target.version) over \(HubClient.appVersion); the app quits for hub-update.", at: .now)
         isQuittingForInstall = true
-        if isTerminationPending {
-            NSApp.reply(toApplicationShouldTerminate: true)
-        } else {
-            NSApp.terminate(nil)
+        let answersPendingQuit = isTerminationPending
+        isTerminationPending = false
+        // AppKit refuses to quit while a sheet is attached: the install
+        // sheet goes first, and the app waits until it's gone.
+        await closeSheets()
+        quit(answersPendingQuit)
+        watchQuitForInstall()
+    }
+
+    /// Closes the install sheet and its *Install anyway?* alert, and waits
+    /// until no window holds a sheet, for at most `sheetCloseTimeout`.
+    private func closeSheets() async {
+        let deadline = ContinuousClock.now + sheetCloseTimeout
+        while true {
+            isConfirmingInstallAnyway = false
+            isShowingSheet = false
+            guard hasAttachedSheet(), ContinuousClock.now < deadline else { return }
+            try? await Task.sleep(for: .milliseconds(50))
         }
     }
 
@@ -317,6 +358,42 @@ final class Installer {
         updates.log("Going back from \(state.to) to \(state.from); the app quits for hub-update.", at: .now)
         isQuittingForInstall = true
         NSApp.terminate(nil)
+    }
+
+    /// The app is still open after asking to quit: once `hub-update` gives
+    /// up waiting for it, the install is over, and the app says so instead
+    /// of showing "Installing" for good.
+    private func watchQuitForInstall() {
+        Task { [weak self] in
+            while true {
+                guard let interval = self?.stateCheckInterval else { return }
+                try? await Task.sleep(for: interval)
+                guard let self, self.phase == .starting else { return }
+                let state = self.updates.readState()
+                if let state, !state.step.isFinished { continue }
+                await self.endInstallThatDidntQuit(state)
+                return
+            }
+        }
+    }
+
+    /// The install ended while the app ran: the hub and the app start work
+    /// again, and the failure shows.
+    private func endInstallThatDidntQuit(_ state: InstallState?) async {
+        let fileManager = FileManager.default
+        if let state {
+            try? fileManager.removeItem(at: updates.lastInstallURL)
+            try? fileManager.moveItem(at: updates.stateURL, to: updates.lastInstallURL)
+            readNotice()
+        }
+        try? fileManager.removeItem(at: updates.reopenURL)
+        let version = state?.to ?? target?.version.description ?? "the new version"
+        failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
+        isQuittingForInstall = false
+        reopensApp = true
+        await stopDraining()
+        taskRunner?.isPaused = false
+        phase = .idle
     }
 
     private func saveReopenRecord() throws {
@@ -341,6 +418,7 @@ final class Installer {
     /// Writes the install's state, and has `hub-update`, copied out of the
     /// new bundle, carry it out.
     private func startHubUpdate(_ target: Target) throws {
+        try refuseQAFixture("Install \(target.version)")
         let home = FileManager.default.homeDirectoryForCurrentUser
         guard let running = HubVersion(HubClient.appVersion) else { throw InstallError("This app's version, \(HubClient.appVersion), can't be read.") }
         let state = InstallState(
@@ -394,6 +472,14 @@ final class Installer {
             try? fileManager.removeItem(at: updates.stateURL)
             throw InstallError("launchd didn't start hub-update: \(output)")
         }
+    }
+
+    /// With a QA fixture's Updates folder, records what was asked in its
+    /// log and throws before anything reaches `hub-update` or launchd.
+    func refuseQAFixture(_ request: String) throws {
+        guard updates.isQAFixture else { return }
+        updates.log("QA fixture: \(request) was asked; hub-update wasn't started.", at: .now)
+        throw InstallError(Self.qaFixtureReason)
     }
 
     private static func runLaunchctl(_ arguments: [String]) -> (Int32, String) {

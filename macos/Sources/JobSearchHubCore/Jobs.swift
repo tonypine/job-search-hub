@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public struct Job: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
@@ -22,10 +23,13 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     /// job leaves the jobs list until restored.
     public var dismissedAt: Date?
     public var dismissalReason: String?
+    /// Why the job has no posting text, as when the page it was added from
+    /// couldn't be read; nil once it has its text.
+    public var textMissingReason: String?
 
     enum CodingKeys: String, CodingKey {
         case id, source, title, location, workplaceType, url, description, pay, employmentType, department, otherLocations, publishedAt
-        case firstSeenAt, lastSeenAt, closedAt, dismissedAt, dismissalReason
+        case firstSeenAt, lastSeenAt, closedAt, dismissedAt, dismissalReason, textMissingReason
         case companyID = "companyId"
         case jobBoardID = "jobBoardId"
     }
@@ -56,6 +60,20 @@ extension Job {
 public struct Pay: Codable, Equatable, Sendable {
     public var ranges: [PayRange]
     public var summary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ranges, summary
+    }
+}
+
+extension Pay {
+    /// Reads missing or null ranges as none, so a pay with only a summary,
+    /// as an older hub can send it, still reads.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ranges = try container.decodeIfPresent([PayRange].self, forKey: .ranges) ?? []
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+    }
 }
 
 public struct PayRange: Codable, Equatable, Sendable {
@@ -126,6 +144,57 @@ public struct JobsResponse: Codable, Equatable, Sendable {
     public var total: Int
     /// The facts the jobs' facts hold, in the order to show them as columns.
     public var factColumns: [JobFactColumn]?
+    /// Why each job the app couldn't read was left out of `jobs`; empty when
+    /// it read them all.
+    public var unreadableJobs: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case jobs, total, factColumns
+    }
+}
+
+private let jobsLog = Logger(subsystem: "JobSearchHub", category: "jobs")
+
+extension JobsResponse {
+    /// Leaves out a job the app can't read, and logs why, so one job can't
+    /// keep the rest of the list from loading.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var items = try container.nestedUnkeyedContainer(forKey: .jobs)
+        var jobs: [JobListItem] = []
+        var unreadable: [String] = []
+        while !items.isAtEnd {
+            do {
+                let item = try items.decode(JobListItem.self)
+                jobs.append(item)
+            } catch {
+                // A failed decode doesn't move past the element; skipping it does.
+                _ = try items.decode(SkippedElement.self)
+                let reason = Self.describe(error)
+                jobsLog.error("Left out a job the app can't read: \(reason, privacy: .public)")
+                unreadable.append(reason)
+            }
+        }
+        self.jobs = jobs
+        total = try container.decode(Int.self, forKey: .total)
+        factColumns = try container.decodeIfPresent([JobFactColumn].self, forKey: .factColumns)
+        unreadableJobs = unreadable
+    }
+
+    private struct SkippedElement: Decodable {
+        init(from _: Decoder) {}
+    }
+
+    private static func describe(_ error: Error) -> String {
+        switch error {
+        case let DecodingError.typeMismatch(_, context), let DecodingError.valueNotFound(_, context),
+             let DecodingError.keyNotFound(_, context), let DecodingError.dataCorrupted(context):
+            let path = context.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+            return "\(path): \(context.debugDescription)"
+        default:
+            return String(describing: error)
+        }
+    }
 }
 
 /// One fact read from job postings, as a column of the jobs list.
@@ -157,6 +226,8 @@ public struct AddJobRequest: Codable, Equatable, Sendable {
 public struct AddJobResponse: Codable, Equatable, Sendable {
     public var job: Job
     public var created: Bool
+    /// The hub started the new job's runs; nil from a hub that doesn't.
+    public var runsStarted: Bool?
 }
 
 public enum JobStatusFilter: String, CaseIterable, Identifiable, Sendable {
@@ -194,15 +265,18 @@ public extension HubClient {
         var response = try await get(
             "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: JobsQuery.pageSize), as: JobsResponse.self
         )
-        while response.jobs.count < response.total {
+        // A job left out unread still takes its place in the hub's pages.
+        while response.jobs.count + response.unreadableJobs.count < response.total {
+            let read = response.jobs.count + response.unreadableJobs.count
             let page = try await get(
-                "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: JobsQuery.pageSize, offset: response.jobs.count),
+                "v1/jobs", query: JobsQuery.makeItems(search: search, status: status, limit: JobsQuery.pageSize, offset: read),
                 as: JobsResponse.self
             )
-            if page.jobs.isEmpty {
+            if page.jobs.isEmpty && page.unreadableJobs.isEmpty {
                 break
             }
             response.jobs += page.jobs
+            response.unreadableJobs += page.unreadableJobs
         }
         return response
     }
@@ -255,5 +329,17 @@ public enum CompanyJobs {
             URLQueryItem(name: "company_id", value: companyID.uuidString), URLQueryItem(name: "status", value: JobStatusFilter.open.rawValue),
             URLQueryItem(name: "limit", value: String(JobsQuery.pageSize)),
         ]
+    }
+}
+
+/// What a job's posting tab says when the job has no posting text.
+public enum JobPosting {
+    /// Why the job has no text, when the hub knows, else that the original
+    /// has it.
+    public static func describeMissingText(of job: Job) -> String {
+        if let reason = job.textMissingReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            return reason
+        }
+        return "The board kept no text for this posting; the original has it."
     }
 }

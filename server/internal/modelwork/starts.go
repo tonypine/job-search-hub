@@ -233,6 +233,9 @@ type RunnableKind struct {
 	// until what it makes for the subject is saved. An agent run, which the
 	// Mac runs, isn't here.
 	RunningStarts []uuid.UUID `json:"running_starts"`
+	// Queued says the hub starts the kind for the subject once the runs it
+	// reads have ended, as for a job just added.
+	Queued bool `json:"queued"`
 }
 
 // ListRunnableKinds is every kind the owner can start for the job or the
@@ -260,6 +263,7 @@ func (controls *Controls) ListRunnableKinds(ctx context.Context, subjectType str
 		runnable := RunnableKind{
 			RunKind: kind, Paused: kind.Automatic && controls.Queue.IsPaused(kind.ID), Route: route,
 			NeedsNote: kind.ID == store.AgentRunKindJobFix, RunningStarts: controls.listRunningStarts(startKey{kind: kind.ID, subjectID: subjectID}),
+			Queued: controls.isQueued(startKey{kind: kind.ID, subjectID: subjectID}),
 		}
 		if len(page.Runs) > 0 {
 			runnable.LastRun = &page.Runs[0]
@@ -360,32 +364,39 @@ type StartedRun struct {
 // its id. An agent run waits for the Mac. A kind that can't run yet is a
 // CannotRunError and starts nothing.
 func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, request StartRequest) (StartedRun, error) {
+	started, _, err := controls.start(ctx, actor, request)
+	return started, err
+}
+
+// start starts the run as StartRun does. A model run's channel closes once
+// it ended and said so; an agent run's is nil.
+func (controls *Controls) start(ctx context.Context, actor store.Actor, request StartRequest) (StartedRun, <-chan struct{}, error) {
 	kind, found := store.GetRunKind(request.Kind)
 	starter, startable := starters[request.Kind]
 	if !found || !startable {
-		return StartedRun{}, ErrNotStartable
+		return StartedRun{}, nil, ErrNotStartable
 	}
 	if request.SubjectType != "" && request.SubjectType != kind.SubjectType {
-		return StartedRun{}, InvalidStartError{Reason: fmt.Sprintf("%s run for a %s", kind.Title, kind.SubjectType)}
+		return StartedRun{}, nil, InvalidStartError{Reason: fmt.Sprintf("%s run for a %s", kind.Title, kind.SubjectType)}
 	}
 	note := strings.TrimSpace(request.Note)
 	if kind.ID == store.AgentRunKindJobFix && note == "" {
-		return StartedRun{}, InvalidStartError{Reason: "a job fix needs a note saying what's wrong"}
+		return StartedRun{}, nil, InvalidStartError{Reason: "a job fix needs a note saying what's wrong"}
 	}
 	subject, err := controls.readSubject(ctx, kind.SubjectType, request.SubjectID)
 	if err != nil {
-		return StartedRun{}, err
+		return StartedRun{}, nil, err
 	}
 	route, err := controls.readRoute(ctx, kind.ID)
 	if err != nil {
-		return StartedRun{}, err
+		return StartedRun{}, nil, err
 	}
 	chosen, err := controls.readChosenModel(ctx, kind, route, request)
 	if err != nil {
-		return StartedRun{}, err
+		return StartedRun{}, nil, err
 	}
 	if reason := getCannotRunReason(controls, kind, starter, subject, route != nil || chosen != nil); reason != nil {
-		return StartedRun{}, *reason
+		return StartedRun{}, nil, *reason
 	}
 
 	started := StartedRun{ID: uuid.New(), Kind: kind.ID, SubjectType: kind.SubjectType, SubjectID: request.SubjectID, StartedByOwner: true}
@@ -396,7 +407,8 @@ func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, reque
 		started.Provider, started.Model = route.Provider, route.Model
 	}
 	if starter.run == nil {
-		return controls.queueAgentRun(ctx, actor, starter, subject, started, chosen, note)
+		started, err := controls.queueAgentRun(ctx, actor, starter, subject, started, chosen, note)
+		return started, nil, err
 	}
 
 	runCtx := chatcompletions.WithRunID(context.WithoutCancel(ctx), kind.ID, started.ID)
@@ -406,7 +418,9 @@ func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, reque
 	}
 	key := startKey{kind: kind.ID, subjectID: request.SubjectID}
 	controls.beginStart(key, started.ID)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		runCtx, cancel := context.WithTimeout(runCtx, startedRunTimeout)
 		defer cancel()
 		startedAt := time.Now()
@@ -418,7 +432,7 @@ func (controls *Controls) StartRun(ctx context.Context, actor store.Actor, reque
 		controls.endStart(key, started.ID)
 		controls.recordRunEnded(context.WithoutCancel(ctx), kind, starter, subject, request.SubjectID, err)
 	}()
-	return started, nil
+	return started, done, nil
 }
 
 // startKey is a kind's runs for one subject.

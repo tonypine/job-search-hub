@@ -2,14 +2,19 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
 	"github.com/tonypine/job-search-hub/server/internal/testdatabase"
+	"github.com/tonypine/job-search-hub/server/migrations"
 )
 
 func TestAFixIsLoggedWithItsReasonsAndOutlivesTheNextPoll(t *testing.T) {
@@ -103,5 +108,63 @@ func TestABoardsJobKeepsAFixAndItsBoardsCompany(t *testing.T) {
 	}
 	if after, _, _ := hub.ListJobs(ctx, store.JobFilter{}); after[0].Job.Title != title || after[0].Job.Location != "Remote, LATAM" {
 		t.Errorf("after the board's poll: %q at %q", after[0].Job.Title, after[0].Job.Location)
+	}
+}
+
+func TestAFixWithAPaySummaryAloneStoresItsRangesAsAList(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.example/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixed, err := hub.FixJobDetails(ctx, owner, job.ID, store.JobDetailsFix{
+		Pay: &store.Pay{Summary: "no range published"}, Reasons: map[string]string{"pay": "the posting gives no range"},
+	})
+	if err != nil || fixed.Pay == nil || fixed.Pay.Summary != "no range published" {
+		t.Fatalf("fixed = %+v, %v", fixed, err)
+	}
+	var rangesType string
+	if err := pool.QueryRow(ctx, `SELECT jsonb_typeof(pay->'ranges') FROM jobs WHERE id = $1`, job.ID).Scan(&rangesType); err != nil || rangesType != "array" {
+		t.Errorf("stored ranges are %q, want an array: %v", rangesType, err)
+	}
+	answer, err := json.Marshal(fixed)
+	if err != nil || !strings.Contains(string(answer), `"pay":{"ranges":[],"summary":"no range published"}`) {
+		t.Errorf("the job's answer = %s, %v", answer, err)
+	}
+}
+
+// The migration that turns stored null pay ranges into empty lists.
+const payRangesMigration = 93
+
+func TestThePayRangesMigrationTurnsStoredNullRangesIntoAnEmptyList(t *testing.T) {
+	pool := testdatabase.New(t)
+	hub := store.New(pool)
+	ctx := context.Background()
+	job, _, err := hub.AddManualJob(ctx, owner, store.ManualJobInput{Title: "Engineer", URL: "https://acme.example/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET pay = '{"ranges": null, "summary": "no range published"}' WHERE id = $1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	database := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { database.Close() })
+	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, payRangesMigration-1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, payRangesMigration); err != nil {
+		t.Fatal(err)
+	}
+	var pay string
+	if err := pool.QueryRow(ctx, `SELECT pay::text FROM jobs WHERE id = $1`, job.ID).Scan(&pay); err != nil || pay != `{"ranges": [], "summary": "no range published"}` {
+		t.Errorf("pay = %s, %v", pay, err)
 	}
 }
