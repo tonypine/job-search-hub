@@ -59,6 +59,19 @@ public struct GoingBackReport: Decodable, Equatable, Sendable {
     public func findDump(migration: Int) -> Dump? {
         dumps.last { $0.migration == migration }
     }
+
+    /// The migration whose copy of the database going back restores, for a
+    /// version whose server knows `target`: its own copy; when that's gone,
+    /// the one at `known`, an older migration its server migrates up from.
+    /// `target` when the database didn't migrate since, when `report` is nil,
+    /// so `hub-update` looks for the copy itself, or when neither copy is on
+    /// disk, which `GoingBackCost.make` then calls `.noCopy`.
+    public static func findRestoredMigration(target: Int, known: Int?, database: Int, report: GoingBackReport?) -> Int {
+        guard target < database, let report, report.findDump(migration: target) == nil,
+              let known, known < target, report.findDump(migration: known) != nil
+        else { return target }
+        return known
+    }
 }
 
 /// One kind of write going back would lose, counted: 3 "jobs found".

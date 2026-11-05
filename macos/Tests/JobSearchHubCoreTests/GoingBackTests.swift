@@ -95,6 +95,33 @@ private let report = GoingBackReport(
         == "The copy of the database from before 0.1.252 changed it is gone, so the hub can't go back to 0.1.247.")
 }
 
+@Test func anOlderVersionRestoresItsOwnCopyOrElseTheOneItsKnownToMigrateFrom() {
+    func restored(target: Int, known: Int?, database: Int = 91, report chosen: GoingBackReport? = report) -> Int {
+        GoingBackReport.findRestoredMigration(target: target, known: known, database: database, report: chosen)
+    }
+    // Its own copy is on disk, whatever else is.
+    #expect(restored(target: 90, known: 85) == 90)
+    // Its copy is gone (88 was pruned): the one at the migration it's known
+    // to reach, which its server migrates up from.
+    #expect(restored(target: 88, known: 85) == 85)
+    // Both are gone, or nothing older is known: its own, which the cost then
+    // says can't be restored.
+    #expect(restored(target: 88, known: 86) == 88)
+    #expect(restored(target: 88, known: nil) == 88)
+    #expect(GoingBackCost.make(target: restored(target: 88, known: 86), database: 91, report: report) == .noCopy)
+    // A known migration that isn't older can't stand in: its copy has writes
+    // the version's server may not understand.
+    #expect(restored(target: 88, known: 90) == 88)
+    // The database has no newer migration: nothing is restored.
+    #expect(restored(target: 91, known: 85) == 91)
+    #expect(restored(target: 88, known: 85, database: 88) == 88)
+    // Without the hub's report, there's no knowing which copies are on disk.
+    #expect(restored(target: 88, known: 85, report: nil) == 88)
+
+    // What the fallback restores is what the cost counts.
+    #expect(GoingBackCost.make(target: restored(target: 88, known: 85), database: 91, report: report) == .uncountable(since: now.addingTimeInterval(-5 * 86400)))
+}
+
 @Test func timesSayTheDayTheyFallOn() {
     #expect(GoingBackCost.describeTime(now.addingTimeInterval(-3600), now: now, calendar: utc) == "today, 15:00")
     #expect(GoingBackCost.describeTime(now.addingTimeInterval(-86400), now: now, calendar: utc) == "yesterday, 16:00")

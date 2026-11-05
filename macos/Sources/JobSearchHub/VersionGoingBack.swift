@@ -148,11 +148,7 @@ final class GoingBack {
         if migration < database {
             report = await readReport()
         }
-        var restored = migration
-        if migration < database, let report, report.findDump(migration: migration) == nil,
-           let known = knownMigration, known < migration, report.findDump(migration: known) != nil {
-            restored = known
-        }
+        let restored = GoingBackReport.findRestoredMigration(target: migration, known: knownMigration, database: database, report: report)
         return Offer(
             reason: reason, running: running, target: target, app: app, databaseMigration: database, restoredMigration: restored,
             cost: GoingBackCost.make(target: restored, database: database, report: report),
