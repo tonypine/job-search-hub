@@ -111,6 +111,26 @@ func goBackSheetDrawsOffscreen(state: String) throws {
     try GoBackSnapshots.write(banner, named: "withdrawn-banner")
 }
 
+/// WCAG's 4.5:1 for text: the fills are the same in both appearances, so one
+/// check covers dark, where the tones themselves brighten under white.
+@Test(arguments: [Tone.caution, .negative])
+func confirmFillsKeepAWhiteLabelReadable(tone: Tone) throws {
+    let hex = try #require(Tone.confirmFillHex(for: tone))
+    let channels = [(hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF].map { channel -> Double in
+        let value = Double(channel) / 255
+        return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+    }
+    let luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    #expect(1.05 / (luminance + 0.05) >= 4.5)
+}
+
+@MainActor
+@Test func theBannersDismissTargetIsLargeEnoughToHit() throws {
+    let image = try #require(ImageRenderer(content: BannerDismissLabel()).nsImage)
+    #expect(image.size.width >= 24)
+    #expect(image.size.height >= 24)
+}
+
 @MainActor
 @Test func returnNeverConfirmsAGoingBackThatLosesWrites() throws {
     let since = GoBackSnapshots.now

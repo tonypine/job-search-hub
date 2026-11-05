@@ -136,13 +136,13 @@ struct GoBackSheetContent: View {
                         Text(isLosingCounted(offer) ? "Go back and lose these" : "Go back and lose it")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Tone.negative.color)
+                    .tint(Tone.negative.confirmFill)
                     .disabled(work.hasUnsavedEdits)
                 } else {
                     Button("Go back to \(offer.target.description)", action: goBack)
                         .keyboardShortcut(offer.confirmsOnReturn ? KeyboardShortcut.defaultAction : nil)
                         .buttonStyle(.borderedProminent)
-                        .tint(offer.reason == .crash ? Tone.caution.color : nil)
+                        .tint(offer.reason == .crash ? Tone.caution.confirmFill : nil)
                         .disabled(work.hasUnsavedEdits)
                 }
             } else {
@@ -252,6 +252,18 @@ struct OlderVersionsContent: View {
     }
 }
 
+/// A banner's ×, in a target large enough to hit.
+struct BannerDismissLabel: View {
+    static let target: CGFloat = 24
+
+    var body: some View {
+        Image(systemName: "xmark")
+            .font(.caption.weight(.semibold))
+            .frame(width: Self.target, height: Self.target)
+            .contentShape(Rectangle())
+    }
+}
+
 /// Where the connection banner goes, while the running version is
 /// withdrawn: "0.1.252 was withdrawn. Going back to 0.1.247 loses nothing."
 struct WithdrawnBanner: View {
@@ -261,17 +273,20 @@ struct WithdrawnBanner: View {
     let dismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+        HStack(spacing: Space.s) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.caution.color).accessibilityHidden(true)
             Text([running.description + " was withdrawn.", summary].compactMap(\.self).joined(separator: " "))
                 .fontWeight(.medium)
                 .fixedSize(horizontal: false, vertical: true)
-            if let goBack {
-                Button("Go back…", action: goBack).buttonStyle(.link).fontWeight(.medium)
-            }
             Spacer(minLength: Space.s)
+            if let goBack {
+                Button("Go back…", action: goBack)
+                    .buttonStyle(.plain)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Tone.caution.color)
+            }
             Button(action: dismiss) {
-                Image(systemName: "xmark").font(.caption.weight(.semibold))
+                BannerDismissLabel()
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
