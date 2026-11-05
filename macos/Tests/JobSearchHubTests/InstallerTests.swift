@@ -261,13 +261,15 @@ private func makeState(_ step: InstallStep, failure: String? = nil) -> InstallSt
 /// The going back's sheet, offering 0.1.247 kept in `previous/`, over an
 /// installer that starts no launchd job.
 @MainActor
-private func makeGoingBackOffer(root: URL) async throws -> (Installer, GoingBack) {
+private func makeGoingBackOffer(root: URL, prepare: @MainActor (Installer) -> Void = { _ in }) async throws -> (Installer, GoingBack) {
     let updates = UpdatesFolder(root: root)
     let contents = updates.previousURL.appending(path: "Job Search Hub.app/Contents")
     try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
     try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "0.1.247"], format: .xml, options: 0)
         .write(to: contents.appending(path: "Info.plist"))
     let installer = Installer(updates: updates)
+    installer.readUnsavedEdits = { [] }
+    prepare(installer)
     let goingBack = GoingBack(
         updates: updates, running: HubVersion("0.1.252"), qaStandIn: QAGoingBack(previousMigration: 91, databaseMigration: 91), installer: installer
     )
@@ -366,4 +368,92 @@ private func makeGoingBackState(_ step: InstallStep, failure: String? = nil) -> 
     #expect(goingBack.isShowingSheet)
     #expect(installer.phase == .idle)
     #expect(recorder.quits.isEmpty)
+}
+
+/// The edits an installer reads, and the go-backs it hands to `hub-update`.
+@MainActor
+private final class GoingBackStandIn {
+    var edits: [UnsavedEdit]
+    var launches = 0
+
+    init(edits: [UnsavedEdit]) {
+        self.edits = edits
+    }
+
+    func attach(to installer: Installer) {
+        installer.readUnsavedEdits = { self.edits }
+        installer.launchGoingBack = { _ in self.launches += 1 }
+    }
+}
+
+@MainActor
+@Test func aGoingBackWithAnUnsavedEditWaitsForItWithoutLaunchingOrQuitting() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let standIn = GoingBackStandIn(edits: [UnsavedEdit(id: "criteria", title: "Criteria")])
+    let (installer, goingBack) = try await makeGoingBackOffer(root: root) { standIn.attach(to: $0) }
+    installer.stateCheckInterval = .seconds(3600)
+    let recorder = QuitRecorder(sheetChecks: 0)
+    recorder.attach(to: installer, isSheetShowing: { goingBack.isShowingSheet })
+    #expect(goingBack.work.hasUnsavedEdits)
+
+    await goingBack.confirm()
+
+    // Nothing started: the sheet stays, and names the edit.
+    #expect(standIn.launches == 0)
+    #expect(recorder.quits.isEmpty)
+    #expect(goingBack.failure?.report.advice == "Criteria has unsaved edits. Save or discard them first: going back would lose them.")
+    #expect(!goingBack.isStarting)
+    #expect(goingBack.isShowingSheet)
+    #expect(installer.phase == .idle)
+    #expect(!FileManager.default.fileExists(atPath: installer.updates.reopenURL.path))
+
+    // Saved, it goes ahead, without the sheet having looked again.
+    standIn.edits = []
+    await goingBack.confirm()
+    #expect(standIn.launches == 1)
+    #expect(recorder.quits.count == 1)
+    #expect(goingBack.failure == nil)
+    #expect(!goingBack.work.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func aGoingBackRefusesAnEditMadeAfterTheSheetLooked() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let standIn = GoingBackStandIn(edits: [])
+    let (installer, goingBack) = try await makeGoingBackOffer(root: root) { standIn.attach(to: $0) }
+    let recorder = QuitRecorder(sheetChecks: 0)
+    recorder.attach(to: installer, isSheetShowing: { goingBack.isShowingSheet })
+    #expect(!goingBack.work.hasUnsavedEdits)
+
+    standIn.edits = [UnsavedEdit(id: "prompt", title: "The job brief prompt")]
+    await goingBack.confirm()
+
+    #expect(standIn.launches == 0)
+    #expect(recorder.quits.isEmpty)
+    #expect(goingBack.work.hasUnsavedEdits)
+    #expect(goingBack.failure?.report.advice == "The job brief prompt has unsaved edits. Save or discard them first: going back would lose them.")
+}
+
+@MainActor
+@Test func aGoingBackOfferNamesTheWorkItWouldStopAndGoesAheadOverIt() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let (session, _) = StubHub.makeSession(answers: [drainPath: researching])
+    let (installer, goingBack) = try await makeGoingBackOffer(root: root) { installer in
+        installer.makeClient = { HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session) }
+    }
+    installer.launchGoingBack = { _ in }
+    installer.stateCheckInterval = .seconds(3600)
+    let recorder = QuitRecorder(sheetChecks: 0)
+    recorder.attach(to: installer, isSheetShowing: { goingBack.isShowingSheet })
+
+    #expect(goingBack.work.running.map(\.title).contains("Researching Initech"))
+    #expect(goingBack.work.costOfGoingBack(to: HubVersion("0.1.247")!).contains("Researching Initech stops; run it again afterwards."))
+
+    // The sheet said what stops, so the owner's confirm is enough.
+    await goingBack.confirm()
+    #expect(goingBack.failure == nil)
+    #expect(recorder.quits.count == 1)
 }

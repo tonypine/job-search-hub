@@ -405,10 +405,13 @@ public struct RunningItem: Equatable, Identifiable, Sendable {
     }
 
     /// What installing now costs this item, in a sentence.
-    public var cost: String {
+    public var cost: String { describeCost(reopensWith: "the new version") }
+
+    /// What quitting for `version` costs this item, in a sentence.
+    func describeCost(reopensWith version: String) -> String {
         switch kind {
         case .session:
-            "The \(title.replacingOccurrences(of: "Claude session · ", with: "")) session's turn stops mid-way; its conversation reopens with the new version."
+            "The \(title.replacingOccurrences(of: "Claude session · ", with: "")) session's turn stops mid-way; its conversation reopens with \(version)."
         case .agentRun:
             "\(title) stops; run it again afterwards."
         case .serverWork:
@@ -496,6 +499,9 @@ public struct RunningWork: Equatable, Sendable {
         }
     }
 
+    /// Whether *Running now* has a line to show.
+    public var hasAnythingToList: Bool { !items.isEmpty || idleSessionsLine != nil }
+
     /// Lines still running, ended ones aside.
     public var running: [RunningItem] { items.filter { !$0.hasEnded } }
 
@@ -535,6 +541,19 @@ public struct RunningWork: Equatable, Sendable {
     /// What *Install anyway* costs, a sentence per line still running.
     public var cost: String {
         running.filter { $0.kind != .unsavedEdit }.map(\.cost).joined(separator: " ")
+    }
+
+    /// What going back to `target` stops, a sentence per line still running.
+    public func costOfGoingBack(to target: HubVersion) -> String {
+        running.filter { $0.kind != .unsavedEdit }.map { $0.describeCost(reopensWith: target.description) }.joined(separator: " ")
+    }
+
+    /// Why going back can't start yet, naming the edits it would lose; nil
+    /// without any.
+    public var goingBackRefusal: String? {
+        let edits = running.filter { $0.kind == .unsavedEdit }
+        guard !edits.isEmpty else { return nil }
+        return edits.map { "\($0.title)." }.joined(separator: " ") + " Save or discard them first: going back would lose them."
     }
 
     /// The sidebar's line while the install waits: "Waiting for 1 session".

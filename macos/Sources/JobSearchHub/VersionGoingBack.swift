@@ -85,6 +85,9 @@ final class GoingBack {
         self.installer = installer ?? .shared
     }
 
+    /// What runs now, which going back stops, and the edits that hold it up.
+    var work: RunningWork { installer.work }
+
     /// The version in `previous/`, when it's older than the one running: the
     /// one *Go back to* offers.
     var previousVersion: HubVersion? {
@@ -103,7 +106,9 @@ final class GoingBack {
         isShowingSheet = true
         isWeighing = true
         defer { isWeighing = false }
-        offer = await weighPrevious(reason)
+        let weighed = await weighPrevious(reason)
+        await installer.refreshWork()
+        offer = weighed
         if offer == nil && failure == nil {
             isShowingSheet = false
         }
@@ -250,6 +255,7 @@ final class GoingBack {
         }
         guard let offer = await weigh(.older, running: running, target: older.version, app: checked.app, migration: migration, knownMigration: older.migration)
         else { return }
+        await installer.refreshWork()
         self.offer = offer
         page = .offer
     }
@@ -266,6 +272,7 @@ final class GoingBack {
             app: offer.app, databaseMigration: offer.databaseMigration, restoredMigration: offer.restoredMigration, startedAt: .now,
             jobPlist: Installer.jobPlistURL
         )
+        failure = nil
         isStarting = true
         let target = offer.target
         do {
@@ -279,6 +286,18 @@ final class GoingBack {
             // Each reason it refuses is already a sentence for the owner.
             failure = HubFailure("Couldn't go back to \(offer.target)", advice: error.localizedDescription)
         }
+    }
+
+    /// The open sheet keeps its list of what runs current.
+    func refreshWork() async {
+        await installer.refreshWork()
+    }
+
+    /// An unsaved edit's line: its page shows, and the sheet closes, for
+    /// *Go back* to be asked again once it's saved or discarded.
+    func openEdit(_ item: RunningItem) {
+        installer.openEdit(item)
+        dismiss()
     }
 
     /// *Cancel*, or *Stay on 0.1.252*.

@@ -784,6 +784,9 @@ How it's built (TP-592):
   server while it migrates up, marks the version left bad, records the going back in
   `installs.json`, and reopens the app. Without the dump, or if it stops before the restore,
   nothing changes. The feed isn't told: the owner did it, at the Mac.
+- **What runs when the owner goes back**: the sheet lists it as the install sheet does and says what
+  stops. Unsaved edits turn *Go back* off until they're saved or discarded, each line opening its
+  edit, and the app reads them again before it starts, so an edit is never lost to the quit.
 - **A crash in the first day**: the app writes `Updates/run.json` at launch and marks it at a clean
   quit. At the next launch, a version installed in the last 24 hours (`installs.json`) whose last
   run didn't quit cleanly, or left a `JobSearchHub-*.ips` report with its `app_version` since that

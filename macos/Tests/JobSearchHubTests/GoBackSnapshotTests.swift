@@ -19,7 +19,7 @@ enum GoBackSnapshots {
         LostCount(rows: 4, words: "updates"),
     ]
 
-    nonisolated static let names = ["nothing-lost", "loses", "uncountable", "no-copy", "crash", "weighing"]
+    nonisolated static let names = ["nothing-lost", "loses", "uncountable", "no-copy", "crash", "weighing", "running-work"]
 
     static func makeOffer(_ name: String) -> GoingBack.Offer? {
         let cost: GoingBackCost
@@ -38,9 +38,19 @@ enum GoBackSnapshots {
         )
     }
 
+    /// A session, an agent run and an edit that holds going back up.
+    static func makeWork(_ name: String) -> RunningWork {
+        guard name == "running-work" else { return RunningWork(items: [], idleSessionCount: 0) }
+        return RunningWork.make(
+            sessions: [RunningSession(id: UUID(), name: "Acme", activity: .working)],
+            drain: [DrainStatus.Work(type: "agent_run", kind: "company_triage", subject: "Initech", startedAt: now.addingTimeInterval(-130), ageSeconds: 130)],
+            tasks: [], edits: [UnsavedEdit(id: "criteria", title: "Criteria")], now: now
+        )
+    }
+
     static func render(_ name: String) -> NSImage? {
         draw(GoBackSheetContent(
-            offer: makeOffer(name), isWeighing: name == "weighing", now: now, failure: .constant(nil), goBack: {}, cancel: {}
+            offer: makeOffer(name), work: makeWork(name), isWeighing: name == "weighing", now: now, failure: .constant(nil), goBack: {}, cancel: {}, openEdit: { _ in }
         ))
     }
 

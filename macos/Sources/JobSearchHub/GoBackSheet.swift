@@ -20,10 +20,16 @@ struct GoBackSheet: View {
             )
         default:
             GoBackSheetContent(
-                offer: goingBack.offer, isWeighing: goingBack.isWeighing, isStarting: goingBack.isStarting, now: .now, failure: failure,
-                goBack: { Task { await goingBack.confirm() } }, cancel: goingBack.dismiss,
+                offer: goingBack.offer, work: goingBack.work, isWeighing: goingBack.isWeighing, isStarting: goingBack.isStarting, now: .now, failure: failure,
+                goBack: { Task { await goingBack.confirm() } }, cancel: goingBack.dismiss, openEdit: goingBack.openEdit,
                 back: goingBack.page == .olderVersions ? { goingBack.showList() } : nil
             )
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Installer.waitInterval)
+                    await goingBack.refreshWork()
+                }
+            }
         }
     }
 }
@@ -32,12 +38,15 @@ struct GoBackSheet: View {
 /// "Job Search Hub 0.1.252 quit unexpectedly".
 struct GoBackSheetContent: View {
     let offer: GoingBack.Offer?
+    /// What runs now: going back stops it, and unsaved edits hold it up.
+    let work: RunningWork
     var isWeighing = false
     var isStarting = false
     let now: Date
     @Binding var failure: HubFailure?
     let goBack: () -> Void
     let cancel: () -> Void
+    let openEdit: (RunningItem) -> Void
     /// Back to the list of older versions, when the offer came from it.
     var back: (() -> Void)?
 
@@ -63,6 +72,7 @@ struct GoBackSheetContent: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if offer.cost.isPossible {
+                    runningWork(offer)
                     Text("Job Search Hub quits, and reopens on \(offer.target.description) once the hub is back. \(offer.running.description) isn't offered again.")
                         .font(.hubSecondary)
                         .foregroundStyle(.secondary)
@@ -81,6 +91,27 @@ struct GoBackSheetContent: View {
         }
         .padding(Space.l)
         .frame(width: 500, alignment: .leading)
+    }
+
+    /// What going back would cut off, and the edits it can't go ahead with.
+    @ViewBuilder
+    private func runningWork(_ offer: GoingBack.Offer) -> some View {
+        if work.hasAnythingToList {
+            RunningNowList(work: work, showsHeading: true, openEdit: openEdit)
+        }
+        let stops = work.costOfGoingBack(to: offer.target)
+        if !stops.isEmpty {
+            Text(stops)
+                .font(.hubSecondary)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if work.hasUnsavedEdits {
+            Text("Save or discard the unsaved edits first: going back would lose them.")
+                .font(.hubSecondary)
+                .foregroundStyle(Tone.caution.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func title(_ offer: GoingBack.Offer) -> String {
@@ -106,11 +137,13 @@ struct GoBackSheetContent: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Tone.negative.color)
+                    .disabled(work.hasUnsavedEdits)
                 } else {
                     Button("Go back to \(offer.target.description)", action: goBack)
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(.borderedProminent)
                         .tint(offer.reason == .crash ? Tone.caution.color : nil)
+                        .disabled(work.hasUnsavedEdits)
                 }
             } else {
                 Button(offer == nil && isWeighing ? "Cancel" : "Close", action: cancel)

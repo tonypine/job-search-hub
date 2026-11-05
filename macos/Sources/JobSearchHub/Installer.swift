@@ -106,6 +106,8 @@ final class Installer {
     /// Going back was handed to `hub-update`: told why when it ends with the
     /// app still open.
     @ObservationIgnored private var goingBackStayed: (@MainActor (String) -> Void)?
+    /// The edits not saved yet. Tests stand in for them.
+    @ObservationIgnored var readUnsavedEdits: @MainActor () -> [UnsavedEdit] = { UnsavedEdits.shared.list }
     /// How often the app, still open after asking to quit, looks at whether
     /// `hub-update` gave up on it.
     @ObservationIgnored var stateCheckInterval: Duration = .seconds(1)
@@ -279,7 +281,7 @@ final class Installer {
     private func makeWork(drain: [DrainStatus.Work]) -> RunningWork {
         RunningWork.make(
             sessions: ClaudeSessionHost.shared.runningSessions, drain: drain,
-            tasks: taskRunner.map { Array($0.runningTasks.values) } ?? [], edits: UnsavedEdits.shared.list, now: .now
+            tasks: taskRunner.map { Array($0.runningTasks.values) } ?? [], edits: readUnsavedEdits(), now: .now
         )
     }
 
@@ -364,8 +366,9 @@ final class Installer {
     /// Goes back to an earlier version, as the going-back sheet confirmed:
     /// records what's open, hands the state to `hub-update`, copied from
     /// this bundle, whose version knows how to go back, and quits, once
-    /// `closeSheet` has closed the sheet that asked. When `hub-update` gives
-    /// up with the app still open, `stayed` hears why.
+    /// `closeSheet` has closed the sheet that asked. Unsaved edits refuse it,
+    /// as they do an install: quitting would lose them. When `hub-update`
+    /// gives up with the app still open, `stayed` hears why.
     func goBack(_ state: InstallState, closeSheet: @MainActor () -> Void = {}, stayed: @escaping @MainActor (String) -> Void = { _ in }) async throws {
         try refuseQAFixture("Go back to \(state.from)")
         if launchGoingBack == nil, let reason = cannotInstallReason {
@@ -374,6 +377,12 @@ final class Installer {
         guard phase == .idle || phase == .whenQuit else { throw InstallError("An install is under way.") }
         guard FileManager.default.fileExists(atPath: URL(filePath: state.newApp).appending(path: "Contents/Info.plist").path) else {
             throw InstallError("\(state.from) isn't on this Mac any more.")
+        }
+        // Read now, not from the sheet's last look, with nothing to wait for
+        // between here and the quit.
+        work = makeWork(drain: []).keepingServerWork(from: work)
+        if let refusal = work.goingBackRefusal {
+            throw InstallError(refusal)
         }
         try saveReopenRecord()
         if let launchGoingBack {
