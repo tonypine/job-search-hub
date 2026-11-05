@@ -117,17 +117,49 @@ private func environment(_ directory: URL) -> [String: String] {
 
 // MARK: The committed fixtures
 
-@Test(arguments: ["updates-nothing-lost", "updates-withdrawn"])
+@Test(arguments: ["updates-nothing-lost", "updates-withdrawn", "updates-counted-cost", "updates-first-day-crash"])
 func eachCommittedFixtureKeepsAnOlderVersionThanItRuns(_ name: String) throws {
     let fixtures = QAFixtures(directory: committedFixtures.appending(path: name))
     let updates = UpdatesFolder.makeDefault(home: home, fixtures: fixtures)
     let running = try #require(fixtures.readRunningVersion())
     let previous = try #require(updates.readPreviousVersion())
+    let goingBack = try #require(fixtures.readGoingBack())
 
     #expect(updates.isQAFixture)
     #expect(!running.isLocalBuild)
     #expect(previous < running)
     #expect(updates.readBadVersions().isEmpty)
+    #expect(goingBack.previousMigration <= goingBack.databaseMigration)
+}
+
+@Test func theCountedCostFixtureCountsWhatGoingBackLoses() throws {
+    let fixtures = QAFixtures(directory: committedFixtures.appending(path: "updates-counted-cost"))
+    let goingBack = try #require(fixtures.readGoingBack())
+    let report = try #require(goingBack.report)
+
+    let cost = GoingBackCost.make(target: goingBack.previousMigration, database: goingBack.databaseMigration, report: report)
+
+    #expect(cost.lostSentence == "Since then: 3 jobs found, 1 card moved, 2 people added, 4 updates. These would be lost.")
+    #expect(report.findMigration(of: try #require(HubVersion("0.1.240"))) == 85)
+    #expect(goingBack.installedHoursAgo == nil)
+}
+
+@Test func theFirstDayCrashFixtureWasInstalledHoursAgoAndDidntQuitCleanly() throws {
+    let fixtures = QAFixtures(directory: committedFixtures.appending(path: "updates-first-day-crash"))
+    let updates = UpdatesFolder.makeDefault(home: home, fixtures: fixtures)
+    let goingBack = try #require(fixtures.readGoingBack())
+    let run = try #require(updates.readRun())
+
+    #expect(goingBack.installedHoursAgo == 2)
+    #expect(run.version == fixtures.readRunningVersion()?.description)
+    #expect(!run.quitCleanly)
+}
+
+@Test func aFixtureWithoutGoingBackJSONHasNoStandIn() throws {
+    let directory = try makeFixture(runningVersion: "0.1.252")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    #expect(QAFixtures(directory: directory).readGoingBack() == nil)
 }
 
 // MARK: The appearance

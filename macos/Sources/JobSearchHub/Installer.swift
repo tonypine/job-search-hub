@@ -113,6 +113,14 @@ final class Installer {
 
     static let qaFixtureReason = "A QA fixture stands in for the Updates folder, so installs and going back are recorded in its log, not run."
 
+    /// Why this copy of the app can't go back to an earlier version; nil
+    /// when it can. With a QA fixture's Updates folder the sheet still opens,
+    /// so QA sees what going back costs; its *Go back* is refused, in the
+    /// fixture's log.
+    var cannotGoBackReason: String? {
+        updates.isQAFixture ? nil : cannotInstallReason
+    }
+
     /// Why this copy of the app can't install versions; nil when it can. Only
     /// the installed app, carrying `hub-update`, installs over itself.
     var cannotInstallReason: String? {
@@ -346,6 +354,7 @@ final class Installer {
     /// records what's open, hands the state to `hub-update`, copied from
     /// this bundle, whose version knows how to go back, and quits.
     func goBack(_ state: InstallState) throws {
+        try refuseQAFixture("Go back to \(state.from)")
         if let reason = cannotInstallReason {
             throw InstallError(reason)
         }

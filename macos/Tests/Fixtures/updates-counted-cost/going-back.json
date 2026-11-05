@@ -1,0 +1,69 @@
+{
+  "previous_migration": 88,
+  "database_migration": 91,
+  "report": {
+    "migration": 91,
+    "migration_releases": [
+      {
+        "migration": 85,
+        "release": "0.1.240"
+      },
+      {
+        "migration": 88,
+        "release": "0.1.247"
+      },
+      {
+        "migration": 91,
+        "release": "0.1.252"
+      }
+    ],
+    "dumps": [
+      {
+        "migration": 85,
+        "dumped_at": "2025-12-28T09:00:00Z",
+        "since": "2025-12-28T09:01:00Z",
+        "lost": [
+          {
+            "rows": 9,
+            "words": "jobs found"
+          },
+          {
+            "rows": 3,
+            "words": "cards moved"
+          },
+          {
+            "rows": 2,
+            "words": "people added"
+          },
+          {
+            "rows": 11,
+            "words": "updates"
+          }
+        ]
+      },
+      {
+        "migration": 88,
+        "dumped_at": "2026-01-01T00:00:00Z",
+        "since": "2026-01-01T00:01:00Z",
+        "lost": [
+          {
+            "rows": 3,
+            "words": "jobs found"
+          },
+          {
+            "rows": 1,
+            "words": "card moved"
+          },
+          {
+            "rows": 2,
+            "words": "people added"
+          },
+          {
+            "rows": 4,
+            "words": "updates"
+          }
+        ]
+      }
+    ]
+  }
+}

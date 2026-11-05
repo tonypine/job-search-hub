@@ -184,9 +184,15 @@ To open the screens that need a past install, such as Settings › Version's *Go
 
 - `updates/`: the Updates folder, in place of `~/Library/Application Support/JobSearchHub/Updates`, with the version kept in `previous/` (a `JobSearchHub.app/Contents/Info.plist` naming its version is enough), `installs.json` and `bad-versions.json`;
 - `running-version`: the version the app runs as, such as `0.1.252`, in place of the build's `0.1.0-dev`, so the version in `previous/` is older and the app isn't a local build;
-- `releases.json`: the releases in GitHub's shape, read when neither `HUB_RELEASES_URL` nor the build names a feed.
+- `releases.json`: the releases in GitHub's shape, read when neither `HUB_RELEASES_URL` nor the build names a feed;
+- `going-back.json`: what the servers would say about going back, which a fixture's `previous/` bundle and the QA host's dev server can't: `previous_migration` (the kept version's newest migration), `database_migration`, an optional `report` in `GET /v1/version/going-back`'s shape, and an optional `installed_hours_ago`, which keeps the running version in its first day.
 
-With a fixture's Updates folder the app writes only in the copy: *Install now…* is turned off with a note, and an install or a going back that's asked for is written to the copy's `install.log` and never reaches `hub-update` or launchd. The committed fixtures are in `macos/Tests/Fixtures/`: `updates-nothing-lost` runs 0.1.252 with 0.1.247 kept, and `updates-withdrawn` does too, with 0.1.252 withdrawn in its feed. They reach Settings › Version's *Go back to…* and the withdrawn card; the go-back sheet, its cost and the offer after a first-day crash bring their own fixtures with the screens that draw them.
+With a fixture's Updates folder the app writes only in the copy: *Install now…* is turned off with a note, and the going-back sheet opens with its cost, but its *Go back* is refused with the same note. An install or a going back that's asked for is written to the copy's `install.log` and never reaches `hub-update` or launchd. The committed fixtures are in `macos/Tests/Fixtures/`, each running 0.1.252 with 0.1.247 kept:
+
+- `updates-nothing-lost`: no migration since 0.1.247, so the sheet says nothing is lost;
+- `updates-withdrawn`: the same, with 0.1.252 withdrawn in its feed, for the withdrawn banner and card;
+- `updates-counted-cost`: a migration since, so the sheet counts "3 jobs found, 1 card moved, 2 people added, 4 updates", and *Install an older version…* lists 0.1.240;
+- `updates-first-day-crash`: the counted cost, with 0.1.252 installed two hours before launch and its last run not quit cleanly, so the app asks to go back as it opens.
 
 `qa_launch_app`'s `appearance: "dark"` (or `"light"`) sets `SYMPHONY_BAR_QA_APPEARANCE`, which the app applies at launch in QA mode; outside it, or with no or another value, it follows the system's.
 

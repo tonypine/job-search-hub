@@ -37,7 +37,7 @@ struct VersionSettings: View {
             facts: checker.facts, status: NewVersionStatus.make(checker.facts, now: now), installedAt: checker.installedAt,
             serverVersion: checker.runningServer?.version, previousVersion: checker.previousVersion,
             hasInstallLog: checker.hasInstallLog, runningReleaseURL: checker.runningReleaseURL, now: now,
-            installBlockedReason: installer.cannotInstallReason, installsOnQuit: installer.phase == .whenQuit,
+            installBlockedReason: installer.cannotInstallReason, goBackBlockedReason: installer.cannotGoBackReason, installsOnQuit: installer.phase == .whenQuit,
             installedChanges: checker.installedChanges
         )
     }
@@ -93,6 +93,10 @@ struct VersionPage {
     var now: Date
     /// Why this app can't install a version; nil when it can.
     var installBlockedReason: String?
+    /// Why this app can't go back to an earlier version; nil when it can,
+    /// and with a QA fixture, whose sheet opens and refuses only the going
+    /// back.
+    var goBackBlockedReason: String?
     /// *Install when I quit* was chosen.
     var installsOnQuit = false
     /// What the install that brought the running version changed.
@@ -254,8 +258,8 @@ struct VersionSettingsContent: View {
                 if let target = goBackTarget {
                     Button("Go back…") { goBack(.withdrawn) }
                         .buttonStyle(VersionCapsuleStyle())
-                        .disabled(page.installBlockedReason != nil)
-                        .help(page.installBlockedReason ?? "See what going back to \(target.description) would lose")
+                        .disabled(page.goBackBlockedReason != nil)
+                        .help(page.goBackBlockedReason ?? "See what going back to \(target.description) would lose")
                 }
             }
         }
@@ -307,8 +311,8 @@ struct VersionSettingsContent: View {
                 if let target = goBackTarget {
                     Button("Go back to \(target.description)…") { goBack(.settings) }
                         .buttonStyle(VersionCapsuleStyle())
-                        .disabled(page.installBlockedReason != nil)
-                        .help(page.installBlockedReason ?? "See what going back to \(target.description) would lose")
+                        .disabled(page.goBackBlockedReason != nil)
+                        .help(page.goBackBlockedReason ?? "See what going back to \(target.description) would lose")
                 }
             }
             HStack {
@@ -317,8 +321,8 @@ struct VersionSettingsContent: View {
                 Spacer(minLength: Space.s)
                 Button("Install an older version…", action: installOlder)
                     .buttonStyle(VersionCapsuleStyle())
-                    .disabled(page.installBlockedReason != nil || page.facts.running.isLocalBuild)
-                    .help(page.installBlockedReason ?? "List the older versions the hub can go back to")
+                    .disabled(page.goBackBlockedReason != nil || page.facts.running.isLocalBuild)
+                    .help(page.goBackBlockedReason ?? "List the older versions the hub can go back to")
             }
         }
         .hubCard()

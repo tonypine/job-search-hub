@@ -11,7 +11,7 @@ import UserNotifications
 @MainActor
 @Observable
 final class GoingBack {
-    static let shared = GoingBack(updates: Installer.shared.updates)
+    static let shared = GoingBack(updates: Installer.shared.updates, qaStandIn: QAFixtures.current?.readGoingBack())
     private static let withdrawnDismissedKey = "withdrawnBannerDismissed"
     private static let withdrawnNotifiedKey = "withdrawnNotified"
 
@@ -68,10 +68,15 @@ final class GoingBack {
     @ObservationIgnored let updates: UpdatesFolder
     @ObservationIgnored var makeClient: @MainActor () -> HubClient? = { nil }
     @ObservationIgnored private let inspector = CodesignInspector()
-    @ObservationIgnored private let running = HubVersion(HubClient.appVersion)
+    @ObservationIgnored private let running: HubVersion?
+    /// In QA, a fixture's `going-back.json`: the migrations and the report
+    /// the servers would give, which the QA host has no real servers for.
+    @ObservationIgnored let qaStandIn: QAGoingBack?
 
-    init(updates: UpdatesFolder) {
+    init(updates: UpdatesFolder, running: HubVersion? = HubVersion(HubClient.appVersion), qaStandIn: QAGoingBack? = nil) {
         self.updates = updates
+        self.running = running
+        self.qaStandIn = qaStandIn
     }
 
     /// The version in `previous/`, when it's older than the one running: the
@@ -106,7 +111,7 @@ final class GoingBack {
             failure = HubFailure("Couldn't go back", advice: "No earlier version is kept on this Mac.")
             return nil
         }
-        guard let migration = await inspector.readServerBuild(of: app)?.newestMigration else {
+        guard let migration = await readMigration(of: app, qaStandIn: qaStandIn?.previousMigration) else {
             failure = HubFailure("Couldn't go back to \(target)", advice: "Its server doesn't say which migrations it knows.")
             return nil
         }
@@ -124,8 +129,8 @@ final class GoingBack {
             return nil
         }
         var report: GoingBackReport?
-        if migration < database, let client = makeClient() {
-            report = try? await client.get("v1/version/going-back", as: GoingBackReport.self)
+        if migration < database {
+            report = await readReport()
         }
         var restored = migration
         if migration < database, let report, report.findDump(migration: migration) == nil,
@@ -135,13 +140,36 @@ final class GoingBack {
         return Offer(
             reason: reason, running: running, target: target, app: app, databaseMigration: database, restoredMigration: restored,
             cost: GoingBackCost.make(target: restored, database: database, report: report),
-            installedAt: InstallRecord.findInstalledAt(running, in: updates.readInstalls())
+            installedAt: findInstalledAt(running, now: .now)
         )
+    }
+
+    /// The newest migration the server in `app` knows, from its
+    /// `hub-server`; with a QA fixture's stand-in, `standIn`, which a
+    /// fixture's bundle carries no server to say.
+    private func readMigration(of app: URL, qaStandIn standIn: Int?) async -> Int? {
+        if qaStandIn != nil, let standIn { return standIn }
+        return await inspector.readServerBuild(of: app)?.newestMigration
+    }
+
+    /// The hub's report on going back, or a QA fixture's stand-in for it.
+    private func readReport() async -> GoingBackReport? {
+        if let report = qaStandIn?.report { return report }
+        guard let client = makeClient() else { return nil }
+        return try? await client.get("v1/version/going-back", as: GoingBackReport.self)
+    }
+
+    /// When the running version was put in place: its install record's
+    /// date, or, with a QA fixture, the hours before `now` it names.
+    private func findInstalledAt(_ running: HubVersion, now: Date) -> Date? {
+        if let hours = qaStandIn?.installedHoursAgo { return now.addingTimeInterval(-hours * 60 * 60) }
+        return InstallRecord.findInstalledAt(running, in: updates.readInstalls())
     }
 
     /// The database's migration: the running server's newest, which it
     /// migrated up to at its start; this bundle's when it doesn't answer.
     private func readDatabaseMigration() async -> Int? {
+        if let qaStandIn { return qaStandIn.databaseMigration }
         if let client = makeClient(), let build = try? await client.get("v1/version", as: ServerBuild.self), let migration = build.newestMigration {
             return migration
         }
@@ -165,7 +193,9 @@ final class GoingBack {
     func loadOlderVersions() async {
         guard let running else { return }
         failure = nil
-        guard let client = makeClient() else {
+        let standIn = qaStandIn?.report
+        let client = makeClient()
+        guard standIn != nil || client != nil else {
             failure = HubFailure("Couldn't list older versions", advice: "Connect to the hub first: it knows which copies of the database it keeps.")
             return
         }
@@ -173,8 +203,15 @@ final class GoingBack {
         defer { isLoadingOlderVersions = false }
         do {
             async let releases = ReleaseFeed().fetch()
-            async let report = client.get("v1/version/going-back", as: GoingBackReport.self)
-            let (fetched, read) = try await (releases, report)
+            let read: GoingBackReport
+            if let standIn {
+                read = standIn
+            } else if let client {
+                read = try await client.get("v1/version/going-back", as: GoingBackReport.self)
+            } else {
+                return
+            }
+            let fetched = try await releases
             olderVersions = OlderVersions.pick(fetched, running: running, previous: previousVersion, bad: updates.readBadVersions(), report: read)
         } catch {
             failure = HubFailure("Couldn't list older versions", error)
@@ -201,7 +238,7 @@ final class GoingBack {
                 return
             }
         }
-        guard let migration = await inspector.readServerBuild(of: checked.app)?.newestMigration else {
+        guard let migration = await readMigration(of: checked.app, qaStandIn: older.migration) else {
             failure = HubFailure("Couldn't go back to \(older.version)", advice: "Its server doesn't say which migrations it knows.")
             return
         }
@@ -251,11 +288,7 @@ final class GoingBack {
     /// this run's record, which a clean quit marks.
     func readLaunch() {
         guard let running else { return }
-        let previousRun = updates.readRun()
-        let crashed = FirstDayCrash.didCrash(
-            running: running, installedAt: InstallRecord.findInstalledAt(running, in: updates.readInstalls()), previousRun: previousRun,
-            crashReports: Self.readCrashReports(since: previousRun?.startedAt ?? .distantPast), now: .now
-        )
+        let crashed = didCrashInFirstDay(now: .now)
         try? updates.writeRun(RunRecord(version: running.description, startedAt: .now, quitCleanly: false))
         guard crashed, previousVersion != nil else { return }
         updates.log("Job Search Hub \(running) quit unexpectedly in its first day.", at: .now)
@@ -267,6 +300,17 @@ final class GoingBack {
             }
             await offerPrevious(.crash)
         }
+    }
+
+    /// Whether the last run of the running version, installed in the last
+    /// day, crashed or didn't quit cleanly.
+    func didCrashInFirstDay(now: Date) -> Bool {
+        guard let running else { return false }
+        let previousRun = updates.readRun()
+        return FirstDayCrash.didCrash(
+            running: running, installedAt: findInstalledAt(running, now: now), previousRun: previousRun,
+            crashReports: Self.readCrashReports(since: previousRun?.startedAt ?? .distantPast), now: now
+        )
     }
 
     /// The app quits normally: the next launch knows this run didn't crash.
