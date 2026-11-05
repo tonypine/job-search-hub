@@ -54,7 +54,7 @@ private func makePage(_ checker: NewVersionChecker, installer: Installer) -> Ver
     let page = makePage(checker, installer: installer)
 
     #expect(page.previousVersion == HubVersion("0.1.247"))
-    #expect(page.goBackTitle == "Go back to 0.1.247…")
+    #expect(page.goBackTarget == HubVersion("0.1.247"))
     #expect(page.status == .upToDate(newest: HubVersion("0.1.252"), checkedAt: checker.facts.lastCheckedAt))
     #expect(page.installBlockedReason == Installer.qaFixtureReason)
     // Going back opens its sheet, so QA sees the cost; only *Go back* is
@@ -72,7 +72,7 @@ private func makePage(_ checker: NewVersionChecker, installer: Installer) -> Ver
     let page = makePage(checker, installer: Installer(updates: checker.updates))
 
     #expect(page.status == .withdrawn(try #require(HubVersion("0.1.252"))))
-    #expect(page.goBackTitle == "Go back to 0.1.247…")
+    #expect(page.goBackTarget == HubVersion("0.1.247"))
     #expect(page.goBackBlockedReason == nil)
 }
 
@@ -198,7 +198,7 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
 }
 
 @MainActor
-@Test func goingBackWithAFixtureIsRecordedInItsLogAndRefused() throws {
+@Test func goingBackWithAFixtureIsRecordedInItsLogAndRefused() async throws {
     let fixtures = try copyFixture("updates-nothing-lost")
     defer { try? FileManager.default.removeItem(at: fixtures.directory) }
     let updates = UpdatesFolder.makeDefault(home: URL(filePath: "/Users/qa"), fixtures: fixtures)
@@ -208,8 +208,8 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
         app: updates.previousURL.appending(path: "JobSearchHub.app"), databaseMigration: 91, restoredMigration: 91, startedAt: .now, jobPlist: nil
     )
 
-    #expect(throws: InstallError.self) {
-        try installer.goBack(state)
+    await #expect(throws: InstallError.self) {
+        try await installer.goBack(state)
     }
 
     let log = try String(contentsOf: updates.logURL, encoding: .utf8)
@@ -228,7 +228,7 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
     )
     await goingBack.offerPrevious(.settings)
 
-    goingBack.confirm()
+    await goingBack.confirm()
 
     let failure = try #require(goingBack.failure)
     #expect(failure.title == "Couldn't go back to 0.1.247")
@@ -286,6 +286,25 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
     #expect(page.facts.ready == nil)
     #expect(page.facts.failed == nil)
     #expect(page.previousVersion == nil)
-    #expect(page.goBackTitle == nil)
+    #expect(page.goBackTarget == nil)
     #expect(page.status == .upToDate(newest: HubVersion("0.1.252"), checkedAt: checker.facts.lastCheckedAt))
+}
+
+/// Going back past the kept version, to an older download, leaves the newer
+/// one in `previous/`: it's listed, and not offered.
+@MainActor
+@Test func aKeptVersionNewerThanTheRunningOneIsntOffered() async throws {
+    let fixtures = try copyFixture("updates-after-going-back")
+    defer { try? FileManager.default.removeItem(at: fixtures.directory) }
+    let contents = fixtures.directory.appending(path: "updates/previous/JobSearchHub.app/Contents")
+    try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+    try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "0.1.252"], format: .xml, options: 0)
+        .write(to: contents.appending(path: "Info.plist"))
+    let checker = try makeChecker(fixtures)
+
+    await checker.checkAndWait()
+    let page = makePage(checker, installer: Installer(updates: checker.updates))
+
+    #expect(page.previousVersion == HubVersion("0.1.252"))
+    #expect(page.goBackTarget == nil)
 }

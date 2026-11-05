@@ -256,17 +256,24 @@ final class GoingBack {
 
     // MARK: Going back
 
-    /// *Go back*: `hub-update` takes it from here, and the app quits.
-    func confirm() {
-        guard let offer, offer.cost.isPossible else { return }
+    /// *Go back*: `hub-update` takes it from here; the sheet closes, and the
+    /// app quits. Should `hub-update` give up with the app still open, the
+    /// sheet comes back saying why.
+    func confirm() async {
+        guard let offer, offer.cost.isPossible, !isStarting else { return }
         let state = InstallState.makeGoingBack(
             from: offer.running, to: offer.target, installed: ServerLaunchAgent.makeInstalledAppURL(home: FileManager.default.homeDirectoryForCurrentUser),
             app: offer.app, databaseMigration: offer.databaseMigration, restoredMigration: offer.restoredMigration, startedAt: .now,
             jobPlist: Installer.jobPlistURL
         )
         isStarting = true
+        let target = offer.target
         do {
-            try installer.goBack(state)
+            try await installer.goBack(state, closeSheet: { isShowingSheet = false }, stayed: { [weak self] reason in
+                self?.isStarting = false
+                self?.failure = HubFailure("Couldn't go back to \(target)", advice: reason)
+                self?.isShowingSheet = true
+            })
         } catch {
             isStarting = false
             // Each reason it refuses is already a sentence for the owner.

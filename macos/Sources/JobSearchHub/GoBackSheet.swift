@@ -21,7 +21,7 @@ struct GoBackSheet: View {
         default:
             GoBackSheetContent(
                 offer: goingBack.offer, isWeighing: goingBack.isWeighing, isStarting: goingBack.isStarting, now: .now, failure: failure,
-                goBack: goingBack.confirm, cancel: goingBack.dismiss,
+                goBack: { Task { await goingBack.confirm() } }, cancel: goingBack.dismiss,
                 back: goingBack.page == .olderVersions ? { goingBack.showList() } : nil
             )
         }

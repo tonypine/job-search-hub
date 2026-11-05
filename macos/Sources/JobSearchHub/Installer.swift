@@ -101,6 +101,11 @@ final class Installer {
     }
     /// Starts `hub-update` for the target; tests stand in for launchd.
     @ObservationIgnored var launchHubUpdate: (@MainActor (Target) throws -> Void)?
+    /// Starts `hub-update` going back; tests stand in for launchd.
+    @ObservationIgnored var launchGoingBack: (@MainActor (InstallState) throws -> Void)?
+    /// Going back was handed to `hub-update`: told why when it ends with the
+    /// app still open.
+    @ObservationIgnored private var goingBackStayed: (@MainActor (String) -> Void)?
     /// How often the app, still open after asking to quit, looks at whether
     /// `hub-update` gave up on it.
     @ObservationIgnored var stateCheckInterval: Duration = .seconds(1)
@@ -328,23 +333,29 @@ final class Installer {
             return
         }
         updates.log("Installing \(target.version) over \(HubClient.appVersion); the app quits for hub-update.", at: .now)
-        isQuittingForInstall = true
-        let answersPendingQuit = isTerminationPending
-        isTerminationPending = false
-        // AppKit refuses to quit while a sheet is attached: the install
-        // sheet goes first, and the app waits until it's gone.
-        await closeSheets()
-        quit(answersPendingQuit)
+        await quitForInstall()
         watchQuitForInstall()
     }
 
-    /// Closes the install sheet and its *Install anyway?* alert, and waits
-    /// until no window holds a sheet, for at most `sheetCloseTimeout`.
-    private func closeSheets() async {
+    /// AppKit refuses to quit while a sheet is attached: the sheets go first,
+    /// and the app waits until they're gone.
+    private func quitForInstall(closingSheet closeSheet: @MainActor () -> Void = {}) async {
+        isQuittingForInstall = true
+        let answersPendingQuit = isTerminationPending
+        isTerminationPending = false
+        await closeSheets(closeSheet)
+        quit(answersPendingQuit)
+    }
+
+    /// Closes the install sheet, its *Install anyway?* alert and whatever
+    /// `closeSheet` closes, and waits until no window holds a sheet, for at
+    /// most `sheetCloseTimeout`.
+    private func closeSheets(_ closeSheet: @MainActor () -> Void) async {
         let deadline = ContinuousClock.now + sheetCloseTimeout
         while true {
             isConfirmingInstallAnyway = false
             isShowingSheet = false
+            closeSheet()
             guard hasAttachedSheet(), ContinuousClock.now < deadline else { return }
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -352,10 +363,12 @@ final class Installer {
 
     /// Goes back to an earlier version, as the going-back sheet confirmed:
     /// records what's open, hands the state to `hub-update`, copied from
-    /// this bundle, whose version knows how to go back, and quits.
-    func goBack(_ state: InstallState) throws {
+    /// this bundle, whose version knows how to go back, and quits, once
+    /// `closeSheet` has closed the sheet that asked. When `hub-update` gives
+    /// up with the app still open, `stayed` hears why.
+    func goBack(_ state: InstallState, closeSheet: @MainActor () -> Void = {}, stayed: @escaping @MainActor (String) -> Void = { _ in }) async throws {
         try refuseQAFixture("Go back to \(state.from)")
-        if let reason = cannotInstallReason {
+        if launchGoingBack == nil, let reason = cannotInstallReason {
             throw InstallError(reason)
         }
         guard phase == .idle || phase == .whenQuit else { throw InstallError("An install is under way.") }
@@ -363,10 +376,18 @@ final class Installer {
             throw InstallError("\(state.from) isn't on this Mac any more.")
         }
         try saveReopenRecord()
-        try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: Bundle.main.bundleURL))
+        if let launchGoingBack {
+            try launchGoingBack(state)
+        } else {
+            try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: Bundle.main.bundleURL))
+        }
         updates.log("Going back from \(state.to) to \(state.from); the app quits for hub-update.", at: .now)
-        isQuittingForInstall = true
-        NSApp.terminate(nil)
+        // A version waiting for *Install when I quit* isn't what runs now.
+        target = nil
+        phase = .starting
+        goingBackStayed = stayed
+        await quitForInstall(closingSheet: closeSheet)
+        watchQuitForInstall()
     }
 
     /// The app is still open after asking to quit: once `hub-update` gives
@@ -396,8 +417,13 @@ final class Installer {
             readNotice()
         }
         try? fileManager.removeItem(at: updates.reopenURL)
-        let version = state?.to ?? target?.version.description ?? "the new version"
-        failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
+        if let goingBackStayed {
+            self.goingBackStayed = nil
+            goingBackStayed(state?.failure ?? "Going back stopped before the app quit, so nothing changed.")
+        } else {
+            let version = state?.to ?? target?.version.description ?? "the new version"
+            failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
+        }
         isQuittingForInstall = false
         reopensApp = true
         await stopDraining()

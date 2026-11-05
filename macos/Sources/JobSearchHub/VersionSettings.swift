@@ -102,9 +102,11 @@ struct VersionPage {
     /// What the install that brought the running version changed.
     var installedChanges: InstalledChanges?
 
-    /// *Go back to 0.1.247…*, when a previous version is kept.
-    var goBackTitle: String? {
-        previousVersion.map { "Go back to \($0.description)…" }
+    /// The previous version, when the hub can go back to it: older than the
+    /// one running. After going back to an older download, `previous/` holds
+    /// a newer one.
+    var goBackTarget: HubVersion? {
+        previousVersion.flatMap { $0 < facts.running ? $0 : nil }
     }
 }
 
@@ -137,12 +139,6 @@ struct VersionSettingsContent: View {
         self.installWhenQuit = installWhenQuit
         self.goBack = goBack
         self.installOlder = installOlder
-    }
-
-    /// The previous version, when the hub can go back to it: older than the
-    /// one running.
-    private var goBackTarget: HubVersion? {
-        page.previousVersion.flatMap { $0 < page.facts.running ? $0 : nil }
     }
 
     var body: some View {
@@ -255,7 +251,7 @@ struct VersionSettingsContent: View {
         case let .withdrawn(version):
             StatusCard(symbol: "arrow.uturn.backward.circle.fill", tone: .caution, title: "\(version.description) was withdrawn",
                        detail: "It was pulled after its release. The next release replaces it.") {
-                if let target = goBackTarget {
+                if let target = page.goBackTarget {
                     Button("Go back…") { goBack(.withdrawn) }
                         .buttonStyle(VersionCapsuleStyle())
                         .disabled(page.goBackBlockedReason != nil)
@@ -308,7 +304,7 @@ struct VersionSettingsContent: View {
                 Text(page.previousVersion.map { "Previous version: \($0.description)" } ?? "No previous version on this Mac")
                     .foregroundStyle(page.previousVersion == nil ? .secondary : .primary)
                 Spacer(minLength: Space.s)
-                if let target = goBackTarget {
+                if let target = page.goBackTarget {
                     Button("Go back to \(target.description)…") { goBack(.settings) }
                         .buttonStyle(VersionCapsuleStyle())
                         .disabled(page.goBackBlockedReason != nil)
