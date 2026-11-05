@@ -64,6 +64,9 @@ public struct NewVersionFacts: Equatable, Sendable {
     public var failingSince: Date?
     /// The newest release offered, newer or not.
     public var newestRelease: HubVersion?
+    /// The newest release above the running one that this Mac won't offer
+    /// again, when nothing else newer is out.
+    public var newerNotOffered: HubVersion?
     public var ready: ReadyVersion?
     public var failed: FailedVersion?
     public var isRunningWithdrawn: Bool
@@ -74,8 +77,9 @@ public struct NewVersionFacts: Equatable, Sendable {
     public init(
         running: HubVersion, isChecking: Bool = false, lastCheckedAt: Date? = nil, failingSince: Date? = nil,
         newestRelease: HubVersion? = nil, ready: ReadyVersion? = nil, failed: FailedVersion? = nil, isRunningWithdrawn: Bool = false,
-        isQAMode: Bool = false
+        isQAMode: Bool = false, newerNotOffered: HubVersion? = nil
     ) {
+        self.newerNotOffered = newerNotOffered
         self.running = running
         self.isChecking = isChecking
         self.lastCheckedAt = lastCheckedAt
@@ -94,6 +98,9 @@ public enum NewVersionStatus: Equatable, Sendable {
     case checking
     /// The running version is the newest release.
     case upToDate(newest: HubVersion?, checkedAt: Date?)
+    /// Nothing to install, though a newer release exists: the owner went
+    /// back from it, or it failed to install on this Mac.
+    case newerNotOffered(HubVersion, checkedAt: Date?)
     /// A build from a checkout, which no version installs over by itself.
     case localBuild(commit: String?)
     /// A newer version is ready; Settings › Version shows it in full.
@@ -132,6 +139,9 @@ public enum NewVersionStatus: Equatable, Sendable {
         }
         if facts.ready != nil {
             return .ready
+        }
+        if let notOffered = facts.newerNotOffered {
+            return .newerNotOffered(notOffered, checkedAt: facts.lastCheckedAt)
         }
         return .upToDate(newest: facts.newestRelease, checkedAt: facts.lastCheckedAt)
     }

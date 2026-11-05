@@ -287,7 +287,7 @@ private func makeGoingBack(_ fixtures: QAFixtures) throws -> GoingBack {
     #expect(page.facts.failed == nil)
     #expect(page.previousVersion == nil)
     #expect(page.goBackTarget == nil)
-    #expect(page.status == .upToDate(newest: HubVersion("0.1.252"), checkedAt: checker.facts.lastCheckedAt))
+    #expect(page.status == .newerNotOffered(HubVersion("0.1.252")!, checkedAt: checker.facts.lastCheckedAt))
 }
 
 /// Going back past the kept version, to an older download, leaves the newer

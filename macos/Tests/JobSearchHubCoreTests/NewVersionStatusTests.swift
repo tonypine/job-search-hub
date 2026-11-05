@@ -20,6 +20,16 @@ private let ready = ReadyVersion(
     #expect(NewVersionStatus.make(facts, now: now) == .upToDate(newest: running, checkedAt: now))
 }
 
+@Test func aNewerReleaseThisMacWontOfferIsntCalledUpToDate() {
+    let left = HubVersion("0.1.252")!
+    let facts = NewVersionFacts(running: running, lastCheckedAt: now, newestRelease: left, newerNotOffered: left)
+    #expect(NewVersionStatus.make(facts, now: now) == .newerNotOffered(left, checkedAt: now))
+
+    var withReady = facts
+    withReady.ready = ready
+    #expect(NewVersionStatus.make(withReady, now: now) == .ready)
+}
+
 @Test func aReadyVersionIsShownInFull() {
     #expect(NewVersionStatus.make(NewVersionFacts(running: running, lastCheckedAt: now, ready: ready), now: now) == .ready)
 }

@@ -155,8 +155,11 @@ final class NewVersionChecker {
             )
         }
 
-        // A version that failed to install on this Mac isn't offered again.
-        guard let newest = MacReleases.findNewest(in: releases, above: running, excluding: updates.readBadVersions()) else {
+        // A version that failed to install on this Mac, or that the owner
+        // went back from, isn't offered again.
+        let bad = updates.readBadVersions()
+        facts.newerNotOffered = MacReleases.findNewestNotOffered(in: releases, above: running, excluding: bad)
+        guard let newest = MacReleases.findNewest(in: releases, above: running, excluding: bad) else {
             facts.ready = nil
             facts.failed = nil
             updates.removeDownloads(keeping: nil)

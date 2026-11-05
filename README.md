@@ -193,7 +193,7 @@ With a fixture's Updates folder the app writes only in the copy: *Install now…
 - `updates-withdrawn`: the same, with 0.1.252 withdrawn in its feed, for the withdrawn banner and card;
 - `updates-counted-cost`: a migration since, so the sheet counts "3 jobs found, 1 card moved, 2 people added, 4 updates", and *Install an older version…* lists 0.1.240;
 - `updates-first-day-crash`: the counted cost, with 0.1.252 installed two hours before launch and its last run not quit cleanly, so the app asks to go back as it opens.
-- `updates-after-going-back`: the state going back leaves, running 0.1.247 with 0.1.252 marked bad and still in its feed, so Settings › Version doesn't offer 0.1.252 and has no way further back.
+- `updates-after-going-back`: the state going back leaves, running 0.1.247 with 0.1.252 marked bad and still in its feed, so Settings › Version says "No version to install" and why, doesn't offer 0.1.252 and has no way further back.
 
 With a fixture, what the withdrawn banner remembers, such as being dismissed, lasts that launch only, so the next launch shows it again.
 

@@ -762,7 +762,8 @@ the words *Go back* uses.
   then: 3 jobs found, 1 card moved, 2 people added, 4 updates. These would be lost." And: "Or stay
   on 0.1.252 and wait for a fix." If the counts can't be trusted (a Postgres crash since), the
   sheet says it can't tell what was written since the install, and that all of it would be lost.
-- **A version the owner went back from** is marked bad on this Mac, and isn't offered again.
+- **A version the owner went back from** is marked bad on this Mac, and isn't offered again. While
+  it's the newest release, Settings › Version says "No version to install" and why, not "up to date".
 - **Older versions** than the previous one download again from GitHub, through *Install an older
   version…*, listed only when their pre-migration dump is still on disk (the newest five are kept)
   or they need none.

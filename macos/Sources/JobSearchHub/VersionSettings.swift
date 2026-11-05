@@ -216,6 +216,9 @@ struct VersionSettingsContent: View {
         case let .upToDate(newest, checkedAt):
             StatusCard(symbol: "checkmark.circle.fill", tone: .positive, title: "Job Search Hub is up to date",
                        detail: describeUpToDate(newest: newest, checkedAt: checkedAt)) { checkNowButton }
+        case let .newerNotOffered(version, checkedAt):
+            StatusCard(symbol: "checkmark.circle", tone: .neutral, title: "No version to install",
+                       detail: describeNotOffered(version, checkedAt: checkedAt)) { checkNowButton }
         case let .localBuild(commit):
             StatusCard(symbol: "hammer.circle.fill", tone: .neutral, title: commit.map { "Local build of \($0)" } ?? "Local build",
                        detail: "Built from a checkout. New versions don't install over it by themselves.") {
@@ -265,6 +268,15 @@ struct VersionSettingsContent: View {
         Button("Check now", action: checkNow)
             .buttonStyle(VersionCapsuleStyle())
             .disabled(page.facts.isChecking)
+    }
+
+    /// `bad-versions.json` doesn't record why a version is in it, so this
+    /// names both reasons.
+    private func describeNotOffered(_ version: HubVersion, checkedAt: Date?) -> String {
+        let reason = "\(version.description) isn't offered on this Mac again: you went back from it, or it failed to install here. A newer release will be offered once it's out."
+        guard let checkedAt else { return reason }
+        let ago = RelativeDateTimeFormatter().localizedString(for: checkedAt, relativeTo: page.now)
+        return "\(reason) Checked \(ago)."
     }
 
     private func describeUpToDate(newest: HubVersion?, checkedAt: Date?) -> String {

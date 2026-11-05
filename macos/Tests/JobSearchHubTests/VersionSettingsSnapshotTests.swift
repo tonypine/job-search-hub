@@ -27,4 +27,5 @@ func settingsVersionDrawsOffscreen(state: String) throws {
     if case .failedChecks = VersionSnapshots.makePage("failed-checks").status {} else { Issue.record("not failed checks") }
     if case .cannotCheck = VersionSnapshots.makePage("cannot-check").status {} else { Issue.record("not cannot check") }
     if case .upToDate = VersionSnapshots.makePage("up-to-date").status {} else { Issue.record("not up to date") }
+    if case .newerNotOffered = VersionSnapshots.makePage("not-offered").status {} else { Issue.record("not the version it won't offer") }
 }

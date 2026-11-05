@@ -9,7 +9,7 @@ import SwiftUI
 enum VersionSnapshots {
     static let now = Date(timeIntervalSince1970: 1_791_300_000)
     static let running = HubVersion("0.1.247")!
-    nonisolated static let names = ["ready", "ready-all-changes", "checking", "up-to-date", "local-build", "failed-checks", "cannot-check", "withdrawn"]
+    nonisolated static let names = ["ready", "ready-all-changes", "checking", "up-to-date", "not-offered", "local-build", "failed-checks", "cannot-check", "withdrawn"]
 
     static let ready = ReadyVersion(
         version: HubVersion("0.1.252")!,
@@ -52,6 +52,10 @@ enum VersionSnapshots {
             facts.isChecking = true
         case "up-to-date":
             facts = NewVersionFacts(running: ready.version, lastCheckedAt: now.addingTimeInterval(-5 * 60), newestRelease: ready.version)
+        case "not-offered":
+            facts = NewVersionFacts(
+                running: running, lastCheckedAt: now.addingTimeInterval(-5 * 60), newestRelease: ready.version, newerNotOffered: ready.version
+            )
         case "local-build":
             facts.running = HubVersion("0.1.0-dev.abc1234")!
         case "failed-checks":

@@ -72,6 +72,17 @@ private func makeRelease(_ tag: String, draft: Bool = false, prerelease: Bool = 
     #expect(MacReleases.findNewest(in: releases, above: version("0.1.247"))?.checksumAsset?.name == "Job-Search-Hub-0.1.252.zip.sha256")
 }
 
+@Test func namesTheNewerReleaseHeldBackOnlyWhenNothingElseNewerCanBeOffered() {
+    let releases = [makeRelease("mac-v0.1.252"), makeRelease("mac-v0.1.250"), makeRelease("mac-v0.1.247")]
+    let running = version("0.1.247")
+
+    #expect(MacReleases.findNewestNotOffered(in: releases, above: running, excluding: []) == nil)
+    #expect(MacReleases.findNewestNotOffered(in: releases, above: running, excluding: [version("0.1.252")]) == nil)
+    #expect(MacReleases.findNewestNotOffered(in: releases, above: running, excluding: [version("0.1.250"), version("0.1.252")]) == version("0.1.252"))
+    #expect(MacReleases.findNewestNotOffered(in: releases, above: version("0.1.252"), excluding: [version("0.1.252")]) == nil)
+    #expect(MacReleases.findNewestNotOffered(in: [makeRelease("mac-v0.1.252", prerelease: true)], above: running, excluding: [version("0.1.252")]) == nil)
+}
+
 @Test func skipsDraftsAndPreReleases() {
     let releases = [
         makeRelease("mac-v0.1.255", draft: true),
