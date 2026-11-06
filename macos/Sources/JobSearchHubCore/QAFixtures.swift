@@ -25,7 +25,9 @@ public enum QAMode {
 ///   place of the build's own (`0.1.0-dev` in QA), so the one in `previous/`
 ///   is older;
 /// - `releases.json`: the Mac releases in GitHub's shape, the feed read when
-///   neither `HUB_RELEASES_URL` nor the build names one.
+///   neither `HUB_RELEASES_URL` nor the build names one;
+/// - `going-back.json`: what the servers would say about going back, which
+///   the QA host has no real servers for (see `QAGoingBack`).
 ///
 /// The app writes only inside the copy: an install, or going back, with a
 /// fixture's Updates folder is recorded in its install log and never runs
@@ -35,6 +37,7 @@ public struct QAFixtures: Equatable, Sendable {
     public static let updatesName = "updates"
     public static let runningVersionName = "running-version"
     public static let releasesName = "releases.json"
+    public static let goingBackName = "going-back.json"
 
     public let directory: URL
 
@@ -71,6 +74,37 @@ public struct QAFixtures: Equatable, Sendable {
     public var releasesURL: URL? {
         let url = directory.appending(path: Self.releasesName)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// `going-back.json`, when the fixture holds one that reads.
+    public func readGoingBack() -> QAGoingBack? {
+        (try? Data(contentsOf: directory.appending(path: Self.goingBackName))).flatMap { try? HubJSON.makeDecoder().decode(QAGoingBack.self, from: $0) }
+    }
+}
+
+/// A QA fixture's `going-back.json`: what weighing going back reads from the
+/// servers, which a fixture's `previous/` bundle doesn't carry and the QA
+/// host's dev server doesn't know, so QA sees the sheet, its cost, the
+/// withdrawn banner's offer and the prompt after a first-day crash. In the
+/// hub's JSON: snake_case keys, ISO 8601 dates.
+public struct QAGoingBack: Decodable, Equatable, Sendable {
+    /// The newest migration the server of the version in `previous/` knows,
+    /// which its bundle's `hub-server --version` would print.
+    public var previousMigration: Int
+    /// The database's migration, which the running server would answer.
+    public var databaseMigration: Int
+    /// What `GET /v1/version/going-back` would answer; nil leaves the hub's.
+    public var report: GoingBackReport?
+    /// How long before the launch the running version was installed, in
+    /// place of its install record's date, so a committed fixture stays in
+    /// its first day.
+    public var installedHoursAgo: Double?
+
+    public init(previousMigration: Int, databaseMigration: Int, report: GoingBackReport? = nil, installedHoursAgo: Double? = nil) {
+        self.previousMigration = previousMigration
+        self.databaseMigration = databaseMigration
+        self.report = report
+        self.installedHoursAgo = installedHoursAgo
     }
 }
 

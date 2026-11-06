@@ -124,6 +124,41 @@ func TestOnlyTheNewestPreMigrationDumpsAreKept(t *testing.T) {
 	}
 }
 
+func TestPreMigrationDumpsListWithTheirMigrationOldestFirst(t *testing.T) {
+	folder := t.TempDir()
+	if dumps, err := ListPreMigrationDumps(filepath.Join(folder, "missing")); err != nil || dumps != nil {
+		t.Fatalf("a missing folder lists %v, %v", dumps, err)
+	}
+	written := at(t, "2026-10-01 09:00")
+	for order, name := range []string{"hub-pre-migration-88.dump", "hub-pre-migration-85.dump", "hub-pre-migration-x.dump", "hub-2026-10-01.dump", "hub-pre-migration-88.counts.json"} {
+		path := filepath.Join(folder, name)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		modified := written.Add(time.Duration(order) * time.Hour)
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dumps, err := ListPreMigrationDumps(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PreMigrationDump{
+		{Path: filepath.Join(folder, "hub-pre-migration-88.dump"), Migration: 88, DumpedAt: written},
+		{Path: filepath.Join(folder, "hub-pre-migration-85.dump"), Migration: 85, DumpedAt: written.Add(time.Hour)},
+	}
+	if len(dumps) != len(want) {
+		t.Fatalf("dumps = %+v, want %+v", dumps, want)
+	}
+	for index := range want {
+		if dumps[index].Path != want[index].Path || dumps[index].Migration != want[index].Migration || !dumps[index].DumpedAt.Equal(want[index].DumpedAt) {
+			t.Fatalf("dumps = %+v, want %+v", dumps, want)
+		}
+	}
+}
+
 func TestAPreUpgradeDumpIsNamedByBothMajorsAndOutlivesThePruning(t *testing.T) {
 	folder := t.TempDir()
 	// A pg_dump that writes its --file argument and nothing else.

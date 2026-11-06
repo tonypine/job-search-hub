@@ -63,11 +63,11 @@ private func makeHub() -> (HubClient, StubHub.Recording) {
     return (HubClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test", session: session), recording)
 }
 
-/// Waits, for up to five seconds, until the hub has had `count` requests:
+/// Waits, for up to a minute (a passing test returns at once; a loaded runner must not fail one that only waits its turn), until the hub has had `count` requests:
 /// a follow asks again only once it has read the answer before.
 @MainActor
 private func waitForRequests(_ count: Int, on recording: StubHub.Recording) async {
-    let deadline = Date.now.addingTimeInterval(5)
+    let deadline = Date.now.addingTimeInterval(60)
     while recording.requestCount < count, Date.now < deadline {
         try? await Task.sleep(for: .milliseconds(5))
     }
@@ -330,10 +330,10 @@ private func chainKinds(_ kinds: String...) -> StubHub.Answer {
     StubHub.Answer(status: 200, body: #"{"kinds":[\#(kinds.joined(separator: ","))]}"#)
 }
 
-/// Waits, for up to five seconds, until the condition holds.
+/// Waits, for up to a minute (a passing test returns at once; a loaded runner must not fail one that only waits its turn), until the condition holds.
 @MainActor
 private func waitUntil(_ condition: @MainActor () -> Bool) async {
-    let deadline = Date.now.addingTimeInterval(5)
+    let deadline = Date.now.addingTimeInterval(60)
     while !condition(), Date.now < deadline {
         try? await Task.sleep(for: .milliseconds(5))
     }

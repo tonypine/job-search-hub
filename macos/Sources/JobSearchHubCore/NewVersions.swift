@@ -176,6 +176,14 @@ public enum MacReleases {
         getOffered(releases).first { $0.version > running && !bad.contains($0.version) }
     }
 
+    /// The newest release above the running one that's held back only
+    /// because it's one of `bad`, or nil when another newer one can be
+    /// offered instead.
+    public static func findNewestNotOffered(in releases: [GitHubRelease], above running: HubVersion, excluding bad: Set<HubVersion>) -> HubVersion? {
+        guard findNewest(in: releases, above: running, excluding: bad) == nil else { return nil }
+        return findNewest(in: releases, above: running)?.version
+    }
+
     /// The releases after the running one, up to and including `newest`,
     /// newest first: the ones *What's new* reads.
     public static func findBetween(in releases: [GitHubRelease], running: HubVersion, through newest: HubVersion) -> [MacRelease] {

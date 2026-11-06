@@ -49,6 +49,22 @@ extension Tone {
     /// phrases a screen check quoted.
     var mark: Color { color.opacity(0.24) }
 
+    /// The fill's sRGB value behind a confirm button's white label: deep in
+    /// both appearances, where `color` brightens in dark and the label fades.
+    static func confirmFillHex(for tone: Tone) -> UInt32? {
+        switch tone {
+        case .caution: 0xA86400
+        case .negative: 0xC42B2F
+        case .accent, .positive, .neutral: nil
+        }
+    }
+
+    /// The tone behind a confirm button's white label.
+    var confirmFill: Color {
+        guard let hex = Self.confirmFillHex(for: self) else { return color }
+        return Color(light: hex, dark: hex)
+    }
+
     private static let positiveColor = Color(light: 0x1E8E50, dark: 0x3CC97F)
     private static let cautionColor = Color(light: 0xB86E00, dark: 0xF2A33A)
     private static let negativeColor = Color(light: 0xD13438, dark: 0xFF6B6B)

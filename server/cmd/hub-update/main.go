@@ -1,9 +1,11 @@
 // Command hub-update installs a new version of the Mac app's bundle once the
 // app has quit: it stops the server, swaps the bundle, starts the server and
 // checks it, reopens the app and checks it, and puts the old version back if
-// either fails. The app writes the install's Updates/state.json and starts
-// it as a launchd job, which runs it again after a crash, and at the next
-// login after a power loss, until the install ends.
+// either fails; or, when the owner asks, goes back to an earlier version,
+// restoring the database from before the later one migrated it. The app
+// writes the install's Updates/state.json and starts it as a launchd job,
+// which runs it again after a crash, and at the next login after a power
+// loss, until the install ends.
 //
 //	hub-update install <state.json>
 //	hub-update --version

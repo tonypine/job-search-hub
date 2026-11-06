@@ -534,6 +534,8 @@ See [Failures](#failures) for what happens underneath. On screen:
   start, so the hub went back to 0.1.247. Nothing was lost." and *Show install log*.
 - **The new version crashed** in its first day: on the next launch, a sheet: "Job Search Hub 0.1.252
   quit unexpectedly. Go back to 0.1.247?", with the cost if migrations ran, and *Stay on 0.1.252*.
+  When going back would lose writes, Return doesn't confirm it: the sheet opens unasked, and a
+  Return meant for a page could land on it.
 - **Going back**, from Settings › Version: a sheet with what it would lose, counted from Postgres's
   per-table counters (see [Failures](#failures)), and the advice to stay and wait for a fix, which
   with daily merges is often better.
@@ -755,15 +757,46 @@ the words *Go back* uses.
 
 - **If no migration ran since 0.1.247**, it's an install in reverse, from `Updates/previous/`, and
   nothing is lost. The sheet says so.
-- **If migrations ran**, it also restores `hub-pre-migration-0.1.252.dump`, and loses what was
+- **If migrations ran**, it also restores the dump taken before 0.1.252 migrated, and loses what was
   written since. The sheet counts it the same way, from the counters against the mark: "Since
   then: 3 jobs found, 1 card moved, 2 people added, 4 updates. These would be lost." And: "Or stay
   on 0.1.252 and wait for a fix." If the counts can't be trusted (a Postgres crash since), the
   sheet says it can't tell what was written since the install, and that all of it would be lost.
-- **A version the owner went back from** is marked bad on this Mac, and isn't offered again.
+- **A version the owner went back from** is marked bad on this Mac, and isn't offered again. While
+  it's the newest release, Settings › Version says "No version to install" and why, not "up to date".
 - **Older versions** than the previous one download again from GitHub, through *Install an older
   version…*, listed only when their pre-migration dump is still on disk (the newest five are kept)
   or they need none.
+
+How it's built (TP-592):
+
+- **The cost, while the server runs**: `GET /v1/version/going-back` (owner) answers the database's
+  migration, `migration_releases` (the release that first ran at each migration), and each
+  `hub-pre-migration-<migration>.dump` on disk with what was written since its mark, counted from
+  the live counters, or why it can't be. The dumps are named by the migration they hold, not by
+  version: going back to a version restores the dump of its newest migration.
+- **Which migration an older release knows**: the app reads the previous version's from its own
+  `hub-server --version`. For a release never kept here, `migration_releases` gives a lower bound,
+  the newest migration a release no newer than it first ran at; its server migrates up from that
+  dump if it knows more. A release older than every recorded one isn't listed.
+- **`hub-update` goes back** as a rollback the owner asked for: the app writes `state.json` with
+  `going_back`, `from` the version gone back to, `to` the version left and `new_app` the earlier
+  bundle, and starts the `hub-update` of the running bundle, which knows how. Once the app has quit
+  and the server stopped, it counts what was written since the dump (with the version left's
+  `hub-server`), restores it with the earlier one's, swaps the bundle back, checks the earlier
+  server while it migrates up, marks the version left bad, records the going back in
+  `installs.json`, and reopens the app. Without the dump, or if it stops before the restore,
+  nothing changes. The feed isn't told: the owner did it, at the Mac.
+- **What runs when the owner goes back**: the sheet lists it as the install sheet does and says what
+  stops. Unsaved edits turn *Go back* off until they're saved or discarded, each line opening its
+  edit, and the app reads them again before it starts, so an edit is never lost to the quit.
+- **A crash in the first day**: the app writes `Updates/run.json` at launch and marks it at a clean
+  quit. At the next launch, a version installed in the last 24 hours (`installs.json`) whose last
+  run didn't quit cleanly, or left a `JobSearchHub-*.ips` report with its `app_version` since that
+  run started, asks to go back to the previous version.
+- **A withdrawn version**: each hourly check that finds the running release a pre-release weighs
+  going back to the previous version for the banner, and posts a notification once when the app
+  isn't in front.
 
 ## Out of scope
 

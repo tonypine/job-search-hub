@@ -90,6 +90,17 @@ private let criteria = UnsavedEdit(id: "criteria", title: "Criteria")
     #expect(!later.isClear)
 }
 
+@Test func goingBackSaysWhatItStopsAndWhichEditsHoldItUp() {
+    let target = HubVersion("0.1.247")!
+    let work = RunningWork.make(sessions: [acme], drain: [research], tasks: [fix], edits: [criteria], now: now)
+    #expect(work.costOfGoingBack(to: target) == "The Acme session's turn stops mid-way; its conversation reopens with 0.1.247. "
+        + "Researching Initech stops; run it again afterwards. Fixing Platform Lead stops; it goes back to the queue and runs again after the restart.")
+    #expect(work.goingBackRefusal == "Criteria has unsaved edits. Save or discard them first: going back would lose them.")
+
+    let saved = RunningWork.make(sessions: [acme], drain: [], tasks: [], edits: [], now: now)
+    #expect(saved.goingBackRefusal == nil)
+}
+
 @Test func installAnywaySaysWhatItCostsFirst() {
     let work = RunningWork.make(sessions: [acme], drain: [research, brief], tasks: [fix], edits: [criteria], now: now)
     #expect(work.cost == "The Acme session's turn stops mid-way; its conversation reopens with the new version. "

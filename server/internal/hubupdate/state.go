@@ -4,7 +4,8 @@
 // version back if either fails. Every step is recorded in
 // Updates/state.json before it's taken, and every step can be taken again,
 // so a run cut short by sleep, a power loss or a crash finishes or undoes
-// the install when it runs again.
+// the install when it runs again. Going back to an earlier version, when
+// the owner asks, takes the same rollback's steps.
 package hubupdate
 
 import (
@@ -91,6 +92,12 @@ type State struct {
 	// JobPlist is the launchd job that runs hub-update, which goes once
 	// the install has ended.
 	JobPlist string `json:"job_plist,omitempty"`
+	// GoingBack says the owner goes back from To, the version installed, to
+	// From, an earlier one at NewApp: a rollback they asked for. Once the
+	// app has quit and the server stopped, it takes a rollback's steps, and
+	// restores the dump of FromMigration when the database migrated since.
+	// Before the restore nothing has changed, and a failure abandons it.
+	GoingBack bool `json:"going_back,omitempty"`
 
 	Step Step `json:"step"`
 	// ServerLog is where the server's log stood when the new server started,

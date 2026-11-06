@@ -6,8 +6,8 @@ import UserNotifications
 /// without a delegate, macOS keeps them out of sight. Also answers Control-
 /// Command-F with full screen, opens the main window when launch ends
 /// without one, starts looking for new versions, reads how the last install
-/// ended, and installs at ⌘Q when asked to. In QA mode it draws light or
-/// dark as `SYMPHONY_BAR_QA_APPEARANCE` asks.
+/// ended and whether the last run crashed, and installs at ⌘Q when asked to.
+/// In QA mode it draws light or dark as `SYMPHONY_BAR_QA_APPEARANCE` asks.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var fullScreenShortcutMonitor: Any?
 
@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Before the checker: what the last install installed is part of
         // its What's new.
         Installer.shared.readLaunchState()
+        // Whether this version crashed in its first day, which asks to go back.
+        GoingBack.shared.readLaunch()
+        NewVersionChecker.shared.onWithdrawn = { Task { await GoingBack.shared.noticeWithdrawn() } }
         NewVersionChecker.shared.start()
         // Window state saved by a build whose main scene differs restores
         // nothing, and SwiftUI then opens no window: the app runs with none
@@ -45,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !NSApp.sendAction(Selector(("showNewMainWindow:")), to: nil, from: nil) {
             _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
         }
+    }
+
+    /// The next launch knows this run quit cleanly.
+    func applicationWillTerminate(_ notification: Notification) {
+        GoingBack.shared.markCleanQuit()
     }
 
     /// After *Install when I quit*, ⌘Q installs: at once, or once the work

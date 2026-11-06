@@ -64,23 +64,8 @@ struct InstallSheetContent: View {
             Text(intro)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if !work.items.isEmpty || work.idleSessionsLine != nil {
-                VStack(alignment: .leading, spacing: Space.s) {
-                    if !isWaiting {
-                        Text("Running now").font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
-                    }
-                    ForEach(work.items) { item in
-                        InstallItemRow(item: item, openEdit: openEdit)
-                    }
-                    if let idle = work.idleSessionsLine {
-                        HStack(spacing: Space.s) {
-                            Image(systemName: "moon.zzz").frame(width: 18).foregroundStyle(.secondary).accessibilityHidden(true)
-                            Text(idle)
-                            Spacer(minLength: Space.s)
-                            Text("reopen where they were").font(.hubCaption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            if work.hasAnythingToList {
+                RunningNowList(work: work, showsHeading: !isWaiting, openEdit: openEdit)
             } else {
                 Text("Nothing is running.").foregroundStyle(.secondary)
             }
@@ -144,6 +129,32 @@ struct InstallSheetContent: View {
             }
         }
         .controlSize(.large)
+    }
+}
+
+/// *Running now*, in the install sheet and the going-back sheet.
+struct RunningNowList: View {
+    let work: RunningWork
+    let showsHeading: Bool
+    let openEdit: (RunningItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            if showsHeading {
+                Text("Running now").font(.hubSecondary.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            ForEach(work.items) { item in
+                InstallItemRow(item: item, openEdit: openEdit)
+            }
+            if let idle = work.idleSessionsLine {
+                HStack(spacing: Space.s) {
+                    Image(systemName: "moon.zzz").frame(width: 18).foregroundStyle(.secondary).accessibilityHidden(true)
+                    Text(idle)
+                    Spacer(minLength: Space.s)
+                    Text("reopen where they were").font(.hubCaption).foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 

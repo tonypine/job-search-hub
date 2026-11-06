@@ -100,6 +100,32 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, release string) error {
 	return nil
 }
 
+// MigrationRelease is the release that first migrated the database to a
+// migration, or first ran on it.
+type MigrationRelease struct {
+	Migration int64  `json:"migration"`
+	Release   string `json:"release"`
+}
+
+// ListMigrationReleases lists the releases recorded in migration_releases,
+// the oldest migration first. Going back reads it to tell which migration an
+// older release knows.
+func (s *Store) ListMigrationReleases(ctx context.Context) ([]MigrationRelease, error) {
+	rows, err := s.pool.Query(ctx, `SELECT migration, release FROM migration_releases ORDER BY migration`)
+	if err != nil {
+		return nil, fmt.Errorf("list the releases that migrated the database: %w", err)
+	}
+	releases, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (MigrationRelease, error) {
+		var release MigrationRelease
+		err := row.Scan(&release.Migration, &release.Release)
+		return release, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list the releases that migrated the database: %w", err)
+	}
+	return releases, nil
+}
+
 // flushWriteCounts has the connection's backend flush the write counts it
 // holds: pg_stat_force_next_flush() makes its next report, which it makes
 // before it answers, a forced one. Postgres before 15 has no such

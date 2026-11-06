@@ -23,7 +23,8 @@ struct VersionSettings: View {
                     VersionSettingsContent(
                         page: makePage(now: context.date), checkNow: checker.checkNow,
                         showLog: { NSWorkspace.shared.open(checker.updates.logURL) },
-                        installNow: installNow, installWhenQuit: installWhenQuit
+                        installNow: installNow, installWhenQuit: installWhenQuit,
+                        goBack: goBack, installOlder: installOlder
                     )
                 }
                 .padding(Space.xl)
@@ -36,7 +37,7 @@ struct VersionSettings: View {
             facts: checker.facts, status: NewVersionStatus.make(checker.facts, now: now), installedAt: checker.installedAt,
             serverVersion: checker.runningServer?.version, previousVersion: checker.previousVersion,
             hasInstallLog: checker.hasInstallLog, runningReleaseURL: checker.runningReleaseURL, now: now,
-            installBlockedReason: installer.cannotInstallReason, installsOnQuit: installer.phase == .whenQuit,
+            installBlockedReason: installer.cannotInstallReason, goBackBlockedReason: installer.cannotGoBackReason, installsOnQuit: installer.phase == .whenQuit,
             installedChanges: checker.installedChanges
         )
     }
@@ -44,11 +45,27 @@ struct VersionSettings: View {
     /// The sheet shows over the main window, which comes forward.
     private func installNow() {
         guard let ready = checker.facts.ready else { return }
+        showMainWindow()
+        Task { await installer.review(ready) }
+    }
+
+    private func goBack(_ reason: GoingBack.Reason) {
+        showMainWindow()
+        Task { await GoingBack.shared.offerPrevious(reason) }
+    }
+
+    private func installOlder() {
+        showMainWindow()
+        Task { await GoingBack.shared.showOlderVersions() }
+    }
+
+    /// Closes Settings and brings the main window forward, where the sheets
+    /// show.
+    private func showMainWindow() {
         NSApp.keyWindow?.close()
         if let main = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
             main.makeKeyAndOrderFront(nil)
         }
-        Task { await installer.review(ready) }
     }
 
     private func installWhenQuit() {
@@ -76,34 +93,43 @@ struct VersionPage {
     var now: Date
     /// Why this app can't install a version; nil when it can.
     var installBlockedReason: String?
+    /// Why this app can't go back to an earlier version; nil when it can,
+    /// and with a QA fixture, whose sheet opens and refuses only the going
+    /// back.
+    var goBackBlockedReason: String?
     /// *Install when I quit* was chosen.
     var installsOnQuit = false
     /// What the install that brought the running version changed.
     var installedChanges: InstalledChanges?
 
-    /// *Go back to 0.1.247…*, when a previous version is kept.
-    var goBackTitle: String? {
-        previousVersion.map { "Go back to \($0.description)…" }
+    /// The previous version, when the hub can go back to it: older than the
+    /// one running. After going back to an older download, `previous/` holds
+    /// a newer one.
+    var goBackTarget: HubVersion? {
+        previousVersion.flatMap { $0 < facts.running ? $0 : nil }
     }
 }
 
 /// The tab's content, drawn without AppKit controls (buttons and radios
 /// are SwiftUI shapes), so `ImageRenderer` can draw it offscreen too.
 struct VersionSettingsContent: View {
-    static let goBackHelp = "Going back comes with a later version of the app."
-
     let page: VersionPage
     let checkNow: () -> Void
     let showLog: () -> Void
     let installNow: () -> Void
     let installWhenQuit: () -> Void
+    /// *Go back to…*, from the previous version's line or the withdrawn card.
+    let goBack: (GoingBack.Reason) -> Void
+    /// *Install an older version…*.
+    let installOlder: () -> Void
     @State private var isShowingAllChanges: Bool
     @State private var isShowingAllInstalledChanges = false
     @Environment(\.openURL) private var openURL
 
     init(
         page: VersionPage, isShowingAllChanges: Bool = false, checkNow: @escaping () -> Void, showLog: @escaping () -> Void,
-        installNow: @escaping () -> Void = {}, installWhenQuit: @escaping () -> Void = {}
+        installNow: @escaping () -> Void = {}, installWhenQuit: @escaping () -> Void = {},
+        goBack: @escaping (GoingBack.Reason) -> Void = { _ in }, installOlder: @escaping () -> Void = {}
     ) {
         self.page = page
         _isShowingAllChanges = State(initialValue: isShowingAllChanges)
@@ -111,6 +137,8 @@ struct VersionSettingsContent: View {
         self.showLog = showLog
         self.installNow = installNow
         self.installWhenQuit = installWhenQuit
+        self.goBack = goBack
+        self.installOlder = installOlder
     }
 
     var body: some View {
@@ -188,6 +216,9 @@ struct VersionSettingsContent: View {
         case let .upToDate(newest, checkedAt):
             StatusCard(symbol: "checkmark.circle.fill", tone: .positive, title: "Job Search Hub is up to date",
                        detail: describeUpToDate(newest: newest, checkedAt: checkedAt)) { checkNowButton }
+        case let .newerNotOffered(version, checkedAt):
+            StatusCard(symbol: "checkmark.circle", tone: .neutral, title: "No version to install",
+                       detail: describeNotOffered(version, checkedAt: checkedAt)) { checkNowButton }
         case let .localBuild(commit):
             StatusCard(symbol: "hammer.circle.fill", tone: .neutral, title: commit.map { "Local build of \($0)" } ?? "Local build",
                        detail: "Built from a checkout. New versions don't install over it by themselves.") {
@@ -223,10 +254,12 @@ struct VersionSettingsContent: View {
         case let .withdrawn(version):
             StatusCard(symbol: "arrow.uturn.backward.circle.fill", tone: .caution, title: "\(version.description) was withdrawn",
                        detail: "It was pulled after its release. The next release replaces it.") {
-                Button("Go back…") {}
-                    .buttonStyle(VersionCapsuleStyle())
-                    .disabled(true)
-                    .help(Self.goBackHelp)
+                if let target = page.goBackTarget {
+                    Button("Go back…") { goBack(.withdrawn) }
+                        .buttonStyle(VersionCapsuleStyle())
+                        .disabled(page.goBackBlockedReason != nil)
+                        .help(page.goBackBlockedReason ?? "See what going back to \(target.description) would lose")
+                }
             }
         }
     }
@@ -235,6 +268,15 @@ struct VersionSettingsContent: View {
         Button("Check now", action: checkNow)
             .buttonStyle(VersionCapsuleStyle())
             .disabled(page.facts.isChecking)
+    }
+
+    /// `bad-versions.json` doesn't record why a version is in it, so this
+    /// names both reasons.
+    private func describeNotOffered(_ version: HubVersion, checkedAt: Date?) -> String {
+        let reason = "\(version.description) isn't offered on this Mac again: you went back from it, or it failed to install here. A newer release will be offered once it's out."
+        guard let checkedAt else { return reason }
+        let ago = RelativeDateTimeFormatter().localizedString(for: checkedAt, relativeTo: page.now)
+        return "\(reason) Checked \(ago)."
     }
 
     private func describeUpToDate(newest: HubVersion?, checkedAt: Date?) -> String {
@@ -274,12 +316,21 @@ struct VersionSettingsContent: View {
                 Text(page.previousVersion.map { "Previous version: \($0.description)" } ?? "No previous version on this Mac")
                     .foregroundStyle(page.previousVersion == nil ? .secondary : .primary)
                 Spacer(minLength: Space.s)
-                if let goBackTitle = page.goBackTitle {
-                    Button(goBackTitle) {}
+                if let target = page.goBackTarget {
+                    Button("Go back to \(target.description)…") { goBack(.settings) }
                         .buttonStyle(VersionCapsuleStyle())
-                        .disabled(true)
-                        .help(Self.goBackHelp)
+                        .disabled(page.goBackBlockedReason != nil)
+                        .help(page.goBackBlockedReason ?? "See what going back to \(target.description) would lose")
                 }
+            }
+            HStack {
+                Text("Older versions download again from GitHub.")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: Space.s)
+                Button("Install an older version…", action: installOlder)
+                    .buttonStyle(VersionCapsuleStyle())
+                    .disabled(page.goBackBlockedReason != nil || page.facts.running.isLocalBuild)
+                    .help(page.goBackBlockedReason ?? "List the older versions the hub can go back to")
             }
         }
         .hubCard()

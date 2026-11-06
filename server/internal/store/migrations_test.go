@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/tonypine/job-search-hub/server/internal/store"
@@ -23,6 +24,24 @@ func TestAReleaseRecordsItselfAsTheFirstToKnowTheNewestMigration(t *testing.T) {
 	var release string
 	if err := pool.QueryRow(ctx, `SELECT release FROM migration_releases WHERE migration = $1`, migrations.Newest()).Scan(&release); err != nil || release != "0.1.300" {
 		t.Fatalf("release = %q, %v; want the first release that migrated it", release, err)
+	}
+}
+
+func TestTheReleasesThatMigratedTheDatabaseListOldestMigrationFirst(t *testing.T) {
+	ctx := context.Background()
+	pool := testdatabase.New(t)
+	newest := migrations.Newest()
+	if _, err := pool.Exec(ctx, `INSERT INTO migration_releases (migration, release) VALUES ($1, '0.1.250'), ($2, '0.1.240')`, newest, newest-2); err != nil {
+		t.Fatal(err)
+	}
+
+	releases, err := store.New(pool).ListMigrationReleases(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.MigrationRelease{{Migration: newest - 2, Release: "0.1.240"}, {Migration: newest, Release: "0.1.250"}}
+	if !slices.Equal(releases, want) {
+		t.Fatalf("releases = %+v, want %+v", releases, want)
 	}
 }
 

@@ -265,41 +265,59 @@ func (dumper *Dumper) removeOldDumps() error {
 // removeOldPreMigrationDumps keeps the keptPreMigrationDumps written last. A
 // dump of an older version can be the newest, after a restore.
 func removeOldPreMigrationDumps(folder string) error {
-	entries, err := os.ReadDir(folder)
+	dumps, err := ListPreMigrationDumps(folder)
 	if err != nil {
 		return err
 	}
-	type dump struct {
-		name     string
-		modified time.Time
+	if len(dumps) <= keptPreMigrationDumps {
+		return nil
 	}
-	var dumps []dump
+	for _, old := range dumps[:len(dumps)-keptPreMigrationDumps] {
+		if err := os.Remove(old.Path); err != nil {
+			return err
+		}
+		if err := os.Remove(MarkPath(old.Path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// PreMigrationDump is a dump taken before migrations, which holds the
+// database at Migration.
+type PreMigrationDump struct {
+	Path      string
+	Migration int64
+	DumpedAt  time.Time
+}
+
+// ListPreMigrationDumps lists the dumps taken before migrations in folder,
+// the oldest first. A folder that isn't there holds none.
+func ListPreMigrationDumps(folder string) ([]PreMigrationDump, error) {
+	entries, err := os.ReadDir(folder)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var dumps []PreMigrationDump
 	for _, entry := range entries {
 		version, isDump := strings.CutPrefix(entry.Name(), preMigrationPrefix)
 		version, hasSuffix := strings.CutSuffix(version, dumpSuffix)
 		if !isDump || !hasSuffix || !entry.Type().IsRegular() {
 			continue
 		}
-		if _, err := strconv.ParseInt(version, 10, 64); err != nil {
+		migration, err := strconv.ParseInt(version, 10, 64)
+		if err != nil {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		dumps = append(dumps, dump{entry.Name(), info.ModTime()})
+		dumps = append(dumps, PreMigrationDump{Path: filepath.Join(folder, entry.Name()), Migration: migration, DumpedAt: info.ModTime()})
 	}
-	if len(dumps) <= keptPreMigrationDumps {
-		return nil
-	}
-	slices.SortFunc(dumps, func(a, b dump) int { return a.modified.Compare(b.modified) })
-	for _, old := range dumps[:len(dumps)-keptPreMigrationDumps] {
-		if err := os.Remove(filepath.Join(folder, old.name)); err != nil {
-			return err
-		}
-		if err := os.Remove(MarkPath(filepath.Join(folder, old.name))); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
+	slices.SortFunc(dumps, func(a, b PreMigrationDump) int { return a.DumpedAt.Compare(b.DumpedAt) })
+	return dumps, nil
 }

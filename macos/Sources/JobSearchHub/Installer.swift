@@ -101,6 +101,13 @@ final class Installer {
     }
     /// Starts `hub-update` for the target; tests stand in for launchd.
     @ObservationIgnored var launchHubUpdate: (@MainActor (Target) throws -> Void)?
+    /// Starts `hub-update` going back; tests stand in for launchd.
+    @ObservationIgnored var launchGoingBack: (@MainActor (InstallState) throws -> Void)?
+    /// Going back was handed to `hub-update`: told why when it ends with the
+    /// app still open.
+    @ObservationIgnored private var goingBackStayed: (@MainActor (String) -> Void)?
+    /// The edits not saved yet. Tests stand in for them.
+    @ObservationIgnored var readUnsavedEdits: @MainActor () -> [UnsavedEdit] = { UnsavedEdits.shared.list }
     /// How often the app, still open after asking to quit, looks at whether
     /// `hub-update` gave up on it.
     @ObservationIgnored var stateCheckInterval: Duration = .seconds(1)
@@ -112,6 +119,14 @@ final class Installer {
     }
 
     static let qaFixtureReason = "A QA fixture stands in for the Updates folder, so installs and going back are recorded in its log, not run."
+
+    /// Why this copy of the app can't go back to an earlier version; nil
+    /// when it can. With a QA fixture's Updates folder the sheet still opens,
+    /// so QA sees what going back costs; its *Go back* is refused, in the
+    /// fixture's log.
+    var cannotGoBackReason: String? {
+        updates.isQAFixture ? nil : cannotInstallReason
+    }
 
     /// Why this copy of the app can't install versions; nil when it can. Only
     /// the installed app, carrying `hub-update`, installs over itself.
@@ -266,7 +281,7 @@ final class Installer {
     private func makeWork(drain: [DrainStatus.Work]) -> RunningWork {
         RunningWork.make(
             sessions: ClaudeSessionHost.shared.runningSessions, drain: drain,
-            tasks: taskRunner.map { Array($0.runningTasks.values) } ?? [], edits: UnsavedEdits.shared.list, now: .now
+            tasks: taskRunner.map { Array($0.runningTasks.values) } ?? [], edits: readUnsavedEdits(), now: .now
         )
     }
 
@@ -320,26 +335,68 @@ final class Installer {
             return
         }
         updates.log("Installing \(target.version) over \(HubClient.appVersion); the app quits for hub-update.", at: .now)
-        isQuittingForInstall = true
-        let answersPendingQuit = isTerminationPending
-        isTerminationPending = false
-        // AppKit refuses to quit while a sheet is attached: the install
-        // sheet goes first, and the app waits until it's gone.
-        await closeSheets()
-        quit(answersPendingQuit)
+        await quitForInstall()
         watchQuitForInstall()
     }
 
-    /// Closes the install sheet and its *Install anyway?* alert, and waits
-    /// until no window holds a sheet, for at most `sheetCloseTimeout`.
-    private func closeSheets() async {
+    /// AppKit refuses to quit while a sheet is attached: the sheets go first,
+    /// and the app waits until they're gone.
+    private func quitForInstall(closingSheet closeSheet: @MainActor () -> Void = {}) async {
+        isQuittingForInstall = true
+        let answersPendingQuit = isTerminationPending
+        isTerminationPending = false
+        await closeSheets(closeSheet)
+        quit(answersPendingQuit)
+    }
+
+    /// Closes the install sheet, its *Install anyway?* alert and whatever
+    /// `closeSheet` closes, and waits until no window holds a sheet, for at
+    /// most `sheetCloseTimeout`.
+    private func closeSheets(_ closeSheet: @MainActor () -> Void) async {
         let deadline = ContinuousClock.now + sheetCloseTimeout
         while true {
             isConfirmingInstallAnyway = false
             isShowingSheet = false
+            closeSheet()
             guard hasAttachedSheet(), ContinuousClock.now < deadline else { return }
             try? await Task.sleep(for: .milliseconds(50))
         }
+    }
+
+    /// Goes back to an earlier version, as the going-back sheet confirmed:
+    /// records what's open, hands the state to `hub-update`, copied from
+    /// this bundle, whose version knows how to go back, and quits, once
+    /// `closeSheet` has closed the sheet that asked. Unsaved edits refuse it,
+    /// as they do an install: quitting would lose them. When `hub-update`
+    /// gives up with the app still open, `stayed` hears why.
+    func goBack(_ state: InstallState, closeSheet: @MainActor () -> Void = {}, stayed: @escaping @MainActor (String) -> Void = { _ in }) async throws {
+        try refuseQAFixture("Go back to \(state.from)")
+        if launchGoingBack == nil, let reason = cannotInstallReason {
+            throw InstallError(reason)
+        }
+        guard phase == .idle || phase == .whenQuit else { throw InstallError("An install is under way.") }
+        guard FileManager.default.fileExists(atPath: URL(filePath: state.newApp).appending(path: "Contents/Info.plist").path) else {
+            throw InstallError("\(state.from) isn't on this Mac any more.")
+        }
+        // Read now, not from the sheet's last look, with nothing to wait for
+        // between here and the quit.
+        work = makeWork(drain: []).keepingServerWork(from: work)
+        if let refusal = work.goingBackRefusal {
+            throw InstallError(refusal)
+        }
+        try saveReopenRecord()
+        if let launchGoingBack {
+            try launchGoingBack(state)
+        } else {
+            try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: Bundle.main.bundleURL))
+        }
+        updates.log("Going back from \(state.to) to \(state.from); the app quits for hub-update.", at: .now)
+        // A version waiting for *Install when I quit* isn't what runs now.
+        target = nil
+        phase = .starting
+        goingBackStayed = stayed
+        await quitForInstall(closingSheet: closeSheet)
+        watchQuitForInstall()
     }
 
     /// The app is still open after asking to quit: once `hub-update` gives
@@ -369,8 +426,13 @@ final class Installer {
             readNotice()
         }
         try? fileManager.removeItem(at: updates.reopenURL)
-        let version = state?.to ?? target?.version.description ?? "the new version"
-        failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
+        if let goingBackStayed {
+            self.goingBackStayed = nil
+            goingBackStayed(state?.failure ?? "Going back stopped before the app quit, so nothing changed.")
+        } else {
+            let version = state?.to ?? target?.version.description ?? "the new version"
+            failure = HubFailure("Couldn't install \(version)", advice: state?.failure ?? "The install stopped before the app quit, so nothing was installed.")
+        }
         isQuittingForInstall = false
         reopensApp = true
         await stopDraining()
@@ -391,28 +453,40 @@ final class Installer {
         try updates.writeReopenRecord(record)
     }
 
-    /// Writes the install's state, copies `hub-update` out of the new
-    /// bundle, which the install moves, and loads it as a one-shot launchd
-    /// job that runs again if it crashes, or at login after a power loss.
+    /// The launchd job's plist, which the state names so `hub-update`
+    /// removes it once the install ends.
+    static var jobPlistURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/LaunchAgents/\(jobLabel).plist")
+    }
+
+    /// Writes the install's state, and has `hub-update`, copied out of the
+    /// new bundle, carry it out.
     private func startHubUpdate(_ target: Target) throws {
         try refuseQAFixture("Install \(target.version)")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let running = HubVersion(HubClient.appVersion) else { throw InstallError("This app's version, \(HubClient.appVersion), can't be read.") }
+        let state = InstallState(
+            from: running, to: target.version, installed: ServerLaunchAgent.makeInstalledAppURL(home: home), newApp: target.app,
+            reopenApp: reopensApp, fromMigration: target.fromMigration, toMigration: target.toMigration, startedAt: .now, jobPlist: Self.jobPlistURL
+        )
+        try launchHubUpdate(state, from: ServerLaunchAgent.makeCommandURL("hub-update", bundle: target.app))
+    }
+
+    /// Writes the state, copies `hub-update` out of its bundle, which the
+    /// install moves, and loads it as a one-shot launchd job that runs again
+    /// if it crashes, or at login after a power loss.
+    private func launchHubUpdate(_ state: InstallState, from hubUpdate: URL) throws {
         if let state = updates.readState(), !state.step.isFinished {
             throw InstallError("The install of \(state.to) is still under way.")
         }
         let fileManager = FileManager.default
-        let home = fileManager.homeDirectoryForCurrentUser
-        guard let running = HubVersion(HubClient.appVersion) else { throw InstallError("This app's version, \(HubClient.appVersion), can't be read.") }
         try fileManager.createDirectory(at: updates.root, withIntermediateDirectories: true)
 
         let installer = updates.installerURL
         try? fileManager.removeItem(at: installer)
-        try fileManager.copyItem(at: ServerLaunchAgent.makeCommandURL("hub-update", bundle: target.app), to: installer)
+        try fileManager.copyItem(at: hubUpdate, to: installer)
 
-        let plist = home.appending(path: "Library/LaunchAgents/\(Self.jobLabel).plist")
-        let state = InstallState(
-            from: running, to: target.version, installed: ServerLaunchAgent.makeInstalledAppURL(home: home), newApp: target.app,
-            reopenApp: reopensApp, fromMigration: target.fromMigration, toMigration: target.toMigration, startedAt: .now, jobPlist: plist
-        )
+        let plist = Self.jobPlistURL
         try updates.writeState(state)
         try? fileManager.removeItem(at: updates.launchedURL)
 
